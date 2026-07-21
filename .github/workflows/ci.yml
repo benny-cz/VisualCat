@@ -13,6 +13,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Cheap, fast gates that do not need a build. They run first so an obvious
+  # documentation or credential mistake does not wait on the 3-OS matrix.
+  repository:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Tags and full history are required to check changelog links and to
+          # scan every reachable blob.
+          fetch-depth: 0
+      - name: Verify documentation and version consistency
+        run: pwsh ./tools/verify-docs.ps1
+      - name: Scan for secrets
+        run: pwsh ./tools/scan-secrets.ps1 -History
+
   desktop-core:
     permissions:
       contents: read

@@ -17,6 +17,28 @@ In PowerShell:
 
 Compare the printed value with the matching line in `SHA256SUMS`.
 
+A checksum only proves the bytes were not corrupted in transit; it is hosted
+next to the download it describes. To prove the bytes came from this
+repository's release workflow, verify the build provenance attestation with the
+[GitHub CLI](https://cli.github.com/):
+
+```shell
+gh attestation verify VisualCat-Desktop-linux-x64-*.tar.gz --repo benny-cz/VisualCat
+```
+
+## What each archive contains
+
+Alongside the application, every desktop and CLI archive contains:
+
+- `LICENSE` — the MIT license this project is released under;
+- `THIRD-PARTY-NOTICES.md` — bundled components and their licenses; and
+- `README.txt` — the version, launch command, checksum and provenance
+  verification steps, platform-specific notes, and where to report a bug or a
+  vulnerability.
+
+Each release also carries a CycloneDX SBOM (`VisualCat-sbom-v*.cdx.json`)
+listing every shipped component and its license.
+
 ## Desktop packages
 
 Desktop packages are currently unsigned.

@@ -14,7 +14,72 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A release must not be publishable from a commit that would fail the gates
+  # required of a pull request. CI runs on pushes to main, not on tag pushes,
+  # so the release workflow proves this itself and every packaging job depends
+  # on it. It also resolves the release version once, so the packaging jobs
+  # cannot drift apart.
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is-tagged-release: ${{ steps.version.outputs.is-tagged-release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: Directory.Packages.props
+      - name: Resolve and validate release version
+        id: version
+        shell: pwsh
+        run: |
+          $isTag = '${{ github.ref_type }}' -eq 'tag'
+          if ($isTag) {
+            $ref = '${{ github.ref_name }}'
+            if ($ref -notmatch '^v(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$') {
+              throw "Tag '$ref' is not a release version. Use 'vMAJOR.MINOR.PATCH' with an optional prerelease suffix."
+            }
+            $version = $Matches['version']
+          } else {
+            # Rehearsal runs are versioned as previews so they can never be
+            # mistaken for, or published as, a real release.
+            $version = '2.0.0-preview.${{ github.run_number }}'
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "is-tagged-release=$($isTag.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "Release version: ``$version`` (tagged release: $isTag)" >> $env:GITHUB_STEP_SUMMARY
+      - name: Restore documented desktop solution
+        run: dotnet restore VisualCat.Desktop.slnx
+      - name: Verify formatting
+        run: dotnet format VisualCat.Desktop.slnx --no-restore --verify-no-changes --verbosity diagnostic
+      - name: Build Release
+        run: dotnet build VisualCat.Desktop.slnx --no-restore --configuration Release
+      - name: Test
+        run: dotnet test VisualCat.Desktop.slnx --no-restore --no-build --configuration Release
+      - name: CLI smoke test
+        run: |
+          dotnet run --project src/VisualCat.Cli --configuration Release --no-build -- index samples/logcat_small.txt --output release.vcat
+          dotnet run --project src/VisualCat.Cli --configuration Release --no-build -- verify release.vcat
+          dotnet run --project src/VisualCat.Cli --configuration Release --no-build -- --version
+          pwsh ./tools/verify-cli-help.ps1
+      - name: Verify documentation and version consistency
+        shell: pwsh
+        run: |
+          if ('${{ steps.version.outputs.is-tagged-release }}' -eq 'true') {
+            ./tools/verify-docs.ps1 -ReleaseVersion '${{ steps.version.outputs.version }}'
+          } else {
+            ./tools/verify-docs.ps1
+          }
+      - name: Scan for secrets
+        run: pwsh ./tools/scan-secrets.ps1 -History
+
   desktop:
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
@@ -22,16 +87,24 @@ jobs:
           - os: windows-latest
             rid: win-x64
             archive: zip
+            # Only run an archived binary on a runner that can actually execute
+            # it; cross-architecture execution is not guaranteed.
+            executable: true
           - os: ubuntu-latest
             rid: linux-x64
             archive: tar.gz
+            executable: true
           - os: macos-15
             rid: osx-arm64
             archive: tar.gz
+            executable: true
           - os: macos-15
             rid: osx-x64
             archive: tar.gz
+            executable: false
     runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
@@ -39,14 +112,6 @@ jobs:
           global-json-file: global.json
           cache: true
           cache-dependency-path: Directory.Packages.props
-      - name: Resolve release version
-        shell: pwsh
-        run: |
-          $version = '${{ github.ref_name }}' -replace '^v', ''
-          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
-            $version = '2.0.0-preview.${{ github.run_number }}'
-          }
-          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
       - name: Restore desktop and CLI
         run: |
           dotnet restore src/VisualCat.Desktop/VisualCat.Desktop.csproj --runtime ${{ matrix.rid }}
@@ -58,6 +123,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Desktop publish failed.' }
           dotnet publish src/VisualCat.Cli/VisualCat.Cli.csproj --configuration Release --runtime '${{ matrix.rid }}' --self-contained true --no-restore --output 'artifacts/cli' -p:Version=$env:RELEASE_VERSION
           if ($LASTEXITCODE -ne 0) { throw 'CLI publish failed.' }
+      - name: Stage license, notices, and release README
+        shell: pwsh
+        run: |
+          ./tools/stage-release-notices.ps1 -Destination artifacts/desktop -Component Desktop -Version $env:RELEASE_VERSION -Runtime '${{ matrix.rid }}'
+          ./tools/stage-release-notices.ps1 -Destination artifacts/cli -Component Cli -Version $env:RELEASE_VERSION -Runtime '${{ matrix.rid }}'
       - name: Archive packages
         shell: pwsh
         run: |
@@ -73,6 +143,18 @@ jobs:
             tar -C artifacts/cli -czf "packages/$cli.tar.gz" .
             if ($LASTEXITCODE -ne 0) { throw 'CLI archive failed.' }
           }
+      - name: Verify the archives that will be uploaded
+        shell: pwsh
+        run: |
+          $extension = if ('${{ matrix.archive }}' -eq 'zip') { 'zip' } else { 'tar.gz' }
+          $skip = '${{ matrix.executable }}' -ne 'true'
+          "### ${{ matrix.rid }} packages" >> $env:GITHUB_STEP_SUMMARY
+          ./tools/verify-package-contents.ps1 `
+            -Archive "packages/VisualCat-Desktop-${{ matrix.rid }}-v$env:RELEASE_VERSION.$extension" `
+            -Component Desktop -Version $env:RELEASE_VERSION -Runtime '${{ matrix.rid }}' -SkipExecution:$skip
+          ./tools/verify-package-contents.ps1 `
+            -Archive "packages/VisualCat-CLI-${{ matrix.rid }}-v$env:RELEASE_VERSION.$extension" `
+            -Component Cli -Version $env:RELEASE_VERSION -Runtime '${{ matrix.rid }}' -SkipExecution:$skip
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: packages-${{ matrix.rid }}
@@ -83,22 +165,17 @@ jobs:
     # Android is opt-in so missing signing credentials cannot block desktop,
     # CLI, checksum, and NuGet artifacts. Enabling the job still fails closed
     # unless every persistent signing secret is present.
+    needs: preflight
     if: vars.ANDROID_RELEASE_ENABLED == 'true'
     runs-on: windows-latest
+    env:
+      RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
           workloads: android
-      - name: Resolve release version
-        shell: pwsh
-        run: |
-          $version = '${{ github.ref_name }}' -replace '^v', ''
-          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
-            $version = '2.0.0-preview.${{ github.run_number }}'
-          }
-          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
       - name: Materialize Android signing key
         shell: pwsh
         env:
@@ -136,7 +213,10 @@ jobs:
           if-no-files-found: error
 
   nuget:
+    needs: preflight
     runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
@@ -144,32 +224,73 @@ jobs:
           global-json-file: global.json
           cache: true
           cache-dependency-path: Directory.Packages.props
-      - name: Resolve release version
-        shell: pwsh
-        run: |
-          $version = '${{ github.ref_name }}' -replace '^v', ''
-          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
-            $version = '2.0.0-preview.${{ github.run_number }}'
-          }
-          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
       - name: Pack .NET global tool
         run: dotnet pack src/VisualCat.Cli/VisualCat.Cli.csproj --configuration Release --output packages -p:Version="$RELEASE_VERSION"
+      - name: Install the packed tool from a local feed and run it
+        shell: pwsh
+        run: |
+          $toolPath = Join-Path $env:RUNNER_TEMP 'vcat-tool'
+          dotnet tool install VisualCat.Cli --version $env:RELEASE_VERSION --add-source packages --tool-path $toolPath
+          if ($LASTEXITCODE -ne 0) { throw 'Installing the packed global tool failed.' }
+
+          $reported = & (Join-Path $toolPath 'vcat') --version
+          if ($LASTEXITCODE -ne 0) { throw 'The installed global tool failed to run.' }
+          # SourceLink appends '+<commit>' to the informational version.
+          if ($reported -ne "vcat $env:RELEASE_VERSION" -and $reported -notlike "vcat $env:RELEASE_VERSION+*") {
+            throw "The installed tool reports '$reported' but the release version is '$env:RELEASE_VERSION'."
+          }
+
+          & (Join-Path $toolPath 'vcat') help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'The installed global tool failed to print help.' }
+
+          $package = Get-ChildItem -Path packages -Filter '*.nupkg' | Select-Object -First 1
+          $size = '{0:N2}' -f ($package.Length / 1MB)
+          "- ``$($package.Name)``: $size MB, installs and reports ``$reported``" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: packages-nuget
           path: packages/*.nupkg
           if-no-files-found: error
 
+  # A human notice file cannot describe a self-contained archive's full
+  # transitive runtime, so the inventory is generated from resolved packages
+  # rather than maintained by hand.
+  sbom:
+    needs: preflight
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: Directory.Packages.props
+      - name: Generate SBOM and review licenses
+        run: pwsh ./tools/generate-sbom.ps1 -Version "$RELEASE_VERSION" -OutputRoot sbom
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: packages-sbom
+          path: sbom/*
+          if-no-files-found: error
+
   publish:
-    needs: [desktop, android, nuget]
+    needs: [preflight, desktop, android, nuget, sbom]
     if: >-
       always() &&
+      needs.preflight.result == 'success' &&
       needs.desktop.result == 'success' &&
       needs.nuget.result == 'success' &&
+      needs.sbom.result == 'success' &&
       (needs.android.result == 'success' || needs.android.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Provenance ties the uploaded bytes to this workflow and commit, which a
+      # checksum hosted next to the download cannot do.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -177,6 +298,26 @@ jobs:
           pattern: packages-*
           path: dist
           merge-multiple: true
+      - name: Verify the release contains every expected asset
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          $expected = @(
+            "VisualCat-Desktop-win-x64-v$env:RELEASE_VERSION.zip"
+            "VisualCat-CLI-win-x64-v$env:RELEASE_VERSION.zip"
+            "VisualCat-Desktop-linux-x64-v$env:RELEASE_VERSION.tar.gz"
+            "VisualCat-CLI-linux-x64-v$env:RELEASE_VERSION.tar.gz"
+            "VisualCat-Desktop-osx-x64-v$env:RELEASE_VERSION.tar.gz"
+            "VisualCat-CLI-osx-x64-v$env:RELEASE_VERSION.tar.gz"
+            "VisualCat-Desktop-osx-arm64-v$env:RELEASE_VERSION.tar.gz"
+            "VisualCat-CLI-osx-arm64-v$env:RELEASE_VERSION.tar.gz"
+            "VisualCat-sbom-v$env:RELEASE_VERSION.cdx.json"
+          )
+          $present = @(Get-ChildItem -LiteralPath dist -File | Select-Object -ExpandProperty Name)
+          $missing = $expected | Where-Object { $present -notcontains $_ }
+          if ($missing) { throw "The release is missing: $($missing -join ', ')" }
+          if (-not ($present | Where-Object { $_ -like '*.nupkg' })) { throw 'The release contains no NuGet package.' }
       - name: Generate SHA-256 checksums
         shell: pwsh
         run: |
@@ -184,13 +325,24 @@ jobs:
             Sort-Object Name |
             ForEach-Object { "{0} *{1}" -f (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant(), $_.Name }
           $lines | Set-Content -LiteralPath dist/SHA256SUMS -Encoding utf8NoBOM
+          @('### Release assets', '```') + $lines + @('```') |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-assets
           path: dist/*
           if-no-files-found: error
+      - name: Attest build provenance
+        if: needs.preflight.outputs.is-tagged-release == 'true'
+        uses: actions/attest-build-provenance@78e6cbd37d0ac1a40113c04f2037dacf1ea3f12e # v4
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.nupkg
+            dist/*.apk
       - name: Publish GitHub release
-        if: github.ref_type == 'tag'
+        if: needs.preflight.outputs.is-tagged-release == 'true'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           files: dist/*
@@ -198,7 +350,7 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
       - name: Publish .NET global tool to NuGet
-        if: github.ref_type == 'tag'
+        if: needs.preflight.outputs.is-tagged-release == 'true'
         shell: pwsh
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
