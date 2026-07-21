@@ -17,6 +17,10 @@ concurrency:
 
 jobs:
   analyze:
+    # GitHub Free cannot accept code-scanning uploads from private repositories.
+    # Public repositories enable it automatically; licensed private repositories
+    # can opt in after enabling Code Security by setting CODEQL_ENABLED=true.
+    if: github.event.repository.visibility == 'public' || vars.CODEQL_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: read
