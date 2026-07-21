@@ -164,7 +164,9 @@ foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         continue
     }
-    if ((Get-Item -LiteralPath $path).Length -gt 8MB) {
+    # On Unix, PowerShell treats dotfiles as hidden. Get-Item therefore needs
+    # -Force even after Test-Path has confirmed that a tracked file exists.
+    if ((Get-Item -LiteralPath $path -Force).Length -gt 8MB) {
         continue
     }
 
