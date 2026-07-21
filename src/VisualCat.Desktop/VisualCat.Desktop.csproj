@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>VisualCat</AssemblyName>
+    <ApplicationIcon>Assets/visualcat.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Skia" />
+    <ProjectReference Include="../VisualCat.App/VisualCat.App.csproj" />
+  </ItemGroup>
+</Project>

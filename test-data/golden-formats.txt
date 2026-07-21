@@ -1,0 +1,9 @@
+--------- beginning of main
+05-15 14:13:37.496  1073  1151 V Thread: verbose
+2025-05-15 14:13:37.496123  1073  1151 A Thread: assert alias
+05-15 14:13:37.496 D/TimeTag( 1073): time message: with colon
+D/BriefTag( 1073): brief message
+1747311217.496123  1073  1151 W EpochTag: epoch message
+[ 05-15 14:13:37.496  1073: 1151 E/LongTag ]
+long body line
+malformed evidence

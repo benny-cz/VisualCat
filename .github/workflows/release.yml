@@ -1,0 +1,165 @@
+name: Release packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            archive: zip
+          - os: ubuntu-latest
+            rid: linux-x64
+            archive: tar.gz
+          - os: macos-15
+            rid: osx-arm64
+            archive: tar.gz
+          - os: macos-15
+            rid: osx-x64
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: Directory.Packages.props
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}' -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
+            $version = '2.0.0-preview.${{ github.run_number }}'
+          }
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+      - name: Restore desktop and CLI
+        run: |
+          dotnet restore src/VisualCat.Desktop/VisualCat.Desktop.csproj --runtime ${{ matrix.rid }}
+          dotnet restore src/VisualCat.Cli/VisualCat.Cli.csproj --runtime ${{ matrix.rid }}
+      - name: Publish desktop and CLI
+        shell: pwsh
+        run: |
+          dotnet publish src/VisualCat.Desktop/VisualCat.Desktop.csproj --configuration Release --runtime '${{ matrix.rid }}' --self-contained true --no-restore --output 'artifacts/desktop' -p:Version=$env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop publish failed.' }
+          dotnet publish src/VisualCat.Cli/VisualCat.Cli.csproj --configuration Release --runtime '${{ matrix.rid }}' --self-contained true --no-restore --output 'artifacts/cli' -p:Version=$env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'CLI publish failed.' }
+      - name: Archive packages
+        shell: pwsh
+        run: |
+          $desktop = "VisualCat-Desktop-${{ matrix.rid }}-v$env:RELEASE_VERSION"
+          $cli = "VisualCat-CLI-${{ matrix.rid }}-v$env:RELEASE_VERSION"
+          New-Item -ItemType Directory -Path packages -Force | Out-Null
+          if ('${{ matrix.archive }}' -eq 'zip') {
+            Compress-Archive -Path 'artifacts/desktop/*' -DestinationPath "packages/$desktop.zip"
+            Compress-Archive -Path 'artifacts/cli/*' -DestinationPath "packages/$cli.zip"
+          } else {
+            tar -C artifacts/desktop -czf "packages/$desktop.tar.gz" .
+            if ($LASTEXITCODE -ne 0) { throw 'Desktop archive failed.' }
+            tar -C artifacts/cli -czf "packages/$cli.tar.gz" .
+            if ($LASTEXITCODE -ne 0) { throw 'CLI archive failed.' }
+          }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages-${{ matrix.rid }}
+          path: packages/*
+          if-no-files-found: error
+
+  android:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          workloads: android
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}' -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
+            $version = '2.0.0-preview.${{ github.run_number }}'
+          }
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+      - name: Materialize Android signing key
+        shell: pwsh
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          $required = @('ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD')
+          $missing = $required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) }
+          if ($missing) {
+            throw "Signed Android releases require repository secrets: $($missing -join ', '). See docs/RELEASE-CHECKLIST.md."
+          }
+          $keyStore = Join-Path $env:RUNNER_TEMP 'visualcat-release.keystore'
+          [IO.File]::WriteAllBytes($keyStore, [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64))
+          "ANDROID_KEYSTORE_PATH=$keyStore" >> $env:GITHUB_ENV
+      - run: dotnet restore src/VisualCat.Android/VisualCat.Android.csproj
+      - name: Publish signed installable APK
+        shell: pwsh
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          dotnet publish src/VisualCat.Android/VisualCat.Android.csproj --configuration Release --no-restore --output artifacts/android -p:Version=$env:RELEASE_VERSION -p:AndroidPackageFormat=apk -p:AndroidKeyStore=true -p:AndroidSigningKeyStore=$env:ANDROID_KEYSTORE_PATH -p:AndroidSigningStorePass=$env:ANDROID_KEYSTORE_PASSWORD -p:AndroidSigningKeyAlias=$env:ANDROID_KEY_ALIAS -p:AndroidSigningKeyPass=$env:ANDROID_KEY_PASSWORD
+          if ($LASTEXITCODE -ne 0) { throw 'Android publish failed.' }
+          $apk = Get-ChildItem -Path artifacts/android -Recurse -Filter '*-Signed.apk' | Select-Object -First 1
+          if (-not $apk) { throw 'The Android build did not produce a signed APK.' }
+          New-Item -ItemType Directory -Path packages -Force | Out-Null
+          Copy-Item -LiteralPath $apk.FullName -Destination "packages/VisualCat-Android-v$env:RELEASE_VERSION.apk"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages-android
+          path: packages/*
+          if-no-files-found: error
+
+  publish:
+    needs: [desktop, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: packages-*
+          path: dist
+          merge-multiple: true
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        run: |
+          $lines = Get-ChildItem -LiteralPath dist -File |
+            Sort-Object Name |
+            ForEach-Object { "{0} *{1}" -f (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant(), $_.Name }
+          $lines | Set-Content -LiteralPath dist/SHA256SUMS -Encoding utf8NoBOM
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          body_path: docs/RELEASE-NOTES.md
+          generate_release_notes: true
+          fail_on_unmatched_files: true

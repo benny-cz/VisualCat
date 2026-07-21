@@ -1,0 +1,1001 @@
+--------- beginning of main
+05-15 14:13:37.002000  4561 24465 D Network         : Frame completed in 52767 ms
+05-15 14:13:37.002000  6642 19876 E Network         : Connection 22233 to 10.0.0.8 failed after 2034 ms
+05-15 14:13:37.002000  8580  3600 V chatty          : FATAL EXCEPTION: main
+05-15 14:13:37.004000 17944  9489 D AndroidRuntime  : Cache contains 49121 entries
+05-15 14:13:37.007000 10438 28515 F chatty          : Cache contains 13311 entries
+05-15 14:13:37.010000 12287 16050 V AndroidRuntime  : uid=10007(com.example) identical 10711 lines
+05-15 14:13:37.013000  9543 29152 I AndroidRuntime  : Cache contains 1472 entries
+05-15 14:13:37.016000 10179 16110 E VisualCat       : Cache contains 47579 entries
+05-15 14:13:37.016000   540 27290 W VisualCat       : Frame completed in 36322 ms
+05-15 14:13:37.016000 14618 15173 F Camera          : Frame completed in 54786 ms
+05-15 14:13:37.016000 13995 15576 D chatty          : FATAL EXCEPTION: main
+05-15 14:13:37.017000 16710 17449 V SurfaceFlinger  : Started process 56517 for package com.example.app
+05-15 14:13:37.017000 14684 12614 D AndroidRuntime  : Frame completed in 237 ms
+05-15 14:13:37.017000 18218 19859 V VisualCat       : Cache contains 50449 entries
+05-15 14:13:37.020000 11520 21832 W Network         : Cache contains 14929 entries
+05-15 14:13:37.022000  2309 18775 W VisualCat       : Started process 27970 for package com.example.app
+05-15 14:13:37.025000  9119 25804 I ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.027000 17820 26628 V chatty          : uid=10007(com.example) identical 602 lines
+05-15 14:13:37.028000 10068  3579 D VisualCat       : Frame completed in 28586 ms
+05-15 14:13:37.029000  4648 19915 E AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.029000 14411 28223 F ActivityManager : Cache contains 22380 entries
+05-15 14:13:37.031000 10091 21767 W Camera          : Started process 33686 for package com.example.app
+05-15 14:13:37.034000  1446 25037 V chatty          : Connection 22776 to 10.0.0.8 failed after 813 ms
+05-15 14:13:37.035000 12706  6830 I Network         : Connection 56031 to 10.0.0.8 failed after 781 ms
+05-15 14:13:37.037000 15873 15325 F SurfaceFlinger  : Started process 50393 for package com.example.app
+05-15 14:13:37.037000  2286 15276 W Camera          : FATAL EXCEPTION: main
+05-15 14:13:37.039000  1317 16207 D VisualCat       : Connection 27699 to 10.0.0.8 failed after 1254 ms
+05-15 14:13:37.041000  3693 11689 D chatty          : Rendering surface 0x0000DA25
+05-15 14:13:37.044000  4193  7638 F ActivityManager : Started process 12594 for package com.example.app
+05-15 14:13:37.044000 15485  5066 W ActivityManager : uid=10007(com.example) identical 25393 lines
+05-15 14:13:37.047000  5137  2341 I VisualCat       : Started process 72223 for package com.example.app
+05-15 14:13:37.047000 19933   487 V Camera          : Connection 80903 to 10.0.0.8 failed after 3147 ms
+05-15 14:13:37.048000 13867 15863 F ActivityManager : Cache contains 1450 entries
+05-15 14:13:37.048000  6758 12187 E ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.051000 16313 27180 W ActivityManager : Connection 76017 to 10.0.0.8 failed after 353 ms
+05-15 14:13:37.053000 12528 28235 V Camera          : Started process 72593 for package com.example.app
+05-15 14:13:37.055000 18404  5790 W chatty          : Cache contains 59238 entries
+05-15 14:13:37.055000 18907  5901 I ActivityManager : Rendering surface 0x00013315
+05-15 14:13:37.057000 18883 28369 I chatty          : FATAL EXCEPTION: main
+05-15 14:13:37.060000 18394 17783 E Camera          : Rendering surface 0x0000F3EC
+05-15 14:13:37.061000 10787  2240 E VisualCat       : Started process 43049 for package com.example.app
+05-15 14:13:37.062000 14162 11458 W Network         : Frame completed in 97437 ms
+05-15 14:13:37.063000  5877  4550 V AndroidRuntime  : Connection 35368 to 10.0.0.8 failed after 2172 ms
+05-15 14:13:37.065000  9858 13450 W chatty          : Rendering surface 0x000154BD
+05-15 14:13:37.068000 17245  6817 E Network         : Frame completed in 53942 ms
+05-15 14:13:37.070000 17349 20235 D chatty          : Rendering surface 0x000097A2
+05-15 14:13:37.070000 19922 26503 I VisualCat       : Cache contains 26012 entries
+05-15 14:13:37.070000 16170 22721 E ActivityManager : Rendering surface 0x000019A5
+05-15 14:13:37.073000  6649  9444 V ActivityManager : uid=10007(com.example) identical 81696 lines
+05-15 14:13:37.074000 16213 16315 F ActivityManager : Frame completed in 97851 ms
+05-15 14:13:37.077000 13552 10437 F SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.079000  1137 21727 E SurfaceFlinger  : Rendering surface 0x00010B02
+05-15 14:13:37.080000  2236 10225 D ActivityManager : Rendering surface 0x00006799
+05-15 14:13:37.083000  6682 28658 I chatty          : Started process 98339 for package com.example.app
+05-15 14:13:37.084000 18308 27383 F chatty          : Started process 8639 for package com.example.app
+05-15 14:13:37.086000  3178 11153 F Camera          : Cache contains 33735 entries
+05-15 14:13:37.089000  5282  6028 I ActivityManager : Started process 9696 for package com.example.app
+05-15 14:13:37.089000  7185  1790 F Network         : Started process 19486 for package com.example.app
+05-15 14:13:37.092000  8273  7262 V AndroidRuntime  : Connection 96111 to 10.0.0.8 failed after 216 ms
+05-15 14:13:37.092000 19118 11055 F ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.095000 17264  4465 I AndroidRuntime  : Frame completed in 9814 ms
+05-15 14:13:37.097000 19869 18303 F SurfaceFlinger  : uid=10007(com.example) identical 2087 lines
+05-15 14:13:37.099000  1168 16585 W SurfaceFlinger  : Rendering surface 0x00018296
+05-15 14:13:37.099000 14003 11938 W chatty          : Rendering surface 0x00006768
+05-15 14:13:37.099000  9798 22460 F VisualCat       : Cache contains 34689 entries
+05-15 14:13:37.099000 12207 10802 D Network         : uid=10007(com.example) identical 31116 lines
+05-15 14:13:37.101000   202 19742 D SurfaceFlinger  : uid=10007(com.example) identical 59753 lines
+05-15 14:13:37.104000  4418  4931 V VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:37.106000 12457 15993 E VisualCat       : Cache contains 34072 entries
+05-15 14:13:37.106000 13988 22775 D chatty          : Frame completed in 83043 ms
+05-15 14:13:37.108000  7834 11182 E SurfaceFlinger  : Connection 44681 to 10.0.0.8 failed after 1539 ms
+05-15 14:13:37.111000 14097 13908 I VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:37.113000  8684 27198 F Network         : Started process 45863 for package com.example.app
+05-15 14:13:37.114000 16599   458 W SurfaceFlinger  : Cache contains 25031 entries
+05-15 14:13:37.114000   753 12786 V VisualCat       : Rendering surface 0x00005C39
+05-15 14:13:37.115000 17824 19789 V chatty          : Cache contains 48233 entries
+05-15 14:13:37.116000 12112  4461 I ActivityManager : Cache contains 69137 entries
+05-15 14:13:37.118000 12849 18263 E AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.118000  3018 29553 F VisualCat       : uid=10007(com.example) identical 17063 lines
+05-15 14:13:37.120000 15783 23094 F AndroidRuntime  : Cache contains 88695 entries
+05-15 14:13:37.122000  7294  8209 D chatty          : Started process 28320 for package com.example.app
+05-15 14:13:37.123000 14262  1272 F Network         : Cache contains 61859 entries
+05-15 14:13:37.123000 14034  5762 I SurfaceFlinger  : Rendering surface 0x00015478
+05-15 14:13:37.125000  1336 21012 E AndroidRuntime  : Connection 87545 to 10.0.0.8 failed after 4040 ms
+05-15 14:13:37.126000  4710  6655 I chatty          : FATAL EXCEPTION: main
+05-15 14:13:37.127000 11927 29297 F ActivityManager : Started process 17214 for package com.example.app
+05-15 14:13:37.128000 12833 12727 D Network         : FATAL EXCEPTION: main
+05-15 14:13:37.128000 16230 12634 W SurfaceFlinger  : Connection 48096 to 10.0.0.8 failed after 4116 ms
+05-15 14:13:37.131000  1221  8072 V SurfaceFlinger  : Started process 8561 for package com.example.app
+05-15 14:13:37.131000   129   547 I AndroidRuntime  : Started process 80937 for package com.example.app
+05-15 14:13:37.131000  8502  4233 D Network         : Connection 17513 to 10.0.0.8 failed after 2039 ms
+05-15 14:13:37.133000  7042 11018 F Network         : Frame completed in 37320 ms
+05-15 14:13:37.135000  5690 21627 W chatty          : uid=10007(com.example) identical 79560 lines
+05-15 14:13:37.136000 10188  2501 D AndroidRuntime  : Connection 91809 to 10.0.0.8 failed after 290 ms
+05-15 14:13:37.136000 13586  5733 F VisualCat       : uid=10007(com.example) identical 63635 lines
+05-15 14:13:37.139000  9049  4632 D Network         : Connection 70228 to 10.0.0.8 failed after 3024 ms
+05-15 14:13:37.141000  3886 29990 V AndroidRuntime  : Frame completed in 26856 ms
+05-15 14:13:37.142000  6369 26333 E Network         : uid=10007(com.example) identical 9251 lines
+05-15 14:13:37.142000 15521  6009 I Camera          : Started process 35538 for package com.example.app
+05-15 14:13:37.145000  6332 23148 E Network         : Cache contains 67805 entries
+05-15 14:13:37.146000 11731  7636 W Network         : Connection 57235 to 10.0.0.8 failed after 2294 ms
+05-15 14:13:37.148000 17128 16935 D VisualCat       : Cache contains 99263 entries
+05-15 14:13:37.148000  8252  9871 F Network         : uid=10007(com.example) identical 54418 lines
+05-15 14:13:37.151000  1293  4377 E SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.152000 17939  7054 V Camera          : Cache contains 75014 entries
+05-15 14:13:37.155000  2274 18003 W VisualCat       : Frame completed in 25767 ms
+05-15 14:13:37.158000  9432 12011 E SurfaceFlinger  : Started process 71263 for package com.example.app
+05-15 14:13:37.161000  6165 25519 V VisualCat       : uid=10007(com.example) identical 17705 lines
+05-15 14:13:37.164000   848 24082 V ActivityManager : Started process 46119 for package com.example.app
+05-15 14:13:37.164000  2205 23662 F VisualCat       : Started process 49809 for package com.example.app
+05-15 14:13:37.166000 17662 19106 I Network         : Rendering surface 0x00006539
+05-15 14:13:37.168000 19946  9549 V VisualCat       : Cache contains 66686 entries
+05-15 14:13:37.169000  4413 21890 E SurfaceFlinger  : Started process 51675 for package com.example.app
+05-15 14:13:37.170000 14266 18069 W Network         : Connection 40193 to 10.0.0.8 failed after 1610 ms
+05-15 14:13:37.172000 18488 10972 I ActivityManager : Connection 78977 to 10.0.0.8 failed after 3433 ms
+05-15 14:13:37.175000  5088 24410 I chatty          : uid=10007(com.example) identical 15373 lines
+05-15 14:13:37.177000  7405  1356 E AndroidRuntime  : Connection 39631 to 10.0.0.8 failed after 4047 ms
+05-15 14:13:37.177000  6959 24205 F SurfaceFlinger  : Cache contains 85314 entries
+05-15 14:13:37.177000 16619 14833 E ActivityManager : Frame completed in 89881 ms
+05-15 14:13:37.180000  9327  8176 E Camera          : Rendering surface 0x00015887
+05-15 14:13:37.183000 19609  8605 V VisualCat       : Started process 44449 for package com.example.app
+05-15 14:13:37.183000 18018 11202 V SurfaceFlinger  : Started process 87435 for package com.example.app
+05-15 14:13:37.183000  3877  6641 W ActivityManager : uid=10007(com.example) identical 7456 lines
+05-15 14:13:37.186000  3662  1473 E ActivityManager : Connection 54565 to 10.0.0.8 failed after 1665 ms
+05-15 14:13:37.189000  1319  5892 I Camera          : Frame completed in 9236 ms
+05-15 14:13:37.191000 10781   752 V SurfaceFlinger  : Cache contains 76159 entries
+05-15 14:13:37.193000  9327 18536 V SurfaceFlinger  : Cache contains 85451 entries
+05-15 14:13:37.196000 10869  2512 E SurfaceFlinger  : Connection 99608 to 10.0.0.8 failed after 3948 ms
+05-15 14:13:37.199000 16513 14063 W AndroidRuntime  : Connection 15719 to 10.0.0.8 failed after 4810 ms
+05-15 14:13:37.199000 16942  7511 E chatty          : Frame completed in 44465 ms
+05-15 14:13:37.202000  9819  7906 W ActivityManager : Started process 45606 for package com.example.app
+05-15 14:13:37.205000 19440 27070 D Camera          : Frame completed in 99668 ms
+05-15 14:13:37.208000 17857  6196 E SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.208000 18992 19530 F SurfaceFlinger  : Connection 56372 to 10.0.0.8 failed after 4705 ms
+05-15 14:13:37.208000 16241  9130 I SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.211000  7786  3801 D AndroidRuntime  : Rendering surface 0x00006F24
+05-15 14:13:37.212000  2294 19849 I ActivityManager : uid=10007(com.example) identical 32201 lines
+05-15 14:13:37.213000  1207 18538 E ActivityManager : uid=10007(com.example) identical 59031 lines
+05-15 14:13:37.216000  6494  9983 F chatty          : Rendering surface 0x0001427E
+05-15 14:13:37.219000  1485 25235 V SurfaceFlinger  : Cache contains 15062 entries
+05-15 14:13:37.221000 18047  2938 W AndroidRuntime  : Frame completed in 76960 ms
+05-15 14:13:37.222000  9738  4130 D Network         : Rendering surface 0x00013091
+05-15 14:13:37.224000 17183 12890 F SurfaceFlinger  : Rendering surface 0x000053F8
+05-15 14:13:37.225000 15247 14050 E VisualCat       : Cache contains 22640 entries
+05-15 14:13:37.228000 10071 10600 D chatty          : Rendering surface 0x00016D29
+05-15 14:13:37.231000  6999  9186 E VisualCat       : Connection 47410 to 10.0.0.8 failed after 493 ms
+05-15 14:13:37.233000  3642 25267 E Network         : Frame completed in 1776 ms
+05-15 14:13:37.236000  1422  5438 E Camera          : Rendering surface 0x0000C628
+05-15 14:13:37.239000 12825  6905 W SurfaceFlinger  : Connection 45726 to 10.0.0.8 failed after 3315 ms
+05-15 14:13:37.239000  2641 13754 F Camera          : FATAL EXCEPTION: main
+05-15 14:13:37.242000 12364 26329 W VisualCat       : uid=10007(com.example) identical 16818 lines
+05-15 14:13:37.245000  6029  1758 I ActivityManager : Connection 95043 to 10.0.0.8 failed after 948 ms
+05-15 14:13:37.245000  7159   287 W SurfaceFlinger  : Started process 60980 for package com.example.app
+05-15 14:13:37.245000 19280 16739 D AndroidRuntime  : uid=10007(com.example) identical 76223 lines
+05-15 14:13:37.246000 18307 18611 I AndroidRuntime  : Started process 7221 for package com.example.app
+05-15 14:13:37.247000  9446  1614 I ActivityManager : Frame completed in 61003 ms
+05-15 14:13:37.248000 18245 17301 F ActivityManager : uid=10007(com.example) identical 74144 lines
+05-15 14:13:37.248000  5658  3356 V ActivityManager : Cache contains 73562 entries
+05-15 14:13:37.249000 12075 13380 W VisualCat       : Connection 91319 to 10.0.0.8 failed after 921 ms
+05-15 14:13:37.249000  8582 16322 W ActivityManager : Connection 33966 to 10.0.0.8 failed after 3712 ms
+05-15 14:13:37.250000  5544 24984 E chatty          : Connection 36075 to 10.0.0.8 failed after 4748 ms
+05-15 14:13:37.251000 19005  1568 E SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.253000 11185 18602 V Camera          : Started process 73676 for package com.example.app
+05-15 14:13:37.255000 19863 12095 F ActivityManager : Cache contains 76953 entries
+05-15 14:13:37.255000 19273 25321 F Network         : Connection 37714 to 10.0.0.8 failed after 3801 ms
+05-15 14:13:37.256000  5401 11796 W SurfaceFlinger  : Cache contains 65474 entries
+05-15 14:13:37.259000 17871 27822 W Camera          : Rendering surface 0x0000D663
+05-15 14:13:37.261000 14082 14120 D Network         : Started process 71353 for package com.example.app
+05-15 14:13:37.262000 19530  6279 W chatty          : Frame completed in 60193 ms
+05-15 14:13:37.262000   507 25574 F VisualCat       : Frame completed in 3635 ms
+05-15 14:13:37.262000  6053 29530 E SurfaceFlinger  : Started process 79745 for package com.example.app
+05-15 14:13:37.262000 18668  9481 W chatty          : FATAL EXCEPTION: main
+05-15 14:13:37.264000 14588 11970 W VisualCat       : uid=10007(com.example) identical 85068 lines
+05-15 14:13:37.265000  9730 19606 D VisualCat       : Rendering surface 0x0001838B
+05-15 14:13:37.268000  8046 26129 I AndroidRuntime  : Frame completed in 70669 ms
+05-15 14:13:37.271000 15320 15222 I SurfaceFlinger  : Started process 90214 for package com.example.app
+05-15 14:13:37.273000  3608 16570 I AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.275000  3016  1316 F AndroidRuntime  : Rendering surface 0x00014EF6
+05-15 14:13:37.276000 11293 23003 E ActivityManager : Frame completed in 97818 ms
+05-15 14:13:37.277000 11258 10143 E VisualCat       : Frame completed in 84846 ms
+05-15 14:13:37.279000 12674  6249 D AndroidRuntime  : Connection 72415 to 10.0.0.8 failed after 2689 ms
+05-15 14:13:37.282000 19163  1058 F SurfaceFlinger  : Cache contains 41029 entries
+05-15 14:13:37.285000  1254  5559 E chatty          : Started process 81065 for package com.example.app
+05-15 14:13:37.285000  9296 20844 E SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.287000  8860  1346 F ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.290000  1332 27798 D chatty          : uid=10007(com.example) identical 44929 lines
+05-15 14:13:37.290000  8278  1378 V SurfaceFlinger  : Cache contains 26417 entries
+05-15 14:13:37.292000 19434  7643 E SurfaceFlinger  : Frame completed in 1633 ms
+05-15 14:13:37.293000  8332 26234 E AndroidRuntime  : Rendering surface 0x0000D147
+05-15 14:13:37.294000 17859  2392 I AndroidRuntime  : Started process 39749 for package com.example.app
+05-15 14:13:37.294000  6627 24185 E SurfaceFlinger  : Cache contains 80963 entries
+05-15 14:13:37.297000  5323 23477 V VisualCat       : Started process 53691 for package com.example.app
+05-15 14:13:37.300000 17593  9960 V Network         : Rendering surface 0x00015D91
+05-15 14:13:37.301000  2518 14620 I ActivityManager : Frame completed in 60816 ms
+05-15 14:13:37.302000  7950 14493 V Network         : uid=10007(com.example) identical 11057 lines
+05-15 14:13:37.302000  2055 29333 F chatty          : Rendering surface 0x000185EE
+05-15 14:13:37.305000 19165 15898 W ActivityManager : Cache contains 77685 entries
+05-15 14:13:37.306000  7990 28300 W ActivityManager : uid=10007(com.example) identical 39771 lines
+05-15 14:13:37.308000 16413   589 W Network         : FATAL EXCEPTION: main
+05-15 14:13:37.310000 18126 29357 I VisualCat       : Cache contains 86614 entries
+05-15 14:13:37.313000 15479  2901 W Network         : Frame completed in 15513 ms
+05-15 14:13:37.313000 14943  7403 I VisualCat       : Started process 94171 for package com.example.app
+05-15 14:13:37.314000  4829 25438 I ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.315000 10860  6036 W Network         : FATAL EXCEPTION: main
+05-15 14:13:37.316000 13753 18554 I VisualCat       : Rendering surface 0x0001026D
+05-15 14:13:37.317000 17539 27701 E SurfaceFlinger  : Cache contains 92539 entries
+05-15 14:13:37.317000 13080 11972 E ActivityManager : Rendering surface 0x0000D5CE
+05-15 14:13:37.320000  8754  1170 I Camera          : uid=10007(com.example) identical 62047 lines
+05-15 14:13:37.322000 18026 18553 E SurfaceFlinger  : Frame completed in 61761 ms
+05-15 14:13:37.324000  1198  2529 F Camera          : uid=10007(com.example) identical 28903 lines
+05-15 14:13:37.327000 19038 19894 F chatty          : Connection 84051 to 10.0.0.8 failed after 2437 ms
+05-15 14:13:37.328000 10139 22317 F ActivityManager : uid=10007(com.example) identical 3509 lines
+05-15 14:13:37.331000  1100 15696 V SurfaceFlinger  : Connection 35364 to 10.0.0.8 failed after 412 ms
+05-15 14:13:37.334000 13491  1120 F Network         : uid=10007(com.example) identical 23880 lines
+05-15 14:13:37.334000  2687 18986 E VisualCat       : Frame completed in 31215 ms
+05-15 14:13:37.337000 12267 21019 I ActivityManager : uid=10007(com.example) identical 43004 lines
+05-15 14:13:37.339000 15185 23303 F Camera          : Rendering surface 0x0000B7BC
+05-15 14:13:37.339000  6813 27229 D Network         : Cache contains 41860 entries
+05-15 14:13:37.339000  2285  6301 F AndroidRuntime  : uid=10007(com.example) identical 97330 lines
+05-15 14:13:37.341000 13679  2542 V chatty          : Rendering surface 0x00008A49
+05-15 14:13:37.344000 10545  1479 E AndroidRuntime  : Rendering surface 0x00011308
+05-15 14:13:37.345000 12879 28928 I Network         : uid=10007(com.example) identical 55064 lines
+05-15 14:13:37.348000 18623 26952 I VisualCat       : uid=10007(com.example) identical 25566 lines
+05-15 14:13:37.348000 13637 27194 W VisualCat       : Rendering surface 0x000018E2
+05-15 14:13:37.350000  9955 18937 W AndroidRuntime  : uid=10007(com.example) identical 71819 lines
+05-15 14:13:37.350000  8834 29644 V SurfaceFlinger  : Cache contains 62683 entries
+05-15 14:13:37.351000 19095  7298 F chatty          : Cache contains 73601 entries
+05-15 14:13:37.351000  2303  8175 V Network         : Started process 30079 for package com.example.app
+05-15 14:13:37.353000 12938  5467 D ActivityManager : uid=10007(com.example) identical 69218 lines
+05-15 14:13:37.355000  9526  7259 I SurfaceFlinger  : Connection 25448 to 10.0.0.8 failed after 3782 ms
+05-15 14:13:37.356000  7983 17927 I AndroidRuntime  : uid=10007(com.example) identical 16884 lines
+05-15 14:13:37.357000  6597 11936 W ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.360000 17026  1299 D AndroidRuntime  : Connection 87125 to 10.0.0.8 failed after 4444 ms
+05-15 14:13:37.360000 10930 17223 E VisualCat       : Cache contains 4889 entries
+05-15 14:13:37.360000 16072 13217 V AndroidRuntime  : Rendering surface 0x00001E67
+05-15 14:13:37.363000  4055 27629 F SurfaceFlinger  : Connection 35603 to 10.0.0.8 failed after 1407 ms
+05-15 14:13:37.366000  5672  6280 D SurfaceFlinger  : uid=10007(com.example) identical 75380 lines
+05-15 14:13:37.366000  1641  1729 E ActivityManager : Connection 41187 to 10.0.0.8 failed after 118 ms
+05-15 14:13:37.368000  3359 16162 F Network         : FATAL EXCEPTION: main
+05-15 14:13:37.368000 15370 12980 D ActivityManager : Rendering surface 0x0000E8C8
+05-15 14:13:37.369000  8326 20476 V AndroidRuntime  : Rendering surface 0x0000385C
+05-15 14:13:37.369000  6713  6378 W VisualCat       : Cache contains 74282 entries
+05-15 14:13:37.372000   517  8732 E Network         : Cache contains 64668 entries
+05-15 14:13:37.374000  3648 13036 E chatty          : uid=10007(com.example) identical 48230 lines
+05-15 14:13:37.374000  7835 29020 D SurfaceFlinger  : Frame completed in 55736 ms
+05-15 14:13:37.375000  5016 21407 E ActivityManager : Cache contains 12467 entries
+05-15 14:13:37.377000  6107 20503 D SurfaceFlinger  : Cache contains 89967 entries
+05-15 14:13:37.379000  7372 23246 D SurfaceFlinger  : uid=10007(com.example) identical 5373 lines
+05-15 14:13:37.381000 16296  3167 D Camera          : Rendering surface 0x0000B5EA
+05-15 14:13:37.381000 12689 27830 V SurfaceFlinger  : Frame completed in 70633 ms
+05-15 14:13:37.383000  1851  3418 D chatty          : Connection 47292 to 10.0.0.8 failed after 1979 ms
+05-15 14:13:37.383000  3294  9429 F SurfaceFlinger  : Started process 19930 for package com.example.app
+05-15 14:13:37.386000  5555 23152 W Camera          : Cache contains 43799 entries
+05-15 14:13:37.386000  6293 29469 F SurfaceFlinger  : Started process 70290 for package com.example.app
+05-15 14:13:37.387000  1488  3248 W SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.388000  5980  8111 V SurfaceFlinger  : uid=10007(com.example) identical 31701 lines
+05-15 14:13:37.388000 15321 13560 I chatty          : Connection 17828 to 10.0.0.8 failed after 1734 ms
+05-15 14:13:37.388000  5428  1589 V chatty          : Frame completed in 16883 ms
+05-15 14:13:37.388000  8062 28006 W ActivityManager : uid=10007(com.example) identical 4330 lines
+05-15 14:13:37.389000  4261 16560 D SurfaceFlinger  : Frame completed in 61959 ms
+05-15 14:13:37.392000 19478 13819 W ActivityManager : Cache contains 24568 entries
+05-15 14:13:37.392000  2131  7971 D Camera          : FATAL EXCEPTION: main
+05-15 14:13:37.392000  6004 20974 D SurfaceFlinger  : Started process 71721 for package com.example.app
+05-15 14:13:37.394000  9894 18265 D Camera          : Rendering surface 0x00016FAD
+05-15 14:13:37.395000 18506 20238 W VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:37.398000 15292 10375 W Network         : Frame completed in 27564 ms
+05-15 14:13:37.401000  7743  9268 W VisualCat       : Connection 49454 to 10.0.0.8 failed after 64 ms
+05-15 14:13:37.402000 10261  8989 F SurfaceFlinger  : Rendering surface 0x0000F36E
+05-15 14:13:37.404000  7581 12928 V AndroidRuntime  : Cache contains 14853 entries
+05-15 14:13:37.406000 14560  1858 W SurfaceFlinger  : Frame completed in 61830 ms
+05-15 14:13:37.406000 18668 25924 V ActivityManager : uid=10007(com.example) identical 46616 lines
+05-15 14:13:37.406000  2008 14995 W Camera          : FATAL EXCEPTION: main
+05-15 14:13:37.409000  8931 11435 F AndroidRuntime  : uid=10007(com.example) identical 45179 lines
+05-15 14:13:37.409000  9824  6827 W SurfaceFlinger  : Frame completed in 51229 ms
+05-15 14:13:37.410000 15429 26772 I ActivityManager : Started process 22850 for package com.example.app
+05-15 14:13:37.412000  7517 26187 D ActivityManager : Cache contains 55395 entries
+05-15 14:13:37.412000 16016 23102 V SurfaceFlinger  : Started process 87091 for package com.example.app
+05-15 14:13:37.414000 12959  8753 F SurfaceFlinger  : Connection 55176 to 10.0.0.8 failed after 4618 ms
+05-15 14:13:37.414000   398 24076 F Camera          : Rendering surface 0x0000F0B0
+05-15 14:13:37.416000 10799 10069 E chatty          : Rendering surface 0x00000063
+05-15 14:13:37.416000  4748  7259 D Network         : FATAL EXCEPTION: main
+05-15 14:13:37.418000 12640  4702 F VisualCat       : Connection 99790 to 10.0.0.8 failed after 4409 ms
+05-15 14:13:37.421000 16817 16205 W chatty          : FATAL EXCEPTION: main
+05-15 14:13:37.424000 13802 24818 E chatty          : Rendering surface 0x00012EF3
+05-15 14:13:37.424000 12241  7883 E VisualCat       : Started process 38375 for package com.example.app
+05-15 14:13:37.426000  2468 19561 D Network         : Connection 69494 to 10.0.0.8 failed after 3475 ms
+05-15 14:13:37.426000 11330  3253 F AndroidRuntime  : Rendering surface 0x000139D9
+05-15 14:13:37.426000 10493 17845 V VisualCat       : Cache contains 57973 entries
+05-15 14:13:37.429000 17647  7381 I SurfaceFlinger  : Frame completed in 3771 ms
+05-15 14:13:37.431000  1701   489 D Camera          : Cache contains 50464 entries
+05-15 14:13:37.434000   369 12076 D chatty          : Started process 52551 for package com.example.app
+05-15 14:13:37.437000 19232 17555 W Camera          : Rendering surface 0x00007D51
+05-15 14:13:37.440000  3341  6326 W AndroidRuntime  : Rendering surface 0x0000C6EE
+05-15 14:13:37.442000  4150  5620 D Network         : Frame completed in 48124 ms
+05-15 14:13:37.443000  9047   138 I Camera          : Cache contains 49668 entries
+05-15 14:13:37.444000 14993 25193 W SurfaceFlinger  : Started process 80528 for package com.example.app
+05-15 14:13:37.445000  4212  9684 F VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:37.447000  6363  9641 D AndroidRuntime  : Started process 16161 for package com.example.app
+05-15 14:13:37.448000  2870 25719 F AndroidRuntime  : Rendering surface 0x00008E4B
+05-15 14:13:37.450000 12034  1428 V Camera          : Rendering surface 0x0000326C
+05-15 14:13:37.450000  2536  9242 F SurfaceFlinger  : Frame completed in 42930 ms
+05-15 14:13:37.451000 18854  2873 I SurfaceFlinger  : Connection 34978 to 10.0.0.8 failed after 1878 ms
+05-15 14:13:37.454000  3296 17228 W AndroidRuntime  : Connection 27029 to 10.0.0.8 failed after 1178 ms
+05-15 14:13:37.456000  1144  1103 W VisualCat       : uid=10007(com.example) identical 83346 lines
+05-15 14:13:37.456000 14662  8406 I Network         : Rendering surface 0x0000C609
+05-15 14:13:37.457000 15091 14607 F chatty          : uid=10007(com.example) identical 54956 lines
+05-15 14:13:37.460000  3954  7523 W VisualCat       : uid=10007(com.example) identical 90888 lines
+05-15 14:13:37.461000  6668 22896 W Camera          : Rendering surface 0x000158D9
+05-15 14:13:37.464000 14275 13369 F VisualCat       : Frame completed in 56731 ms
+05-15 14:13:37.466000  1911 12808 E AndroidRuntime  : uid=10007(com.example) identical 48350 lines
+05-15 14:13:37.468000  1099 15728 I chatty          : uid=10007(com.example) identical 99095 lines
+05-15 14:13:37.469000  8337 22934 E ActivityManager : Frame completed in 74987 ms
+05-15 14:13:37.470000 14837 22832 I chatty          : Rendering surface 0x00016189
+05-15 14:13:37.473000  5215  4513 D AndroidRuntime  : Cache contains 18965 entries
+05-15 14:13:37.475000 12079  4416 D Network         : uid=10007(com.example) identical 32734 lines
+05-15 14:13:37.475000  3392 14039 E SurfaceFlinger  : Cache contains 28992 entries
+05-15 14:13:37.476000 18047 19704 V VisualCat       : Cache contains 26633 entries
+05-15 14:13:37.476000 14940  9277 W ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.479000  5518 14188 D Camera          : Cache contains 79082 entries
+05-15 14:13:37.480000  2374 15848 W Network         : Frame completed in 94633 ms
+05-15 14:13:37.483000 16447  3445 I ActivityManager : Rendering surface 0x00014F58
+05-15 14:13:37.485000 15384  7139 I SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.487000 16398 20207 V Network         : uid=10007(com.example) identical 21903 lines
+05-15 14:13:37.490000 11314 22331 F AndroidRuntime  : Connection 16036 to 10.0.0.8 failed after 372 ms
+05-15 14:13:37.491000 17125 25937 V SurfaceFlinger  : Cache contains 87887 entries
+05-15 14:13:37.494000 11476 19655 V chatty          : uid=10007(com.example) identical 14899 lines
+05-15 14:13:37.494000  1841  2316 E chatty          : FATAL EXCEPTION: main
+05-15 14:13:37.494000  7190  3999 V Network         : Started process 95489 for package com.example.app
+05-15 14:13:37.497000  3751 17846 F ActivityManager : Frame completed in 90950 ms
+05-15 14:13:37.498000  1861 10694 V ActivityManager : uid=10007(com.example) identical 78144 lines
+05-15 14:13:37.500000 12026 24647 V VisualCat       : Rendering surface 0x0000AC5C
+05-15 14:13:37.503000 11640  9616 E AndroidRuntime  : Started process 49399 for package com.example.app
+05-15 14:13:37.506000  8692  8322 E chatty          : Rendering surface 0x000000C2
+05-15 14:13:37.509000 16528 13482 V AndroidRuntime  : Connection 36252 to 10.0.0.8 failed after 2397 ms
+05-15 14:13:37.511000  6756  2955 V VisualCat       : Rendering surface 0x00012CDF
+05-15 14:13:37.511000 11744 12209 D chatty          : Connection 32434 to 10.0.0.8 failed after 4962 ms
+05-15 14:13:37.511000  7976 17477 E Network         : Started process 13232 for package com.example.app
+05-15 14:13:37.514000   388 23289 D ActivityManager : Connection 33627 to 10.0.0.8 failed after 723 ms
+05-15 14:13:37.515000  9398  3716 F SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.518000  7465  8555 I ActivityManager : Connection 75329 to 10.0.0.8 failed after 1826 ms
+05-15 14:13:37.519000 11039 25921 V SurfaceFlinger  : Connection 80958 to 10.0.0.8 failed after 1046 ms
+05-15 14:13:37.521000  3673 18461 F SurfaceFlinger  : Started process 27485 for package com.example.app
+05-15 14:13:37.524000   115  1810 F Network         : Connection 73167 to 10.0.0.8 failed after 1871 ms
+05-15 14:13:37.526000 19424 17838 V chatty          : Started process 60369 for package com.example.app
+05-15 14:13:37.529000  4304 26583 W Camera          : uid=10007(com.example) identical 75601 lines
+05-15 14:13:37.529000  2321   381 E Network         : Rendering surface 0x0000C063
+05-15 14:13:37.529000  8760  1967 W chatty          : Started process 58631 for package com.example.app
+05-15 14:13:37.529000  6412  2731 I chatty          : Rendering surface 0x00002CF1
+05-15 14:13:37.532000  5960  9827 V Network         : Rendering surface 0x000177A5
+05-15 14:13:37.533000 11694 14466 I SurfaceFlinger  : Rendering surface 0x00003A20
+05-15 14:13:37.536000  3684 15312 E Network         : Cache contains 2360 entries
+05-15 14:13:37.536000  1111   796 E VisualCat       : Connection 10984 to 10.0.0.8 failed after 4760 ms
+05-15 14:13:37.537000 13558  5722 I Network         : Cache contains 83674 entries
+05-15 14:13:37.539000 14909 22236 V VisualCat       : Connection 78568 to 10.0.0.8 failed after 2553 ms
+05-15 14:13:37.542000  6301  5906 D AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.545000  4015 15717 D Camera          : FATAL EXCEPTION: main
+05-15 14:13:37.548000  8092 19254 D Camera          : FATAL EXCEPTION: main
+05-15 14:13:37.548000 12022 14128 F chatty          : Cache contains 48209 entries
+05-15 14:13:37.548000   950 21069 V AndroidRuntime  : Started process 22189 for package com.example.app
+05-15 14:13:37.551000 14451  9232 E ActivityManager : Started process 67103 for package com.example.app
+05-15 14:13:37.553000 14063 17713 E VisualCat       : Cache contains 72759 entries
+05-15 14:13:37.553000   494 23611 D VisualCat       : uid=10007(com.example) identical 70030 lines
+05-15 14:13:37.555000 17592 14245 I Camera          : Cache contains 29366 entries
+05-15 14:13:37.558000 10088 18008 E Camera          : Rendering surface 0x0000B138
+05-15 14:13:37.559000 12617   600 I Network         : Connection 93484 to 10.0.0.8 failed after 675 ms
+05-15 14:13:37.559000   929 27371 W AndroidRuntime  : Connection 22857 to 10.0.0.8 failed after 1164 ms
+05-15 14:13:37.561000 18803 20189 W chatty          : FATAL EXCEPTION: main
+05-15 14:13:37.564000 14754  1596 E SurfaceFlinger  : Cache contains 86227 entries
+05-15 14:13:37.565000  3254 19260 E SurfaceFlinger  : Started process 58984 for package com.example.app
+05-15 14:13:37.566000  4494  1286 F chatty          : Rendering surface 0x000175E0
+05-15 14:13:37.566000 16705 22108 D Camera          : FATAL EXCEPTION: main
+05-15 14:13:37.568000  2057 17280 I Network         : Connection 29904 to 10.0.0.8 failed after 4458 ms
+05-15 14:13:37.571000  9763 19679 V Network         : Frame completed in 69674 ms
+05-15 14:13:37.574000  9308 22843 W VisualCat       : Started process 42243 for package com.example.app
+05-15 14:13:37.576000  7195 17322 F chatty          : Frame completed in 64624 ms
+05-15 14:13:37.578000  1402  5589 I chatty          : Rendering surface 0x00004629
+05-15 14:13:37.580000 18687 14473 W Camera          : Started process 33772 for package com.example.app
+05-15 14:13:37.582000 16729 25155 I chatty          : FATAL EXCEPTION: main
+05-15 14:13:37.583000  2453 22279 V Network         : FATAL EXCEPTION: main
+05-15 14:13:37.583000 14011 27572 W Camera          : Started process 87585 for package com.example.app
+05-15 14:13:37.586000 13647 19566 E Camera          : Connection 22749 to 10.0.0.8 failed after 3544 ms
+05-15 14:13:37.587000  9112 17277 V chatty          : Cache contains 19227 entries
+05-15 14:13:37.587000   100 10461 F Network         : Frame completed in 91686 ms
+05-15 14:13:37.590000 17089 16552 I VisualCat       : uid=10007(com.example) identical 46721 lines
+05-15 14:13:37.591000 11446 24807 D VisualCat       : Rendering surface 0x000030A7
+05-15 14:13:37.594000 10568  6335 V ActivityManager : uid=10007(com.example) identical 33422 lines
+05-15 14:13:37.596000 18207   471 E VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:37.596000  3391 28759 W Network         : Frame completed in 17370 ms
+05-15 14:13:37.597000  3045 23525 E chatty          : Connection 64521 to 10.0.0.8 failed after 2126 ms
+05-15 14:13:37.599000 13106   600 F chatty          : Rendering surface 0x0000D9DF
+05-15 14:13:37.602000 17907  3479 I VisualCat       : Cache contains 56750 entries
+05-15 14:13:37.605000  6445 16011 E VisualCat       : Frame completed in 12644 ms
+05-15 14:13:37.605000  9600 27257 V Network         : Cache contains 14865 entries
+05-15 14:13:37.605000  1059  4447 I Camera          : Frame completed in 3498 ms
+05-15 14:13:37.605000 18841 26374 W chatty          : Frame completed in 12142 ms
+05-15 14:13:37.607000  6240  9862 E Camera          : Started process 98656 for package com.example.app
+05-15 14:13:37.610000  8930  3889 W AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.611000 15167  1340 W SurfaceFlinger  : Started process 59866 for package com.example.app
+05-15 14:13:37.612000 17622 23634 F Network         : Connection 72167 to 10.0.0.8 failed after 2180 ms
+05-15 14:13:37.614000 19682 16335 I VisualCat       : Connection 81506 to 10.0.0.8 failed after 1739 ms
+05-15 14:13:37.614000 19901  7289 V VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:37.616000 11778 25685 I AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.619000 14771 16876 I AndroidRuntime  : Frame completed in 21415 ms
+05-15 14:13:37.619000  5088  1632 V SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.622000   810  4724 E AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.625000 12085 11953 W AndroidRuntime  : Connection 43396 to 10.0.0.8 failed after 4352 ms
+05-15 14:13:37.625000 12075 18317 V VisualCat       : Frame completed in 53559 ms
+05-15 14:13:37.627000 17446 21950 V Camera          : uid=10007(com.example) identical 58259 lines
+05-15 14:13:37.629000  2542 15584 D VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:37.629000 15414 28207 D VisualCat       : Rendering surface 0x0000A690
+05-15 14:13:37.632000  5662 29247 W Camera          : Cache contains 87150 entries
+05-15 14:13:37.633000 13848 20845 D ActivityManager : Connection 8388 to 10.0.0.8 failed after 1910 ms
+05-15 14:13:37.636000   434  2296 V VisualCat       : Connection 93163 to 10.0.0.8 failed after 2170 ms
+05-15 14:13:37.637000 11462 11883 D VisualCat       : Cache contains 14788 entries
+05-15 14:13:37.639000 10237 21781 I SurfaceFlinger  : Rendering surface 0x00001D94
+05-15 14:13:37.639000   980 11291 W Network         : Started process 20606 for package com.example.app
+05-15 14:13:37.640000  8805 21868 W Camera          : Frame completed in 29678 ms
+05-15 14:13:37.640000  1934 27924 F chatty          : Cache contains 29167 entries
+05-15 14:13:37.643000  5458  6208 W chatty          : Rendering surface 0x00004CD6
+05-15 14:13:37.644000  5217 27401 F chatty          : Connection 78135 to 10.0.0.8 failed after 975 ms
+05-15 14:13:37.644000 11625 26927 V chatty          : Connection 11362 to 10.0.0.8 failed after 2408 ms
+05-15 14:13:37.647000 11995  3662 V AndroidRuntime  : Rendering surface 0x00005B12
+05-15 14:13:37.648000  9226 27583 D Network         : uid=10007(com.example) identical 17909 lines
+05-15 14:13:37.650000  2022 28760 W Camera          : FATAL EXCEPTION: main
+05-15 14:13:37.652000 14326  8201 E Camera          : Started process 13802 for package com.example.app
+05-15 14:13:37.653000 11596 16159 D AndroidRuntime  : Cache contains 65998 entries
+05-15 14:13:37.656000  3356 15191 F Network         : FATAL EXCEPTION: main
+05-15 14:13:37.658000   706 17355 V ActivityManager : Frame completed in 18765 ms
+05-15 14:13:37.660000  7657  6425 W VisualCat       : Rendering surface 0x0000DA8F
+05-15 14:13:37.660000 15325 23913 W VisualCat       : Frame completed in 21018 ms
+05-15 14:13:37.660000 12572 13986 V AndroidRuntime  : Started process 62 for package com.example.app
+05-15 14:13:37.663000 11015  1450 F AndroidRuntime  : Cache contains 95206 entries
+05-15 14:13:37.663000 19315  3534 D Network         : Connection 23401 to 10.0.0.8 failed after 4555 ms
+05-15 14:13:37.666000 17259   238 I AndroidRuntime  : Frame completed in 91535 ms
+05-15 14:13:37.667000  2239 12557 I VisualCat       : Rendering surface 0x0001193B
+05-15 14:13:37.669000  6609 26040 F chatty          : Rendering surface 0x0000C7F5
+05-15 14:13:37.671000  1882 24606 I chatty          : FATAL EXCEPTION: main
+05-15 14:13:37.674000 17740 12918 V Camera          : uid=10007(com.example) identical 54895 lines
+05-15 14:13:37.674000  5738 12246 F Network         : FATAL EXCEPTION: main
+05-15 14:13:37.676000 14713 15721 E VisualCat       : Connection 28789 to 10.0.0.8 failed after 70 ms
+05-15 14:13:37.679000  3231  8161 W chatty          : Connection 89840 to 10.0.0.8 failed after 3971 ms
+05-15 14:13:37.679000 16402 12342 I ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.679000  8781  2169 F SurfaceFlinger  : Started process 36401 for package com.example.app
+05-15 14:13:37.680000 10741  6604 F AndroidRuntime  : Rendering surface 0x0000055C
+05-15 14:13:37.681000  4090 27903 I Camera          : Cache contains 32489 entries
+05-15 14:13:37.684000  7827  7427 D AndroidRuntime  : Rendering surface 0x0000226D
+05-15 14:13:37.687000  3676  7155 F SurfaceFlinger  : Connection 60170 to 10.0.0.8 failed after 2361 ms
+05-15 14:13:37.688000 15886 26019 I VisualCat       : Rendering surface 0x0000C5CF
+05-15 14:13:37.689000  4538  1595 W Network         : Connection 28970 to 10.0.0.8 failed after 4947 ms
+05-15 14:13:37.692000 13841 21084 D SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.694000 17067   811 D SurfaceFlinger  : uid=10007(com.example) identical 52145 lines
+05-15 14:13:37.696000 10161  6982 E ActivityManager : Cache contains 12966 entries
+05-15 14:13:37.696000 12282 20635 D ActivityManager : uid=10007(com.example) identical 9146 lines
+05-15 14:13:37.699000  8773 12298 W AndroidRuntime  : uid=10007(com.example) identical 19925 lines
+05-15 14:13:37.701000 10354  6291 V Camera          : uid=10007(com.example) identical 46034 lines
+05-15 14:13:37.703000  7220 24379 D VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:37.704000 17825 18981 F AndroidRuntime  : Rendering surface 0x00002621
+05-15 14:13:37.704000  5127 10094 W AndroidRuntime  : Rendering surface 0x00009E3F
+05-15 14:13:37.704000  1918 12820 W SurfaceFlinger  : Frame completed in 62380 ms
+05-15 14:13:37.706000  9835 22292 E Camera          : uid=10007(com.example) identical 88377 lines
+05-15 14:13:37.707000 16339 16401 V ActivityManager : Frame completed in 2350 ms
+05-15 14:13:37.710000 11937  7424 V ActivityManager : Cache contains 46526 entries
+05-15 14:13:37.713000 17179 15311 F SurfaceFlinger  : Started process 51040 for package com.example.app
+05-15 14:13:37.714000  3221 18253 V AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.714000  7937  8823 D SurfaceFlinger  : Frame completed in 24428 ms
+05-15 14:13:37.714000 16322 18665 F VisualCat       : uid=10007(com.example) identical 30733 lines
+05-15 14:13:37.717000  9785 14797 W AndroidRuntime  : Started process 98769 for package com.example.app
+05-15 14:13:37.718000  2637 16162 W Camera          : Rendering surface 0x0000DD4A
+05-15 14:13:37.718000 16353 23808 W chatty          : Cache contains 53593 entries
+05-15 14:13:37.718000 16747 18649 W SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.719000  2775 26322 D chatty          : Connection 27798 to 10.0.0.8 failed after 427 ms
+05-15 14:13:37.722000   601  8196 I AndroidRuntime  : uid=10007(com.example) identical 69377 lines
+05-15 14:13:37.723000  7109 12350 W AndroidRuntime  : Connection 50710 to 10.0.0.8 failed after 4890 ms
+05-15 14:13:37.723000 17916  9274 V ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.725000  9064 15635 E Camera          : Frame completed in 56575 ms
+05-15 14:13:37.726000  1035 28469 W Camera          : Cache contains 72471 entries
+05-15 14:13:37.728000  6067 27388 F SurfaceFlinger  : Rendering surface 0x0001189C
+05-15 14:13:37.729000  4009  3858 V Camera          : Started process 83266 for package com.example.app
+05-15 14:13:37.732000  7788 17334 E AndroidRuntime  : Rendering surface 0x000171BB
+05-15 14:13:37.732000 12905 10622 D Camera          : Frame completed in 53781 ms
+05-15 14:13:37.733000  8109 20255 F VisualCat       : Cache contains 92130 entries
+05-15 14:13:37.735000  1717 15705 D Camera          : Connection 72346 to 10.0.0.8 failed after 950 ms
+05-15 14:13:37.738000 19561 25736 D VisualCat       : Connection 84456 to 10.0.0.8 failed after 4720 ms
+05-15 14:13:37.740000  4531  6440 W SurfaceFlinger  : Connection 71224 to 10.0.0.8 failed after 3257 ms
+05-15 14:13:37.741000  2552   649 W AndroidRuntime  : uid=10007(com.example) identical 12158 lines
+05-15 14:13:37.742000  7018 28526 W Network         : FATAL EXCEPTION: main
+05-15 14:13:37.742000 19544 15061 V AndroidRuntime  : Cache contains 86924 entries
+05-15 14:13:37.743000  1531 28363 D AndroidRuntime  : Rendering surface 0x000176D5
+05-15 14:13:37.745000 15236 15576 F ActivityManager : Frame completed in 27197 ms
+05-15 14:13:37.747000  4964  7508 V Network         : FATAL EXCEPTION: main
+05-15 14:13:37.749000  2126  4257 V Network         : Rendering surface 0x00009D2B
+05-15 14:13:37.749000  5494 15706 E chatty          : Frame completed in 45953 ms
+05-15 14:13:37.752000  6178  6141 D VisualCat       : Rendering surface 0x000141F0
+05-15 14:13:37.753000  1759 26165 I Network         : Started process 62156 for package com.example.app
+05-15 14:13:37.755000  9840  2133 W ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.756000  1107 23200 I ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.756000 11114  5795 F SurfaceFlinger  : Rendering surface 0x00009BFC
+05-15 14:13:37.759000   182 10364 W AndroidRuntime  : uid=10007(com.example) identical 23747 lines
+05-15 14:13:37.762000  6738 20829 D SurfaceFlinger  : Cache contains 31081 entries
+05-15 14:13:37.765000 13649 27372 F chatty          : Frame completed in 29902 ms
+05-15 14:13:37.767000 12898 11304 D chatty          : Frame completed in 70732 ms
+05-15 14:13:37.767000  5978 26170 W VisualCat       : Connection 86019 to 10.0.0.8 failed after 102 ms
+05-15 14:13:37.769000 18853 19677 D Network         : Cache contains 9200 entries
+05-15 14:13:37.772000  3406 11618 I Camera          : Started process 95884 for package com.example.app
+05-15 14:13:37.772000  1539  7224 I VisualCat       : uid=10007(com.example) identical 80895 lines
+05-15 14:13:37.774000  5643 11458 W SurfaceFlinger  : Frame completed in 98838 ms
+05-15 14:13:37.774000  6965 18900 D SurfaceFlinger  : Connection 91019 to 10.0.0.8 failed after 1996 ms
+05-15 14:13:37.775000  9796 22222 W VisualCat       : Frame completed in 70411 ms
+05-15 14:13:37.777000 15595 27028 F Network         : Connection 78623 to 10.0.0.8 failed after 3767 ms
+05-15 14:13:37.779000 15191 20485 D ActivityManager : Cache contains 44353 entries
+05-15 14:13:35.731000  9731   933 D chatty          : Rendering surface 0x00013A07
+05-15 14:13:37.781000 10159 29174 F SurfaceFlinger  : Rendering surface 0x0000F6E2
+05-15 14:13:37.783000  6076  8850 I Network         : Cache contains 49692 entries
+05-15 14:13:37.785000  3595 15404 E Network         : Connection 87273 to 10.0.0.8 failed after 3682 ms
+05-15 14:13:37.788000 12555 26290 V SurfaceFlinger  : Frame completed in 70937 ms
+05-15 14:13:37.789000  6032  5166 E Camera          : Started process 19131 for package com.example.app
+05-15 14:13:37.789000  4988 10934 W Camera          : Rendering surface 0x00018426
+05-15 14:13:37.789000 17922 29684 V VisualCat       : Rendering surface 0x0000A5C6
+05-15 14:13:37.790000  5051 25802 I chatty          : Connection 617 to 10.0.0.8 failed after 4193 ms
+05-15 14:13:37.792000  3711  2204 W Camera          : Cache contains 26351 entries
+05-15 14:13:37.795000  9162 26603 E Camera          : uid=10007(com.example) identical 30865 lines
+05-15 14:13:37.796000 18144 21502 D chatty          : Cache contains 38602 entries
+05-15 14:13:37.797000  3184 11440 F chatty          : Connection 82520 to 10.0.0.8 failed after 1920 ms
+05-15 14:13:37.800000  1389  2454 D ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.803000 17304 20824 W Camera          : Frame completed in 46569 ms
+05-15 14:13:37.803000  7508 22183 E AndroidRuntime  : Started process 7612 for package com.example.app
+05-15 14:13:37.804000 18499 28551 I ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.805000  4092  4364 W AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.807000  1680 23044 V VisualCat       : uid=10007(com.example) identical 32620 lines
+05-15 14:13:37.810000  6343 13021 I chatty          : Frame completed in 91297 ms
+05-15 14:13:37.810000 18496 15152 D Network         : Frame completed in 22967 ms
+05-15 14:13:37.812000  5245  1596 V SurfaceFlinger  : Started process 15725 for package com.example.app
+05-15 14:13:37.812000 11658 18440 D Camera          : Started process 76847 for package com.example.app
+05-15 14:13:37.812000  2554  9116 E SurfaceFlinger  : Started process 57599 for package com.example.app
+05-15 14:13:37.813000  4662 20142 I SurfaceFlinger  : Connection 26368 to 10.0.0.8 failed after 2016 ms
+05-15 14:13:37.816000  2221 12783 I chatty          : Cache contains 31106 entries
+05-15 14:13:37.817000 10115 10385 W Camera          : Rendering surface 0x000175D6
+05-15 14:13:37.818000 13204  8339 W VisualCat       : Started process 91051 for package com.example.app
+05-15 14:13:37.819000  7366 21569 F ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.821000  6802   504 V chatty          : Frame completed in 88523 ms
+05-15 14:13:37.824000 19867 21937 W VisualCat       : Connection 83103 to 10.0.0.8 failed after 4000 ms
+05-15 14:13:37.827000  1460  9389 V Network         : Started process 78526 for package com.example.app
+05-15 14:13:37.827000   509 12531 V Camera          : Started process 64500 for package com.example.app
+05-15 14:13:37.828000 15168 19609 V ActivityManager : uid=10007(com.example) identical 63476 lines
+05-15 14:13:37.830000 17990  1802 F Network         : FATAL EXCEPTION: main
+05-15 14:13:37.833000  8394 19789 I chatty          : Connection 57757 to 10.0.0.8 failed after 3127 ms
+05-15 14:13:37.834000 11814  2637 W Network         : Started process 41588 for package com.example.app
+05-15 14:13:37.837000 13386  1146 F AndroidRuntime  : uid=10007(com.example) identical 96365 lines
+05-15 14:13:37.837000 12821 25627 E chatty          : Cache contains 9870 entries
+05-15 14:13:37.840000   285  7158 V chatty          : Frame completed in 81416 ms
+05-15 14:13:37.842000 16560  3880 W VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:37.842000  3203  6419 E AndroidRuntime  : Started process 73489 for package com.example.app
+05-15 14:13:37.845000  4938  2616 V VisualCat       : Connection 43158 to 10.0.0.8 failed after 4725 ms
+05-15 14:13:37.845000  9305  3344 F chatty          : Frame completed in 51281 ms
+05-15 14:13:37.845000  5906 28938 V VisualCat       : Started process 79798 for package com.example.app
+05-15 14:13:37.848000 11090 26775 I VisualCat       : uid=10007(com.example) identical 74301 lines
+05-15 14:13:37.848000  8788 25946 D chatty          : uid=10007(com.example) identical 4743 lines
+05-15 14:13:37.848000  9750 28493 I VisualCat       : Cache contains 27864 entries
+05-15 14:13:37.849000 19574  3885 V VisualCat       : Rendering surface 0x0000DED3
+05-15 14:13:37.852000  9366  4548 D chatty          : uid=10007(com.example) identical 42733 lines
+05-15 14:13:37.854000  8655 16950 E AndroidRuntime  : Started process 60266 for package com.example.app
+05-15 14:13:37.857000 13981 12155 E VisualCat       : Connection 30999 to 10.0.0.8 failed after 3681 ms
+05-15 14:13:37.858000  6738  2320 F VisualCat       : Started process 33617 for package com.example.app
+05-15 14:13:37.860000 10075 29290 V SurfaceFlinger  : Frame completed in 41507 ms
+05-15 14:13:37.861000  1079 25718 I AndroidRuntime  : Cache contains 6243 entries
+05-15 14:13:37.863000 13852  2968 W AndroidRuntime  : Cache contains 35566 entries
+05-15 14:13:37.863000 16556  3412 D VisualCat       : Frame completed in 72129 ms
+05-15 14:13:37.864000 19520 25226 D VisualCat       : Frame completed in 47675 ms
+05-15 14:13:37.866000 18252  5057 E chatty          : FATAL EXCEPTION: main
+05-15 14:13:37.868000 16194  2056 E Camera          : Started process 93846 for package com.example.app
+05-15 14:13:37.868000 15423 29907 D Camera          : FATAL EXCEPTION: main
+05-15 14:13:37.871000 15129 26959 W ActivityManager : Cache contains 66119 entries
+05-15 14:13:37.874000  8042 11551 F Network         : Started process 91045 for package com.example.app
+05-15 14:13:37.875000 17683 19365 W Network         : Frame completed in 91526 ms
+05-15 14:13:37.876000 10360  4030 F AndroidRuntime  : Started process 91047 for package com.example.app
+05-15 14:13:37.879000 11570  8729 V SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.881000 15827 13984 F Network         : Connection 11088 to 10.0.0.8 failed after 1289 ms
+05-15 14:13:37.884000 13745 11801 V AndroidRuntime  : Frame completed in 26769 ms
+05-15 14:13:37.886000  7949 10339 I chatty          : Cache contains 59500 entries
+05-15 14:13:37.889000 15881 12540 D VisualCat       : uid=10007(com.example) identical 5126 lines
+05-15 14:13:37.892000 13085 18112 F ActivityManager : Cache contains 18506 entries
+05-15 14:13:37.892000 19889 15991 F VisualCat       : Connection 44787 to 10.0.0.8 failed after 188 ms
+05-15 14:13:37.895000 10368 27275 F chatty          : Started process 26963 for package com.example.app
+05-15 14:13:37.895000 19766 29314 E Network         : Rendering surface 0x00013562
+05-15 14:13:37.895000  6271 20783 D VisualCat       : uid=10007(com.example) identical 26154 lines
+05-15 14:13:37.895000   369  9146 W ActivityManager : Connection 74366 to 10.0.0.8 failed after 3202 ms
+05-15 14:13:37.895000  1322 25037 E Camera          : Connection 1738 to 10.0.0.8 failed after 4199 ms
+05-15 14:13:37.895000   999 22313 F AndroidRuntime  : Rendering surface 0x000141F7
+05-15 14:13:37.898000 16331 11895 D Network         : Frame completed in 68570 ms
+05-15 14:13:37.899000  3115 10390 D Network         : Rendering surface 0x0000B9FA
+05-15 14:13:37.899000  8490  5082 E Network         : Rendering surface 0x000069B5
+05-15 14:13:37.901000  3149  6490 V AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.903000 13004  7801 V AndroidRuntime  : Connection 70103 to 10.0.0.8 failed after 2530 ms
+05-15 14:13:37.905000 17201  2887 D ActivityManager : Connection 64901 to 10.0.0.8 failed after 3459 ms
+05-15 14:13:37.905000  5327 29568 F Network         : FATAL EXCEPTION: main
+05-15 14:13:37.908000 17879 26773 F SurfaceFlinger  : Frame completed in 16405 ms
+05-15 14:13:37.908000 15313  4065 E Network         : Cache contains 5998 entries
+05-15 14:13:37.911000 19501 29084 F Network         : Rendering surface 0x000102F1
+05-15 14:13:37.913000  8786 15498 I Camera          : Started process 96729 for package com.example.app
+05-15 14:13:37.916000 10083  7509 I SurfaceFlinger  : Frame completed in 13006 ms
+05-15 14:13:37.919000   974  8435 V Camera          : uid=10007(com.example) identical 92405 lines
+05-15 14:13:37.922000 17198 24430 E Camera          : Connection 24947 to 10.0.0.8 failed after 3693 ms
+05-15 14:13:37.924000 16789 28154 V Network         : Rendering surface 0x00011C0A
+05-15 14:13:37.926000  7203 29342 I ActivityManager : Connection 15772 to 10.0.0.8 failed after 1894 ms
+05-15 14:13:37.929000 19418  1579 V AndroidRuntime  : Connection 68793 to 10.0.0.8 failed after 2234 ms
+05-15 14:13:37.929000  7886 14325 E AndroidRuntime  : Cache contains 10567 entries
+05-15 14:13:37.930000  6862 15115 W VisualCat       : Frame completed in 88124 ms
+05-15 14:13:37.931000 17424  6020 F SurfaceFlinger  : Cache contains 78915 entries
+05-15 14:13:37.932000  5676 28660 I Network         : uid=10007(com.example) identical 88121 lines
+05-15 14:13:37.933000   247 26148 D Camera          : Cache contains 46860 entries
+05-15 14:13:37.933000  4978 22053 D chatty          : Started process 19325 for package com.example.app
+05-15 14:13:37.934000  4844  9236 D VisualCat       : uid=10007(com.example) identical 38463 lines
+05-15 14:13:37.936000 14314  8433 I ActivityManager : Frame completed in 99940 ms
+05-15 14:13:37.937000  7507  9993 E Camera          : FATAL EXCEPTION: main
+05-15 14:13:37.939000  5380 20599 E VisualCat       : Started process 70182 for package com.example.app
+05-15 14:13:37.942000  8037 12428 F Camera          : Cache contains 96646 entries
+05-15 14:13:37.944000  4573 17264 F ActivityManager : Rendering surface 0x00016284
+05-15 14:13:37.947000 14637 15572 I Camera          : Started process 2866 for package com.example.app
+05-15 14:13:37.950000  7560  5964 V ActivityManager : uid=10007(com.example) identical 95990 lines
+05-15 14:13:37.950000  3136 10818 F VisualCat       : Rendering surface 0x00010E0C
+05-15 14:13:37.953000  3563  4666 F Network         : Cache contains 88142 entries
+05-15 14:13:37.955000  8653 14963 I AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.955000 10784 14496 I AndroidRuntime  : Frame completed in 37205 ms
+05-15 14:13:37.956000  6886 27014 V Camera          : Connection 22218 to 10.0.0.8 failed after 1361 ms
+05-15 14:13:37.957000 19302  6719 I AndroidRuntime  : Frame completed in 65552 ms
+05-15 14:13:37.960000  4334 21369 I SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:37.961000  4285  3792 F AndroidRuntime  : Connection 52970 to 10.0.0.8 failed after 2451 ms
+05-15 14:13:37.964000 15149   200 E AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:37.967000  7814  1838 F Camera          : Frame completed in 62968 ms
+05-15 14:13:37.967000 10810 16691 V chatty          : Cache contains 84147 entries
+05-15 14:13:37.970000  3387 10725 E VisualCat       : Cache contains 20942 entries
+05-15 14:13:37.972000 11959 14306 E chatty          : uid=10007(com.example) identical 15220 lines
+05-15 14:13:37.972000  1649 23359 W SurfaceFlinger  : uid=10007(com.example) identical 20136 lines
+05-15 14:13:37.973000 19461 29832 I SurfaceFlinger  : Connection 3229 to 10.0.0.8 failed after 1901 ms
+05-15 14:13:37.973000 12119  4755 V Camera          : Started process 6308 for package com.example.app
+05-15 14:13:37.976000 14227  6747 F ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:37.978000  4757  8220 F chatty          : Connection 60154 to 10.0.0.8 failed after 619 ms
+05-15 14:13:37.980000 15462 17287 V AndroidRuntime  : Frame completed in 92215 ms
+05-15 14:13:37.981000  7466 26315 E Network         : Started process 75062 for package com.example.app
+05-15 14:13:37.983000  4088  1039 V VisualCat       : Cache contains 33242 entries
+05-15 14:13:37.984000 18788 12616 W ActivityManager : uid=10007(com.example) identical 13509 lines
+05-15 14:13:37.987000 13185  2783 V Network         : Frame completed in 35726 ms
+05-15 14:13:37.990000 11895 25755 E Network         : Cache contains 74056 entries
+05-15 14:13:37.991000 14749 16756 D chatty          : uid=10007(com.example) identical 95153 lines
+05-15 14:13:37.994000 12943  5583 I ActivityManager : Connection 11068 to 10.0.0.8 failed after 9 ms
+05-15 14:13:37.995000 17110 26091 I Camera          : Cache contains 8109 entries
+05-15 14:13:37.996000 11795 13167 I ActivityManager : uid=10007(com.example) identical 10050 lines
+05-15 14:13:37.999000   143 21172 W Camera          : uid=10007(com.example) identical 40933 lines
+05-15 14:13:38.000000 14799  6266 I ActivityManager : uid=10007(com.example) identical 86688 lines
+05-15 14:13:38.000000  4862 13407 I Network         : Connection 20838 to 10.0.0.8 failed after 3977 ms
+05-15 14:13:38.000000  6719 26510 W ActivityManager : Connection 15004 to 10.0.0.8 failed after 1520 ms
+05-15 14:13:38.003000 11486   977 W Network         : Connection 38145 to 10.0.0.8 failed after 168 ms
+05-15 14:13:38.003000 18394  8955 V chatty          : uid=10007(com.example) identical 55712 lines
+05-15 14:13:38.004000 12313  7291 W ActivityManager : Connection 85536 to 10.0.0.8 failed after 3237 ms
+05-15 14:13:38.006000 11301 19786 W Network         : Frame completed in 20994 ms
+05-15 14:13:38.006000  3575 14456 D chatty          : Connection 3647 to 10.0.0.8 failed after 4299 ms
+05-15 14:13:38.006000 18721  9946 V ActivityManager : Cache contains 33165 entries
+05-15 14:13:38.007000 14704 19918 W AndroidRuntime  : Rendering surface 0x000065E9
+05-15 14:13:38.009000 14389 11410 E VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:38.012000 19909  1553 D chatty          : uid=10007(com.example) identical 23357 lines
+05-15 14:13:38.015000 15752  9967 I Network         : Frame completed in 51182 ms
+05-15 14:13:38.016000  7011 15811 F AndroidRuntime  : Started process 55748 for package com.example.app
+05-15 14:13:38.018000  5273 24458 E ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:38.019000 12599  6386 I Camera          : uid=10007(com.example) identical 38801 lines
+05-15 14:13:38.020000  5263  5216 V Camera          : uid=10007(com.example) identical 46997 lines
+05-15 14:13:38.023000 14242  3980 F AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.023000  3695  5227 W AndroidRuntime  : Connection 13705 to 10.0.0.8 failed after 437 ms
+05-15 14:13:38.024000 13155  9604 D VisualCat       : Connection 8886 to 10.0.0.8 failed after 3432 ms
+05-15 14:13:38.024000 10575  7737 F ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:38.024000 15182 15793 D Camera          : uid=10007(com.example) identical 8801 lines
+05-15 14:13:38.025000  7711  1876 E ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:38.028000  5780 21400 D chatty          : Started process 92523 for package com.example.app
+05-15 14:13:38.030000 17006 26618 F AndroidRuntime  : uid=10007(com.example) identical 13120 lines
+05-15 14:13:38.032000  8963 22685 W SurfaceFlinger  : Cache contains 46700 entries
+05-15 14:13:38.033000 11830 25833 I VisualCat       : Cache contains 4553 entries
+05-15 14:13:38.035000 16091  4607 D VisualCat       : uid=10007(com.example) identical 49558 lines
+05-15 14:13:38.035000  5075 12494 E VisualCat       : Started process 53009 for package com.example.app
+05-15 14:13:38.035000  9775 15439 V VisualCat       : Connection 98892 to 10.0.0.8 failed after 2622 ms
+05-15 14:13:38.036000 15901 26895 E Network         : Rendering surface 0x00007319
+05-15 14:13:38.037000  7574 25725 W Camera          : uid=10007(com.example) identical 17494 lines
+05-15 14:13:38.038000 17362 16956 V ActivityManager : Rendering surface 0x00007180
+05-15 14:13:38.038000 19426 20575 V AndroidRuntime  : Cache contains 35384 entries
+05-15 14:13:38.038000  1713  3887 D chatty          : Frame completed in 62917 ms
+05-15 14:13:38.040000 18780 20685 F SurfaceFlinger  : Started process 23028 for package com.example.app
+05-15 14:13:38.040000  5743 17669 F VisualCat       : Frame completed in 69079 ms
+05-15 14:13:38.040000 11182 27065 E Network         : Started process 74077 for package com.example.app
+05-15 14:13:38.043000  7565 20246 I ActivityManager : uid=10007(com.example) identical 28268 lines
+05-15 14:13:38.043000  9945 28727 F Camera          : Rendering surface 0x0000C0C3
+05-15 14:13:38.045000 17193 17895 D chatty          : FATAL EXCEPTION: main
+05-15 14:13:38.045000 19013 24264 E SurfaceFlinger  : Cache contains 60978 entries
+05-15 14:13:38.047000 19519 29081 V VisualCat       : Started process 59945 for package com.example.app
+05-15 14:13:38.047000  9922 16530 D VisualCat       : uid=10007(com.example) identical 77998 lines
+05-15 14:13:38.048000  8285 10622 W chatty          : FATAL EXCEPTION: main
+05-15 14:13:38.051000  5114 12166 D Camera          : Rendering surface 0x00015B85
+05-15 14:13:38.054000  1876 25687 D VisualCat       : Cache contains 40088 entries
+05-15 14:13:38.055000  4626 25061 I Network         : Rendering surface 0x0000F3B8
+05-15 14:13:38.058000  7124 10519 V ActivityManager : Connection 9002 to 10.0.0.8 failed after 1877 ms
+05-15 14:13:38.061000  5208 18347 W VisualCat       : uid=10007(com.example) identical 55557 lines
+05-15 14:13:38.061000  3988 29688 D chatty          : FATAL EXCEPTION: main
+05-15 14:13:38.061000 11315 12408 E VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:38.061000   605 28167 D AndroidRuntime  : Cache contains 61717 entries
+05-15 14:13:38.063000 11535  6257 F Camera          : Frame completed in 36341 ms
+05-15 14:13:38.064000  1561 23940 I ActivityManager : Rendering surface 0x00014A1A
+05-15 14:13:38.067000 15144 26126 F VisualCat       : Frame completed in 25668 ms
+05-15 14:13:38.067000  2699  3287 F AndroidRuntime  : Connection 35763 to 10.0.0.8 failed after 2328 ms
+05-15 14:13:38.068000 12361 19255 E AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.071000 16722  6141 V Network         : Frame completed in 70418 ms
+05-15 14:13:38.073000 13956  5652 V SurfaceFlinger  : Cache contains 96682 entries
+05-15 14:13:38.075000  7650 21686 E Network         : Rendering surface 0x00002D11
+05-15 14:13:38.078000 13317 11561 D ActivityManager : Frame completed in 92857 ms
+05-15 14:13:38.081000  2716 29423 I SurfaceFlinger  : Rendering surface 0x0000A828
+05-15 14:13:38.082000  5751 13555 W Network         : FATAL EXCEPTION: main
+05-15 14:13:38.082000 11997 12691 W Network         : Frame completed in 31297 ms
+05-15 14:13:38.082000 18406 20593 D ActivityManager : Started process 39869 for package com.example.app
+05-15 14:13:38.082000 10881 19982 I AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.084000 10970 17268 D Camera          : Started process 71039 for package com.example.app
+05-15 14:13:38.084000  8566 19177 I VisualCat       : Cache contains 59860 entries
+05-15 14:13:38.086000 16664 26556 I chatty          : FATAL EXCEPTION: main
+05-15 14:13:38.086000  9966 12463 I chatty          : Connection 34570 to 10.0.0.8 failed after 2535 ms
+05-15 14:13:38.086000  1551 16169 I Camera          : FATAL EXCEPTION: main
+05-15 14:13:38.087000 18995 10615 V SurfaceFlinger  : Connection 66143 to 10.0.0.8 failed after 607 ms
+05-15 14:13:38.087000 15114 25109 E chatty          : Cache contains 1196 entries
+05-15 14:13:38.087000  1919 27164 I AndroidRuntime  : Started process 29492 for package com.example.app
+05-15 14:13:38.088000 12898 27731 V ActivityManager : Started process 14411 for package com.example.app
+05-15 14:13:38.090000  4561  9840 V chatty          : FATAL EXCEPTION: main
+05-15 14:13:38.090000 13048 25137 F ActivityManager : uid=10007(com.example) identical 4432 lines
+05-15 14:13:38.091000  4677 13100 F VisualCat       : Rendering surface 0x0001445B
+05-15 14:13:38.094000 12803  7167 F SurfaceFlinger  : Frame completed in 76567 ms
+05-15 14:13:38.096000  8878 28740 E Network         : Started process 80577 for package com.example.app
+05-15 14:13:38.096000  3607 16787 E Network         : Rendering surface 0x0001345C
+05-15 14:13:38.098000  9414  5814 W SurfaceFlinger  : Started process 41430 for package com.example.app
+05-15 14:13:38.101000  5316 17425 V SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:38.103000 17305 21715 W Camera          : Rendering surface 0x00001F5B
+05-15 14:13:38.106000  5724  6378 F chatty          : Connection 24999 to 10.0.0.8 failed after 1748 ms
+05-15 14:13:38.108000 16195 11523 D chatty          : Cache contains 59683 entries
+05-15 14:13:38.108000   767 10050 V chatty          : uid=10007(com.example) identical 74514 lines
+05-15 14:13:38.111000 18718 22601 E VisualCat       : uid=10007(com.example) identical 5217 lines
+05-15 14:13:38.114000 18456 14173 I chatty          : Cache contains 48252 entries
+05-15 14:13:38.117000 13750  3303 D Network         : Connection 94986 to 10.0.0.8 failed after 767 ms
+05-15 14:13:38.117000 12995 16140 D Camera          : FATAL EXCEPTION: main
+05-15 14:13:38.120000 17083  4285 I Network         : Frame completed in 56285 ms
+05-15 14:13:38.120000  4469 27147 E ActivityManager : Frame completed in 82846 ms
+05-15 14:13:38.120000 17982 24689 D SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:38.120000 15583 23756 E AndroidRuntime  : uid=10007(com.example) identical 54595 lines
+05-15 14:13:38.121000  1745 29766 F Network         : Rendering surface 0x00012263
+05-15 14:13:38.123000 10585 22117 W ActivityManager : uid=10007(com.example) identical 3104 lines
+05-15 14:13:38.123000  8487  4845 F SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:38.123000  2317   172 W SurfaceFlinger  : uid=10007(com.example) identical 90644 lines
+05-15 14:13:38.126000 13547 27815 D SurfaceFlinger  : Frame completed in 4168 ms
+05-15 14:13:38.127000 12610 19495 W VisualCat       : Connection 92394 to 10.0.0.8 failed after 204 ms
+05-15 14:13:38.127000 10918  3534 V Camera          : Cache contains 52450 entries
+05-15 14:13:38.127000   956  9997 D ActivityManager : Frame completed in 49455 ms
+05-15 14:13:38.127000  5275 16193 D AndroidRuntime  : Started process 46278 for package com.example.app
+05-15 14:13:38.130000 17325 14090 W chatty          : Connection 56088 to 10.0.0.8 failed after 4199 ms
+05-15 14:13:38.132000 16773 26058 I SurfaceFlinger  : uid=10007(com.example) identical 29764 lines
+05-15 14:13:38.133000 19167 13342 I VisualCat       : Cache contains 538 entries
+05-15 14:13:38.136000   687  6637 I AndroidRuntime  : Started process 57515 for package com.example.app
+05-15 14:13:38.138000 13128 17821 F SurfaceFlinger  : Cache contains 39193 entries
+05-15 14:13:38.139000   113  2299 W ActivityManager : uid=10007(com.example) identical 42273 lines
+05-15 14:13:38.139000 13387 27716 W SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:38.140000 10717  4454 E Network         : Frame completed in 36550 ms
+05-15 14:13:38.142000 19045  2917 W chatty          : Frame completed in 95597 ms
+05-15 14:13:38.142000 11210 19266 D SurfaceFlinger  : uid=10007(com.example) identical 73105 lines
+05-15 14:13:38.144000 17380 24094 I chatty          : Frame completed in 85505 ms
+05-15 14:13:38.147000 19394 27425 I Camera          : Rendering surface 0x0000E005
+05-15 14:13:38.147000  1107  7932 V Network         : Cache contains 89252 entries
+05-15 14:13:38.149000  7921 23700 I Network         : Rendering surface 0x00003A6A
+05-15 14:13:38.151000 12192 18106 I Network         : FATAL EXCEPTION: main
+05-15 14:13:38.154000  9378 10142 W chatty          : Started process 60640 for package com.example.app
+05-15 14:13:38.154000 18154 28052 D SurfaceFlinger  : Frame completed in 18026 ms
+05-15 14:13:38.155000 18820 15799 F Network         : Started process 44837 for package com.example.app
+05-15 14:13:38.158000 13398 15318 W SurfaceFlinger  : Started process 5715 for package com.example.app
+05-15 14:13:38.160000  7034 25403 W SurfaceFlinger  : Rendering surface 0x000106D0
+05-15 14:13:38.161000  3614 11921 D Network         : Rendering surface 0x00016FA5
+05-15 14:13:38.164000 14848 12962 E ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:38.165000   311 28305 D SurfaceFlinger  : uid=10007(com.example) identical 9447 lines
+05-15 14:13:38.165000  2340 25415 F VisualCat       : uid=10007(com.example) identical 27292 lines
+05-15 14:13:38.168000 12241  5109 E chatty          : Frame completed in 91828 ms
+05-15 14:13:38.170000  5514 10836 W AndroidRuntime  : Rendering surface 0x00005B21
+05-15 14:13:38.172000   432 28887 F SurfaceFlinger  : Rendering surface 0x00015D67
+05-15 14:13:38.172000  1302 13943 V AndroidRuntime  : Rendering surface 0x00014952
+05-15 14:13:38.172000  1147  9892 E chatty          : Frame completed in 75348 ms
+05-15 14:13:38.175000  3806 16536 D VisualCat       : Started process 64731 for package com.example.app
+05-15 14:13:38.176000  9144 21230 W SurfaceFlinger  : Started process 80911 for package com.example.app
+05-15 14:13:38.178000   509 20395 W Network         : Connection 68918 to 10.0.0.8 failed after 1040 ms
+05-15 14:13:38.178000 14208 22020 I SurfaceFlinger  : Frame completed in 51068 ms
+05-15 14:13:38.178000 11630 24650 V chatty          : Rendering surface 0x00008722
+05-15 14:13:38.181000 11062 24087 V SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:38.181000  8839 10172 D Network         : Rendering surface 0x000119C7
+05-15 14:13:38.181000 12474 14790 D Camera          : Started process 19952 for package com.example.app
+05-15 14:13:38.181000 18286 23452 V Camera          : Frame completed in 90671 ms
+05-15 14:13:38.183000 10247 16769 W Camera          : Rendering surface 0x00005EBD
+05-15 14:13:38.184000   240 16312 D SurfaceFlinger  : Cache contains 5957 entries
+05-15 14:13:38.184000 16868 13308 W AndroidRuntime  : Rendering surface 0x00010118
+05-15 14:13:38.185000   934  8453 W SurfaceFlinger  : Started process 6432 for package com.example.app
+05-15 14:13:38.186000 12315  8818 V AndroidRuntime  : uid=10007(com.example) identical 37164 lines
+05-15 14:13:38.186000  5521 11799 E ActivityManager : uid=10007(com.example) identical 6816 lines
+05-15 14:13:38.187000 18327  4074 F Camera          : Cache contains 72765 entries
+05-15 14:13:38.188000  3218  9305 F SurfaceFlinger  : uid=10007(com.example) identical 55104 lines
+05-15 14:13:38.188000  3930 20515 I SurfaceFlinger  : Connection 65064 to 10.0.0.8 failed after 2242 ms
+05-15 14:13:38.190000  1143 13877 F VisualCat       : uid=10007(com.example) identical 48091 lines
+05-15 14:13:38.191000  9021 16660 D SurfaceFlinger  : uid=10007(com.example) identical 96459 lines
+05-15 14:13:38.191000 14740 21336 D SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:38.192000  5654 12452 I SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:38.193000  3970  1277 F chatty          : FATAL EXCEPTION: main
+05-15 14:13:38.194000  5156   379 D AndroidRuntime  : Frame completed in 34216 ms
+05-15 14:13:38.197000 15422 21533 F SurfaceFlinger  : uid=10007(com.example) identical 3518 lines
+05-15 14:13:38.199000 12063 26446 F Camera          : Started process 69633 for package com.example.app
+05-15 14:13:38.201000 17367 19002 D ActivityManager : uid=10007(com.example) identical 26975 lines
+05-15 14:13:38.201000 10052 21412 W Camera          : FATAL EXCEPTION: main
+05-15 14:13:38.204000  9229 12138 I ActivityManager : Cache contains 37291 entries
+05-15 14:13:38.204000  9811 25994 F chatty          : Cache contains 13782 entries
+05-15 14:13:38.205000 18312   966 F SurfaceFlinger  : Cache contains 88840 entries
+05-15 14:13:38.205000  9949  8947 I ActivityManager : Rendering surface 0x0000B5AC
+05-15 14:13:38.206000  4658 19031 V Network         : Cache contains 63410 entries
+05-15 14:13:38.209000  1918 12719 V AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.209000  3072 25653 D VisualCat       : Started process 19211 for package com.example.app
+05-15 14:13:38.210000 17536  2336 W chatty          : Rendering surface 0x00006E2E
+05-15 14:13:38.212000  3524 13277 D Network         : Rendering surface 0x00001C7A
+05-15 14:13:38.213000 18147  9260 V SurfaceFlinger  : Connection 37442 to 10.0.0.8 failed after 1559 ms
+05-15 14:13:38.215000  2589 23106 I Network         : FATAL EXCEPTION: main
+05-15 14:13:38.218000  9027  8837 I ActivityManager : Cache contains 70863 entries
+05-15 14:13:38.221000  1100 13008 W AndroidRuntime  : Rendering surface 0x0000DE95
+05-15 14:13:38.223000 19405 11881 E chatty          : Started process 40264 for package com.example.app
+05-15 14:13:38.223000  3419 26150 D chatty          : FATAL EXCEPTION: main
+05-15 14:13:38.225000 14895 19636 E VisualCat       : Rendering surface 0x00010EDB
+05-15 14:13:38.225000   583 22423 E Camera          : Rendering surface 0x0000154F
+05-15 14:13:38.225000 14032   532 W SurfaceFlinger  : Cache contains 17903 entries
+05-15 14:13:38.227000 12206 29481 W Camera          : Connection 31672 to 10.0.0.8 failed after 3582 ms
+05-15 14:13:38.228000  4475 24989 I chatty          : Rendering surface 0x0000A425
+05-15 14:13:38.230000  1191 18462 F SurfaceFlinger  : uid=10007(com.example) identical 72903 lines
+05-15 14:13:38.233000 10506 16518 W SurfaceFlinger  : Rendering surface 0x00001045
+05-15 14:13:38.234000  6828 11732 F Network         : Started process 86770 for package com.example.app
+05-15 14:13:38.237000  1418 19109 V ActivityManager : Cache contains 99422 entries
+05-15 14:13:38.240000  5788 12475 I ActivityManager : Cache contains 67073 entries
+05-15 14:13:38.242000  4305  6190 V SurfaceFlinger  : Frame completed in 66581 ms
+05-15 14:13:38.242000  3524 11683 I SurfaceFlinger  : Connection 88716 to 10.0.0.8 failed after 2156 ms
+05-15 14:13:38.244000   626 28826 V Camera          : Cache contains 92420 entries
+05-15 14:13:38.247000 12059 12803 V SurfaceFlinger  : Frame completed in 86256 ms
+05-15 14:13:38.250000  5917 22598 V Camera          : Rendering surface 0x00015EF6
+05-15 14:13:38.252000  4865 21632 W ActivityManager : Rendering surface 0x000061E2
+05-15 14:13:38.254000 13854 25253 I Camera          : Rendering surface 0x000123E1
+05-15 14:13:38.254000  8166 21295 E VisualCat       : Frame completed in 27400 ms
+05-15 14:13:38.255000 18965 27957 V chatty          : Frame completed in 88081 ms
+05-15 14:13:38.258000 13654  2840 V VisualCat       : Connection 45107 to 10.0.0.8 failed after 1899 ms
+05-15 14:13:38.259000 12517 28049 F AndroidRuntime  : Rendering surface 0x0000CF44
+05-15 14:13:38.262000  7277 28537 V Network         : Connection 75948 to 10.0.0.8 failed after 3575 ms
+05-15 14:13:38.264000 18163  7207 V AndroidRuntime  : Cache contains 31370 entries
+05-15 14:13:38.264000 17893 16689 F Network         : Connection 1326 to 10.0.0.8 failed after 432 ms
+05-15 14:13:38.265000 18832 20668 V Camera          : Rendering surface 0x00011D2D
+05-15 14:13:38.265000 14746 29105 E Network         : Cache contains 38630 entries
+05-15 14:13:38.267000 19667 17916 V AndroidRuntime  : Frame completed in 80585 ms
+05-15 14:13:38.268000 13491 26072 F chatty          : FATAL EXCEPTION: main
+05-15 14:13:38.270000  5933   416 D SurfaceFlinger  : uid=10007(com.example) identical 92405 lines
+05-15 14:13:38.273000  3399 15534 I AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.275000 14254 17170 D Network         : uid=10007(com.example) identical 86738 lines
+05-15 14:13:38.275000  5495 16432 F VisualCat       : uid=10007(com.example) identical 97266 lines
+05-15 14:13:38.275000  1143 23164 W SurfaceFlinger  : Frame completed in 15672 ms
+05-15 14:13:38.275000 13461  5958 E chatty          : Connection 72223 to 10.0.0.8 failed after 3932 ms
+05-15 14:13:38.276000 18465 24444 D AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.277000   838 22784 E AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.278000  6843  8016 E Network         : uid=10007(com.example) identical 7520 lines
+05-15 14:13:38.278000  3803 21306 I ActivityManager : Connection 23824 to 10.0.0.8 failed after 2685 ms
+05-15 14:13:38.280000 10019 19571 I VisualCat       : Connection 91276 to 10.0.0.8 failed after 2525 ms
+05-15 14:13:38.281000 15409 28491 V VisualCat       : Cache contains 65813 entries
+05-15 14:13:38.282000 17263 22709 E ActivityManager : Rendering surface 0x00008010
+05-15 14:13:38.284000  8115 17937 V chatty          : Connection 68766 to 10.0.0.8 failed after 4228 ms
+05-15 14:13:38.285000 11445  3989 W Camera          : Connection 23655 to 10.0.0.8 failed after 2983 ms
+05-15 14:13:38.286000  3867 29690 F AndroidRuntime  : Cache contains 74231 entries
+05-15 14:13:38.289000 11706 28059 F Camera          : uid=10007(com.example) identical 17274 lines
+05-15 14:13:38.289000 16266 22289 V SurfaceFlinger  : Started process 73240 for package com.example.app
+05-15 14:13:38.291000 14649 12904 D chatty          : Frame completed in 41312 ms
+05-15 14:13:38.291000 15682 16582 I VisualCat       : Connection 63504 to 10.0.0.8 failed after 1190 ms
+05-15 14:13:38.293000  7895 11714 E AndroidRuntime  : uid=10007(com.example) identical 44717 lines
+05-15 14:13:38.293000 12765 26902 W Network         : Frame completed in 15502 ms
+05-15 14:13:38.295000 11431 26800 V Network         : Connection 26113 to 10.0.0.8 failed after 1821 ms
+05-15 14:13:38.298000  9934  7321 D VisualCat       : uid=10007(com.example) identical 34266 lines
+05-15 14:13:38.298000 11511 29622 E AndroidRuntime  : uid=10007(com.example) identical 88662 lines
+05-15 14:13:38.298000 18362  9445 I AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.301000  1750  3861 W Camera          : Rendering surface 0x00009A43
+05-15 14:13:38.303000  8742 23148 F Network         : Started process 58207 for package com.example.app
+05-15 14:13:38.305000  6139 18710 W Camera          : Rendering surface 0x000046F5
+05-15 14:13:38.308000 19563 18495 F SurfaceFlinger  : Cache contains 44764 entries
+05-15 14:13:38.310000  5065 24441 V SurfaceFlinger  : Cache contains 14683 entries
+05-15 14:13:38.310000  8338 16177 I VisualCat       : Connection 46049 to 10.0.0.8 failed after 3088 ms
+05-15 14:13:38.311000 10215 16554 I SurfaceFlinger  : uid=10007(com.example) identical 81904 lines
+05-15 14:13:38.314000  4793  1472 V ActivityManager : Frame completed in 48940 ms
+05-15 14:13:38.317000 15721  6430 F Network         : uid=10007(com.example) identical 44033 lines
+05-15 14:13:38.320000 16614 13029 E SurfaceFlinger  : Started process 69919 for package com.example.app
+05-15 14:13:38.321000  7046 23873 E Network         : uid=10007(com.example) identical 36809 lines
+05-15 14:13:38.322000 16915 12894 F ActivityManager : Rendering surface 0x000073DA
+05-15 14:13:38.323000 13287 11661 E Network         : Cache contains 80341 entries
+05-15 14:13:38.323000  1098 28235 E chatty          : uid=10007(com.example) identical 98991 lines
+05-15 14:13:38.326000   612 23532 V ActivityManager : Rendering surface 0x00009D03
+05-15 14:13:38.329000  1414 22037 D chatty          : Connection 96241 to 10.0.0.8 failed after 580 ms
+05-15 14:13:38.332000  1060 20538 I chatty          : Cache contains 90403 entries
+05-15 14:13:38.332000 16540  9973 F Camera          : Rendering surface 0x00015759
+05-15 14:13:38.332000  7477 17946 F AndroidRuntime  : Connection 31646 to 10.0.0.8 failed after 3052 ms
+05-15 14:13:38.334000 17490 11367 I Camera          : FATAL EXCEPTION: main
+05-15 14:13:38.334000 15129 10652 E SurfaceFlinger  : uid=10007(com.example) identical 73586 lines
+05-15 14:13:38.335000 11772 13763 F VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:38.337000  5940 24164 I ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:38.337000  8734  9151 I Network         : Rendering surface 0x000006F4
+05-15 14:13:38.338000  9700   215 I ActivityManager : Connection 41690 to 10.0.0.8 failed after 2449 ms
+05-15 14:13:38.338000 10528 11612 W Network         : Frame completed in 95041 ms
+05-15 14:13:38.340000 16411 20436 I SurfaceFlinger  : Started process 28381 for package com.example.app
+05-15 14:13:38.343000 10748  8520 E chatty          : Started process 28962 for package com.example.app
+05-15 14:13:38.345000 19191  2122 V ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:38.346000  3208  8471 F chatty          : Cache contains 80226 entries
+05-15 14:13:38.346000  9079  8258 F SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:38.348000  9880 15235 V SurfaceFlinger  : Rendering surface 0x000125BF
+05-15 14:13:38.351000 10310  3275 E SurfaceFlinger  : Rendering surface 0x000063A4
+05-15 14:13:38.351000 14840 15277 D VisualCat       : Cache contains 68648 entries
+05-15 14:13:38.352000  7558  3665 D VisualCat       : Started process 65002 for package com.example.app
+05-15 14:13:38.353000  4468  3835 V AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.356000 16641 24983 W SurfaceFlinger  : Frame completed in 98387 ms
+05-15 14:13:38.358000 10759 26118 F VisualCat       : FATAL EXCEPTION: main
+05-15 14:13:38.359000 19579 28837 I chatty          : Started process 61581 for package com.example.app
+05-15 14:13:38.362000  4165 22361 F ActivityManager : Rendering surface 0x0000D3F0
+05-15 14:13:38.363000  7699 23334 E VisualCat       : Rendering surface 0x00008877
+05-15 14:13:38.365000 10443  5008 D ActivityManager : Connection 87008 to 10.0.0.8 failed after 1693 ms
+05-15 14:13:38.366000 12241  5411 W AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.369000 17744 26161 V ActivityManager : Rendering surface 0x00004ED4
+05-15 14:13:38.370000  9439 21702 W Network         : uid=10007(com.example) identical 4012 lines
+05-15 14:13:38.373000  4157 25385 W Network         : Rendering surface 0x00004FC9
+05-15 14:13:38.376000  6510  8563 E VisualCat       : Connection 64816 to 10.0.0.8 failed after 528 ms
+05-15 14:13:38.378000 14694 10839 D Network         : Started process 88765 for package com.example.app
+05-15 14:13:38.378000  5377  5738 V SurfaceFlinger  : Cache contains 4097 entries
+05-15 14:13:38.380000   776 14701 V Network         : Connection 18626 to 10.0.0.8 failed after 251 ms
+05-15 14:13:38.381000 18695 12601 D Network         : uid=10007(com.example) identical 84471 lines
+05-15 14:13:38.383000 11334  6902 I SurfaceFlinger  : Rendering surface 0x0000342B
+05-15 14:13:38.385000  8745 21314 W AndroidRuntime  : Started process 24504 for package com.example.app
+05-15 14:13:38.386000 16762 18100 W chatty          : FATAL EXCEPTION: main
+05-15 14:13:38.387000  9249  5162 F chatty          : Cache contains 80647 entries
+05-15 14:13:38.387000   163 21740 I ActivityManager : Cache contains 22496 entries
+05-15 14:13:38.388000 11658 28552 E Network         : Cache contains 96250 entries
+05-15 14:13:38.390000  5328 20931 F Network         : Cache contains 26511 entries
+05-15 14:13:38.392000  3258 13937 I ActivityManager : uid=10007(com.example) identical 11354 lines
+05-15 14:13:38.392000 19168 23863 F Camera          : Connection 50818 to 10.0.0.8 failed after 1891 ms
+05-15 14:13:38.392000  3774 19504 V VisualCat       : uid=10007(com.example) identical 30650 lines
+05-15 14:13:38.392000  7606  8879 W AndroidRuntime  : Rendering surface 0x00002E1C
+05-15 14:13:38.394000 14955  1817 D AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.394000 17748 17407 I Camera          : Started process 50976 for package com.example.app
+05-15 14:13:38.394000  5488 14387 I VisualCat       : Started process 66457 for package com.example.app
+05-15 14:13:38.395000  1063 18458 W VisualCat       : Started process 12720 for package com.example.app
+05-15 14:13:38.398000 12006 22590 W chatty          : FATAL EXCEPTION: main
+05-15 14:13:38.398000 16365 13725 E ActivityManager : Connection 26867 to 10.0.0.8 failed after 3504 ms
+05-15 14:13:38.398000  4520 27253 E chatty          : Frame completed in 27286 ms
+05-15 14:13:38.401000  3695 10476 D VisualCat       : Started process 51862 for package com.example.app
+05-15 14:13:38.404000 16806 14211 E SurfaceFlinger  : Rendering surface 0x0000E787
+05-15 14:13:38.404000  8585 16385 E Camera          : Frame completed in 69017 ms
+05-15 14:13:38.406000 16698 23704 V ActivityManager : Cache contains 47034 entries
+05-15 14:13:38.409000  6149  6873 F chatty          : Frame completed in 75018 ms
+05-15 14:13:38.410000  7267 11226 V ActivityManager : Rendering surface 0x0000F86E
+05-15 14:13:38.411000 11300 11208 F SurfaceFlinger  : Connection 5006 to 10.0.0.8 failed after 2337 ms
+05-15 14:13:38.413000  6966 23376 W ActivityManager : Rendering surface 0x00004E14
+05-15 14:13:38.415000 10412 14062 V chatty          : Started process 46196 for package com.example.app
+05-15 14:13:38.416000 18441 24272 F Network         : Connection 93250 to 10.0.0.8 failed after 1788 ms
+05-15 14:13:38.417000  5726 15114 F SurfaceFlinger  : Connection 58171 to 10.0.0.8 failed after 3843 ms
+05-15 14:13:38.419000   808 19555 F Camera          : Cache contains 9585 entries
+05-15 14:13:38.420000  5795 14912 D SurfaceFlinger  : Started process 53658 for package com.example.app
+05-15 14:13:38.423000 16860  2311 I VisualCat       : Frame completed in 1605 ms
+05-15 14:13:38.425000 13894 25336 I ActivityManager : Started process 27097 for package com.example.app
+05-15 14:13:38.428000 14459 12358 D VisualCat       : Cache contains 78732 entries
+05-15 14:13:38.429000 12915 24343 V ActivityManager : Rendering surface 0x0001779F
+05-15 14:13:38.431000 12357 14023 I chatty          : Frame completed in 44215 ms
+05-15 14:13:38.431000 11766 26018 V VisualCat       : Cache contains 43221 entries
+05-15 14:13:38.433000 13799 24756 I Camera          : Cache contains 88238 entries
+05-15 14:13:38.435000   869 16115 W ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:38.436000 13321  8388 I VisualCat       : Frame completed in 77714 ms
+05-15 14:13:38.437000  1261 10106 E ActivityManager : Started process 79130 for package com.example.app
+05-15 14:13:38.437000 15098 25504 I ActivityManager : Cache contains 5062 entries
+05-15 14:13:38.440000  7819 18269 W AndroidRuntime  : Cache contains 41120 entries
+05-15 14:13:38.442000  4266  1640 F VisualCat       : Started process 70400 for package com.example.app
+05-15 14:13:38.445000  4390 13794 D chatty          : FATAL EXCEPTION: main
+05-15 14:13:38.447000  9096 16431 E Camera          : FATAL EXCEPTION: main
+05-15 14:13:38.448000  8546  3396 V chatty          : Frame completed in 70218 ms
+05-15 14:13:38.451000  6818 25783 D ActivityManager : Connection 92989 to 10.0.0.8 failed after 1754 ms
+05-15 14:13:38.453000 11825 28021 D SurfaceFlinger  : FATAL EXCEPTION: main
+05-15 14:13:38.456000   336  2285 D AndroidRuntime  : Connection 10534 to 10.0.0.8 failed after 2173 ms
+05-15 14:13:38.458000 18369 25966 W Network         : Cache contains 59308 entries
+05-15 14:13:38.459000  2086 27649 V SurfaceFlinger  : Started process 49063 for package com.example.app
+05-15 14:13:38.460000  8031 22258 D AndroidRuntime  : Started process 26452 for package com.example.app
+05-15 14:13:38.462000  9953  2299 V Network         : Started process 72412 for package com.example.app
+05-15 14:13:38.464000  7134 18229 W ActivityManager : Rendering surface 0x0000235A
+05-15 14:13:38.464000  4392 24284 F AndroidRuntime  : Rendering surface 0x00004524
+05-15 14:13:38.466000 18281  7688 V SurfaceFlinger  : Frame completed in 2628 ms
+05-15 14:13:38.467000  1681  8969 V SurfaceFlinger  : Frame completed in 79225 ms
+05-15 14:13:38.469000  6153 24384 F Network         : uid=10007(com.example) identical 68629 lines
+05-15 14:13:38.469000   623  4145 V ActivityManager : Started process 9970 for package com.example.app
+05-15 14:13:38.471000  4912 12696 W Network         : Cache contains 91905 entries
+05-15 14:13:38.471000  2118 16279 W Network         : Frame completed in 10145 ms
+05-15 14:13:38.472000 17171 28898 W SurfaceFlinger  : Connection 94415 to 10.0.0.8 failed after 1306 ms
+05-15 14:13:38.473000  5004 20973 I AndroidRuntime  : Cache contains 88289 entries
+05-15 14:13:38.476000 18689 18677 F AndroidRuntime  : Cache contains 48518 entries
+05-15 14:13:38.478000 16844  6041 V ActivityManager : FATAL EXCEPTION: main
+05-15 14:13:38.479000 13189 21063 D chatty          : Rendering surface 0x00009D8C
+05-15 14:13:38.482000 18020 27816 I AndroidRuntime  : FATAL EXCEPTION: main
+05-15 14:13:38.484000  8095 24142 D AndroidRuntime  : Frame completed in 4775 ms
+05-15 14:13:38.485000 19635 28998 V chatty          : Connection 23303 to 10.0.0.8 failed after 1658 ms

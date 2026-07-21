@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../VisualCat.Domain/VisualCat.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The mask oracle and segment contract are implementation detail that the test
+         suite pins directly; neither belongs on the public surface. -->
+    <InternalsVisibleTo Include="VisualCat.Core.Tests" />
+  </ItemGroup>
+</Project>

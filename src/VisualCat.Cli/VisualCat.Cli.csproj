@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>vcat</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../VisualCat.Application/VisualCat.Application.csproj" />
+    <ProjectReference Include="../VisualCat.Infrastructure/VisualCat.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

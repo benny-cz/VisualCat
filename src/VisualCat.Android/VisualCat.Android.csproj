@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ApplicationId>com.visualcat.app</ApplicationId>
+    <ApplicationTitle>VisualCat</ApplicationTitle>
+    <SupportedOSPlatformVersion>31</SupportedOSPlatformVersion>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Android" />
+    <PackageReference Include="Avalonia.Skia" />
+    <PackageReference Include="Xamarin.AndroidX.Core" />
+    <ProjectReference Include="../VisualCat.App/VisualCat.App.csproj" />
+  </ItemGroup>
+</Project>

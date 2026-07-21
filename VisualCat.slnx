@@ -1,0 +1,22 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/VisualCat.Domain/VisualCat.Domain.csproj" />
+    <Project Path="src/VisualCat.Core/VisualCat.Core.csproj" />
+    <Project Path="src/VisualCat.Application/VisualCat.Application.csproj" />
+    <Project Path="src/VisualCat.Infrastructure/VisualCat.Infrastructure.csproj" />
+    <Project Path="src/VisualCat.Cli/VisualCat.Cli.csproj" />
+    <Project Path="src/VisualCat.App/VisualCat.App.csproj" />
+    <Project Path="src/VisualCat.Desktop/VisualCat.Desktop.csproj" />
+    <Project Path="src/VisualCat.Android/VisualCat.Android.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/VisualCat.Domain.Tests/VisualCat.Domain.Tests.csproj" />
+    <Project Path="tests/VisualCat.Core.Tests/VisualCat.Core.Tests.csproj" />
+    <Project Path="tests/VisualCat.Application.Tests/VisualCat.Application.Tests.csproj" />
+    <Project Path="tests/VisualCat.App.Tests/VisualCat.App.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/VisualCat.GenerateLogs/VisualCat.GenerateLogs.csproj" />
+    <Project Path="bench/VisualCat.Benchmarks/VisualCat.Benchmarks.csproj" />
+  </Folder>
+</Solution>

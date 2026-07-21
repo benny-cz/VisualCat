@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../VisualCat.Domain/VisualCat.Domain.csproj" />
+    <ProjectReference Include="../VisualCat.Core/VisualCat.Core.csproj" />
+    <ProjectReference Include="../VisualCat.Application/VisualCat.Application.csproj" />
+  </ItemGroup>
+</Project>

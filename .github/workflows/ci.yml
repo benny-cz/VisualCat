@@ -1,0 +1,82 @@
+name: VisualCat CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-core:
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: Directory.Packages.props
+      - name: Restore documented desktop solution
+        run: dotnet restore VisualCat.Desktop.slnx
+      - name: Verify formatting
+        if: runner.os == 'Linux'
+        run: dotnet format VisualCat.Desktop.slnx --no-restore --verify-no-changes --verbosity diagnostic
+      - name: Build documented desktop solution
+        run: dotnet build VisualCat.Desktop.slnx --no-restore --configuration Release
+      - name: Test
+        if: runner.os != 'Linux'
+        run: dotnet test VisualCat.Desktop.slnx --no-restore --no-build --configuration Release
+      - name: Test with coverage
+        if: runner.os == 'Linux'
+        run: dotnet test VisualCat.Desktop.slnx --no-restore --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory TestResults
+      - name: Run README CLI smoke test
+        if: runner.os == 'Linux'
+        run: |
+          dotnet run --project src/VisualCat.Cli --configuration Release --no-build -- index samples/logcat_small.txt --output ci.vcat
+          dotnet run --project src/VisualCat.Cli --configuration Release --no-build -- verify ci.vcat
+          dotnet run --project src/VisualCat.Cli --configuration Release --no-build -- --version
+      - name: Create coverage report
+        if: runner.os == 'Linux'
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.10
+          reportgenerator "-reports:TestResults/**/coverage.cobertura.xml" "-targetdir:coverage-report" "-reporttypes:Html;MarkdownSummaryGithub;Badges" "-assemblyfilters:+VisualCat.*;-*.Tests"
+          cat coverage-report/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage to Codecov
+        if: runner.os == 'Linux'
+        uses: codecov/codecov-action@v7
+        with:
+          use_oidc: true
+          files: TestResults/**/coverage.cobertura.xml
+          flags: unit-tests
+          fail_ci_if_error: false
+      - name: Preserve coverage report
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: coverage-report
+          if-no-files-found: error
+
+  android:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          workloads: android
+      - run: dotnet restore src/VisualCat.Android/VisualCat.Android.csproj
+      - run: dotnet build src/VisualCat.Android/VisualCat.Android.csproj --no-restore --configuration Release
