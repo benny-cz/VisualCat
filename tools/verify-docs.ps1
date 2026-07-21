@@ -9,8 +9,9 @@
 
       * every relative Markdown link and image resolves on disk;
       * required repository files exist;
-      * the changelog has an [Unreleased] section and its link definitions
-        reference tags that actually exist;
+      * the changelog has an [Unreleased] section and its released versions and
+        link definitions reference tags that exist, except for the one declared
+        VersionPrefix that may be staged immediately before its tag;
       * README, changelog, and Directory.Build.props agree about the release
         state; and
       * the README does not advertise badges that cannot report real data yet.
@@ -53,6 +54,8 @@ $requiredFiles = @(
     'docs/THIRD-PARTY-NOTICES.md'
     'docs/RELEASE-NOTES.md'
     'docs/RELEASE-CHECKLIST.md'
+    'tools/render-release-notes.ps1'
+    '.github/release-targets.json'
     '.github/CODEOWNERS'
     '.github/dependabot.yml'
 )
@@ -147,8 +150,11 @@ if ($changelog -notmatch '(?m)^##\s*\[Unreleased\]') {
 $releasedVersions = @([regex]::Matches($changelog, '(?m)^##\s*\[(?<version>\d+\.\d+\.\d+)\]') |
     ForEach-Object { $_.Groups['version'].Value })
 
-# Tags referenced by changelog link definitions must exist. A changelog that
-# links to a tag nobody created is the exact defect this check exists for.
+# Tags referenced by changelog link definitions must exist. The sole exception
+# is the current VersionPrefix when its release section has been staged for CI
+# immediately before the annotated tag is created. This removes the impossible
+# ordering where CI demanded the tag before allowing the release commit, while
+# the release preflight demanded the commit before allowing the tag.
 $tags = @()
 if ($gitAvailable) {
     $tags = @(git -C $repository tag --list 2>$null)
@@ -159,9 +165,26 @@ $referencedTags = @([regex]::Matches($changelog, 'releases/tag/(?<tag>v[\w.+-]+)
 $referencedTags += @([regex]::Matches($changelog, 'compare/(?<tag>v[\w.+-]+)\.\.\.') |
     ForEach-Object { $_.Groups['tag'].Value })
 
+$pendingTag = $null
+if ($declaredVersion -and $releasedVersions -contains $declaredVersion) {
+    $candidate = "v$declaredVersion"
+    if (-not $gitAvailable -or $tags -notcontains $candidate) {
+        $pendingTag = $candidate
+    }
+}
+
 foreach ($tag in ($referencedTags | Sort-Object -Unique)) {
-    if ($gitAvailable -and $tags -notcontains $tag) {
+    if ($gitAvailable -and $tags -notcontains $tag -and $tag -ne $pendingTag) {
         Add-Problem "CHANGELOG.md references tag '$tag', which does not exist in this repository."
+    }
+}
+
+if ($gitAvailable) {
+    foreach ($releasedVersion in $releasedVersions) {
+        $releaseTag = "v$releasedVersion"
+        if ($tags -notcontains $releaseTag -and $releaseTag -ne $pendingTag) {
+            Add-Problem "CHANGELOG.md documents released version '$releasedVersion', but tag '$releaseTag' does not exist."
+        }
     }
 }
 
@@ -178,10 +201,15 @@ if ($ReleaseVersion) {
         Add-Problem "CHANGELOG.md has no '## [$base]' section for the release being published."
     }
 } else {
-    # Source-preview state: nothing may claim a release that does not exist.
-    if ($releasedVersions.Count -gt 0 -and $gitAvailable -and $tags.Count -eq 0) {
-        Add-Problem ("CHANGELOG.md documents released version(s) $($releasedVersions -join ', ') but the repository has no tags. " +
-            'Keep the entries under [Unreleased] until a release is tagged.')
+    # A single pending section matching VersionPrefix may pass CI before its tag
+    # is created. All other released sections were checked against tags above.
+    $untaggedReleasedVersions = @($releasedVersions | Where-Object {
+            -not $gitAvailable -or $tags -notcontains "v$_"
+        })
+    if ($untaggedReleasedVersions.Count -gt 1 -or
+        ($untaggedReleasedVersions.Count -eq 1 -and $untaggedReleasedVersions[0] -ne $declaredVersion)) {
+        Add-Problem ("CHANGELOG.md documents untagged release version(s) $($untaggedReleasedVersions -join ', '). " +
+            "Only the declared VersionPrefix '$declaredVersion' may be staged while its release tag is pending.")
     }
 }
 

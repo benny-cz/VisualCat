@@ -9,8 +9,9 @@
     find the license, the third-party notices, how to launch the program, how to
     verify the download, and where to report a problem.
 
-    Both tools/package.ps1 and the release workflow call this script so a
-    maintainer packaging locally sees exactly the layout users receive.
+    Both tools/package.ps1 and the release workflow call this script so local
+    packages contain the same files users receive. Unix permissions are only
+    authoritative when the archive is built on a Unix runner.
 #>
 [CmdletBinding()]
 param(
@@ -95,7 +96,8 @@ macOS notes
 -----------
 
 This build is not signed or notarized. After verifying the checksum above,
-clear the downloaded-file quarantine:
+clear the downloaded-file quarantine. This archive contains a terminal-launched
+executable, not a Finder .app bundle:
 
   xattr -dr com.apple.quarantine .
   chmod +x $executable
@@ -104,6 +106,10 @@ clear the downloaded-file quarantine:
     @"
 Linux notes
 -----------
+
+This release is a tarball, not a distribution package. A graphical X11/XWayland
+session, fonts, and the platform equivalents of libX11, libICE, libSM, and
+fontconfig are required. See the support matrix below for package names.
 
 Restore the executable bit if your extraction tool dropped it:
 

@@ -6,7 +6,8 @@
 .DESCRIPTION
     Every published directory receives LICENSE, THIRD-PARTY-NOTICES.md, and a
     README.txt through tools/stage-release-notices.ps1, so a maintainer
-    packaging locally sees exactly what a user extracts.
+    packaging locally sees the same file layout a user extracts. Unix mode bits
+    are authoritative only when the archive is created on Unix.
 
     With -Archive, the script also produces the release archives (zip for
     Windows, tar.gz elsewhere) and verifies each one with
@@ -37,6 +38,10 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repository = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$temporary = Join-Path $repository ".tmp/package/$PID"
+New-Item -ItemType Directory -Path $temporary -Force | Out-Null
+$env:TEMP = $temporary
+$env:TMP = $temporary
 
 # [Path]::GetFullPath resolves against the process directory, which is not
 # necessarily PowerShell's current location.
@@ -69,6 +74,13 @@ $hostRid = if ($IsWindows) {
     if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq 'Arm64') { 'osx-arm64' } else { 'osx-x64' }
 } else {
     'linux-x64'
+}
+
+$systemTar = if ($IsWindows) { Join-Path $env:SystemRoot 'System32\tar.exe' }
+$tarCommand = if ($systemTar -and (Test-Path -LiteralPath $systemTar -PathType Leaf)) {
+    $systemTar
+} else {
+    (Get-Command tar -ErrorAction Stop).Source
 }
 
 foreach ($rid in $Runtime) {
@@ -116,9 +128,16 @@ foreach ($rid in $Runtime) {
         } else {
             $archivePath = Join-Path $packages "$baseName.tar.gz"
             Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
-            tar -C $destination -czf $archivePath .
-            if ($LASTEXITCODE -ne 0) {
-                throw "Archiving failed for $($component.Name) / $rid."
+            # Use a relative archive filename. GNU tar otherwise treats a
+            # Windows drive-qualified -f path as a remote host:path target.
+            Push-Location $packages
+            try {
+                & $tarCommand -C $destination -czf ([System.IO.Path]::GetFileName($archivePath)) .
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Archiving failed for $($component.Name) / $rid."
+                }
+            } finally {
+                Pop-Location
             }
         }
 

@@ -54,6 +54,12 @@ if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
 }
 
 $isWindowsRuntime = $Runtime -eq 'win-x64'
+$systemTar = if ($IsWindows) { Join-Path $env:SystemRoot 'System32\tar.exe' }
+$tarCommand = if ($systemTar -and (Test-Path -LiteralPath $systemTar -PathType Leaf)) {
+    $systemTar
+} else {
+    (Get-Command tar -ErrorAction Stop).Source
+}
 $executableName = switch ($Component) {
     'Desktop' { if ($isWindowsRuntime) { 'VisualCat.exe' } else { 'VisualCat' } }
     'Cli' { if ($isWindowsRuntime) { 'vcat.exe' } else { 'vcat' } }
@@ -70,9 +76,16 @@ if ($archivePath.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)) {
         $zip.Dispose()
     }
 } else {
-    $entries = @(tar -tzf $archivePath)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not list entries of '$archivePath'."
+    # GNU tar treats a Windows drive-qualified archive operand as host:path.
+    # Run beside the archive and pass only its relative leaf name.
+    Push-Location (Split-Path -Parent $archivePath)
+    try {
+        $entries = @(& $tarCommand -tzf (Split-Path -Leaf $archivePath))
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not list entries of '$archivePath'."
+        }
+    } finally {
+        Pop-Location
     }
 }
 
@@ -103,15 +116,21 @@ if ($topLevel -notcontains $executableName) {
 
 # --- extracted contents --------------------------------------------------
 
-$extractRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("visualcat-verify-" + [Guid]::NewGuid().ToString('N'))
+$scratchRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\.tmp\archive-verification'))
+$extractRoot = Join-Path $scratchRoot ([Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
 try {
     if ($archivePath.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)) {
         Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot -Force
     } else {
-        tar -xzf $archivePath -C $extractRoot
-        if ($LASTEXITCODE -ne 0) {
-            throw "Extraction of '$archivePath' failed."
+        Push-Location (Split-Path -Parent $archivePath)
+        try {
+            & $tarCommand -xzf (Split-Path -Leaf $archivePath) -C $extractRoot
+            if ($LASTEXITCODE -ne 0) {
+                throw "Extraction of '$archivePath' failed."
+            }
+        } finally {
+            Pop-Location
         }
     }
 

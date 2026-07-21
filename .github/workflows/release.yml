@@ -24,6 +24,8 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       is-tagged-release: ${{ steps.version.outputs.is-tagged-release }}
+      is-prerelease: ${{ steps.version.outputs.is-prerelease }}
+      desktop-matrix: ${{ steps.targets.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -40,7 +42,9 @@ jobs:
           $isTag = '${{ github.ref_type }}' -eq 'tag'
           if ($isTag) {
             $ref = '${{ github.ref_name }}'
-            if ($ref -notmatch '^v(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$') {
+            $identifier = '(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)'
+            $tagPattern = "^v(?<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-$identifier(?:\.$identifier)*)?)$"
+            if ($ref -notmatch $tagPattern) {
               throw "Tag '$ref' is not a release version. Use 'vMAJOR.MINOR.PATCH' with an optional prerelease suffix."
             }
             $version = $Matches['version']
@@ -50,9 +54,41 @@ jobs:
             $version = '2.0.0-preview.${{ github.run_number }}'
           }
 
+          $isPrerelease = $isTag -and $version.Contains('-')
           "version=$version" >> $env:GITHUB_OUTPUT
           "is-tagged-release=$($isTag.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "Release version: ``$version`` (tagged release: $isTag)" >> $env:GITHUB_STEP_SUMMARY
+          "is-prerelease=$($isPrerelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "Release version: ``$version`` (tagged release: $isTag; prerelease: $isPrerelease)" >> $env:GITHUB_STEP_SUMMARY
+
+          if ($isTag) {
+            git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+            if ($LASTEXITCODE -ne 0) { throw 'Fetching origin/main failed.' }
+            git merge-base --is-ancestor $env:GITHUB_SHA refs/remotes/origin/main
+            if ($LASTEXITCODE -ne 0) {
+              throw "Tagged release commit $env:GITHUB_SHA is not reachable from main. Merge and pass CI on main before tagging."
+            }
+          }
+      - name: Resolve desktop release targets
+        id: targets
+        shell: pwsh
+        run: |
+          $targets = @(Get-Content -Raw -LiteralPath .github/release-targets.json | ConvertFrom-Json)
+          if ($targets.Count -eq 0) { throw 'The desktop release target list is empty.' }
+
+          $duplicateRids = @($targets | Group-Object rid | Where-Object Count -ne 1 | Select-Object -ExpandProperty Name)
+          if ($duplicateRids) { throw "Duplicate desktop release RIDs: $($duplicateRids -join ', ')" }
+
+          foreach ($target in $targets) {
+            if ($target.rid -notmatch '^(win|linux|osx)-[a-z0-9]+$') { throw "Invalid release RID '$($target.rid)'." }
+            if ($target.archive -notin @('zip', 'tar.gz')) { throw "Invalid archive type '$($target.archive)' for $($target.rid)." }
+            if (($target.rid -like 'win-*') -ne ($target.archive -eq 'zip')) {
+              throw "Release target '$($target.rid)' has inconsistent archive type '$($target.archive)'."
+            }
+          }
+
+          $matrix = @{ include = $targets } | ConvertTo-Json -Depth 5 -Compress
+          "matrix=$matrix" >> $env:GITHUB_OUTPUT
+          "Desktop targets: $($targets.rid -join ', ')" >> $env:GITHUB_STEP_SUMMARY
       - name: Restore documented desktop solution
         run: dotnet restore VisualCat.Desktop.slnx
       - name: Verify formatting
@@ -82,26 +118,9 @@ jobs:
     needs: preflight
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            rid: win-x64
-            archive: zip
-            # Only run an archived binary on a runner that can actually execute
-            # it; cross-architecture execution is not guaranteed.
-            executable: true
-          - os: ubuntu-latest
-            rid: linux-x64
-            archive: tar.gz
-            executable: true
-          - os: macos-15
-            rid: osx-arm64
-            archive: tar.gz
-            executable: true
-          - os: macos-15
-            rid: osx-x64
-            archive: tar.gz
-            executable: false
+      # The same checked-in target list also drives the expected release assets
+      # in the publish job, so adding a RID cannot drift between two lists.
+      matrix: ${{ fromJSON(needs.preflight.outputs.desktop-matrix) }}
     runs-on: ${{ matrix.os }}
     env:
       RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
@@ -130,6 +149,10 @@ jobs:
           ./tools/stage-release-notices.ps1 -Destination artifacts/cli -Component Cli -Version $env:RELEASE_VERSION -Runtime '${{ matrix.rid }}'
       - name: Archive packages
         shell: pwsh
+        env:
+          # Prevent macOS tar from emitting AppleDouble ._ files for extended
+          # attributes attached to published binaries.
+          COPYFILE_DISABLE: 1
         run: |
           $desktop = "VisualCat-Desktop-${{ matrix.rid }}-v$env:RELEASE_VERSION"
           $cli = "VisualCat-CLI-${{ matrix.rid }}-v$env:RELEASE_VERSION"
@@ -170,6 +193,9 @@ jobs:
     runs-on: windows-latest
     env:
       RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+      # GitHub increments this monotonically for this workflow. It lets an APK
+      # from a later stable run upgrade an installed release-candidate APK.
+      ANDROID_VERSION_CODE: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
@@ -200,7 +226,7 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          dotnet publish src/VisualCat.Android/VisualCat.Android.csproj --configuration Release --no-restore --output artifacts/android -p:Version=$env:RELEASE_VERSION -p:AndroidPackageFormat=apk -p:AndroidKeyStore=true -p:AndroidSigningKeyStore=$env:ANDROID_KEYSTORE_PATH -p:AndroidSigningStorePass=$env:ANDROID_KEYSTORE_PASSWORD -p:AndroidSigningKeyAlias=$env:ANDROID_KEY_ALIAS -p:AndroidSigningKeyPass=$env:ANDROID_KEY_PASSWORD
+          dotnet publish src/VisualCat.Android/VisualCat.Android.csproj --configuration Release --no-restore --output artifacts/android -p:Version=$env:RELEASE_VERSION -p:ApplicationDisplayVersion=$env:RELEASE_VERSION -p:ApplicationVersion=$env:ANDROID_VERSION_CODE -p:AndroidPackageFormat=apk -p:AndroidKeyStore=true -p:AndroidSigningKeyStore=$env:ANDROID_KEYSTORE_PATH -p:AndroidSigningStorePass=$env:ANDROID_KEYSTORE_PASSWORD -p:AndroidSigningKeyAlias=$env:ANDROID_KEY_ALIAS -p:AndroidSigningKeyPass=$env:ANDROID_KEY_PASSWORD
           if ($LASTEXITCODE -ne 0) { throw 'Android publish failed.' }
           $apk = Get-ChildItem -Path artifacts/android -Recurse -Filter '*-Signed.apk' | Select-Object -First 1
           if (-not $apk) { throw 'The Android build did not produce a signed APK.' }
@@ -302,18 +328,17 @@ jobs:
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          ANDROID_INCLUDED: ${{ needs.android.result == 'success' }}
         run: |
-          $expected = @(
-            "VisualCat-Desktop-win-x64-v$env:RELEASE_VERSION.zip"
-            "VisualCat-CLI-win-x64-v$env:RELEASE_VERSION.zip"
-            "VisualCat-Desktop-linux-x64-v$env:RELEASE_VERSION.tar.gz"
-            "VisualCat-CLI-linux-x64-v$env:RELEASE_VERSION.tar.gz"
-            "VisualCat-Desktop-osx-x64-v$env:RELEASE_VERSION.tar.gz"
-            "VisualCat-CLI-osx-x64-v$env:RELEASE_VERSION.tar.gz"
-            "VisualCat-Desktop-osx-arm64-v$env:RELEASE_VERSION.tar.gz"
-            "VisualCat-CLI-osx-arm64-v$env:RELEASE_VERSION.tar.gz"
-            "VisualCat-sbom-v$env:RELEASE_VERSION.cdx.json"
-          )
+          $targets = @(Get-Content -Raw -LiteralPath .github/release-targets.json | ConvertFrom-Json)
+          $expected = @($targets | ForEach-Object {
+              "VisualCat-Desktop-$($_.rid)-v$env:RELEASE_VERSION.$($_.archive)"
+              "VisualCat-CLI-$($_.rid)-v$env:RELEASE_VERSION.$($_.archive)"
+            })
+          $expected += "VisualCat-sbom-v$env:RELEASE_VERSION.cdx.json"
+          if ($env:ANDROID_INCLUDED -eq 'true') {
+            $expected += "VisualCat-Android-v$env:RELEASE_VERSION.apk"
+          }
           $present = @(Get-ChildItem -LiteralPath dist -File | Select-Object -ExpandProperty Name)
           $missing = $expected | Where-Object { $present -notcontains $_ }
           if ($missing) { throw "The release is missing: $($missing -join ', ')" }
@@ -332,23 +357,26 @@ jobs:
           name: release-assets
           path: dist/*
           if-no-files-found: error
+      - name: Render versioned release notes
+        if: needs.preflight.outputs.is-tagged-release == 'true'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: ./tools/render-release-notes.ps1 -Version $env:RELEASE_VERSION -Destination release-notes.md
       - name: Attest build provenance
         if: needs.preflight.outputs.is-tagged-release == 'true'
-        uses: actions/attest-build-provenance@78e6cbd37d0ac1a40113c04f2037dacf1ea3f12e # v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
-          subject-path: |
-            dist/*.zip
-            dist/*.tar.gz
-            dist/*.nupkg
-            dist/*.apk
+          subject-path: dist/*
       - name: Publish GitHub release
         if: needs.preflight.outputs.is-tagged-release == 'true'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           files: dist/*
-          body_path: docs/RELEASE-NOTES.md
+          body_path: release-notes.md
           generate_release_notes: true
           fail_on_unmatched_files: true
+          prerelease: ${{ needs.preflight.outputs.is-prerelease == 'true' }}
       - name: Publish .NET global tool to NuGet
         if: needs.preflight.outputs.is-tagged-release == 'true'
         shell: pwsh

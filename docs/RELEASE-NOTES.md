@@ -1,4 +1,7 @@
-# VisualCat v2 release notes
+# VisualCat v{{VERSION}} release notes
+
+The version-specific source history is recorded in
+[CHANGELOG.md at tag v{{VERSION}}](https://github.com/benny-cz/VisualCat/blob/v{{VERSION}}/CHANGELOG.md).
 
 VisualCat release assets are self-contained. Choose the desktop or CLI archive
 matching your operating system and CPU. Releases also include a signed Android
@@ -37,7 +40,8 @@ Alongside the application, every desktop and CLI archive contains:
   vulnerability.
 
 Each release also carries a CycloneDX SBOM (`VisualCat-sbom-v*.cdx.json`)
-listing every shipped component and its license.
+covering resolved packages in the desktop solution. It does not enumerate the
+embedded self-contained .NET runtime or Android-only dependencies.
 
 ## Desktop packages
 
@@ -45,16 +49,20 @@ Desktop packages are currently unsigned.
 
 - **Windows:** extract the ZIP and run `VisualCat.exe`. If SmartScreen warns,
   choose **More info → Run anyway** after verifying the checksum.
-- **macOS:** extract the archive, then remove the downloaded-file quarantine
-  after verifying the checksum:
+- **macOS:** the download is a bare command-line-launched executable, not a
+  Finder `.app` bundle, and is neither signed nor notarized. Extract the archive,
+  then remove the downloaded-file quarantine after verifying the checksum:
 
   ```shell
   xattr -dr com.apple.quarantine VisualCat
   ./VisualCat
   ```
 
-- **Linux:** extract the archive, preserve or restore the executable bit, then
-  launch it:
+- **Linux:** only a tarball is provided—there is no `.deb`, `.rpm`, AppImage,
+  Flatpak, or desktop-menu entry. Extract the archive, preserve or restore the
+  executable bit, install the native dependencies listed in the
+  [support matrix](https://github.com/benny-cz/VisualCat/blob/main/docs/SUPPORT.md),
+  then launch it:
 
   ```shell
   chmod +x VisualCat
@@ -74,8 +82,9 @@ it from the device's file manager after allowing installs from that source, or:
 adb install VisualCat-Android-*.apk
 ```
 
-Normal Android applications can usually read only their own logs. See
-[`SUPPORT.md`](SUPPORT.md) for the optional `READ_LOGS` grant and current
-capture limitations.
+Normal Android applications can usually read only their own logs. See the
+[support matrix](https://github.com/benny-cz/VisualCat/blob/main/docs/SUPPORT.md)
+for the optional `READ_LOGS` grant and current capture limitations. Physical-
+device validation and long-running ADB soak testing remain manual release gates.
 
 No VisualCat build sends telemetry or uploads log content.

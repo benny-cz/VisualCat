@@ -5,8 +5,8 @@
 .DESCRIPTION
     Composes the checks that already exist rather than reimplementing them:
     formatting, build, tests, CLI help, documentation and version consistency,
-    vulnerable packages, packaging with the notice files users receive, and a
-    secret scan.
+    vulnerable packages, packaging with the notice files users receive, a
+    CycloneDX SBOM and license-policy review, and a secret scan.
 
     The script is read-only with respect to the repository: it never tags,
     pushes, publishes, or rewrites anything. Output goes to a scratch directory
@@ -28,7 +28,7 @@ param(
     [switch]$ScanHistory,
 
     # Stages to skip, for iterating quickly on one area.
-    [ValidateSet('Format', 'Build', 'Test', 'Cli', 'Docs', 'Vulnerable', 'Package', 'Secrets')]
+    [ValidateSet('Format', 'Build', 'Test', 'Cli', 'Docs', 'Vulnerable', 'Package', 'Sbom', 'Secrets')]
     [string[]]$Skip = @(),
 
     [string]$OutputRoot = (Join-Path $PSScriptRoot '..\artifacts\verify')
@@ -40,6 +40,13 @@ Set-StrictMode -Version Latest
 $repository = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $solution = Join-Path $repository 'VisualCat.Desktop.slnx'
 $output = [System.IO.Path]::GetFullPath($OutputRoot)
+$temporary = Join-Path $output 'temp'
+New-Item -ItemType Directory -Path $temporary -Force | Out-Null
+# Some service and sandbox shells inherit a system temp directory they cannot
+# write. Child dotnet, MSBuild, archive, and scanning processes all receive the
+# dedicated ignored scratch directory owned by this preflight process.
+$env:TEMP = $temporary
+$env:TMP = $temporary
 $results = [System.Collections.Generic.List[object]]::new()
 $failed = $null
 
@@ -134,6 +141,12 @@ Invoke-Stage 'Docs' {
     Invoke-Native 'verify-docs.ps1' {
         & (Join-Path $PSScriptRoot 'verify-docs.ps1')
     }
+    Invoke-Native 'render-release-notes.ps1' {
+        New-Item -ItemType Directory -Path $output -Force | Out-Null
+        & (Join-Path $PSScriptRoot 'render-release-notes.ps1') `
+            -Version '2.0.0-preview.local' `
+            -Destination (Join-Path $output 'release-notes.md')
+    }
 }
 
 Invoke-Stage 'Vulnerable' {
@@ -164,6 +177,13 @@ Invoke-Stage 'Package' {
 
     Invoke-Native 'package.ps1 -Archive' {
         & (Join-Path $PSScriptRoot 'package.ps1') -Runtime $runtimes -OutputRoot (Join-Path $output 'packages') -Archive
+    }
+}
+
+Invoke-Stage 'Sbom' {
+    Invoke-Native 'generate-sbom.ps1' {
+        & (Join-Path $PSScriptRoot 'generate-sbom.ps1') `
+            -OutputRoot (Join-Path $output 'sbom')
     }
 }
 

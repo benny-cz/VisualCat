@@ -9,7 +9,8 @@ pwsh ./tools/verify-public-release.ps1 -AllRuntimes -ScanHistory
 This answers "is this commit mechanically ready to package?" It composes the
 existing checks — formatting, Release build, tests, CLI help, documentation and
 version consistency, vulnerable packages, packaging with the notice files users
-receive, and a secret scan — and exits non-zero naming the first failing stage.
+receive, CycloneDX SBOM generation and license review, and a secret scan — and
+exits non-zero naming the first failing stage.
 It never tags, pushes, or publishes anything.
 
 Everything below is what a machine cannot decide.
@@ -18,8 +19,8 @@ Everything below is what a machine cannot decide.
 
 These are gates, not reminders. CI enforces them on every pull request, and the
 release workflow's `preflight` job enforces them again on the exact commit being
-packaged, so a release cannot be published from a commit that would fail a pull
-request:
+packaged. Tagged commits must also be reachable from `main`, so a release cannot
+be published from an unmerged commit or one that would fail a pull request:
 
 - formatting, Release build with warnings as errors, and the full test suite on
   Windows, Linux, and macOS;
@@ -69,11 +70,18 @@ Test at least the primary Windows artifact and one Unix artifact on a clean
 machine. Confirm that checksums, file permissions, archive names, embedded
 versions, license files, and the documented launch steps agree.
 
-Reproduce the same layout locally with:
+Reproduce the same file layout locally with:
 
 ```shell
 pwsh ./tools/package.ps1 -Runtime win-x64,linux-x64,osx-x64,osx-arm64 -Archive
 ```
+
+When this runs on Windows, cross-built Unix tarballs are layout checks only:
+Windows cannot faithfully create or validate Unix executable mode bits. The
+Linux and macOS workflow runners are authoritative for permissions. Run the
+command from a normal PowerShell session; on Windows, `tools/package.ps1`
+selects the system `tar.exe` explicitly and uses a relative archive filename so
+Git for Windows' GNU `tar` cannot misread a drive-qualified path as `host:path`.
 
 Keep a short release record noting any item intentionally deferred, especially
 code signing, notarization, physical Android testing, and soak tests.
@@ -81,6 +89,14 @@ code signing, notarization, physical Android testing, and soak tests.
 Tag only after a rehearsal you were satisfied with. A tag starts publication and
 should represent artifacts that are ready to keep available; do not create one to
 make a badge green.
+
+For the stable release, promote the current changelog entries to the dated
+`## [MAJOR.MINOR.PATCH]` section and merge that commit before tagging it.
+`tools/verify-docs.ps1` permits exactly the declared `VersionPrefix` to be staged
+as the pending release while its tag does not yet exist; older released sections
+and tag links remain checked. After CI is green on that commit, create the
+annotated tag on the same commit and push it. This avoids an intentionally red
+branch build and ensures the tag points at a commit already tested on `main`.
 
 ## First public release only
 
@@ -201,4 +217,6 @@ the GitHub release for inspection and manual publication.
 
 Desktop signing, macOS notarization, store submission, physical-device
 validation, and multi-hour soak gates require release infrastructure or hardware
-and must be recorded explicitly when deferred.
+and must be recorded explicitly when deferred. The published CycloneDX SBOM
+covers the desktop solution's resolved packages; it does not enumerate the
+embedded .NET runtime or Android-only dependency graph.

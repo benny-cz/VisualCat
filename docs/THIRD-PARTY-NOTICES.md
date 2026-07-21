@@ -31,8 +31,10 @@ projects. This summary is provided for convenience and for the explanations an
 automated inventory cannot express; the license text distributed with each
 component is authoritative.
 
-The complete machine-generated inventory for a given build is the CycloneDX
-SBOM attached to each release. Reproduce it with:
+The machine-generated inventory of resolved desktop-solution packages for a
+given build is the CycloneDX SBOM attached to each release. It does not enumerate
+the embedded self-contained .NET runtime or Android-only dependencies. Reproduce
+it with:
 
 ```shell
 pwsh ./tools/generate-sbom.ps1

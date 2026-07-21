@@ -30,6 +30,10 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repository = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$temporary = Join-Path $repository ".tmp/sbom/$PID"
+New-Item -ItemType Directory -Path $temporary -Force | Out-Null
+$env:TEMP = $temporary
+$env:TMP = $temporary
 
 # [Path]::GetFullPath resolves against the process directory, which is not
 # necessarily PowerShell's current location.
@@ -56,14 +60,20 @@ if ($ExistingSbom) {
     $fileName = "VisualCat-sbom-v$Version.cdx.json"
     $sbomPath = Join-Path $output $fileName
 
-    if (-not (Get-Command dotnet-CycloneDX -ErrorAction SilentlyContinue)) {
-        dotnet tool install --global CycloneDX --version $ToolVersion
+    # Install into a version-specific repository scratch path and invoke the
+    # shim directly. This neither depends on the global tool PATH nor silently
+    # reuses a different globally installed version.
+    $toolRoot = Join-Path $repository ".tmp/tools/cyclonedx/$ToolVersion"
+    $toolExecutable = Join-Path $toolRoot "dotnet-CycloneDX$(if ($IsWindows) { '.exe' })"
+    if (-not (Test-Path -LiteralPath $toolExecutable -PathType Leaf)) {
+        New-Item -ItemType Directory -Path $toolRoot -Force | Out-Null
+        dotnet tool install CycloneDX --tool-path $toolRoot --version $ToolVersion
         if ($LASTEXITCODE -ne 0) {
             throw "Installing the CycloneDX tool $ToolVersion failed."
         }
     }
 
-    dotnet CycloneDX (Join-Path $repository 'VisualCat.Desktop.slnx') `
+    & $toolExecutable (Join-Path $repository 'VisualCat.Desktop.slnx') `
         --output $output `
         --filename $fileName `
         --output-format Json `
