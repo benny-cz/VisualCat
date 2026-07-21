@@ -3,6 +3,8 @@
 This document describes the implementation in the working tree. The historical
 product/design specification remains in [`docs/design/PLAN.md`](docs/design/PLAN.md),
 and focused decisions and trade-offs live in [`docs/adr/`](docs/adr/).
+Section references such as `§12.4` in source comments and documents point to
+numbered sections of that plan; `R##` identifiers point to its requirement list.
 
 ## Design center
 
@@ -137,7 +139,10 @@ its drawing and interaction math directly. `WorkspaceViewModel` manages tabs;
 `SessionTabViewModel` owns one snapshot, filters, viewport, query generations,
 and exported state. `MainView` supplies application chrome and platform file
 pickers, while `SessionWorkspaceView` composes the timeline, minimap, facets,
-templates, details, raw context, and session metadata panes.
+templates, details, raw context, and session metadata panes. Its code-only
+composition is split across `SessionWorkspaceView*.cs` partials by concern
+(facets, interactions, mobile layout, panes, presentation, and raw context),
+keeping each behavior area reviewable without introducing a second UI tree.
 
 Desktop and Android are thin hosts around `VisualCat.App`. Platform-specific
 files and capture implementations are registered through `PlatformSourceRegistry`

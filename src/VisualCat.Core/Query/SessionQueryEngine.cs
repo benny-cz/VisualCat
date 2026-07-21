@@ -339,12 +339,19 @@ public static class SessionQueryEngine
         return new EntryPage(identity, entries, queues.Count > 0 ? nextCursor : null, total);
     }
 
+    /// <summary>Returns the most frequent templates in a range and optional severity row.</summary>
+    /// <param name="snapshot">The immutable session snapshot to query.</param>
+    /// <param name="range">The half-open time range to rank.</param>
+    /// <param name="filter">The active filter constraints.</param>
+    /// <param name="top">The maximum number of summaries to return.</param>
+    /// <param name="queryGeneration">The caller generation stamped on query identity.</param>
     /// <param name="level">
     /// Restricts the ranking to one severity row. It composes through the same cached
     /// <c>active AND severity</c> bitmap the heat map already built for this filter, so
     /// asking "what dominates this one cell" costs a rank walk over the cell's index
     /// range and never a fresh predicate pass over the segment (§12.3, §12.7).
     /// </param>
+    /// <param name="cancellationToken">Cancels the query.</param>
     public static IReadOnlyList<TemplateSummary> QueryTopTemplates(
         SessionSnapshot snapshot,
         TimeRange range,

@@ -1,8 +1,9 @@
 # VisualCat v2 release notes
 
 VisualCat release assets are self-contained. Choose the desktop or CLI archive
-matching your operating system and CPU, or the Android APK. Verify the download
-against `SHA256SUMS` before running it.
+matching your operating system and CPU. Releases also include a signed Android
+APK when Android release signing is enabled. Verify the download against
+`SHA256SUMS` before running it.
 
 ```shell
 sha256sum -c SHA256SUMS
@@ -42,7 +43,7 @@ The CLI archives contain `vcat` (`vcat.exe` on Windows) and follow the same
 platform rules. Run `vcat --version` to include the exact build identity in a
 bug report.
 
-## Android
+## Android (when included)
 
 The Android asset is a release-key-signed APK for Android 12 or newer. Install
 it from the device's file manager after allowing installs from that source, or:

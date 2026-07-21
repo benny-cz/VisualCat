@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/benny-cz/VisualCat/actions/workflows/ci.yml/badge.svg)](https://github.com/benny-cz/VisualCat/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/benny-cz/VisualCat/actions/workflows/codeql.yml/badge.svg)](https://github.com/benny-cz/VisualCat/actions/workflows/codeql.yml)
-[![codecov](https://codecov.io/gh/benny-cz/VisualCat/graph/badge.svg)](https://codecov.io/gh/benny-cz/VisualCat)
+[![non-UI coverage](https://codecov.io/gh/benny-cz/VisualCat/graph/badge.svg)](https://codecov.io/gh/benny-cz/VisualCat)
 [![License: MIT](https://img.shields.io/github/license/benny-cz/VisualCat)](LICENSE)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)](global.json)
 [![Release](https://img.shields.io/github/v/release/benny-cz/VisualCat?display_name=tag&sort=semver)](https://github.com/benny-cz/VisualCat/releases)
@@ -25,9 +25,18 @@ or private log data is distributed._
 ### Download a release
 
 Each release provides self-contained desktop and `vcat` CLI archives for
-Windows x64, Linux x64, macOS Intel, and macOS Apple silicon, plus a signed
-Android APK. No separate .NET installation is required. Download the archive
-for your platform and verify it against `SHA256SUMS` on the release page.
+Windows x64, Linux x64, macOS Intel, and macOS Apple silicon. When Android
+release signing is configured, the same release also includes a signed APK. No
+separate .NET installation is required. Download the archive for your platform
+and verify it against `SHA256SUMS` on the release page.
+
+The CLI is also packaged as a .NET global tool. After the first package is
+published to NuGet, install it with:
+
+```shell
+dotnet tool install --global VisualCat.Cli
+vcat --version
+```
 
 Desktop packages are not yet code-signed or notarized. The
 [release notes](docs/RELEASE-NOTES.md) explain the one-time OS prompts and the
@@ -86,8 +95,9 @@ dotnet publish src/VisualCat.Cli -c Release -o ./bin/vcat
 ```
 
 On Windows PowerShell, invoke the generated executable as
-`.\bin\vcat\vcat.exe`. Run `vcat help` for all eleven commands, including ADB
-capture and deterministic test-log generation.
+`.\bin\vcat\vcat.exe`. See the [complete CLI reference](docs/CLI.md) for the
+full command and export list, including ADB capture and deterministic test-log
+generation.
 
 ## What VisualCat gives you
 
@@ -134,6 +144,10 @@ Create self-contained desktop packages locally with:
 pwsh ./tools/package.ps1 -Runtime win-x64,linux-x64,osx-x64,osx-arm64
 ```
 
+The coverage badge reports the reusable Domain, Core, Application,
+Infrastructure, and CLI layers. UI view-model and headless interaction coverage
+is still collected in CI and shown in the downloadable coverage report.
+
 ## Roadmap and non-goals
 
 Near-term work focuses on signed/notarized desktop distribution, performance at
@@ -145,6 +159,8 @@ desktop syslog formats are outside the v2 scope.
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md)
+- [CLI reference](docs/CLI.md)
+- [Keyboard and accessibility](docs/KEYBOARD.md)
 - [Session format](docs/SESSION-FORMAT.md)
 - [Security model and private reporting](docs/SECURITY.md)
 - [Privacy statement](docs/PRIVACY.md)

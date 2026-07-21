@@ -160,6 +160,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
     public async Task LoadSnapshotAsync(bool final, CancellationToken cancellationToken = default)
     {
+        var refreshUnchangedSnapshot = false;
         await _loadLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -183,82 +184,91 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     });
                 }
 
-                return;
-            }
-
-            SessionViewCatalog? restoredViews = null;
-            if (!_viewStateLoaded)
-            {
-                restoredViews = await _viewStore.LoadAsync(cancellationToken).ConfigureAwait(false);
-                _viewStateLoaded = true;
-            }
-
-            SessionSnapshot? previous = null;
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                var priorRange = _snapshot?.TimedRange;
-                previous = Interlocked.Exchange(ref _snapshot, replacement);
-                if (restoredViews is not null)
+                refreshUnchangedSnapshot = final &&
+                    _snapshot.TimedRange is not null &&
+                    (HeatMap is null || Overview is null || Statistics is null);
+                if (!refreshUnchangedSnapshot)
                 {
-                    SavedViews.Clear();
-                    foreach (var view in restoredViews.Presets)
-                    {
-                        SavedViews.Add(view.Name);
-                    }
+                    return;
+                }
+            }
 
-                    if (restoredViews.Active is { } active)
-                    {
-                        ApplyViewState(active, replacement.TimedRange);
-                    }
+            if (!refreshUnchangedSnapshot)
+            {
+                SessionViewCatalog? restoredViews = null;
+                if (!_viewStateLoaded)
+                {
+                    restoredViews = await _viewStore.LoadAsync(cancellationToken).ConfigureAwait(false);
+                    _viewStateLoaded = true;
                 }
 
-                if (replacement.TimedRange is { } sessionRange)
+                SessionSnapshot? previous = null;
+                await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    if (Viewport is null)
+                    var priorRange = _snapshot?.TimedRange;
+                    previous = Interlocked.Exchange(ref _snapshot, replacement);
+                    if (restoredViews is not null)
                     {
-                        if (FollowLatest)
+                        SavedViews.Clear();
+                        foreach (var view in restoredViews.Presets)
                         {
-                            var span = Math.Min(InitialFollowViewportUs, sessionRange.DurationUs);
+                            SavedViews.Add(view.Name);
+                        }
+
+                        if (restoredViews.Active is { } active)
+                        {
+                            ApplyViewState(active, replacement.TimedRange);
+                        }
+                    }
+
+                    if (replacement.TimedRange is { } sessionRange)
+                    {
+                        if (Viewport is null)
+                        {
+                            if (FollowLatest)
+                            {
+                                var span = Math.Min(InitialFollowViewportUs, sessionRange.DurationUs);
+                                Viewport = new TimeRange(
+                                    new InstantUs(sessionRange.EndExclusive.Value - span),
+                                    sessionRange.EndExclusive);
+                                _growInitialFollowViewport = span < InitialFollowViewportUs;
+                            }
+                            else
+                            {
+                                Viewport = sessionRange;
+                            }
+                        }
+                        else if (FollowLatest)
+                        {
+                            var span = _growInitialFollowViewport
+                                ? Math.Min(InitialFollowViewportUs, sessionRange.DurationUs)
+                                : Math.Min(Viewport.Value.DurationUs, sessionRange.DurationUs);
                             Viewport = new TimeRange(
                                 new InstantUs(sessionRange.EndExclusive.Value - span),
                                 sessionRange.EndExclusive);
                             _growInitialFollowViewport = span < InitialFollowViewportUs;
+                            HasNewData = false;
                         }
-                        else
+                        else if (replacement.Descriptor.SourceKind is
+                                     VisualCat.Domain.Sessions.SourceKind.Adb or
+                                     VisualCat.Domain.Sessions.SourceKind.Android or
+                                     VisualCat.Domain.Sessions.SourceKind.GrowingFile &&
+                                 priorRange is { } oldRange &&
+                                 sessionRange.EndExclusive > oldRange.EndExclusive &&
+                                 Viewport is { } historical &&
+                                 historical.EndExclusive < sessionRange.EndExclusive)
                         {
-                            Viewport = sessionRange;
+                            HasNewData = true;
                         }
                     }
-                    else if (FollowLatest)
-                    {
-                        var span = _growInitialFollowViewport
-                            ? Math.Min(InitialFollowViewportUs, sessionRange.DurationUs)
-                            : Math.Min(Viewport.Value.DurationUs, sessionRange.DurationUs);
-                        Viewport = new TimeRange(
-                            new InstantUs(sessionRange.EndExclusive.Value - span),
-                            sessionRange.EndExclusive);
-                        _growInitialFollowViewport = span < InitialFollowViewportUs;
-                        HasNewData = false;
-                    }
-                    else if (replacement.Descriptor.SourceKind is
-                                 VisualCat.Domain.Sessions.SourceKind.Adb or
-                                 VisualCat.Domain.Sessions.SourceKind.Android or
-                                 VisualCat.Domain.Sessions.SourceKind.GrowingFile &&
-                             priorRange is { } oldRange &&
-                             sessionRange.EndExclusive > oldRange.EndExclusive &&
-                             Viewport is { } historical &&
-                             historical.EndExclusive < sessionRange.EndExclusive)
-                    {
-                        HasNewData = true;
-                    }
-                }
 
-                Status = final
-                    ? $"Ready · {replacement.Descriptor.Counters.TimedEntries:N0} entries · snapshot {replacement.Generation}"
-                    : $"Importing · {replacement.Descriptor.Counters.TimedEntries:N0} committed · snapshot {replacement.Generation}";
-                SnapshotChanged?.Invoke(this, EventArgs.Empty);
-            });
-            previous?.Dispose();
+                    Status = final
+                        ? $"Ready · {replacement.Descriptor.Counters.TimedEntries:N0} entries · snapshot {replacement.Generation}"
+                        : $"Importing · {replacement.Descriptor.Counters.TimedEntries:N0} committed · snapshot {replacement.Generation}";
+                    SnapshotChanged?.Invoke(this, EventArgs.Empty);
+                });
+                previous?.Dispose();
+            }
         }
         finally
         {
@@ -764,6 +774,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
     public FacetState StateOf(FacetDimension dimension, FacetKey value) => StateOf(Filter, dimension, value);
 
+    /// <summary>Clears one or both directions of a facet dimension.</summary>
+    /// <param name="dimension">The facet dimension to clear.</param>
     /// <param name="exclude">
     /// <c>null</c> removes both directions; <c>false</c> removes only the includes and
     /// <c>true</c> only the excludes, so a chip drops exactly what it names.

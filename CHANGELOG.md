@@ -5,44 +5,14 @@ All notable changes to VisualCat are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Version numbers correspond to git tags and the GitHub [Releases](https://github.com/benny-cz/VisualCat/releases)
-page. Until the first release is tagged, dated entries describe the current
-baseline and **Unreleased** collects changes staged on top of it.
+page.
 
 ## [Unreleased]
-
-### Added
-- `LICENSE` (MIT), `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, a `CHANGELOG.md`, and
-  GitHub issue/PR templates.
-- Assembly and package metadata (authors, product, description, repository URL,
-  SPDX license) plus SourceLink in `Directory.Build.props`.
-- README pitch, full-resolution analysis and start-page screenshots,
-  a real-app demo loop, project branding, download guidance, and
-  CI/CodeQL/coverage/license/.NET/release badges.
-- A current implementation guide in `ARCHITECTURE.md` and a desktop-only
-  solution for contributors who do not need the Android workload.
-- Automated checksummed desktop and CLI archives, a release-key-signed APK,
-  dependency updates, CodeQL analysis, and coverage reporting.
-
-### Changed
-- Renamed `scripts/` to `samples/`; the authoritative plan now lives at
-  `docs/design/PLAN.md`.
-- Updated tests, performance instructions, sample generation, and third-party
-  notices for the new public repository layout.
-- Made synthetic fixtures byte-identical across platforms, aligned CI with the
-  documented solution-level commands, and exposed the build version in the CLI
-  and desktop start page.
-
-### Removed
-- Personal `concat*` helpers, `global.json.old`, three superseded `V2-PLAN*`
-  drafts, and the large committed log fixtures (regenerate them with
-  `tools/VisualCat.GenerateLogs`).
 
 ## [2.0.0] - 2026-07-21
 
 Initial public baseline — the greenfield .NET 10 rewrite described in
-[docs/design/PLAN.md](docs/design/PLAN.md). This entry documents the state
-captured for the first public release; the `v2.0.0` tag and downloadable
-binaries are pending.
+[docs/design/PLAN.md](docs/design/PLAN.md).
 
 ### Added
 - Span-oriented parsers for `threadtime`, `time`, `brief`, `long`, and `epoch`
@@ -65,6 +35,12 @@ binaries are pending.
   companion.
 - The `vcat` CLI, seeded log generator, verification tool, test suite, and
   benchmark harness.
+- Project branding, screenshots, an animated product demo, and platform-specific
+  download and verification guidance.
+- A contributor-friendly desktop solution that does not require the Android
+  workload, plus a current implementation guide in `ARCHITECTURE.md`.
+- Automated checksummed desktop and CLI archives, optional release-key-signed
+  Android packages, CodeQL analysis, and per-layer coverage reporting.
 - A written [security model](docs/SECURITY.md), [privacy statement](docs/PRIVACY.md),
   [support matrix](docs/SUPPORT.md), [session-format spec](docs/SESSION-FORMAT.md),
   and 18 architecture decision records.

@@ -452,19 +452,16 @@ public sealed class SessionCoordinator
             }
         }
 
-        /// <summary>
-        /// Resolves and mines a whole ordered batch ahead of the commit walk, or returns
-        /// null when the batch must be handled entry by entry (mining disabled, or a long
-        /// format whose messages are assembled at commit time).
-        /// </summary>
-        /// <remarks>
-        /// Timestamps are resolved here rather than during the walk because a template
-        /// records the first and last instant it was seen at, so the miner needs the
-        /// resolved instant, not the raw token. Resolution is stateful — year inference,
-        /// rollover, and out-of-order detection all depend on the entries before it — so
-        /// it runs over the batch in the same source order the commit walk will use,
-        /// which makes the two indistinguishable in their effect on resolver state.
-        /// </remarks>
+        // Resolves and mines a whole ordered batch ahead of the commit walk, or returns
+        // null when the batch must be handled entry by entry (mining disabled, or a long
+        // format whose messages are assembled at commit time).
+        //
+        // Timestamps are resolved here rather than during the walk because a template
+        // records the first and last instant it was seen at, so the miner needs the
+        // resolved instant, not the raw token. Resolution is stateful — year inference,
+        // rollover, and out-of-order detection all depend on the entries before it — so
+        // it runs over the batch in the same source order the commit walk will use,
+        // which makes the two indistinguishable in their effect on resolver state.
         PreparedEntry[]? MineBatch(ParsedBatch batch)
         {
             if (!settings.TemplateSettings.Enabled || detection.PrimaryFormat == LogcatFormat.LongFormat)

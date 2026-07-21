@@ -10,7 +10,8 @@
 - [ ] File, portable, growing-file, partial, degraded, and incompatible sessions are manually exercised.
 - [ ] Keyboard, contrast, text scaling, focus, and screen-reader labels are reviewed.
 - [ ] Windows package is signed; macOS package is signed/notarized; Linux packages are validated.
-- [ ] Desktop and CLI archives, the signed APK, and `SHA256SUMS` are attached to the GitHub release.
+- [ ] Desktop and CLI archives, the CLI `.nupkg`, and `SHA256SUMS` are attached to the GitHub release.
+- [ ] If Android release signing is enabled, the signed APK is attached to the GitHub release.
 - [ ] Android own-app and granted full-device modes are tested on physical hardware.
 - [ ] Privacy, support matrix, known limits, migration policy, and third-party notices are current.
 
@@ -19,7 +20,8 @@ to reproduce desktop artifacts. The release workflow emits versioned desktop
 and CLI archives, generates checksums, and publishes them from a `v*` tag.
 
 Android releases are installable APKs signed by a persistent release key. Set
-these GitHub Actions repository secrets before tagging:
+the `ANDROID_RELEASE_ENABLED` repository variable to `true` and configure these
+GitHub Actions repository secrets before tagging:
 
 - `ANDROID_KEYSTORE_BASE64` — base64-encoded keystore bytes;
 - `ANDROID_KEYSTORE_PASSWORD`;
@@ -29,6 +31,11 @@ these GitHub Actions repository secrets before tagging:
 The workflow fails closed if any signing value is absent and never uploads an
 unsigned or ephemeral debug-signed Android package. Back up the keystore and
 passwords outside GitHub; losing the key prevents users from upgrading an
-installed APK. Desktop signing, macOS notarization, store submission,
+installed APK. Without `ANDROID_RELEASE_ENABLED`, the workflow deliberately
+ships desktop, CLI, NuGet, and checksum assets without an APK.
+
+Set `NUGET_API_KEY` to publish the `VisualCat.Cli` global-tool package to
+nuget.org. Without it, the `.nupkg` is still built, checksummed, and attached to
+the GitHub release for inspection and manual publication. Desktop signing, macOS notarization, store submission,
 physical-device validation, and multi-hour soak gates require release
 infrastructure or hardware and must be recorded explicitly when deferred.

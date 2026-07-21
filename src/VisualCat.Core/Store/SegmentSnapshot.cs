@@ -131,6 +131,7 @@ public sealed class SegmentSnapshot : IDisposable
     /// Lower bound restricted to <c>[from, Count)</c>, located by galloping outward from
     /// <paramref name="from"/> instead of bisecting the whole segment.
     /// </summary>
+    /// <param name="timestampUs">The first timestamp value the result may equal or exceed.</param>
     /// <param name="from">
     /// An index known to satisfy <c>timestamp[j] &lt; timestampUs</c> for every
     /// <c>j &lt; from</c> — in practice the bound returned for the previous, smaller

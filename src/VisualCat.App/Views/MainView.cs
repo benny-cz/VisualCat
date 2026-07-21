@@ -1285,6 +1285,22 @@ public sealed class MainView : UserControl, IAsyncDisposable
     private void OnKeyDown(object? sender, KeyEventArgs eventArgs)
     {
         _ = sender;
+        var control = eventArgs.KeyModifiers.HasFlag(KeyModifiers.Control);
+        var shift = eventArgs.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        if (control && eventArgs.Key == Key.O)
+        {
+            _ = shift ? OpenSessionAsync() : OpenLogAsync();
+            eventArgs.Handled = true;
+            return;
+        }
+
+        if ((_tabs.SelectedItem as TabItem)?.Content is SessionWorkspaceView workspace &&
+            workspace.TryHandleShortcut(eventArgs))
+        {
+            eventArgs.Handled = true;
+            return;
+        }
+
         if (eventArgs.Key == Key.E && eventArgs.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
             _ = ExportAsync();

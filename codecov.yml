@@ -1,0 +1,16 @@
+# The badge measures the reusable engine and service layers. The Avalonia view
+# assembly is exercised separately by view-model and headless interaction tests;
+# including generated/composition-heavy UI code would obscure engine coverage.
+ignore:
+  - "src/VisualCat.App/**"
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: auto
+        threshold: 1%

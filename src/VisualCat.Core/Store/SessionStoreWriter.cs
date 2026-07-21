@@ -409,6 +409,9 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         return true;
     }
 
+    /// <summary>Serializes JSON to a temporary file and atomically publishes it.</summary>
+    /// <param name="path">The final manifest path.</param>
+    /// <param name="value">The value to serialize.</param>
     /// <param name="durable">
     /// Whether to bypass the OS write cache. Only the finalized manifest needs that
     /// guarantee. A progressive manifest is explicitly marked unfinalized and is
@@ -417,6 +420,7 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     /// commit thread, which was over half the wall time of a large import.
     /// Atomicity comes from the temporary-file rename either way (§11.7).
     /// </param>
+    /// <param name="cancellationToken">Cancels serialization and publication.</param>
     private static async Task AtomicJsonWriteAsync<T>(
         string path,
         T value,

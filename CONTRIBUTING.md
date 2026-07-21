@@ -62,9 +62,9 @@ Reproducible reference measurements live in [docs/PERFORMANCE.md](docs/PERFORMAN
   suppressing it, and justify any unavoidable suppression in the PR.
 - Builds are deterministic; keep them that way (no machine- or time-dependent
   output).
-- Match the surrounding code: the layering above is deliberate, and the design
-  implemented structure is described in [ARCHITECTURE.md](ARCHITECTURE.md), and
-  rationale for major decisions is captured in the [ADRs](docs/adr/).
+- Match the surrounding code: the layering above is deliberate, the implemented
+  structure is described in [ARCHITECTURE.md](ARCHITECTURE.md), and rationale
+  for major decisions is captured in the [ADRs](docs/adr/).
 
 ## Pull requests
 

@@ -1,7 +1,9 @@
 # Performance baseline
 
-Baseline date: 2026-07-20 (see the two optimization passes below; the table immediately
-under this heading is the 2026-07-19 baseline the later pass is measured against).
+Section references such as `§12.4` point to numbered sections of the historical
+[`design/PLAN.md`](design/PLAN.md); `R##` identifiers point to its requirement list.
+
+## Initial public baseline — 2026-07-19
 
 Reference machine:
 
@@ -48,7 +50,7 @@ the `Depth` and `MaximumChildren` settings that the previous flat cluster list i
 which is required by §9.3 and produces finer clusters (2,651 vs 1,833 on this corpus).
 That conformance was preferred over the throughput it costs; total ingest still improved.
 
-## Optimization pass, 2026-07-20
+## Current public baseline — 2026-07-20
 
 Same harness, same corpora, same machine as the table above, so the numbers are directly
 comparable to the 2026-07-19 baseline:
@@ -90,6 +92,14 @@ Correctness remains a hard gate. Until distributions exist on controlled CI agen
 - at least 120,000 full-pipeline lines/s on the seeded one-million-line corpus;
 - no more than 10 ms average for its 2,000-column full-view heat map;
 - no statistically meaningful regression beyond 20% from a rolling controlled-agent baseline.
+
+The scheduled and `performance`-labelled
+[`performance.yml`](../.github/workflows/performance.yml) workflow runs a
+100,000-line deterministic smoke corpus on GitHub-hosted Linux. Hosted runners
+are intentionally given much wider absolute floors (10,000 lines/s and 100 ms)
+than the reference machine because their CPU and storage are shared and vary
+between runs. This catches catastrophic regressions and preserves a JSON result
+artifact; it does not replace the strict million-line reference-machine gates.
 
 The original 1.5-million-lines/s full-pipeline target was not supported by measurement: it exceeds the observed safe, mining-enabled pipeline by roughly 20× even on a 12-core NVMe workstation. ADR 0018 therefore replaces it as a release gate with the measured targets above. It remains an optimization direction, not a claim. Larger 10 M / 40 M scale runs remain controlled benchmark jobs rather than source-controlled fixtures.
 

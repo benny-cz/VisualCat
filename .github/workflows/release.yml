@@ -33,8 +33,8 @@ jobs:
             archive: tar.gz
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
           cache: true
@@ -73,17 +73,21 @@ jobs:
             tar -C artifacts/cli -czf "packages/$cli.tar.gz" .
             if ($LASTEXITCODE -ne 0) { throw 'CLI archive failed.' }
           }
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: packages-${{ matrix.rid }}
           path: packages/*
           if-no-files-found: error
 
   android:
+    # Android is opt-in so missing signing credentials cannot block desktop,
+    # CLI, checksum, and NuGet artifacts. Enabling the job still fails closed
+    # unless every persistent signing secret is present.
+    if: vars.ANDROID_RELEASE_ENABLED == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           global-json-file: global.json
           workloads: android
@@ -125,20 +129,50 @@ jobs:
           if (-not $apk) { throw 'The Android build did not produce a signed APK.' }
           New-Item -ItemType Directory -Path packages -Force | Out-Null
           Copy-Item -LiteralPath $apk.FullName -Destination "packages/VisualCat-Android-v$env:RELEASE_VERSION.apk"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: packages-android
           path: packages/*
           if-no-files-found: error
 
+  nuget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: Directory.Packages.props
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}' -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
+            $version = '2.0.0-preview.${{ github.run_number }}'
+          }
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+      - name: Pack .NET global tool
+        run: dotnet pack src/VisualCat.Cli/VisualCat.Cli.csproj --configuration Release --output packages -p:Version="$RELEASE_VERSION"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: packages-nuget
+          path: packages/*.nupkg
+          if-no-files-found: error
+
   publish:
-    needs: [desktop, android]
+    needs: [desktop, android, nuget]
+    if: >-
+      always() &&
+      needs.desktop.result == 'success' &&
+      needs.nuget.result == 'success' &&
+      (needs.android.result == 'success' || needs.android.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: packages-*
           path: dist
@@ -150,16 +184,32 @@ jobs:
             Sort-Object Name |
             ForEach-Object { "{0} *{1}" -f (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant(), $_.Name }
           $lines | Set-Content -LiteralPath dist/SHA256SUMS -Encoding utf8NoBOM
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-assets
           path: dist/*
           if-no-files-found: error
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           files: dist/*
           body_path: docs/RELEASE-NOTES.md
           generate_release_notes: true
           fail_on_unmatched_files: true
+      - name: Publish .NET global tool to NuGet
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NUGET_API_KEY)) {
+            'NuGet publication skipped because NUGET_API_KEY is not configured; the .nupkg remains attached to the GitHub release.' >> $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+          $packages = @(Get-ChildItem -LiteralPath dist -Filter '*.nupkg' -File)
+          if ($packages.Count -eq 0) { throw 'The release contains no NuGet package.' }
+          foreach ($package in $packages) {
+            dotnet nuget push $package.FullName --source 'https://api.nuget.org/v3/index.json' --api-key $env:NUGET_API_KEY --skip-duplicate
+            if ($LASTEXITCODE -ne 0) { throw "NuGet publication failed for $($package.Name)." }
+          }

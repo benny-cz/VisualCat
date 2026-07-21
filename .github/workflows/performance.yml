@@ -1,0 +1,62 @@
+name: Performance regression check
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 3 * * 3"
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'performance'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: Directory.Packages.props
+      - name: Restore benchmark path
+        run: |
+          dotnet restore src/VisualCat.Cli/VisualCat.Cli.csproj
+          dotnet restore bench/VisualCat.Benchmarks/VisualCat.Benchmarks.csproj
+      - name: Build benchmark path
+        run: |
+          dotnet build src/VisualCat.Cli/VisualCat.Cli.csproj --configuration Release --no-restore
+          dotnet build bench/VisualCat.Benchmarks/VisualCat.Benchmarks.csproj --configuration Release --no-restore
+      - name: Generate deterministic CI corpus
+        run: dotnet run --project src/VisualCat.Cli --configuration Release --no-build -- generate-test-log --output .tmp/performance-logcat.txt --lines 100000 --seed 42
+      - name: Run broad hosted-runner gate
+        run: >-
+          dotnet run --project bench/VisualCat.Benchmarks --configuration Release --no-build --
+          .tmp/performance-logcat.txt 20
+          --output .tmp/performance-result.json
+          --min-lines-per-second 10000
+          --max-heat-map-ms 100
+      - name: Publish result summary
+        shell: pwsh
+        run: |
+          $result = Get-Content -Raw -LiteralPath '.tmp/performance-result.json' | ConvertFrom-Json
+          @"
+          ## Performance smoke result
+
+          | Metric | Result | Hosted-runner gate |
+          |---|---:|---:|
+          | Full-pipeline ingest | $([Math]::Round($result.linesPerSecond).ToString('N0')) lines/s | ≥ 10,000 lines/s |
+          | 2,000-column heat map | $([Math]::Round($result.averageHeatMapMilliseconds, 2)) ms | ≤ 100 ms |
+          | Allocation | $([Math]::Round($result.bytesAllocatedPerLine, 1)) bytes/line | informational |
+          "@ >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: performance-result
+          path: .tmp/performance-result.json
+          if-no-files-found: error

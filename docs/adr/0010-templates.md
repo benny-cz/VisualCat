@@ -1,5 +1,9 @@
 # ADR 0010: Template mining
 
+Section references such as `§5.5` point to numbered sections of the historical
+[`../design/PLAN.md`](../design/PLAN.md); `R##` identifiers point to its
+requirement list.
+
 **Decision:** Use versioned Drain-style clustering with ordered masks, state keyed by tag, sequential session-local IDs, representative examples, and bounded clusters.
 
 Mining runs as the tag-sharded partition stage of §5.5 rather than inline on the commit

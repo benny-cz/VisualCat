@@ -208,4 +208,7 @@ public sealed class ShardedTemplateMiner
 /// flat array rather than one allocation per entry (§19.3).
 /// </summary>
 /// <param name="Tag">Null for outcomes that are not mined, such as meta records.</param>
+/// <param name="Message">The normalized message text to cluster.</param>
+/// <param name="Timestamp">The resolved timestamp, when one is available.</param>
+/// <param name="EntryId">The stable entry identity used for representative evidence.</param>
 public readonly record struct MinedEntry(string? Tag, string Message, InstantUs? Timestamp, long EntryId);
