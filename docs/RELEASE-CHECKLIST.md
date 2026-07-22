@@ -56,6 +56,24 @@ be published from an unmerged commit or one that would fail a pull request:
 - [ ] Components the SBOM reports without license metadata have been resolved by
       hand and explained in `docs/THIRD-PARTY-NOTICES.md`.
 
+## Release records
+
+### v2.0.0 — 2026-07-22
+
+- Published Linux x64 CLI and desktop archives passed their checksums and were
+  exercised on Ubuntu 24.04 under WSL2/WSLg. CLI indexing, verification,
+  statistics, queries, search, and export passed; the desktop completed a
+  20-second launch smoke with no missing native dependency or fatal log.
+- The published release-signed APK was tested on a Motorola edge 60 pro running
+  Android 16/API 36. The installed APK was byte-identical to the release asset,
+  cold-launched successfully, and passed both platform-restricted own-app
+  capture and an explicitly granted full-device `READ_LOGS` capture. No crash
+  or ANR was detected, and `READ_LOGS` was revoked after validation.
+- The four-hour ADB soak, accessibility review, macOS hardware validation, and
+  Windows/macOS code signing remain intentionally deferred. See the
+  [first-release plan](../FIRST-RELEASE-PLAN.md) for exact versions, hashes, and
+  observed throughput.
+
 ## Release rehearsal
 
 Run the release workflow with `workflow_dispatch` before creating the first

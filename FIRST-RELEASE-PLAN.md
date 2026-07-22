@@ -54,6 +54,33 @@ verified independently. The sections below retain the original audit evidence
 and execution rationale so future maintainers can understand why each change
 exists.
 
+Post-publication operating-system and hardware validation also completed on
+2026-07-22:
+
+- the exact published Linux desktop and CLI archives passed their release
+  checksums under Ubuntu 24.04 on WSL2. Both were executable x64 ELF binaries
+  with no missing `ldd` dependencies. The CLI reported
+  `2.0.0+c0cce515351cad5febdb437131a1649557eaff0b` and passed index, verify,
+  stats, query, search, and CSV-export workflows; the desktop remained running
+  through a 20-second WSLg smoke test without a fatal error or leaked process;
+- the exact published APK (SHA-256
+  `cfc8ee215dad5f78e88e7017830d189a251a7b8a6fe663ac9a509fc354625e05`)
+  was installed on a Motorola edge 60 pro running Android 16/API 36 after the
+  maintainer authorized removal of the old debug-signed build and its data.
+  Android reported version name `2.0.0`, version code `3`, target SDK 36, and a
+  non-debuggable package; pulling the installed base APK back from the device
+  produced the same SHA-256 hash. Cold launches completed in about 1.3 seconds
+  with no fatal exception or ANR; and
+- restricted own-app capture ingested and rendered 59 real log lines, while a
+  separately authorized `READ_LOGS` test explicitly reported full-device scope
+  and ingested roughly 1,900 lines at about 190 lines per second. The elevated
+  permission was revoked after the test and the stable app was left installed.
+
+These results close the Linux artifact and physical Android gates for this
+release. The four-hour ADB soak, accessibility review, macOS hardware testing,
+and desktop signing/notarization remain separate manual work rather than claims
+made by `v2.0.0`.
+
 ---
 
 ## 1. What the first release must produce
