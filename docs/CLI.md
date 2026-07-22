@@ -6,10 +6,13 @@ exit code `0` on success, `2` for invalid command input, `3` when verification
 finds corruption, `130` when cancelled, and `1` for other failures. Diagnostics
 go to standard error; structured results go to standard output.
 
-Install the global tool after a package is published:
+NuGet.org publication is not currently configured. Download
+`VisualCat.Cli.2.0.0.nupkg` from the
+[latest GitHub release](https://github.com/benny-cz/VisualCat/releases/latest)
+into `./packages`, then install that exact package from the local feed:
 
 ```shell
-dotnet tool install --global VisualCat.Cli
+dotnet tool install --global VisualCat.Cli --version 2.0.0 --add-source ./packages
 vcat --version
 ```
 

@@ -1,9 +1,11 @@
 # VisualCat
 
 <!-- Badge policy: only show a badge that reports real, currently available data.
-     CodeQL, Codecov, and release badges are restored by docs/RELEASE-CHECKLIST.md
-     once each has a successful public run to report. -->
+     Codecov is restored by docs/RELEASE-CHECKLIST.md only after a successful
+     public report exists for the current main commit. -->
 [![CI](https://github.com/benny-cz/VisualCat/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/benny-cz/VisualCat/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/benny-cz/VisualCat/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/benny-cz/VisualCat/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/benny-cz/VisualCat?display_name=tag&sort=semver)](https://github.com/benny-cz/VisualCat/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)](global.json)
 
@@ -17,11 +19,10 @@ lines. Processing is local, with no telemetry or log uploads.
 _The demo uses the checked-in deterministic synthetic fixture. No device-derived
 or private log data is distributed._
 
-> **Status:** source preview. Version `2.0.0` is complete and tested but has not
-> been released yet, so there are no downloads to publish and no version tag.
-> Build it from source with the quick start below. The first `v*` tag will
-> publish checksummed desktop, CLI, and NuGet artifacts automatically through
-> [GitHub Releases](https://github.com/benny-cz/VisualCat/releases).
+> **Status:** `2.0.0` is the current stable release. Download the checksummed,
+> self-contained desktop and CLI archives or the release-key-signed Android APK
+> from the [latest GitHub release](https://github.com/benny-cz/VisualCat/releases/latest),
+> or build from source with the quick start below.
 
 ## Try VisualCat
 
@@ -82,24 +83,29 @@ On Windows PowerShell, invoke the generated executable as
 full command and export list, including ADB capture and deterministic test-log
 generation.
 
-### What the first release will publish
+### Release downloads
 
-No release exists yet, so nothing listed here is downloadable today. This is what
-a `v*` tag produces. The same packaging path runs on every manual rehearsal of
-the release workflow, so the first real tag repeats an already inspected result
-rather than testing the release system for the first time:
+VisualCat `2.0.0` is available from the
+[latest release](https://github.com/benny-cz/VisualCat/releases/latest). Each
+stable `v*` tag publishes:
 
 - self-contained desktop and `vcat` CLI archives for Windows x64, Linux x64,
   macOS Intel, and macOS Apple silicon, each containing `LICENSE`,
   `THIRD-PARTY-NOTICES.md`, and a `README.txt` with launch and verification
   steps;
-- a `VisualCat.Cli` .NET global-tool package
-  (`dotnet tool install --global VisualCat.Cli`);
+- a `VisualCat.Cli` .NET global-tool `.nupkg` attached to the GitHub release;
 - a CycloneDX software bill of materials for the shipped components;
 - `SHA256SUMS` plus GitHub build provenance attestations; and
 - a release-key-signed Android APK when Android release signing is configured.
 
-Desktop packages will not be code-signed or notarized initially. The
+NuGet.org publication is not currently configured. After downloading the
+`.nupkg` into `./packages`, install that exact release from the local feed with:
+
+```shell
+dotnet tool install --global VisualCat.Cli --version 2.0.0 --add-source ./packages
+```
+
+Desktop packages are not code-signed or notarized. The
 [release notes](docs/RELEASE-NOTES.md) explain the one-time OS prompts and the
 [support matrix](docs/SUPPORT.md) records current platform limits.
 

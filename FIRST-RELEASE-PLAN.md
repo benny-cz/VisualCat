@@ -39,11 +39,20 @@ while executing the plan:
 - platform documentation now states the unsigned/notarized, bare-macOS,
   Linux-dependency, packaging-format, and SBOM coverage limitations.
 
-The full local preflight and the maintained Gitleaks history scan pass. Phases
-1–5 remain operational work: merge to `main`, provision the selected publishing
-credentials and repository settings, rehearse, publish a release candidate, and
-then publish `v2.0.0`. The sections below retain the original audit evidence and
-execution rationale so future maintainers can understand why each change exists.
+The full plan was completed on 2026-07-22. The hardening was merged to `main`,
+the repository was made public, Android release signing was enabled with an
+independently backed-up key, and NuGet.org publication was explicitly deferred
+while keeping the verified `.nupkg` on GitHub Releases. A manual rehearsal and
+the `v2.0.0-rc.1` prerelease both passed before the stable `v2.0.0` tag was
+published from commit `c0cce515351cad5febdb437131a1649557eaff0b`.
+
+The stable release workflow, main CI, and CodeQL completed successfully. The
+published checksum manifest, representative desktop and CLI archives, locally
+installed `.nupkg`, CycloneDX SBOM, Android package identity and signing
+certificate, signed-out release page, and SLSA provenance attestation were then
+verified independently. The sections below retain the original audit evidence
+and execution rationale so future maintainers can understand why each change
+exists.
 
 ---
 
