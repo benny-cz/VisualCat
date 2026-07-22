@@ -7,11 +7,12 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Version numbers correspond to git tags and the GitHub [Releases](https://github.com/benny-cz/VisualCat/releases)
 page.
 
-No version has been released yet. The entries below describe the work that the
-first tagged release will carry as `2.0.0`; until that tag exists, VisualCat is
-a source preview.
+The current stable release is `2.0.0`. The entries below describe the initial
+public baseline; ongoing work is recorded under `[Unreleased]`.
 
 ## [Unreleased]
+
+## [2.0.0] - 2026-07-22
 
 Initial public baseline — the greenfield .NET 10 rewrite described in
 [docs/design/PLAN.md](docs/design/PLAN.md).
@@ -50,4 +51,5 @@ Initial public baseline — the greenfield .NET 10 rewrite described in
   archive, a CycloneDX SBOM, build provenance attestations, and the
   `tools/verify-public-release.ps1` one-command local preflight.
 
-[Unreleased]: https://github.com/benny-cz/VisualCat/commits/main
+[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.0
