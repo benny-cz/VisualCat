@@ -1,11 +1,11 @@
 # VisualCat
 
-[![CI](https://github.com/benny-cz/VisualCat/actions/workflows/ci.yml/badge.svg)](https://github.com/benny-cz/VisualCat/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/benny-cz/VisualCat/actions/workflows/codeql.yml/badge.svg)](https://github.com/benny-cz/VisualCat/actions/workflows/codeql.yml)
-[![non-UI coverage](https://codecov.io/gh/benny-cz/VisualCat/graph/badge.svg)](https://codecov.io/gh/benny-cz/VisualCat)
-[![License: MIT](https://img.shields.io/github/license/benny-cz/VisualCat)](LICENSE)
+<!-- Badge policy: only show a badge that reports real, currently available data.
+     CodeQL, Codecov, and release badges are restored by docs/RELEASE-CHECKLIST.md
+     once each has a successful public run to report. -->
+[![CI](https://github.com/benny-cz/VisualCat/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/benny-cz/VisualCat/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)](global.json)
-[![Release](https://img.shields.io/github/v/release/benny-cz/VisualCat?display_name=tag&sort=semver)](https://github.com/benny-cz/VisualCat/releases)
 
 **See the shape of your log.** VisualCat turns huge Android logcat files and
 live `adb` streams into an interactive severity-by-time heat map. Spot crash
@@ -17,30 +17,13 @@ lines. Processing is local, with no telemetry or log uploads.
 _The demo uses the checked-in deterministic synthetic fixture. No device-derived
 or private log data is distributed._
 
-> **Status:** VisualCat v2.0.0 is the release candidate; version tags publish
-> checksummed builds automatically through [GitHub Releases](https://github.com/benny-cz/VisualCat/releases).
+> **Status:** source preview. Version `2.0.0` is complete and tested but has not
+> been released yet, so there are no downloads to publish and no version tag.
+> Build it from source with the quick start below. The first `v*` tag will
+> publish checksummed desktop, CLI, and NuGet artifacts automatically through
+> [GitHub Releases](https://github.com/benny-cz/VisualCat/releases).
 
 ## Try VisualCat
-
-### Download a release
-
-Each release provides self-contained desktop and `vcat` CLI archives for
-Windows x64, Linux x64, macOS Intel, and macOS Apple silicon. When Android
-release signing is configured, the same release also includes a signed APK. No
-separate .NET installation is required. Download the archive for your platform
-and verify it against `SHA256SUMS` on the release page.
-
-The CLI is also packaged as a .NET global tool. After the first package is
-published to NuGet, install it with:
-
-```shell
-dotnet tool install --global VisualCat.Cli
-vcat --version
-```
-
-Desktop packages are not yet code-signed or notarized. The
-[release notes](docs/RELEASE-NOTES.md) explain the one-time OS prompts and the
-[support matrix](docs/SUPPORT.md) records current platform limits.
 
 ### Quick start from source
 
@@ -99,6 +82,27 @@ On Windows PowerShell, invoke the generated executable as
 full command and export list, including ADB capture and deterministic test-log
 generation.
 
+### What the first release will publish
+
+No release exists yet, so nothing listed here is downloadable today. This is what
+a `v*` tag produces. The same packaging path runs on every manual rehearsal of
+the release workflow, so the first real tag repeats an already inspected result
+rather than testing the release system for the first time:
+
+- self-contained desktop and `vcat` CLI archives for Windows x64, Linux x64,
+  macOS Intel, and macOS Apple silicon, each containing `LICENSE`,
+  `THIRD-PARTY-NOTICES.md`, and a `README.txt` with launch and verification
+  steps;
+- a `VisualCat.Cli` .NET global-tool package
+  (`dotnet tool install --global VisualCat.Cli`);
+- a CycloneDX software bill of materials for the shipped components;
+- `SHA256SUMS` plus GitHub build provenance attestations; and
+- a release-key-signed Android APK when Android release signing is configured.
+
+Desktop packages will not be code-signed or notarized initially. The
+[release notes](docs/RELEASE-NOTES.md) explain the one-time OS prompts and the
+[support matrix](docs/SUPPORT.md) records current platform limits.
+
 ## What VisualCat gives you
 
 - A zoomable six-severity density timeline and full-session minimap.
@@ -138,15 +142,22 @@ Start with [`ARCHITECTURE.md`](ARCHITECTURE.md) for the implemented system. The
 original design intent is preserved in [`docs/design/PLAN.md`](docs/design/PLAN.md),
 and the individual trade-offs live in 18 [architecture decision records](docs/adr/).
 
-Create self-contained desktop packages locally with:
+Create the same self-contained desktop and CLI packages locally, including the
+notice files that ship inside every release archive:
 
 ```shell
-pwsh ./tools/package.ps1 -Runtime win-x64,linux-x64,osx-x64,osx-arm64
+pwsh ./tools/package.ps1 -Runtime win-x64,linux-x64,osx-x64,osx-arm64 -Archive
 ```
 
-The coverage badge reports the reusable Domain, Core, Application,
-Infrastructure, and CLI layers. UI view-model and headless interaction coverage
-is still collected in CI and shown in the downloadable coverage report.
+Check whether a commit is mechanically ready to package with one command:
+
+```shell
+pwsh ./tools/verify-public-release.ps1
+```
+
+Coverage is reported for the reusable Domain, Core, Application, Infrastructure,
+and CLI layers. UI view-model and headless interaction coverage is also
+collected in CI and shown in the downloadable coverage report.
 
 ## Roadmap and non-goals
 

@@ -1,6 +1,9 @@
 name: CodeQL
 
 on:
+  # Manual runs let the first public scan be triggered and inspected
+  # deliberately, before the CodeQL badge is restored to the README.
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:

@@ -63,6 +63,13 @@ reported to the community leaders responsible for enforcement at
 marek.strihavka@gmail.com.
 All complaints will be reviewed and investigated promptly and fairly.
 
+This is the maintainer's personal address, published deliberately: VisualCat is
+a single-maintainer project, and a conduct report should reach a person rather
+than an unmonitored alias. The same name and address are also present in the
+license, package metadata, and commit history. Security vulnerabilities go
+through GitHub private vulnerability reporting instead — see
+[docs/SECURITY.md](docs/SECURITY.md).
+
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.
 

@@ -1,0 +1,26 @@
+[
+  {
+    "os": "windows-latest",
+    "rid": "win-x64",
+    "archive": "zip",
+    "executable": true
+  },
+  {
+    "os": "ubuntu-latest",
+    "rid": "linux-x64",
+    "archive": "tar.gz",
+    "executable": true
+  },
+  {
+    "os": "macos-15",
+    "rid": "osx-arm64",
+    "archive": "tar.gz",
+    "executable": true
+  },
+  {
+    "os": "macos-15",
+    "rid": "osx-x64",
+    "archive": "tar.gz",
+    "executable": false
+  }
+]

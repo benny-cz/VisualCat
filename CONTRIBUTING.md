@@ -66,6 +66,21 @@ Reproducible reference measurements live in [docs/PERFORMANCE.md](docs/PERFORMAN
   structure is described in [ARCHITECTURE.md](ARCHITECTURE.md), and rationale
   for major decisions is captured in the [ADRs](docs/adr/).
 
+## Before opening a pull request
+
+One command runs the same mechanical checks CI does — formatting, Release build,
+tests, CLI help, documentation and version consistency, vulnerable packages,
+packaging, and a secret scan — and tells you which stage failed:
+
+```shell
+pwsh ./tools/verify-public-release.ps1
+```
+
+It is read-only with respect to the repository: it never tags, pushes, or
+publishes. Use `-Skip` to iterate on one area (for example
+`-Skip Format,Build,Test` while working on docs), and `-AllRuntimes -ScanHistory`
+for the full pre-release sweep.
+
 ## Pull requests
 
 1. Keep CI green — the 3-OS build/test matrix and the Android build must pass.

@@ -151,7 +151,8 @@ public sealed class SessionPersistenceTests
         var logs = Path.Combine(root, "logs");
         var session = Path.Combine(root, "session.vcat");
         var bundle = Path.Combine(root, "bundle.zip");
-        const string secret = "TOP-SECRET-VISUALCAT-VALUE";
+        // A fixture value that must never reach a diagnostic bundle.
+        const string secret = "TOP-SECRET-VISUALCAT-VALUE"; // gitleaks:allow
         Directory.CreateDirectory(root);
         try
         {

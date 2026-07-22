@@ -464,11 +464,13 @@ public sealed class DrainTemplateMiner
 
     /// <summary>
     /// Log text is untrusted input, so masks run on the non-backtracking engine under a
-    /// timeout. Measured faster than the compiled backtracking engine for these
-    /// patterns as well, so safety costs nothing here.
+    /// timeout. The timeout must also leave room for the engine's first-use setup on
+    /// slower hosts; 100 ms proved too tight on a cold macOS runner even for a tiny
+    /// input. Non-backtracking keeps match time linear while the upstream line-size
+    /// limit and this one-second ceiling bound total work.
     /// </summary>
     private static Regex Create(string pattern) =>
-        new(pattern, RegexOptions.CultureInvariant | RegexOptions.NonBacktracking, TimeSpan.FromMilliseconds(100));
+        new(pattern, RegexOptions.CultureInvariant | RegexOptions.NonBacktracking, TimeSpan.FromSeconds(1));
 
     /// <summary>
     /// Per-tag mining state. Keying by tag rather than by shard is the precondition

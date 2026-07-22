@@ -406,6 +406,21 @@ FodyWeavers.xsd
 .packages/
 *.vcat/
 
+# Local credentials and signing material. These rules are a guardrail only:
+# they do not protect a secret that has already been committed, and release
+# keys should live outside the repository directory in the first place.
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+secrets.json
+appsettings.Development.json
+
+# Local coverage output. Release artifacts (artifacts/) and test results
+# ([Tt]est[Rr]esult*/) are already covered above.
+coverage-report/
+
 # Reproducible large fixtures generated from samples/README.md
 samples/logcat_large.txt
 samples/logcat_verylarge.txt
