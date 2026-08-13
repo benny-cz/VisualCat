@@ -474,13 +474,15 @@ public sealed class PipelineIntegrationTests
         await using var source = new SingleChunkLiveSource(
             Encoding.UTF8.GetBytes("05-15 14:13:37.496  1073  1151 I VisualCat: capture connected\n"));
         using var stop = new CancellationTokenSource();
-        var firstGeneration = 0L;
+        var firstPublication = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         var progress = new InlineProgress<ProgressSnapshot>(value =>
         {
             if (value.TerminalState is null && value.LinesCommitted > 0)
             {
-                Interlocked.CompareExchange(ref firstGeneration, value.SnapshotGeneration, 0);
-                stop.Cancel();
+                if (firstPublication.TrySetResult(value.SnapshotGeneration))
+                {
+                    stop.Cancel();
+                }
             }
         });
         var settings = Settings(2) with
@@ -491,12 +493,11 @@ public sealed class PipelineIntegrationTests
         };
 
         var import = SessionCoordinator.ImportAsync(source, root, settings, progress, gracefulStopToken: stop.Token);
-        var completed = await Task.WhenAny(import, Task.Delay(TimeSpan.FromSeconds(5)));
-        Assert.Same(import, completed);
-        var result = await import;
+        var firstGeneration = await firstPublication.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var result = await import.WaitAsync(TimeSpan.FromSeconds(30));
         await using var imported = new ImportedSession(root, result.Snapshot);
 
-        Assert.True(Volatile.Read(ref firstGeneration) > 0, "The first live batch was committed but not published.");
+        Assert.True(firstGeneration > 0, "The first live batch was committed but not published.");
         Assert.Equal(1, imported.Snapshot.Descriptor.Counters.TimedEntries);
     }
 

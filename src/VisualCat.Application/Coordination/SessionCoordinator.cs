@@ -100,6 +100,7 @@ public sealed class SessionCoordinator
         PendingLong? pendingLong = null;
         var pendingBatches = new SortedDictionary<long, ParsedBatch>();
         var lastProgress = TimeSpan.Zero;
+        var hasReportedSnapshot = false;
         if (state.State == SessionState.Connecting)
         {
             state.TransitionTo(SessionState.Streaming);
@@ -618,12 +619,19 @@ public sealed class SessionCoordinator
             SessionState? terminal = null,
             string? error = null)
         {
-            if (!force && stopwatch.Elapsed - lastProgress < TimeSpan.FromMilliseconds(100))
+            // A quiet live source can publish its first snapshot before the ordinary
+            // 100 ms progress cadence, then produce no more batches. Suppressing that
+            // sole notification leaves the UI empty indefinitely even though the store
+            // already contains viewable data. Always report the first non-zero snapshot;
+            // later generations retain the throttle used by busy captures.
+            var firstPublishedSnapshot = !hasReportedSnapshot && store.Generation > 0;
+            if (!force && !firstPublishedSnapshot && stopwatch.Elapsed - lastProgress < TimeSpan.FromMilliseconds(100))
             {
                 return;
             }
 
             lastProgress = stopwatch.Elapsed;
+            hasReportedSnapshot |= store.Generation > 0;
             var observedBytes = Interlocked.Read(ref bytesRead);
             var observedLines = Interlocked.Read(ref linesRead);
             var throughput = stopwatch.Elapsed.TotalSeconds <= 0 ? 0 : counters.ParsedEntries / stopwatch.Elapsed.TotalSeconds;
