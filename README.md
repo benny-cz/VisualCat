@@ -19,7 +19,7 @@ lines. Processing is local, with no telemetry or log uploads.
 _The demo uses the checked-in deterministic synthetic fixture. No device-derived
 or private log data is distributed._
 
-> **Status:** `2.0.0` is the current stable release. Download the checksummed,
+> **Status:** `2.0.1` is the current stable release. Download the checksummed,
 > self-contained desktop and CLI archives or the release-key-signed Android APK
 > from the [latest GitHub release](https://github.com/benny-cz/VisualCat/releases/latest),
 > or build from source with the quick start below.
@@ -85,7 +85,7 @@ generation.
 
 ### Release downloads
 
-VisualCat `2.0.0` is available from the
+VisualCat `2.0.1` is available from the
 [latest release](https://github.com/benny-cz/VisualCat/releases/latest). Each
 stable `v*` tag publishes:
 
@@ -102,7 +102,7 @@ NuGet.org publication is not currently configured. After downloading the
 `.nupkg` into `./packages`, install that exact release from the local feed with:
 
 ```shell
-dotnet tool install --global VisualCat.Cli --version 2.0.0 --add-source ./packages
+dotnet tool install --global VisualCat.Cli --version 2.0.1 --add-source ./packages
 ```
 
 Desktop packages are not code-signed or notarized. The

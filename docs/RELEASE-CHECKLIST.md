@@ -58,6 +58,15 @@ be published from an unmerged commit or one that would fail a pull request:
 
 ## Release records
 
+### v2.0.1 — 2026-08-13
+
+- The Android companion was exercised on a Motorola edge 60 pro running
+  Android 16/API 36 after the live-capture status and batching changes. The
+  application launched, entered capture promptly, displayed incoming own-app
+  records, and stopped cleanly without a crash or ANR.
+- The four-hour ADB soak, accessibility review, macOS hardware validation, and
+  Windows/macOS code signing remain intentionally deferred.
+
 ### v2.0.0 — 2026-07-22
 
 - Published Linux x64 CLI and desktop archives passed their checksums and were
@@ -77,7 +86,7 @@ be published from an unmerged commit or one that would fail a pull request:
 ## Release rehearsal
 
 Run the release workflow with `workflow_dispatch` before creating the first
-tag. Dispatch runs are versioned `2.0.0-preview.<run>` and never publish a
+tag. Dispatch runs are versioned `2.0.1-preview.<run>` and never publish a
 GitHub release or push to NuGet, so the packaging path can be exercised
 repeatedly and safely.
 

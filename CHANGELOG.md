@@ -7,10 +7,12 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Version numbers correspond to git tags and the GitHub [Releases](https://github.com/benny-cz/VisualCat/releases)
 page.
 
-The current stable release is `2.0.0`. The entries below describe the initial
-public baseline; ongoing work is recorded under `[Unreleased]`.
+The current stable release is `2.0.1`. Ongoing work is recorded under
+`[Unreleased]`.
 
 ## [Unreleased]
+
+## [2.0.1] - 2026-08-13
 
 ### Changed
 - Android live capture now shows distinct preparing, connecting, and waiting
@@ -26,7 +28,7 @@ public baseline; ongoing work is recorded under `[Unreleased]`.
   `pm grant … android.permission.READ_LOGS` has to be repeated for the new ID.
 - The Android target API level is pinned to 36 instead of following the
   installed workload, and `versionCode` is derived from the release version
-  (`2.0.0` → `20000`) rather than from a build counter, so Google Play sees a
+  (`2.0.1` → `20001`) rather than from a build counter, so Google Play sees a
   strictly increasing code that matches the published version.
 
 ### Added
@@ -83,5 +85,6 @@ Initial public baseline — the greenfield .NET 10 rewrite described in
   archive, a CycloneDX SBOM, build provenance attestations, and the
   `tools/verify-public-release.ps1` one-command local preflight.
 
-[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.1
 [2.0.0]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.0
