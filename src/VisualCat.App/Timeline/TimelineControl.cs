@@ -84,6 +84,8 @@ public sealed class TimelineControl : Control
     private double _minimumBarWidth = TimelineBars.DefaultMinimumWidth;
     private bool _pixelSnap = true;
     private TimeZoneInfo _timeZone = TimeZoneInfo.Utc;
+    private string _emptyTitle = "Open a logcat file or start a live capture.";
+    private string _emptyDetail = "The severity × time signal will appear here.";
 
     public TimelineControl()
     {
@@ -147,6 +149,17 @@ public sealed class TimelineControl : Control
         _result = result;
         _sessionRange = sessionRange;
         InvalidateVisual();
+    }
+
+    /// <summary>Explains why a session has no drawable data yet.</summary>
+    public void SetEmptyState(string title, string detail)
+    {
+        _emptyTitle = title;
+        _emptyDetail = detail;
+        if (_result is null)
+        {
+            InvalidateVisual();
+        }
     }
 
     /// <summary>Drops the cell outline when the detail scope it represents is released.</summary>
@@ -247,8 +260,8 @@ public sealed class TimelineControl : Control
         if (_result is null || Bounds.Width < 120 || Bounds.Height < 100)
         {
             DrawText(context, "EVENT DENSITY", new Point(22, 20), 11, AccentBrush);
-            DrawText(context, "Open a logcat file or start a live capture.", new Point(22, 52), 17, foreground);
-            DrawText(context, "The severity × time signal will appear here.", new Point(22, 82), 12, muted);
+            DrawText(context, _emptyTitle, new Point(22, 52), 17, foreground);
+            DrawText(context, _emptyDetail, new Point(22, 82), 12, muted);
             return;
         }
 

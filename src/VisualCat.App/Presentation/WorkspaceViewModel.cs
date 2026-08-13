@@ -166,6 +166,7 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
         var sessionRoot = CreateTemporarySessionPath(source.Metadata.DisplayName);
         var tab = new SessionTabViewModel(source.Metadata.DisplayName, sessionRoot);
         tab.FollowLatest = true;
+        tab.IsLiveCaptureActive = true;
         Add(tab);
         var operation = RegisterOperation(tab, cancellationToken);
         var operationToken = operation.Cancellation.Token;
@@ -184,12 +185,16 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
             await _resourceGovernor.WaitAsync(operationToken).ConfigureAwait(false);
             acquired = true;
 
-            // The capture runs until stopped, so leaving the queueing message in place
-            // would misreport the state for the whole session. The description also
-            // carries the scope an on-device source resolved — own-app versus
-            // full-device — which the user must be able to see (§4.4, §13.9).
+            // Capture setup can include device checks and logcat format negotiation.
+            // Keep that distinct from confirmed streaming so an empty workspace does
+            // not claim data is flowing when the source has not produced a line yet.
+            // The description also carries the scope an on-device source resolved —
+            // own-app versus full-device — which the user must be able to see
+            // (§4.4, §13.9).
             var scope = source.Metadata.Description;
-            tab.Status = $"Capturing · {scope}";
+            tab.Status = source.Metadata.Kind == SourceKind.Adb
+                ? $"Connecting · {scope}"
+                : $"Starting capture · {scope}";
             var result = await SessionCoordinator.ImportAsync(
                 source,
                 sessionRoot,
@@ -201,8 +206,13 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
                 _diagnostics,
                 gracefulStopToken: gracefulStop.Token,
                 cancellationToken: operationToken).ConfigureAwait(false);
+            var capturedEntries = result.Snapshot.Descriptor.Counters.ParsedEntries;
             result.Snapshot.Dispose();
             await tab.LoadSnapshotAsync(true, operationToken).ConfigureAwait(false);
+            if (capturedEntries == 0)
+            {
+                tab.Status = "Stopped · no log entries were received; retry Live and generate app activity";
+            }
             return tab;
         }
         catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested)
@@ -217,6 +227,7 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
         }
         finally
         {
+            tab.IsLiveCaptureActive = false;
             if (acquired)
             {
                 _resourceGovernor.Release();

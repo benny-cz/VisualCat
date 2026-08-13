@@ -54,6 +54,13 @@ public sealed class OnDeviceLogSource : ILogSource
             ?? throw new InvalidOperationException("Android logcat process could not be started.");
         using var registration = linked.Token.Register(static state => ((Java.Lang.Process)state!).Destroy(), _process);
         var input = _process.InputStream ?? throw new InvalidOperationException("Android logcat stdout is unavailable.");
+
+        // Android normally limits an unprivileged app to its own UID's log records.
+        // Emit one real logcat marker after the reader starts so the user gets prompt,
+        // visible proof that the stream is connected even when the app is otherwise
+        // quiet. It also distinguishes a working restricted capture from a source that
+        // never delivered a byte.
+        global::Android.Util.Log.Info("VisualCat", "Live capture connected; waiting for app log activity.");
         var buffer = new byte[256 * 1024];
         long offset = 0;
         while (!linked.IsCancellationRequested)

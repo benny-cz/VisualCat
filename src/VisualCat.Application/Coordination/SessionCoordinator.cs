@@ -199,6 +199,20 @@ public sealed class SessionCoordinator
                         }
                     }
 
+                    // The first live batch is the user's confirmation that capture
+                    // actually works. A time-based store flush is normally evaluated by
+                    // the next entry, but a quiet source may have no next entry, leaving
+                    // valid data invisible indefinitely. Publish that first completed
+                    // batch now; later batches keep the adaptive 1–4 second segment
+                    // cadence and avoid accumulating tiny segments (§10.6, §15.2).
+                    if (source.Metadata.Kind is SourceKind.Adb or SourceKind.Android or SourceKind.GrowingFile &&
+                        store.Generation == 0 &&
+                        counters.TimedEntries > 0 &&
+                        store.FlushSegment() is not null)
+                    {
+                        await PublishFlushedSegmentAsync().ConfigureAwait(false);
+                    }
+
                     nextBatch++;
                 }
 

@@ -16,6 +16,36 @@ namespace VisualCat.App.Tests;
 public sealed class SessionWorkspaceHeadlessTests
 {
     [AvaloniaFact]
+    public async Task ActiveCaptureKeepsStopActionVisibleDuringSnapshotRefresh()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await using var tab = new SessionTabViewModel("Live", root)
+        {
+            IsLiveCaptureActive = true,
+            // A progressive snapshot used to overwrite Capturing with Importing and
+            // accidentally hide the only graceful-stop action.
+            Status = "Importing · 1 committed · snapshot 1",
+        };
+        var view = new SessionWorkspaceView(tab);
+        var window = new Window { Content = view, Width = 900, Height = 600 };
+        window.Show();
+        try
+        {
+            var stop = view.GetLogicalDescendants()
+                .OfType<Button>()
+                .Single(button => Equals(button.Content, "Stop capture"));
+            Assert.True(stop.IsVisible);
+            Assert.True(stop.IsEnabled);
+        }
+        finally
+        {
+            window.Close();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [AvaloniaFact]
     public async Task ImportQueryFilterPagePersistAndComposeWorkspace()
     {
         var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));

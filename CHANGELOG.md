@@ -12,6 +12,38 @@ public baseline; ongoing work is recorded under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Changed
+- Android live capture now shows distinct preparing, connecting, and waiting
+  states until the first entries arrive, and the empty timeline explains what
+  the capture is doing instead of asking the user to start it again.
+- The Android Filters, Plot, Split, Details, Follow, and capture controls now
+  center their labels vertically for consistent touch targets.
+- The Android application ID is now `com.barebit.visualcat`, replacing
+  `com.visualcat.app`, so the companion can be published on Google Play under a
+  namespace the maintainer controls. Android treats this as a different
+  application: a `2.0.0` APK installed from GitHub is not upgraded in place and
+  must be uninstalled, and a previously issued
+  `pm grant … android.permission.READ_LOGS` has to be repeated for the new ID.
+- The Android target API level is pinned to 36 instead of following the
+  installed workload, and `versionCode` is derived from the release version
+  (`2.0.0` → `20000`) rather than from a build counter, so Google Play sees a
+  strictly increasing code that matches the published version.
+
+### Added
+- `tools/package-android.ps1` builds and verifies the signed Android App Bundle
+  and APK for a release, and the release workflow publishes the bundle as a
+  build artifact for Google Play submission.
+- `docs/PLAY-LISTING.md` records the exact Google Play store-listing text and
+  app-content answers, and `tools/generate-play-assets.ps1` regenerates the
+  store icon, feature graphic, and phone screenshots into `artifacts/play/`.
+
+### Fixed
+- Low-volume live sources publish a completed line after the configured latency
+  even when no second source chunk arrives, and the first live batch is made
+  visible immediately instead of remaining buffered indefinitely.
+- Progressive live snapshots no longer relabel the operation as an import or
+  hide Stop capture while acquisition is still active.
+
 ## [2.0.0] - 2026-07-22
 
 Initial public baseline — the greenfield .NET 10 rewrite described in

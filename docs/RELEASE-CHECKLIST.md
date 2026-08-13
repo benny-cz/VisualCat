@@ -212,6 +212,53 @@ updating or deleting every remote branch, and coordinating the force-push while
 there are no public forks or contributor clones. A `.mailmap` changes display in
 some tools but does not remove addresses from commit objects.
 
+## Google Play
+
+The Android companion is published to Google Play as `com.barebit.visualcat`.
+`docs/PLAY-LISTING.md` is the source of truth for every field of the store
+listing and every app-content answer; Play Console is where it is pasted, not
+where it is decided.
+
+Build and verify the upload artifact locally:
+
+```shell
+pwsh ./tools/package-android.ps1 -Format both `
+  -Keystore <path>/visualcat-upload.keystore -KeyAlias visualcat-upload -StorePassword <secret>
+```
+
+This produces `artifacts/android/VisualCat-Android-v<version>.aab` for Play and
+the matching `.apk` for direct installation, then proves what Play checks after
+upload: application ID, versionCode, versionName, `minSdkVersion`,
+`targetSdkVersion`, 64-bit code, a real release signature, and 16 KB page
+alignment of every shipped ELF. The release workflow runs the same script and
+uploads the bundle as the separate `google-play-bundle` artifact, deliberately
+not as a public release asset — the bundle is not installable and Play re-signs
+it, so offering it for download would only confuse.
+
+Before the first submission:
+
+- [ ] The upload keystore and its passwords are backed up off the build machine.
+      With Play App Signing, Google holds the app signing key and can reset a
+      lost upload key, but the reset still blocks every update until it
+      completes.
+- [ ] Play App Signing is enabled with a Google-generated app signing key.
+- [ ] `docs/PLAY-LISTING.md` matches what is actually in Play Console, including
+      the privacy policy URL and the data-safety answers.
+- [ ] The store assets in `artifacts/play/` were regenerated from a capture of
+      the exact build being submitted.
+- [ ] The pre-launch report on the internal or closed track shows no crash, ANR,
+      or accessibility blocker before promoting to production.
+
+A personal Play developer account registered after 13 November 2023 must run a
+closed test with at least twelve testers opted in continuously for fourteen days
+before it can apply for production access. Check which case applies before
+planning a launch date; on an affected account, the first upload starts a
+two-week clock rather than a release.
+
+Renaming the application ID is a one-way door: Play permanently binds a listing
+to its package name, and a rename means a new listing with no reviews, no
+install base, and no upgrade path from the old app.
+
 ## Signing and publication secrets
 
 Android releases are installable APKs signed by a persistent release key. Set

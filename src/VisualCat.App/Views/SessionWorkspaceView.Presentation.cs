@@ -67,15 +67,45 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void UpdateCaptureActions()
     {
         var sourceKind = _viewModel.Snapshot?.Descriptor.SourceKind;
+        var starting = _viewModel.Status.StartsWith("Waiting for capture", StringComparison.Ordinal) ||
+                       _viewModel.Status.StartsWith("Connecting", StringComparison.Ordinal) ||
+                       _viewModel.Status.StartsWith("Starting capture", StringComparison.Ordinal);
+        var capturing = _viewModel.Status.StartsWith("Capturing", StringComparison.Ordinal);
+        var stopping = _viewModel.Status.StartsWith("Stopping", StringComparison.Ordinal);
         var live = sourceKind is SourceKind.Adb or SourceKind.Android or SourceKind.GrowingFile ||
-                   _viewModel.Status.StartsWith("Capturing", StringComparison.Ordinal) ||
-                   _viewModel.Status.StartsWith("Stopping", StringComparison.Ordinal);
+                   starting || capturing || stopping;
         _follow.IsVisible = live;
-        _stopCapture.IsVisible =
-            _viewModel.Status.StartsWith("Capturing", StringComparison.Ordinal) ||
-            _viewModel.Status.StartsWith("Stopping", StringComparison.Ordinal);
-        _stopCapture.IsEnabled = !_viewModel.Status.StartsWith("Stopping", StringComparison.Ordinal);
+        _stopCapture.IsVisible = _viewModel.IsLiveCaptureActive || starting || capturing || stopping;
+        _stopCapture.IsEnabled = !stopping;
+        _stopCapture.Content = stopping ? "Stopping…" : "Stop capture";
         _newData.IsVisible = live && _viewModel.HasNewData;
+
+        if (_viewModel.Status.StartsWith("Waiting for capture", StringComparison.Ordinal))
+        {
+            _timeline.SetEmptyState("Preparing live capture…", "Waiting for an available capture slot.");
+        }
+        else if (_viewModel.Status.StartsWith("Connecting", StringComparison.Ordinal))
+        {
+            _timeline.SetEmptyState("Connecting to the device…", "Checking the device and logcat format.");
+        }
+        else if (_viewModel.Status.StartsWith("Starting capture", StringComparison.Ordinal))
+        {
+            _timeline.SetEmptyState("Starting live capture…", "Waiting for the first log entry.");
+        }
+        else if (capturing)
+        {
+            _timeline.SetEmptyState("Live capture is running", "Waiting for the first visible log entry.");
+        }
+        else if (live && _viewModel.Snapshot?.Descriptor.Counters.ParsedEntries == 0)
+        {
+            _timeline.SetEmptyState("No log entries were captured", "Start Live again and generate app activity.");
+        }
+        else
+        {
+            _timeline.SetEmptyState(
+                "Open a logcat file or start a live capture.",
+                "The severity × time signal will appear here.");
+        }
     }
 
     private static string FormatSpan(long microseconds) =>

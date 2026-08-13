@@ -193,9 +193,10 @@ jobs:
     runs-on: windows-latest
     env:
       RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
-      # GitHub increments this monotonically for this workflow. It lets an APK
-      # from a later stable run upgrade an installed release-candidate APK.
-      ANDROID_VERSION_CODE: ${{ github.run_number }}
+      # versionCode is deliberately not set here. The project derives it from the
+      # release version (2.0.0 -> 20000), which Google Play requires to increase
+      # with every upload; a workflow run number would let a rebuild of an older
+      # version outrank a newer one.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
@@ -219,23 +220,33 @@ jobs:
           [IO.File]::WriteAllBytes($keyStore, [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64))
           "ANDROID_KEYSTORE_PATH=$keyStore" >> $env:GITHUB_ENV
       - run: dotnet restore src/VisualCat.Android/VisualCat.Android.csproj
-      - name: Publish signed installable APK
+      - name: Build and verify the signed App Bundle and APK
         shell: pwsh
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          dotnet publish src/VisualCat.Android/VisualCat.Android.csproj --configuration Release --no-restore --output artifacts/android -p:Version=$env:RELEASE_VERSION -p:ApplicationDisplayVersion=$env:RELEASE_VERSION -p:ApplicationVersion=$env:ANDROID_VERSION_CODE -p:AndroidPackageFormat=apk -p:AndroidKeyStore=true -p:AndroidSigningKeyStore=$env:ANDROID_KEYSTORE_PATH -p:AndroidSigningStorePass=$env:ANDROID_KEYSTORE_PASSWORD -p:AndroidSigningKeyAlias=$env:ANDROID_KEY_ALIAS -p:AndroidSigningKeyPass=$env:ANDROID_KEY_PASSWORD
-          if ($LASTEXITCODE -ne 0) { throw 'Android publish failed.' }
-          $apk = Get-ChildItem -Path artifacts/android -Recurse -Filter '*-Signed.apk' | Select-Object -First 1
-          if (-not $apk) { throw 'The Android build did not produce a signed APK.' }
-          New-Item -ItemType Directory -Path packages -Force | Out-Null
-          Copy-Item -LiteralPath $apk.FullName -Destination "packages/VisualCat-Android-v$env:RELEASE_VERSION.apk"
+          ./tools/package-android.ps1 -Format both -Version $env:RELEASE_VERSION
+      - name: Separate the Play bundle from the release assets
+        shell: pwsh
+        run: |
+          # The .aab is not a release asset: it cannot be installed, and Google
+          # Play re-signs it, so publishing it next to the APK would offer a
+          # download nobody can use. It stays a workflow artifact for upload to
+          # Play Console.
+          New-Item -ItemType Directory -Path packages, bundle -Force | Out-Null
+          Move-Item -Path 'artifacts/android/*.aab' -Destination bundle
+          Move-Item -Path 'artifacts/android/*.apk' -Destination packages
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: packages-android
           path: packages/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: google-play-bundle
+          path: bundle/*
           if-no-files-found: error
 
   nuget:

@@ -54,6 +54,7 @@ $requiredFiles = @(
     'docs/THIRD-PARTY-NOTICES.md'
     'docs/RELEASE-NOTES.md'
     'docs/RELEASE-CHECKLIST.md'
+    'docs/PLAY-LISTING.md'
     'tools/render-release-notes.ps1'
     '.github/release-targets.json'
     '.github/CODEOWNERS'
@@ -220,6 +221,72 @@ if ($gitAvailable -and $tags.Count -eq 0 -and $readme -match 'img\.shields\.io/g
 }
 if ($readme -match 'img\.shields\.io/github/license') {
     Add-Problem 'README.md uses the dynamic Shields license badge; use the static MIT badge so it does not depend on the GitHub API.'
+}
+
+# --- Google Play listing budgets -----------------------------------------
+
+# Play truncates over-long listing fields at submission rather than rejecting
+# them, so an overflow is only discovered by noticing that the published page
+# ends mid-sentence. The budgets are checked here instead.
+$playPath = Join-Path $repository 'docs/PLAY-LISTING.md'
+if (Test-Path -LiteralPath $playPath -PathType Leaf) {
+    $playLines = @(Get-Content -LiteralPath $playPath)
+    $budgets = @(
+        @{ Heading = 'App name'; Limit = 30 }
+        @{ Heading = 'Short description'; Limit = 80 }
+        @{ Heading = 'Full description'; Limit = 4000 }
+    )
+
+    foreach ($budget in $budgets) {
+        $headingPattern = "^###\s+$([regex]::Escape($budget.Heading))\b"
+        $headingIndex = -1
+        for ($index = 0; $index -lt $playLines.Count; $index++) {
+            if ($playLines[$index] -match $headingPattern) { $headingIndex = $index; break }
+        }
+
+        if ($headingIndex -lt 0) {
+            Add-Problem "docs/PLAY-LISTING.md has no '### $($budget.Heading)' section."
+            continue
+        }
+
+        if ($playLines[$headingIndex] -notmatch "$($budget.Limit)\s+characters") {
+            Add-Problem ("docs/PLAY-LISTING.md heading '$($playLines[$headingIndex])' does not state Google Play's " +
+                "$($budget.Limit)-character limit.")
+        }
+
+        $openIndex = -1
+        for ($index = $headingIndex + 1; $index -lt $playLines.Count; $index++) {
+            if ($playLines[$index] -match '^###?\s') { break }
+            if ($playLines[$index] -match '^```') { $openIndex = $index; break }
+        }
+
+        if ($openIndex -lt 0) {
+            Add-Problem "docs/PLAY-LISTING.md section '$($budget.Heading)' contains no fenced value block."
+            continue
+        }
+
+        $closeIndex = -1
+        for ($index = $openIndex + 1; $index -lt $playLines.Count; $index++) {
+            if ($playLines[$index] -match '^```') { $closeIndex = $index; break }
+        }
+
+        if ($closeIndex -lt 0) {
+            Add-Problem "docs/PLAY-LISTING.md section '$($budget.Heading)' has an unterminated value block."
+            continue
+        }
+
+        $value = ($playLines[($openIndex + 1)..($closeIndex - 1)] -join "`n")
+        if ($value.Length -gt $budget.Limit) {
+            Add-Problem ("docs/PLAY-LISTING.md '$($budget.Heading)' is $($value.Length) characters; " +
+                "Google Play allows $($budget.Limit).")
+        }
+        elseif ($value.Length -eq 0) {
+            Add-Problem "docs/PLAY-LISTING.md '$($budget.Heading)' is empty."
+        }
+        else {
+            Write-Host ("Play listing '$($budget.Heading)': $($value.Length)/$($budget.Limit) characters.")
+        }
+    }
 }
 
 # --- report --------------------------------------------------------------

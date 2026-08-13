@@ -308,6 +308,9 @@ public sealed partial class SessionWorkspaceView : UserControl
                 case nameof(SessionTabViewModel.HasNewData):
                     UpdateCaptureActions();
                     break;
+                case nameof(SessionTabViewModel.IsLiveCaptureActive):
+                    UpdateCaptureActions();
+                    break;
             }
         });
         _viewModel.SnapshotChanged += (_, _) => Dispatcher.UIThread.Post(UpdateTimelines);

@@ -83,6 +83,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private FilterSpec _filter = FilterSpec.All;
     private TimeRange? _viewport;
     private bool _followLatest;
+    private bool _isLiveCaptureActive;
     private bool _hasNewData;
     private EntryOrder _entryOrder = EntryOrder.Chronological;
     private string _rawContextText = string.Empty;
@@ -133,6 +134,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public FilterSpec Filter { get => _filter; private set => Set(ref _filter, value); }
     public TimeRange? Viewport { get => _viewport; private set => Set(ref _viewport, value); }
     public bool FollowLatest { get => _followLatest; set => Set(ref _followLatest, value); }
+    public bool IsLiveCaptureActive { get => _isLiveCaptureActive; set => Set(ref _isLiveCaptureActive, value); }
     public bool HasNewData { get => _hasNewData; private set => Set(ref _hasNewData, value); }
     public EntryOrder EntryOrder { get => _entryOrder; private set => Set(ref _entryOrder, value); }
     public string RawContextText { get => _rawContextText; private set => Set(ref _rawContextText, value); }
@@ -264,7 +266,10 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
                     Status = final
                         ? $"Ready · {replacement.Descriptor.Counters.TimedEntries:N0} entries · snapshot {replacement.Generation}"
-                        : $"Importing · {replacement.Descriptor.Counters.TimedEntries:N0} committed · snapshot {replacement.Generation}";
+                        : IsLiveCaptureActive
+                            ? $"Capturing · {replacement.Descriptor.SourceDescription} · " +
+                              $"{replacement.Descriptor.Counters.TimedEntries:N0} entries · snapshot {replacement.Generation}"
+                            : $"Importing · {replacement.Descriptor.Counters.TimedEntries:N0} committed · snapshot {replacement.Generation}";
                     SnapshotChanged?.Invoke(this, EventArgs.Empty);
                 });
                 previous?.Dispose();

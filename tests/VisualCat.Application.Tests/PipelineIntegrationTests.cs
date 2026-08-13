@@ -465,6 +465,42 @@ public sealed class PipelineIntegrationTests
     }
 
     [Fact]
+    public async Task OneLiveChunkIsPublishedEvenWhenTheSourceThenGoesQuiet()
+    {
+        // A common on-device capture has one startup line followed by a long quiet
+        // period. The latency guarantee must not depend on a second chunk arriving,
+        // and the first batch must advance the snapshot so the UI can show evidence.
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-live-quiet-{Guid.NewGuid():N}.vcat");
+        await using var source = new SingleChunkLiveSource(
+            Encoding.UTF8.GetBytes("05-15 14:13:37.496  1073  1151 I VisualCat: capture connected\n"));
+        using var stop = new CancellationTokenSource();
+        var firstGeneration = 0L;
+        var progress = new InlineProgress<ProgressSnapshot>(value =>
+        {
+            if (value.TerminalState is null && value.LinesCommitted > 0)
+            {
+                Interlocked.CompareExchange(ref firstGeneration, value.SnapshotGeneration, 0);
+                stop.Cancel();
+            }
+        });
+        var settings = Settings(2) with
+        {
+            BatchBytes = 8 * 1024 * 1024,
+            BatchLatencyMilliseconds = 75,
+            SegmentEntries = 100_000,
+        };
+
+        var import = SessionCoordinator.ImportAsync(source, root, settings, progress, gracefulStopToken: stop.Token);
+        var completed = await Task.WhenAny(import, Task.Delay(TimeSpan.FromSeconds(5)));
+        Assert.Same(import, completed);
+        var result = await import;
+        await using var imported = new ImportedSession(root, result.Snapshot);
+
+        Assert.True(Volatile.Read(ref firstGeneration) > 0, "The first live batch was committed but not published.");
+        Assert.Equal(1, imported.Snapshot.Descriptor.Counters.TimedEntries);
+    }
+
+    [Fact]
     public async Task GracefulStopPublishesBytesBufferedSinceTheLastBatchBoundary()
     {
         // A stop interrupts the source enumerator mid-batch. Everything buffered since
@@ -993,6 +1029,45 @@ public sealed class PipelineIntegrationTests
         }
 
         public ValueTask DisposeAsync() => _inner.DisposeAsync();
+    }
+
+    private sealed class SingleChunkLiveSource(byte[] bytes) : ILogSource
+    {
+        public SourceMetadata Metadata { get; } = new(
+            SourceKind.Android,
+            "Quiet live source",
+            "Test live source",
+            null,
+            null,
+            DateTimeOffset.UtcNow,
+            false,
+            false);
+
+        public Task<IReadOnlyList<ReadOnlyMemory<byte>>> ProbeAsync(
+            int maximumUsefulLines,
+            CancellationToken cancellationToken)
+        {
+            _ = maximumUsefulLines;
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<ReadOnlyMemory<byte>>>([bytes]);
+        }
+
+        public async IAsyncEnumerable<SourceChunk> ReadAsync(
+            SourceReadContext context,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            _ = context;
+            yield return new SourceChunk(0, bytes);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            _ = cancellationToken;
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class ImportedSession(string root, SessionSnapshot snapshot) : IAsyncDisposable

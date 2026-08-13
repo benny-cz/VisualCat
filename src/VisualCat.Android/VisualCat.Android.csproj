@@ -1,11 +1,24 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-android</TargetFramework>
+    <!-- The Android API level is pinned rather than floating with the workload so
+         a workload update cannot silently change the level Google Play evaluates
+         this app against. -->
+    <TargetFramework>net10.0-android36.0</TargetFramework>
     <OutputType>Exe</OutputType>
-    <ApplicationId>com.visualcat.app</ApplicationId>
+    <ApplicationId>com.barebit.visualcat</ApplicationId>
     <ApplicationTitle>VisualCat</ApplicationTitle>
     <SupportedOSPlatformVersion>31</SupportedOSPlatformVersion>
     <AndroidPackageFormat>apk</AndroidPackageFormat>
+  </PropertyGroup>
+  <PropertyGroup>
+    <!-- Google Play orders uploads by versionCode alone and refuses to accept the
+         same one twice, so it is derived from the release version instead of a
+         hand-maintained counter: 2.0.0 -> 20000, 2.1.3 -> 20103. Re-uploading an
+         unchanged version still works by overriding -p:ApplicationVersion=N. -->
+    <AndroidReleaseMajor>$([System.Version]::Parse('$(VersionPrefix)').Major)</AndroidReleaseMajor>
+    <AndroidReleaseMinor>$([System.Version]::Parse('$(VersionPrefix)').Minor)</AndroidReleaseMinor>
+    <AndroidReleasePatch>$([System.Version]::Parse('$(VersionPrefix)').Build)</AndroidReleasePatch>
+    <ApplicationVersion>$([MSBuild]::Add($([MSBuild]::Multiply($(AndroidReleaseMajor), 10000)), $([MSBuild]::Add($([MSBuild]::Multiply($(AndroidReleaseMinor), 100)), $(AndroidReleasePatch)))))</ApplicationVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia.Android" />

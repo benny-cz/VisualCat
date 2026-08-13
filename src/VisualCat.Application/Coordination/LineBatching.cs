@@ -49,11 +49,11 @@ internal static class LineBatching
         // A size-only trigger starves live sources: a device emitting tens of kilobytes
         // per second would buffer for a minute before the first batch, so nothing is
         // committed, no snapshot is published, and the workspace stays empty. Batches
-        // therefore also close on elapsed time (§10.6, §15.2).
+        // therefore also close on elapsed time (§10.6, §15.2). The timeout is raced
+        // against MoveNext below; checking elapsed time only after another chunk arrives
+        // does not bound latency when a source emits one chunk and then goes quiet.
         var lastYield = Stopwatch.GetTimestamp();
-        var latencyTicks = maximumLatency <= TimeSpan.Zero
-            ? long.MaxValue
-            : (long)(maximumLatency.TotalSeconds * Stopwatch.Frequency);
+        var latencyEnabled = maximumLatency > TimeSpan.Zero;
 
         var writer = new ArrayBufferWriter<byte>(Math.Min(targetBytes, 1024 * 1024));
         var lines = new List<LineSlice>();
@@ -69,23 +69,72 @@ internal static class LineBatching
         // would silently lose up to `targetBytes` of captured log on every stop (§13.7).
         await using var chunks = source.ReadAsync(context, cancellationToken).GetAsyncEnumerator(cancellationToken);
         ExceptionDispatchInfo? interrupted = null;
+        Task<bool>? pendingRead = null;
         while (true)
         {
-            SourceChunk chunk;
             try
             {
-                if (!await chunks.MoveNextAsync().ConfigureAwait(false))
-                {
-                    break;
-                }
-
-                chunk = chunks.Current;
+                pendingRead ??= chunks.MoveNextAsync().AsTask();
             }
             catch (OperationCanceledException exception)
             {
                 interrupted = ExceptionDispatchInfo.Capture(exception);
                 break;
             }
+
+            if (latencyEnabled && lines.Count > 0 && !pendingRead.IsCompleted)
+            {
+                var remaining = maximumLatency - Stopwatch.GetElapsedTime(lastYield);
+                if (remaining > TimeSpan.Zero)
+                {
+                    var timeout = Task.Delay(remaining, CancellationToken.None);
+                    if (await Task.WhenAny(pendingRead, timeout).ConfigureAwait(false) != pendingRead)
+                    {
+                        yield return CompleteReadyBatch(
+                            ref writer,
+                            lines,
+                            batchId++,
+                            nextSequence,
+                            ref lineStart);
+                        nextSequence += lines.Count;
+                        lines = [];
+                        lastYield = Stopwatch.GetTimestamp();
+                        continue;
+                    }
+                }
+                else
+                {
+                    yield return CompleteReadyBatch(
+                        ref writer,
+                        lines,
+                        batchId++,
+                        nextSequence,
+                        ref lineStart);
+                    nextSequence += lines.Count;
+                    lines = [];
+                    lastYield = Stopwatch.GetTimestamp();
+                    continue;
+                }
+            }
+
+            bool hasNext;
+            try
+            {
+                hasNext = await pendingRead.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException exception)
+            {
+                interrupted = ExceptionDispatchInfo.Capture(exception);
+                break;
+            }
+
+            if (!hasNext)
+            {
+                break;
+            }
+
+            pendingRead = null;
+            var chunk = chunks.Current;
 
             if (chunk.RawOffset != rawOffset)
             {
@@ -157,21 +206,21 @@ internal static class LineBatching
                 }
             }
 
-            // Checked once per chunk rather than per line: a silent source has nothing
-            // to flush, and a busy one reaches the size trigger on its own.
-            //
-            // Only on a line boundary. A chunk that ends mid-line leaves bytes in the
-            // writer that no LineSlice covers; flushing then would ship them inside the
-            // batch payload while the next chunk re-adds the line from its start,
-            // duplicating the prefix and shifting every later raw offset.
-            if (lines.Count > 0 &&
-                lineStart == writer.WrittenCount &&
-                Stopwatch.GetTimestamp() - lastYield >= latencyTicks)
+            // Fast-path a timeout already reached while this chunk was being consumed.
+            // CompleteReadyBatch keeps a trailing partial line in the new writer, so
+            // completed lines do not have to wait for that line's next chunk.
+            if (latencyEnabled &&
+                lines.Count > 0 &&
+                Stopwatch.GetElapsedTime(lastYield) >= maximumLatency)
             {
-                yield return CompleteBatch(ref writer, lines, batchId++, nextSequence);
+                yield return CompleteReadyBatch(
+                    ref writer,
+                    lines,
+                    batchId++,
+                    nextSequence,
+                    ref lineStart);
                 nextSequence += lines.Count;
                 lines = [];
-                lineStart = 0;
                 lastYield = Stopwatch.GetTimestamp();
             }
         }
@@ -203,6 +252,27 @@ internal static class LineBatching
     {
         var bytes = writer.WrittenMemory.ToArray();
         writer = new ArrayBufferWriter<byte>(Math.Max(1024, bytes.Length));
+        return new LineBatch(batchId, firstSequence, bytes, lines);
+    }
+
+    /// <summary>
+    /// Closes the completed prefix while retaining any newline-free tail for the next
+    /// chunk. Line offsets are relative to the completed prefix and therefore remain
+    /// valid; raw offsets are absolute and need no adjustment.
+    /// </summary>
+    private static LineBatch CompleteReadyBatch(
+        ref ArrayBufferWriter<byte> writer,
+        IReadOnlyList<LineSlice> lines,
+        long batchId,
+        long firstSequence,
+        ref int lineStart)
+    {
+        var completedLength = lineStart;
+        var bytes = writer.WrittenMemory[..completedLength].ToArray();
+        var tail = writer.WrittenMemory[completedLength..].ToArray();
+        writer = new ArrayBufferWriter<byte>(Math.Max(1024, Math.Max(bytes.Length, tail.Length)));
+        writer.Write(tail);
+        lineStart = 0;
         return new LineBatch(batchId, firstSequence, bytes, lines);
     }
 }

@@ -341,7 +341,7 @@ public sealed class MainView : UserControl, IAsyncDisposable
                 BuildHeroActions(dark),
                 new TextBlock
                 {
-                    Text = $"VisualCat {ProductInfo.InformationalVersion} · local-first · no telemetry",
+                    Text = $"VisualCat {ProductInfo.DisplayVersion} · local-first · no telemetry",
                     FontSize = 10,
                     TextAlignment = TextAlignment.Center,
                     Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextMuted(dark)),

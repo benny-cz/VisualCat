@@ -91,9 +91,22 @@ public sealed partial class SessionWorkspaceView : UserControl
     private readonly WrapPanel _chips = new() { VerticalAlignment = VerticalAlignment.Center };
     private readonly StackPanel _rangeActions = new() { Orientation = Orientation.Horizontal, Spacing = 6, IsVisible = false };
     private readonly TextBlock _rangeText = new() { VerticalAlignment = VerticalAlignment.Center };
-    private readonly Button _follow = new() { Content = "Follow: off" };
-    private readonly Button _newData = new() { Content = "↓ New data", IsVisible = false };
-    private readonly Button _stopCapture = new() { Content = "Stop capture" };
+    private readonly Button _follow = new()
+    {
+        Content = "Follow: off",
+        VerticalContentAlignment = VerticalAlignment.Center,
+    };
+    private readonly Button _newData = new()
+    {
+        Content = "↓ New data",
+        IsVisible = false,
+        VerticalContentAlignment = VerticalAlignment.Center,
+    };
+    private readonly Button _stopCapture = new()
+    {
+        Content = "Stop capture",
+        VerticalContentAlignment = VerticalAlignment.Center,
+    };
     private readonly Button _loadMore = new() { Content = "+500", Margin = new Thickness(0, 0, 6, 0) };
     private readonly Button _loadAll = new() { Content = "Load all", Margin = new Thickness(0, 0, 6, 0) };
     private readonly TextBlock _entryLoadStatus = new()
@@ -645,6 +658,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 MinHeight = 48,
                 Padding = new Thickness(10, 0),
                 HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
             };
             _mobileFilterButton.Click += (_, _) => SetMobileFiltersOpen(!_mobileFiltersOpen);
             AutomationProperties.SetName(_mobileFilterButton, "Open search and timeline filters");
@@ -664,6 +678,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                     Padding = new Thickness(5, 0),
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     HorizontalContentAlignment = HorizontalAlignment.Center,
+                    VerticalContentAlignment = VerticalAlignment.Center,
                     CornerRadius = column switch
                     {
                         0 => new CornerRadius(7, 0, 0, 7),

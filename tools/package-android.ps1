@@ -1,0 +1,552 @@
+<#
+.SYNOPSIS
+    Builds and verifies the signed Android artifacts VisualCat publishes: the
+    Google Play App Bundle and the directly installable APK.
+
+.DESCRIPTION
+    Google Play rejects an upload after the fact and with little detail, so this
+    script proves the properties Play checks before anything is uploaded:
+
+      * application ID, versionCode, versionName, minSdkVersion, and
+        targetSdkVersion actually baked into the package;
+      * a real release signature and the certificate fingerprint that Play will
+        pin the app to forever;
+      * 64-bit native code; and
+      * 16 KB memory-page alignment of every shipped ELF, which Play has
+        required of packages targeting Android 15 and later since
+        1 November 2025.
+
+    The App Bundle is what Google Play consumes. The APK is the same build in
+    the form a person can side-load from the GitHub release, and it is what
+    aapt2 and apksigner can inspect directly, so building both also verifies
+    the bundle's inputs.
+
+.PARAMETER Format
+    Which packages to produce: 'aab' for Google Play, 'apk' for direct
+    installation, or 'both' (default).
+
+.PARAMETER Keystore
+    Path to the signing keystore. Defaults to $env:ANDROID_KEYSTORE_PATH.
+
+.PARAMETER KeyAlias
+    Key alias inside the keystore. Defaults to $env:ANDROID_KEY_ALIAS.
+
+.PARAMETER StorePassword
+    Keystore password. Defaults to $env:ANDROID_KEYSTORE_PASSWORD.
+
+.PARAMETER KeyPassword
+    Key password. Defaults to $env:ANDROID_KEY_PASSWORD, then to StorePassword,
+    which is how PKCS12 keystores are normally created.
+
+.PARAMETER Version
+    Release version (versionName). Defaults to the VersionPrefix declared in
+    Directory.Build.props.
+
+.PARAMETER VersionCode
+    Play's ordering integer. Defaults to the value the project derives from the
+    release version, and only needs overriding to re-upload an unchanged
+    version.
+
+.PARAMETER Output
+    Directory that receives the final named artifacts. Defaults to
+    artifacts/android.
+
+.PARAMETER SkipBuild
+    Verify artifacts already present in the output directory instead of
+    rebuilding them. Signing values are still required, because the keystore's
+    certificate is what the packages are checked against.
+
+.EXAMPLE
+    pwsh ./tools/package-android.ps1 `
+        -Keystore ~/.visualcat-signing/visualcat-upload.keystore `
+        -KeyAlias visualcat-upload -StorePassword '...'
+#>
+[CmdletBinding()]
+param(
+    [ValidateSet('aab', 'apk', 'both')]
+    [string]$Format = 'both',
+    [string]$Keystore = $env:ANDROID_KEYSTORE_PATH,
+    [string]$KeyAlias = $env:ANDROID_KEY_ALIAS,
+    [string]$StorePassword = $env:ANDROID_KEYSTORE_PASSWORD,
+    [string]$KeyPassword = $env:ANDROID_KEY_PASSWORD,
+    [string]$Version,
+    [string]$VersionCode,
+    [string]$Output = 'artifacts/android',
+    [switch]$SkipBuild
+)
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+$repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$project = Join-Path $repository 'src/VisualCat.Android/VisualCat.Android.csproj'
+$expectedApplicationId = 'com.barebit.visualcat'
+# Google Play requires new apps and updates to target this level from
+# 31 August 2026. The project pins it; this is the independent assertion.
+$requiredTargetSdk = 36
+$requiredPageAlignment = 16384
+
+# --- inputs --------------------------------------------------------------
+
+if (-not $Version) {
+    $props = Get-Content -Raw -LiteralPath (Join-Path $repository 'Directory.Build.props')
+    if ($props -notmatch '<VersionPrefix>\s*(?<version>[^<]+?)\s*</VersionPrefix>') {
+        throw 'Directory.Build.props does not declare <VersionPrefix>, so -Version is required.'
+    }
+    $Version = $Matches['version']
+}
+
+if (-not $KeyPassword) { $KeyPassword = $StorePassword }
+
+$missing = @(
+    if (-not $Keystore) { 'Keystore (ANDROID_KEYSTORE_PATH)' }
+    if (-not $KeyAlias) { 'KeyAlias (ANDROID_KEY_ALIAS)' }
+    if (-not $StorePassword) { 'StorePassword (ANDROID_KEYSTORE_PASSWORD)' }
+)
+if ($missing.Count -gt 0) {
+    throw "Signing is required and these values are missing: $($missing -join ', '). See docs/RELEASE-CHECKLIST.md."
+}
+
+$Keystore = [IO.Path]::GetFullPath($Keystore)
+if (-not (Test-Path -LiteralPath $Keystore -PathType Leaf)) {
+    throw "The keystore '$Keystore' does not exist."
+}
+
+$outputRoot = [IO.Path]::GetFullPath((Join-Path $repository $Output))
+New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+
+$formats = if ($Format -eq 'both') { @('aab', 'apk') } else { @($Format) }
+
+# --- Android SDK tooling -------------------------------------------------
+
+<#
+    The SDK, build-tools, and JDK the build actually used are recorded by the
+    Android targets in obj/. Reading them back is exact, where probing
+    ANDROID_HOME guesses at a second installation that may not be the one that
+    produced these bytes.
+#>
+function Get-AndroidBuildEnvironment {
+    param([Parameter(Mandatory)][string]$IntermediatePath)
+
+    $propsPath = Join-Path $IntermediatePath 'build.props'
+    if (-not (Test-Path -LiteralPath $propsPath)) {
+        throw "The Android build did not record '$propsPath'."
+    }
+
+    $values = @{}
+    foreach ($line in Get-Content -LiteralPath $propsPath) {
+        $separator = $line.IndexOf('=')
+        if ($separator -gt 0) {
+            $values[$line.Substring(0, $separator)] = $line.Substring($separator + 1)
+        }
+    }
+
+    $sdk = $values['androidsdkpath']
+    $buildTools = Join-Path $sdk "build-tools/$($values['androidsdkbuildtoolsversion'])"
+    $jdk = $values['javasdkpath']
+    $extension = if ($IsWindows -or $env:OS -eq 'Windows_NT') { '.exe' } else { '' }
+    $batch = if ($IsWindows -or $env:OS -eq 'Windows_NT') { '.bat' } else { '' }
+
+    $tools = [ordered]@{
+        Aapt2     = Join-Path $buildTools "aapt2$extension"
+        ApkSigner = Join-Path $buildTools "apksigner$batch"
+        JarSigner = Join-Path $jdk "bin/jarsigner$extension"
+    }
+    foreach ($tool in $tools.Keys) {
+        if (-not (Test-Path -LiteralPath $tools[$tool])) {
+            throw "Required tool '$tool' was not found at '$($tools[$tool])'."
+        }
+    }
+
+    return [pscustomobject]$tools
+}
+
+function Invoke-Tool {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [string]$Description = 'tool'
+    )
+
+    $output = & $Path @Arguments 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Description failed with exit code ${LASTEXITCODE}:`n$output"
+    }
+
+    return $output
+}
+
+# --- 16 KB page alignment ------------------------------------------------
+
+<#
+    A 16 KB device can only load a shared object whose PT_LOAD segments are
+    aligned to at least 16 KB. Parsing the ELF program headers directly keeps
+    this check honest on a machine without the NDK, where llvm-readelf is
+    absent and its absence would otherwise silently skip the check.
+#>
+function Get-ElfLoadAlignment {
+    param([Parameter(Mandatory)][byte[]]$Bytes)
+
+    if ($Bytes.Length -lt 64 -or
+        $Bytes[0] -ne 0x7F -or $Bytes[1] -ne 0x45 -or $Bytes[2] -ne 0x4C -or $Bytes[3] -ne 0x46) {
+        return $null
+    }
+
+    $is64Bit = $Bytes[4] -eq 2
+    $isLittleEndian = $Bytes[5] -eq 1
+    if (-not $is64Bit -or -not $isLittleEndian) {
+        # 32-bit ABIs are not shipped, and a big-endian Android target does not
+        # exist. Reporting rather than assuming keeps a surprise visible.
+        return @{ Unsupported = "class=$($Bytes[4]) data=$($Bytes[5])" }
+    }
+
+    $programHeaderOffset = [BitConverter]::ToUInt64($Bytes, 32)
+    $programHeaderSize = [BitConverter]::ToUInt16($Bytes, 54)
+    $programHeaderCount = [BitConverter]::ToUInt16($Bytes, 56)
+
+    $alignments = [Collections.Generic.List[uint64]]::new()
+    for ($index = 0; $index -lt $programHeaderCount; $index++) {
+        $entry = [int]$programHeaderOffset + ($index * $programHeaderSize)
+        if ($entry + $programHeaderSize -gt $Bytes.Length) { break }
+        $type = [BitConverter]::ToUInt32($Bytes, $entry)
+        if ($type -eq 1) {
+            # PT_LOAD
+            $alignments.Add([BitConverter]::ToUInt64($Bytes, $entry + 48))
+        }
+    }
+
+    if ($alignments.Count -eq 0) { return $null }
+    return @{ Minimum = ($alignments | Measure-Object -Minimum).Minimum }
+}
+
+function Test-PackagePageAlignment {
+    param(
+        [Parameter(Mandatory)][string]$Package,
+        [Parameter(Mandatory)][string]$LibraryPrefix
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($Package)
+    try {
+        $entries = @($archive.Entries | Where-Object {
+                $_.FullName.StartsWith($LibraryPrefix, [StringComparison]::Ordinal) -and
+                $_.FullName.EndsWith('.so', [StringComparison]::Ordinal)
+            })
+        if ($entries.Count -eq 0) {
+            throw "$([IO.Path]::GetFileName($Package)) contains no native libraries under '$LibraryPrefix'."
+        }
+
+        $misaligned = [Collections.Generic.List[string]]::new()
+        $unreadable = [Collections.Generic.List[string]]::new()
+        foreach ($entry in $entries) {
+            # Only the ELF header and program headers are needed, but entries are
+            # deflated, so the prefix has to be inflated rather than seeked to.
+            $stream = $entry.Open()
+            try {
+                $buffer = [byte[]]::new(64 * 1024)
+                $read = 0
+                while ($read -lt $buffer.Length) {
+                    $chunk = $stream.Read($buffer, $read, $buffer.Length - $read)
+                    if ($chunk -le 0) { break }
+                    $read += $chunk
+                }
+                if ($read -lt $buffer.Length) { $buffer = $buffer[0..([Math]::Max($read, 1) - 1)] }
+            }
+            finally {
+                $stream.Dispose()
+            }
+
+            $result = Get-ElfLoadAlignment -Bytes $buffer
+            if ($null -eq $result) {
+                $unreadable.Add($entry.FullName)
+            }
+            elseif ($result.ContainsKey('Unsupported')) {
+                $unreadable.Add("$($entry.FullName) ($($result.Unsupported))")
+            }
+            elseif ($result.Minimum -lt $requiredPageAlignment) {
+                $misaligned.Add("$($entry.FullName) (2^$([Math]::Log($result.Minimum, 2)) = $($result.Minimum) bytes)")
+            }
+        }
+
+        if ($unreadable.Count -gt 0) {
+            throw ("These entries in $([IO.Path]::GetFileName($Package)) are not readable 64-bit ELF objects: " +
+                ($unreadable -join ', '))
+        }
+        if ($misaligned.Count -gt 0) {
+            throw ("Google Play requires 16 KB page alignment. These libraries in " +
+                "$([IO.Path]::GetFileName($Package)) are aligned below $requiredPageAlignment bytes: " +
+                ($misaligned -join ', '))
+        }
+
+        return $entries.Count
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
+
+function Get-PackageEntry {
+    param(
+        [Parameter(Mandatory)][string]$Package,
+        [Parameter(Mandatory)][string]$EntryName
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($Package)
+    try {
+        $entry = $archive.GetEntry($EntryName)
+        if (-not $entry) { return $null }
+        $stream = $entry.Open()
+        try {
+            $memory = [IO.MemoryStream]::new()
+            $stream.CopyTo($memory)
+            return $memory.ToArray()
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
+
+<#
+    Google Play pins an app to the certificate of its first upload forever, so
+    the identity that matters is the certificate itself rather than the fact
+    that some signature verified. This reads the signer certificate out of the
+    package's PKCS#7 block and reports the same SHA-256 fingerprint that
+    keytool, apksigner, and Play Console show.
+#>
+function Get-SignerCertificateDigest {
+    param([Parameter(Mandatory)][string]$Package)
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($Package)
+    try {
+        $block = @($archive.Entries | Where-Object {
+                $_.FullName -match '^META-INF/[^/]+\.(RSA|DSA|EC)$'
+            }) | Select-Object -First 1
+        if (-not $block) {
+            throw "$([IO.Path]::GetFileName($Package)) contains no META-INF signature block and is unsigned."
+        }
+
+        $stream = $block.Open()
+        try {
+            $memory = [IO.MemoryStream]::new()
+            $stream.CopyTo($memory)
+            $signature = [Security.Cryptography.Pkcs.SignedCms]::new()
+            $signature.Decode($memory.ToArray())
+            $certificate = $signature.SignerInfos[0].Certificate
+            if (-not $certificate) {
+                throw "$([IO.Path]::GetFileName($Package)) carries a signature without an embedded certificate."
+            }
+
+            return [pscustomobject]@{
+                Digest  = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($certificate.RawData)).ToLowerInvariant()
+                Subject = $certificate.Subject
+                Expires = $certificate.NotAfter
+            }
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
+
+# --- build ---------------------------------------------------------------
+
+$results = [Collections.Generic.List[object]]::new()
+
+foreach ($packageFormat in $formats) {
+    $artifact = Join-Path $outputRoot "VisualCat-Android-v$Version.$packageFormat"
+
+    if ($SkipBuild) {
+        if (-not (Test-Path -LiteralPath $artifact)) {
+            throw "-SkipBuild was requested but '$artifact' does not exist."
+        }
+        $results.Add([pscustomobject]@{ Format = $packageFormat; Path = $artifact })
+        continue
+    }
+
+    Write-Host "==> Publishing signed .$packageFormat for $expectedApplicationId $Version"
+
+    $stagingPath = Join-Path $outputRoot "publish-$packageFormat"
+    if (Test-Path -LiteralPath $stagingPath) {
+        Remove-Item -LiteralPath $stagingPath -Recurse -Force
+    }
+
+    $arguments = @(
+        'publish', $project
+        '--configuration', 'Release'
+        '--output', $stagingPath
+        "-p:Version=$Version"
+        "-p:ApplicationDisplayVersion=$Version"
+        "-p:AndroidPackageFormat=$packageFormat"
+        '-p:AndroidKeyStore=true'
+        "-p:AndroidSigningKeyStore=$Keystore"
+        "-p:AndroidSigningStorePass=$StorePassword"
+        "-p:AndroidSigningKeyAlias=$KeyAlias"
+        "-p:AndroidSigningKeyPass=$KeyPassword"
+    )
+    if ($VersionCode) { $arguments += "-p:ApplicationVersion=$VersionCode" }
+
+    & dotnet @arguments
+    if ($LASTEXITCODE -ne 0) { throw "Publishing the .$packageFormat failed." }
+
+    $signed = Get-ChildItem -LiteralPath $stagingPath -Recurse -Filter "*-Signed.$packageFormat" |
+        Select-Object -First 1
+    if (-not $signed) {
+        # An unsigned package here means signing was skipped rather than failed,
+        # which Play would only reveal at upload time.
+        throw "The build produced no signed .$packageFormat in '$stagingPath'."
+    }
+
+    Copy-Item -LiteralPath $signed.FullName -Destination $artifact -Force
+    $results.Add([pscustomobject]@{ Format = $packageFormat; Path = $artifact })
+}
+
+# --- verify --------------------------------------------------------------
+
+# Read from the project rather than repeated here, so pinning a new Android API
+# level cannot leave the verification step looking in a directory the build no
+# longer writes to.
+$projectText = Get-Content -Raw -LiteralPath $project
+if ($projectText -notmatch '<TargetFramework>\s*(?<framework>[^<]+?)\s*</TargetFramework>') {
+    throw 'VisualCat.Android.csproj does not declare a single <TargetFramework>.'
+}
+
+$intermediate = Join-Path $repository "src/VisualCat.Android/obj/Release/$($Matches['framework'])"
+$tools = Get-AndroidBuildEnvironment -IntermediatePath $intermediate
+
+$expectedVersionCode = $VersionCode
+$signingCertificate = $null
+$summary = [Collections.Generic.List[string]]::new()
+
+foreach ($result in $results) {
+    $name = [IO.Path]::GetFileName($result.Path)
+    $size = '{0:N1} MB' -f ((Get-Item -LiteralPath $result.Path).Length / 1MB)
+    Write-Host "==> Verifying $name"
+
+    if ($result.Format -eq 'apk') {
+        $badging = Invoke-Tool -Path $tools.Aapt2 -Arguments @('dump', 'badging', $result.Path) -Description 'aapt2 dump badging'
+
+        if ($badging -notmatch "package: name='(?<id>[^']+)' versionCode='(?<code>\d+)' versionName='(?<version>[^']+)'") {
+            throw "aapt2 did not report a package line for $name."
+        }
+        $applicationId = $Matches['id']
+        $versionCodeFound = $Matches['code']
+        $versionNameFound = $Matches['version']
+
+        if ($badging -notmatch "sdkVersion:'(?<min>\d+)'") { throw "$name declares no minSdkVersion." }
+        $minSdk = $Matches['min']
+        if ($badging -notmatch "targetSdkVersion:'(?<target>\d+)'") { throw "$name declares no targetSdkVersion." }
+        $targetSdk = [int]$Matches['target']
+        $abis = @([regex]::Matches($badging, "native-code: (?<abis>.+)") |
+                ForEach-Object { $_.Groups['abis'].Value.Trim() -replace "'", '' }) -join ' '
+        $permissions = @([regex]::Matches($badging, "uses-permission: name='(?<permission>[^']+)'") |
+                ForEach-Object { $_.Groups['permission'].Value })
+
+        if ($applicationId -ne $expectedApplicationId) {
+            throw "$name declares application ID '$applicationId' but '$expectedApplicationId' is required."
+        }
+        if ($versionNameFound -ne $Version) {
+            throw "$name declares versionName '$versionNameFound' but '$Version' was requested."
+        }
+        if ($targetSdk -lt $requiredTargetSdk) {
+            throw "$name targets API $targetSdk. Google Play requires at least API $requiredTargetSdk."
+        }
+        if ($abis -notmatch 'arm64-v8a') {
+            throw "$name ships no arm64-v8a code. Google Play requires 64-bit support."
+        }
+        if ($expectedVersionCode -and $versionCodeFound -ne $expectedVersionCode) {
+            throw "$name declares versionCode $versionCodeFound but $expectedVersionCode was requested."
+        }
+        $expectedVersionCode = $versionCodeFound
+
+        # Which scheme applies is decided by minSdkVersion, not by preference:
+        # at API 31 apksigner emits v3 alone and leaves v1 and v2 unsigned. The
+        # requirement is therefore that some APK Signature Scheme verified, not
+        # a particular one. Only v1-alone would be a real finding.
+        $signatures = Invoke-Tool -Path $tools.ApkSigner -Arguments @('verify', '--print-certs', '--verbose', $result.Path) -Description 'apksigner verify'
+        $schemes = @([regex]::Matches($signatures, 'Verified using (?<scheme>v[\d.]+) scheme[^:]*: true') |
+                ForEach-Object { $_.Groups['scheme'].Value })
+        if (@($schemes | Where-Object { $_ -ne 'v1' }).Count -eq 0) {
+            throw "$name is not signed with any APK Signature Scheme:`n$signatures"
+        }
+        if ($signatures -notmatch 'Signer #1 certificate SHA-256 digest: (?<digest>[0-9a-f]+)') {
+            throw "apksigner reported no signing certificate for $name."
+        }
+        $certificate = $Matches['digest']
+        if ($signingCertificate -and $certificate -ne $signingCertificate) {
+            throw "$name is signed by $certificate, but another package in this release is signed by $signingCertificate."
+        }
+        $signingCertificate = $certificate
+
+        $libraries = Test-PackagePageAlignment -Package $result.Path -LibraryPrefix 'lib/'
+
+        $summary.Add("- ``$name`` ($size): $applicationId $versionNameFound (versionCode $versionCodeFound), " +
+            "API $minSdk-$targetSdk, $abis, $libraries native libraries 16 KB aligned")
+        $summary.Add("  - signed with APK Signature Scheme $($schemes -join ', ')")
+        $summary.Add("  - permissions: $($permissions -join ', ')")
+    }
+    else {
+        # An App Bundle is a signed JAR whose manifest is protobuf rather than
+        # binary XML, so aapt2 cannot read it. Its identity is asserted against
+        # the raw manifest bytes and its structure against the entries Play
+        # requires.
+        $manifest = Get-PackageEntry -Package $result.Path -EntryName 'base/manifest/AndroidManifest.xml'
+        if (-not $manifest) { throw "$name has no base/manifest/AndroidManifest.xml." }
+        $manifestText = [Text.Encoding]::UTF8.GetString($manifest)
+        if ($manifestText -notmatch [regex]::Escape($expectedApplicationId)) {
+            throw "$name does not declare application ID '$expectedApplicationId'."
+        }
+        if ($manifestText -notmatch [regex]::Escape($Version)) {
+            throw "$name does not declare versionName '$Version'."
+        }
+        if (-not (Get-PackageEntry -Package $result.Path -EntryName 'BundleConfig.pb')) {
+            throw "$name has no BundleConfig.pb and is not a valid App Bundle."
+        }
+
+        # -strict is deliberately not used: it fails any self-signed certificate,
+        # and every Android signing certificate is self-signed by design, so it
+        # would report a permanent, meaningless error instead of a signature
+        # problem.
+        $verification = Invoke-Tool -Path $tools.JarSigner -Arguments @('-verify', $result.Path) -Description 'jarsigner -verify'
+        if ($verification -notmatch 'jar verified') {
+            throw "$name is not correctly signed:`n$verification"
+        }
+
+        $signer = Get-SignerCertificateDigest -Package $result.Path
+        if ($signingCertificate -and $signer.Digest -ne $signingCertificate) {
+            throw "$name is signed by $($signer.Digest), but another package in this release is signed by $signingCertificate."
+        }
+        $signingCertificate = $signer.Digest
+
+        $libraries = Test-PackagePageAlignment -Package $result.Path -LibraryPrefix 'base/lib/'
+
+        $summary.Add("- ``$name`` ($size): signed App Bundle for $expectedApplicationId $Version, " +
+            "$libraries native libraries 16 KB aligned")
+        $summary.Add("  - signed by $($signer.Subject), valid until $($signer.Expires.ToString('yyyy-MM-dd'))")
+    }
+}
+
+foreach ($result in $results) {
+    $stagingPath = Join-Path $outputRoot "publish-$($result.Format)"
+    if (Test-Path -LiteralPath $stagingPath) {
+        Remove-Item -LiteralPath $stagingPath -Recurse -Force
+    }
+}
+
+$summary.Add("- signing certificate SHA-256 ``$signingCertificate`` — Google Play pins the app to this forever")
+
+Write-Host ''
+Write-Host 'Android packages ready for Google Play:'
+foreach ($line in $summary) { Write-Host $line }
+
+if ($env:GITHUB_STEP_SUMMARY) {
+    @('### Android packages') + $summary | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+}
