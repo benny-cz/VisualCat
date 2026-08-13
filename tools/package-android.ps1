@@ -85,6 +85,9 @@ $expectedApplicationId = 'com.barebit.visualcat'
 # 31 August 2026. The project pins it; this is the independent assertion.
 $requiredTargetSdk = 36
 $requiredPageAlignment = 16384
+# Public fingerprint of VisualCat's Google Play upload certificate. A valid
+# signature from any other keystore is still an invalid Play upload.
+$requiredUploadCertificateSha256 = 'a715b0309589aa83dd21548d1959af4bb97b8df06d97fdae32715fbd6530e184'
 
 # --- inputs --------------------------------------------------------------
 
@@ -312,11 +315,11 @@ function Get-PackageEntry {
 }
 
 <#
-    Google Play pins an app to the certificate of its first upload forever, so
-    the identity that matters is the certificate itself rather than the fact
-    that some signature verified. This reads the signer certificate out of the
-    package's PKCS#7 block and reports the same SHA-256 fingerprint that
-    keytool, apksigner, and Play Console show.
+    Google Play authenticates an upload using its registered upload
+    certificate, so the identity that matters is the certificate itself rather
+    than the fact that some signature verified. This reads the signer
+    certificate out of the package's PKCS#7 block and reports the same SHA-256
+    fingerprint that keytool, apksigner, and Play Console show.
 #>
 function Get-SignerCertificateDigest {
     param([Parameter(Mandatory)][string]$Package)
@@ -534,6 +537,10 @@ foreach ($result in $results) {
     }
 }
 
+if ($signingCertificate -ne $requiredUploadCertificateSha256) {
+    throw "The packages use upload certificate SHA-256 '$signingCertificate', but Google Play expects '$requiredUploadCertificateSha256'."
+}
+
 foreach ($result in $results) {
     $stagingPath = Join-Path $outputRoot "publish-$($result.Format)"
     if (Test-Path -LiteralPath $stagingPath) {
@@ -541,7 +548,7 @@ foreach ($result in $results) {
     }
 }
 
-$summary.Add("- signing certificate SHA-256 ``$signingCertificate`` — Google Play pins the app to this forever")
+$summary.Add("- Google Play upload certificate SHA-256 ``$signingCertificate``")
 
 Write-Host ''
 Write-Host 'Android packages ready for Google Play:'

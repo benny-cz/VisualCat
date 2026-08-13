@@ -239,7 +239,10 @@ This produces `artifacts/android/VisualCat-Android-v<version>.aab` for Play and
 the matching `.apk` for direct installation, then proves what Play checks after
 upload: application ID, versionCode, versionName, `minSdkVersion`,
 `targetSdkVersion`, 64-bit code, a real release signature, and 16 KB page
-alignment of every shipped ELF. The release workflow runs the same script and
+alignment of every shipped ELF. It also rejects any signing key except the
+registered VisualCat upload certificate
+(`SHA1 37:5C:8D:64:4F:BF:BD:07:DE:4C:1A:71:95:10:6C:94:4B:C6:B8:14`). The
+release workflow runs the same script and
 uploads the bundle as the separate `google-play-bundle` artifact, deliberately
 not as a public release asset — the bundle is not installable and Play re-signs
 it, so offering it for download would only confuse.
@@ -280,10 +283,10 @@ GitHub Actions repository secrets before tagging:
 - `ANDROID_KEY_PASSWORD`.
 
 The workflow fails closed if any signing value is absent and never uploads an
-unsigned or ephemeral debug-signed Android package. Back up the keystore and
-passwords outside GitHub; losing the key prevents users from upgrading an
-installed APK. Without `ANDROID_RELEASE_ENABLED`, the workflow deliberately
-ships desktop, CLI, NuGet, SBOM, and checksum assets without an APK.
+unsigned, debug-signed, or wrong-certificate Android package. Back up the
+keystore and passwords outside GitHub; losing the key prevents users from
+upgrading an installed APK. Without `ANDROID_RELEASE_ENABLED`, the workflow
+deliberately ships desktop, CLI, NuGet, SBOM, and checksum assets without an APK.
 
 Set `NUGET_API_KEY` to publish the `VisualCat.Cli` global-tool package to
 nuget.org. Without it, the `.nupkg` is still built, checksummed, and attached to

@@ -12,6 +12,11 @@ The current stable release is `2.0.1`. Ongoing work is recorded under
 
 ## [Unreleased]
 
+### Fixed
+- Android release packaging now verifies the Google Play upload certificate
+  fingerprint before accepting an AAB, preventing a valid but unregistered
+  keystore from producing another rejected Play upload.
+
 ## [2.0.1] - 2026-08-13
 
 ### Changed

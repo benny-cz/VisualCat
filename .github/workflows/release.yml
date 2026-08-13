@@ -218,6 +218,23 @@ jobs:
           }
           $keyStore = Join-Path $env:RUNNER_TEMP 'visualcat-release.keystore'
           [IO.File]::WriteAllBytes($keyStore, [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64))
+
+          # Fail before the expensive Android build if the repository secret was
+          # replaced with a valid keystore that Google Play does not recognize.
+          # Certificate fingerprints are public identifiers, not credentials.
+          $expectedUploadSha1 = '37:5C:8D:64:4F:BF:BD:07:DE:4C:1A:71:95:10:6C:94:4B:C6:B8:14'
+          $keytoolOutput = & keytool -list -v -keystore $keyStore `
+            -storepass $env:ANDROID_KEYSTORE_PASSWORD -alias $env:ANDROID_KEY_ALIAS 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) {
+            throw 'The Android release keystore or its credentials are invalid.'
+          }
+          if ($keytoolOutput -notmatch 'SHA1:\s*(?<fingerprint>(?:[0-9A-Fa-f]{2}:){19}[0-9A-Fa-f]{2})') {
+            throw 'keytool did not report an SHA-1 fingerprint for the Android upload certificate.'
+          }
+          if ($Matches['fingerprint'].ToUpperInvariant() -ne $expectedUploadSha1) {
+            throw "The Android upload certificate is $($Matches['fingerprint']); Google Play expects $expectedUploadSha1."
+          }
+
           "ANDROID_KEYSTORE_PATH=$keyStore" >> $env:GITHUB_ENV
       - run: dotnet restore src/VisualCat.Android/VisualCat.Android.csproj
       - name: Build and verify the signed App Bundle and APK
