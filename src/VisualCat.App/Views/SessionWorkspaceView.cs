@@ -80,6 +80,9 @@ public sealed partial class SessionWorkspaceView : UserControl
     private long _timelineSelectionGeneration;
     private readonly object _rawLoadSync = new();
     private CancellationTokenSource? _rawLoadCancellation;
+    private NormalizedEntry? _rawLoadEntry;
+    private long? _rawLoadTimelineCount;
+    private bool _rawLoadInterrupted;
     private static readonly FontFamily MonoFont =
         new("Cascadia Mono,Consolas,Menlo,DejaVu Sans Mono,Roboto Mono,monospace");
     private static readonly IBrush IncludeActive = new SolidColorBrush(Color.Parse("#1E6FA8"));
@@ -180,6 +183,17 @@ public sealed partial class SessionWorkspaceView : UserControl
         SizeChanged += (_, eventArgs) => ApplyMobileLayout(eventArgs.NewSize);
         ActualThemeVariantChanged += (_, _) => ApplyThemeSurfaces();
         ApplyThemeSurfaces();
+        AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(() =>
+        {
+            if (_mobile)
+            {
+                ApplyMobileLayout(Bounds.Size);
+                _root.InvalidateMeasure();
+                _root.InvalidateArrange();
+            }
+
+            ResumeInterruptedRawContextLoad();
+        });
         DetachedFromVisualTree += (_, _) =>
         {
             _searchDebounce?.Cancel();
@@ -188,7 +202,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             _loadAllEntriesCancellation?.Cancel();
             _loadAllEntriesCancellation?.Dispose();
             _loadAllEntriesCancellation = null;
-            CancelRawContextLoad();
+            CancelRawContextLoad(resumeOnAttach: true);
         };
     }
 

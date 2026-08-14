@@ -491,7 +491,7 @@ public static class SessionQueryEngine
         var path = Path.Combine(snapshot.RootPath, "source-order", "records.bin");
         var first = Math.Max(0, sourceSequence - before);
         var result = new List<SourceRecord>(before + after + 1);
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         using var reader = new BinaryReader(stream);
 
         // Sequences are dense and monotonic, so the sidecar turns "find record N" from a
@@ -527,7 +527,7 @@ public static class SessionQueryEngine
         var indexPath = Path.Combine(rootPath, "source-order", "index.bin");
         try
         {
-            using var index = new FileStream(indexPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var index = new FileStream(indexPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             var position = sequence * sizeof(long);
             if (position < 0 || position + sizeof(long) > index.Length)
             {

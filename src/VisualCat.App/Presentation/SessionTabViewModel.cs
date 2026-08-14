@@ -989,6 +989,11 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             }
 
             var records = SessionQueryEngine.GetRawContext(snapshot, entry.SourceSequence, before, after);
+            if (records.Count == 0)
+            {
+                throw new InvalidDataException(
+                    $"No published source record exists for entry {entry.SourceSequence}.");
+            }
             var path = snapshot.RawPath;
             if (path is null || !File.Exists(path))
             {

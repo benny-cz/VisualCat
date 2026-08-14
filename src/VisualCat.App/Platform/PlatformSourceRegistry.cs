@@ -9,6 +9,7 @@ public static class PlatformSourceRegistry
     public static Func<CancellationToken, Task<IReadOnlyList<string>>>? ConsumeLaunchFilesAsync { get; set; }
 
     public static event Action<IReadOnlyList<string>>? LaunchFilesReceived;
+    public static event Action? AppResumed;
 
     public static void PublishLaunchFiles(IReadOnlyList<string> paths)
     {
@@ -17,4 +18,6 @@ public static class PlatformSourceRegistry
             LaunchFilesReceived?.Invoke(paths);
         }
     }
+
+    public static void PublishAppResumed() => AppResumed?.Invoke();
 }

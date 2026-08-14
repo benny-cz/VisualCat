@@ -35,6 +35,7 @@ public sealed class MainView : UserControl, IAsyncDisposable
     private bool _settingsLoaded;
     private Window? _hostWindow;
     private readonly Action<IReadOnlyList<string>> _launchFilesHandler;
+    private readonly Action _appResumedHandler;
 
     // Responsive command bar: primary actions are always inline, flexible actions render as
     // buttons while they fit and fold into "More" when they do not, and settings live in
@@ -76,7 +77,9 @@ public sealed class MainView : UserControl, IAsyncDisposable
             "VisualCat",
             "settings.json"));
         _launchFilesHandler = paths => Dispatcher.UIThread.Post(() => _ = OpenPathsAsync(paths));
+        _appResumedHandler = () => Dispatcher.UIThread.Post(RestoreAndroidLayoutAfterResume);
         PlatformSourceRegistry.LaunchFilesReceived += _launchFilesHandler;
+        PlatformSourceRegistry.AppResumed += _appResumedHandler;
         Content = Build();
         SizeChanged += (_, eventArgs) => UpdateMobileChrome(eventArgs.NewSize);
         ActualThemeVariantChanged += (_, _) => ApplyThemeSurfaces();
@@ -99,6 +102,21 @@ public sealed class MainView : UserControl, IAsyncDisposable
             }
         };
         AddHandler(KeyDownEvent, OnKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+    }
+
+    private void RestoreAndroidLayoutAfterResume()
+    {
+        if (!OperatingSystem.IsAndroid())
+        {
+            return;
+        }
+
+        // Android may recreate its drawing surface with a transient arrange slot while
+        // returning from Recents. Reapply the settled bounds and invalidate the whole host
+        // once the resumed UI queue is running so no stale compact/landscape arrange survives.
+        UpdateMobileChrome(Bounds.Size);
+        _rootPanel.InvalidateMeasure();
+        _rootPanel.InvalidateArrange();
     }
 
     public void AttachHostWindow(Window window)
@@ -1361,6 +1379,7 @@ public sealed class MainView : UserControl, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         PlatformSourceRegistry.LaunchFilesReceived -= _launchFilesHandler;
+        PlatformSourceRegistry.AppResumed -= _appResumedHandler;
         await _viewModel.DisposeAsync();
         if (_diagnostics is not null)
         {

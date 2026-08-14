@@ -352,7 +352,10 @@ public sealed class SessionCoordinator
                         FileMode.Create,
                         FileAccess.Write,
                         FileShare.Read,
-                        1024 * 1024,
+                        // Published snapshots are read while capture continues. Disable
+                        // FileStream's private buffer so a committed raw span is visible to
+                        // that reader as soon as its batch enters the parsing pipeline.
+                        1,
                         FileOptions.Asynchronous | FileOptions.SequentialScan);
                 }
 

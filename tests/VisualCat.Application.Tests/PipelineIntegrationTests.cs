@@ -479,10 +479,7 @@ public sealed class PipelineIntegrationTests
         {
             if (value.TerminalState is null && value.LinesCommitted > 0)
             {
-                if (firstPublication.TrySetResult(value.SnapshotGeneration))
-                {
-                    stop.Cancel();
-                }
+                firstPublication.TrySetResult(value.SnapshotGeneration);
             }
         });
         var settings = Settings(2) with
@@ -493,7 +490,40 @@ public sealed class PipelineIntegrationTests
         };
 
         var import = SessionCoordinator.ImportAsync(source, root, settings, progress, gracefulStopToken: stop.Token);
-        var firstGeneration = await firstPublication.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var firstGeneration = 0L;
+        try
+        {
+            firstGeneration = await firstPublication.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            using var partial = await SessionStore.OpenAsync(root);
+            var range = Assert.IsType<TimeRange>(partial.TimedRange);
+            var entry = Assert.Single(SessionQueryEngine.GetEntries(
+                partial,
+                range,
+                FilterSpec.All,
+                EntryOrder.SourceSequence,
+                null,
+                10,
+                1).Entries);
+            var record = Assert.Single(SessionQueryEngine.GetRawContext(
+                partial,
+                entry.SourceSequence,
+                before: 0,
+                after: 0));
+            await using var raw = new FileStream(
+                Assert.IsType<string>(partial.RawPath),
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite);
+            var bytes = new byte[record.Raw.Length];
+            raw.Position = record.Raw.Offset;
+            await raw.ReadExactlyAsync(bytes);
+            Assert.Contains("capture connected", Encoding.UTF8.GetString(bytes));
+        }
+        finally
+        {
+            stop.Cancel();
+        }
+
         var result = await import.WaitAsync(TimeSpan.FromSeconds(30));
         await using var imported = new ImportedSession(root, result.Snapshot);
 

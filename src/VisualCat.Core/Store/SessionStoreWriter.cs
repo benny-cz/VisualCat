@@ -170,13 +170,25 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         _source = source;
     }
 
-    public Task<SessionManifest> PublishSnapshotAsync(
+    public async Task<SessionManifest> PublishSnapshotAsync(
         SessionDescriptor descriptor,
         IReadOnlyList<TemplateDefinition> templates,
         IReadOnlyList<ProcessNameRange> processNames,
         CancellationToken cancellationToken)
     {
         ThrowIfFinalized();
+
+        // The manifest is the publication boundary. Everything it makes queryable must
+        // be visible to concurrent readers before the atomic manifest replacement, or a
+        // live entry can exist while its source record is still trapped in this writer's
+        // user-space buffer.
+        _sourceRecords.Flush();
+        await _sourceRecordsStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        _sourceIndex.Flush();
+        await _sourceIndexStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await _untimedWriter.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await _untimedStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+
         var manifest = new SessionManifest(
             "2.0",
             descriptor with { Generation = _generation, Finalized = false },
@@ -192,7 +204,8 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             false,
             DateTimeOffset.UtcNow,
             processNames);
-        return WriteManifestAsync(manifest, cancellationToken);
+        await WriteManifestAsync(manifest, cancellationToken).ConfigureAwait(false);
+        return manifest;
     }
 
     public async Task<SessionManifest> FinalizeAsync(

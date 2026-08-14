@@ -299,6 +299,9 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void BeginRawContextLoad(NormalizedEntry entry, long? timelineCount)
     {
         _timelineEntryPending = false;
+        _rawLoadEntry = entry;
+        _rawLoadTimelineCount = timelineCount;
+        _rawLoadInterrupted = false;
         var cancellation = new CancellationTokenSource();
         lock (_rawLoadSync)
         {
@@ -323,6 +326,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 {
                     if (ReferenceEquals(_rawLoadCancellation, cancellation))
                     {
+                        _rawLoadInterrupted = false;
                         PresentRawContext();
                     }
                 }
@@ -358,12 +362,33 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
     }
 
-    private void CancelRawContextLoad()
+    private void CancelRawContextLoad(bool resumeOnAttach = false)
     {
+        var interrupted = false;
         lock (_rawLoadSync)
         {
-            _rawLoadCancellation?.Cancel();
+            if (_rawLoadCancellation is { } active)
+            {
+                active.Cancel();
+                interrupted = true;
+            }
+
             _rawLoadCancellation = null;
+        }
+
+        _rawLoadInterrupted = resumeOnAttach && interrupted;
+        if (!resumeOnAttach)
+        {
+            _rawLoadEntry = null;
+            _rawLoadTimelineCount = null;
+        }
+    }
+
+    private void ResumeInterruptedRawContextLoad()
+    {
+        if (_rawLoadInterrupted && _rawLoadEntry is { } entry && !HasRawContextLoad())
+        {
+            BeginRawContextLoad(entry, _rawLoadTimelineCount);
         }
     }
 
@@ -484,6 +509,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         var hasRaw = !string.IsNullOrEmpty(raw);
+        if (!hasRaw)
+        {
+            ShowRawUnavailableState();
+            return;
+        }
+
         if (_rawEmptyState is { } emptyState)
         {
             emptyState.IsVisible = !hasRaw;
@@ -499,6 +530,39 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (hasRaw && !_mobile && !_rawExpanded)
         {
             SetRawExpanded(true);
+        }
+    }
+
+    private void ShowRawUnavailableState()
+    {
+        if (_rawEmptyTitle is { } title)
+        {
+            title.Text = "Source unavailable";
+        }
+
+        if (_rawPlaceholder is { } description)
+        {
+            description.Text = "No source context was returned for this entry. Choose it again to retry.";
+        }
+
+        if (_rawChooseEntry is { } chooseEntry)
+        {
+            chooseEntry.IsVisible = true;
+        }
+
+        if (_rawEmptyState is { } emptyState)
+        {
+            emptyState.IsVisible = true;
+        }
+
+        if (_rawDataSurface is { } dataSurface)
+        {
+            dataSurface.IsVisible = false;
+        }
+
+        if (_rawEmptyCard is { } emptyCard)
+        {
+            AutomationProperties.SetName(emptyCard, "Source context unavailable");
         }
     }
 

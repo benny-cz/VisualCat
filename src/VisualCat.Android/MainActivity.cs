@@ -12,6 +12,7 @@ namespace VisualCat.Android;
     Label = "VisualCat",
     Theme = "@style/MyTheme.NoActionBar",
     MainLauncher = true,
+    LaunchMode = LaunchMode.SingleTask,
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode)]
 [IntentFilter(
     [Intent.ActionView],
@@ -30,6 +31,12 @@ public sealed class MainActivity : AvaloniaMainActivity
         PlatformSourceRegistry.ShareFileAsync = ShareCurrentAsync;
         PlatformSourceRegistry.ConsumeLaunchFilesAsync = ConsumeCurrentLaunchFilesAsync;
         base.OnCreate(savedInstanceState);
+    }
+
+    protected override void OnResume()
+    {
+        base.OnResume();
+        PlatformSourceRegistry.PublishAppResumed();
     }
 
     protected override void OnNewIntent(Intent? intent)
