@@ -191,7 +191,7 @@ description states before install.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version: `2.0.1` → `20001` |
+| versionCode | Derived from the release version: `2.0.2` → `20002` |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
 | ABIs | `arm64-v8a`, `x86_64` |
@@ -206,4 +206,13 @@ Open a logcat file or a portable session from the desktop app, capture this
 device's log live, and explore it as a zoomable severity-by-time heat map with
 filters, ranked message templates and byte-faithful source context. Everything
 is processed on the device.
+```
+
+Release notes for `2.0.2`:
+
+```text
+Timeline lanes now adapt to the active severity filter, Facets and Templates
+show their count scope, search matches are highlighted in log messages, and a
+selected entry is marked on the timeline. Android source loading is also more
+reliable after the app resumes.
 ```

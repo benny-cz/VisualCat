@@ -58,6 +58,24 @@ be published from an unmerged commit or one that would fail a pull request:
 
 ## Release records
 
+### v2.0.2 — 2026-08-14
+
+- The release-signed APK was clean-installed on a Motorola edge 60 pro running
+  Android 16/API 36 and reported application ID `com.barebit.visualcat`, version
+  `2.0.2`, and version code `20002`. Live capture reached its first inspected
+  state with 56 entries and a visible capture status instead of an idle prompt.
+- Two background/resume cycles preserved the active capture and selected Source
+  context. Raw source remained readable while its sidecar grew, Stop capture
+  finalized cleanly at 825 entries/snapshot 39, and no crash or ANR was logged.
+- The centered workspace controls, filter-driven severity lanes, row severity
+  ribbons/tints, and selected-entry/source orientation were visually reviewed on
+  the physical device.
+- The AAB and APK passed the release packager's application ID, API level, ABI,
+  16 KB alignment, version, signature-scheme, and pinned Google Play upload
+  certificate checks.
+- The four-hour ADB soak, accessibility review, macOS hardware validation, and
+  Windows/macOS code signing remain intentionally deferred.
+
 ### v2.0.1 — 2026-08-13
 
 - The Android companion was exercised on a Motorola edge 60 pro running
@@ -86,7 +104,7 @@ be published from an unmerged commit or one that would fail a pull request:
 ## Release rehearsal
 
 Run the release workflow with `workflow_dispatch` before creating the first
-tag. Dispatch runs are versioned `2.0.1-preview.<run>` and never publish a
+tag. Dispatch runs are versioned `2.0.2-preview.<run>` and never publish a
 GitHub release or push to NuGet, so the packaging path can be exercised
 repeatedly and safely.
 

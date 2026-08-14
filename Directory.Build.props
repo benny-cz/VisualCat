@@ -4,7 +4,7 @@
     <LangVersion>14.0</LangVersion>
     <Authors>Marek Strihavka</Authors>
     <Product>VisualCat</Product>
-    <VersionPrefix>2.0.1</VersionPrefix>
+    <VersionPrefix>2.0.2</VersionPrefix>
     <Description>Interactive, local-first Android logcat analysis with a severity-by-time heat map.</Description>
     <RepositoryUrl>https://github.com/benny-cz/VisualCat</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

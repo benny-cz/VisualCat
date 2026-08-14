@@ -7,12 +7,34 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Version numbers correspond to git tags and the GitHub [Releases](https://github.com/benny-cz/VisualCat/releases)
 page.
 
-The current stable release is `2.0.1`. Ongoing work is recorded under
+The current stable release is `2.0.2`. Ongoing work is recorded under
 `[Unreleased]`.
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-08-14
+
+### Added
+- The workspace now marks the selected entry's instant on the timeline in its
+  severity color, keeping plot and table orientation connected while reading.
+- `docs/design/UX-IMPROVEMENTS.md` records the implemented interface changes,
+  physical-device observations, and a prioritized backlog for future UX work.
+
+### Changed
+- Timeline lanes now follow the active severity filter, so the remaining levels
+  use the available plot height instead of leaving empty lanes behind. Unknown
+  lane membership remains stable while panning because it comes from the full
+  session snapshot.
+- Facets and Templates now state whether their counts describe the full session
+  or the current viewport.
+- Entry rows carry a compact severity ribbon, restrained warning/error/fatal
+  tints, and bounded in-message highlighting for the active text or regex
+  search.
+
 ### Fixed
+- Android source context now survives app resume and activity reattachment,
+  retries interrupted reads, and can read live sidecar files while capture is
+  still writing them.
 - Android release packaging now verifies the Google Play upload certificate
   fingerprint before accepting an AAB, preventing a valid but unregistered
   keystore from producing another rejected Play upload.
@@ -90,6 +112,7 @@ Initial public baseline — the greenfield .NET 10 rewrite described in
   archive, a CycloneDX SBOM, build provenance attestations, and the
   `tools/verify-public-release.ps1` one-command local preflight.
 
-[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.2...HEAD
+[2.0.2]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.2
 [2.0.1]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.1
 [2.0.0]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.0
