@@ -2,10 +2,12 @@ using System.Globalization;
 using System.Text;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.LogicalTree;
 using VisualCat.App.Presentation;
+using VisualCat.App.Timeline;
 using VisualCat.App.Views;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Queries;
@@ -115,6 +117,13 @@ public sealed class SessionWorkspaceHeadlessTests
             Assert.Equal(secondHalf, tab.Viewport);
             Assert.Equal(secondHalf, tab.HeatMap?.Viewport.Range);
 
+            await tab.RefreshCellAsync(secondHalf, LogLevel.Error, TestContext.Current.CancellationToken);
+            Assert.Equal(LogLevel.Error, tab.DetailLevel);
+            await tab.SetLevelAsync(LogLevel.Error, included: false);
+            Assert.Null(tab.DetailLevel);
+            Assert.Null(tab.DetailRange);
+            await tab.SetLevelAsync(LogLevel.Error, included: true);
+
             var view = new SessionWorkspaceView(tab);
             var window = new Window { Content = view, Width = 1280, Height = 800 };
             window.Show();
@@ -128,6 +137,12 @@ public sealed class SessionWorkspaceHeadlessTests
                 Assert.Contains("Session filters", accessibleNames);
                 Assert.Contains("Filtered log entries", accessibleNames);
                 Assert.Contains("Facets", accessibleNames);
+                Assert.Contains(
+                    accessibleNames,
+                    static name => name?.StartsWith("COUNTS · THIS VIEW.", StringComparison.Ordinal) == true);
+                Assert.Contains(
+                    accessibleNames,
+                    static name => name?.StartsWith("COUNTS · WHOLE SESSION.", StringComparison.Ordinal) == true);
 
                 var search = view.GetLogicalDescendants()
                     .OfType<TextBox>()
@@ -145,6 +160,27 @@ public sealed class SessionWorkspaceHeadlessTests
                 entries.SelectedIndex = 0;
                 Assert.True(view.TryHandleShortcut(new KeyEventArgs { Key = Key.J }));
                 Assert.Equal(1, entries.SelectedIndex);
+
+                // The plot marks the row the table has selected, so scrolling the table
+                // cannot silently cost the user their place in the plot (§14.9).
+                var timeline = view.GetLogicalDescendants().OfType<TimelineControl>().Single();
+                var selectedEntry = Assert.IsType<NormalizedEntry>(entries.SelectedItem);
+                Assert.Equal(selectedEntry.Timestamp, timeline.SelectedEntryInstant);
+                Assert.Equal(selectedEntry.Level, timeline.SelectedEntryLevel);
+                entries.SelectedIndex = -1;
+                Assert.Null(timeline.SelectedEntryInstant);
+
+                // The active search term is marked inside the message rather than left for
+                // the reader to find in every one of the matching rows.
+                entries.SelectedIndex = 0;
+                var marked = view.GetLogicalDescendants()
+                    .OfType<TextBlock>()
+                    .SelectMany(static block => block.Inlines ?? [])
+                    .OfType<Run>()
+                    .Where(static run => run.Background is not null)
+                    .ToArray();
+                Assert.NotEmpty(marked);
+                Assert.All(marked, static run => Assert.Equal("failure", run.Text));
             }
             finally
             {

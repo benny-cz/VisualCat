@@ -558,8 +558,12 @@ public static class SessionQueryEngine
     /// bounds execution against pathological patterns over untrusted log text, but it
     /// rejects lookarounds and backreferences, so those degrade to the backtracking
     /// engine under the same timeout rather than failing the search (§12.8, §18.5).
+    ///
+    /// Public because the presentation layer highlights matches inside the rows this
+    /// engine selected: sharing the one compiled instance keeps "highlighted" and
+    /// "matched" the same predicate, and keeps row rendering off the compile path.
     /// </summary>
-    private static Regex CompileSearchRegex(TextSearchSpec search)
+    public static Regex CompileSearchRegex(TextSearchSpec search)
     {
         var timeout = search.RegexTimeout ?? TimeSpan.FromMilliseconds(250);
         var key = (search.Query, search.CaseSensitive, timeout);

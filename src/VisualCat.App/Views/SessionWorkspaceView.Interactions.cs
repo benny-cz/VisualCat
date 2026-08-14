@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
 using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
@@ -23,6 +24,15 @@ namespace VisualCat.App.Views;
 
 public sealed partial class SessionWorkspaceView : UserControl
 {
+    // The message marker deliberately reuses the timeline's search-tick color, so a hit in
+    // the plot and a hit in the text read as one channel rather than two unrelated marks.
+    // Its own foreground is set with it: a mark that inherited the theme foreground would
+    // be unreadable in one of the two themes.
+    private static readonly Avalonia.Media.Immutable.ImmutableSolidColorBrush SearchHighlightFill =
+        new(Color.Parse("#FF3FE0"));
+    private static readonly Avalonia.Media.Immutable.ImmutableSolidColorBrush SearchHighlightText =
+        new(Color.Parse("#150411"));
+
     private void ConfigureEntryList()
     {
         _entries.SelectionMode = SelectionMode.Multiple;
@@ -43,63 +53,206 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             _entries.Styles.Add(CompactItemStyle(64));
         }
-        _entries.ItemTemplate = _mobile
-            ? new FuncDataTemplate<NormalizedEntry>((entry, _) =>
-                entry is null
-                    ? new Border()
-                    : new Border
-                    {
-                        BorderBrush = new SolidColorBrush(Color.Parse("#223650")),
-                        BorderThickness = new Thickness(0, 0, 0, 1),
-                        Padding = new Thickness(7, 5),
-                        Child = new StackPanel
-                        {
-                            Spacing = 2,
-                            Children =
-                            {
-                                new TextBlock
-                                {
-                                    Text = $"{entry.Level.ToLetter()}  {entry.Tag}",
-                                    FontWeight = FontWeight.Bold,
-                                    Foreground = LevelPalette.BrushOf(entry.Level),
-                                },
-                                new TextBlock
-                                {
-                                    Text = entry.Message.Split('\r', '\n')[0],
-                                    TextWrapping = TextWrapping.Wrap,
-                                    MaxLines = 1,
-                                    TextTrimming = TextTrimming.CharacterEllipsis,
-                                },
-                                new TextBlock
-                                {
-                                    Text = $"{FormatInstant(entry.Timestamp)}  ·  {ProcessLabel(entry)}:{entry.Tid}  ·  {entry.Buffer}",
-                                    FontSize = 10,
-                                    Foreground = new SolidColorBrush(Color.Parse("#8EA2BE")),
-                                    TextTrimming = TextTrimming.CharacterEllipsis,
-                                },
-                            },
-                        },
-                    })
-            : new FuncDataTemplate<NormalizedEntry>((entry, _) =>
-                entry is null
-                    ? new Grid()
-                    :
-                new Grid
-                {
-                    ColumnDefinitions = new ColumnDefinitions(EntryColumns),
-                    Children =
-                    {
-                        Cell(FormatInstant(entry.Timestamp), 0),
-                        Cell(entry.Level.ToLetter().ToString(), 1, LevelPalette.ColorOf(entry.Level)),
-                        Cell(ProcessLabel(entry), 2),
-                        Cell(entry.Tid.ToString(System.Globalization.CultureInfo.InvariantCulture), 3),
-                        Cell(entry.Buffer, 4),
-                        Cell(entry.Tag, 5),
-                        Cell(entry.TemplateId.ToString(System.Globalization.CultureInfo.InvariantCulture), 6),
-                        Cell(entry.Message.Split('\r', '\n')[0], 7),
-                    },
-                });
+
+        ApplyEntryTemplate();
         AutomationProperties.SetName(_entries, "Filtered log entries");
+    }
+
+    /// <summary>
+    /// Installs the row template. A row reads mutable state when it is realized — the
+    /// active search term and the current theme — and the search re-queries the entry
+    /// list, so search changes re-realize rows on their own. A theme change does not, so
+    /// it reassigns the template here, which rebuilds every container exactly once.
+    /// </summary>
+    private void ApplyEntryTemplate() =>
+        _entries.ItemTemplate = _mobile ? BuildMobileEntryTemplate() : BuildDesktopEntryTemplate();
+
+    private FuncDataTemplate<NormalizedEntry> BuildDesktopEntryTemplate()
+    {
+        var dark = ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
+        return new FuncDataTemplate<NormalizedEntry>((entry, _) =>
+        {
+            if (entry is null)
+            {
+                return new Grid();
+            }
+
+            var row = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions(EntryColumns),
+                // Notable severities only: tinting every row would decorate the table
+                // instead of ranking it, and the tint has to stay faint enough that the
+                // selection highlight underneath still reads (§14.1 density).
+                Background = RowTint(entry.Level, dark),
+                Children =
+                {
+                    // The edge sits inside the 4px gutter the time cell's margin already
+                    // leaves, so the severity ribbon costs no width and every value stays
+                    // under its column header.
+                    SeverityEdge(entry.Level),
+                    Cell(FormatInstant(entry.Timestamp), 0),
+                    Cell(entry.Level.ToLetter().ToString(), 1, LevelPalette.BrushOf(entry.Level)),
+                    Cell(ProcessLabel(entry), 2),
+                    Cell(entry.Tid.ToString(System.Globalization.CultureInfo.InvariantCulture), 3),
+                    Cell(entry.Buffer, 4),
+                    Cell(entry.Tag, 5),
+                    Cell(entry.TemplateId.ToString(System.Globalization.CultureInfo.InvariantCulture), 6),
+                    MessageCell(entry, 7),
+                },
+            };
+            return row;
+        });
+    }
+
+    private FuncDataTemplate<NormalizedEntry> BuildMobileEntryTemplate()
+    {
+        var dark = ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
+        var separator = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
+        var muted = new SolidColorBrush(WorkspacePalette.TextMuted(dark));
+        return new FuncDataTemplate<NormalizedEntry>((entry, _) =>
+        {
+            if (entry is null)
+            {
+                return new Border();
+            }
+
+            var body = new StackPanel
+            {
+                Margin = new Thickness(7, 5),
+                Spacing = 2,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = $"{entry.Level.ToLetter()}  {entry.Tag}",
+                        FontWeight = FontWeight.Bold,
+                        Foreground = LevelPalette.BrushOf(entry.Level),
+                    },
+                    HighlightedText(
+                        FirstLine(entry.Message),
+                        _viewModel.Filter.Search,
+                        static text => new TextBlock
+                        {
+                            Text = text,
+                            TextWrapping = TextWrapping.Wrap,
+                            MaxLines = 1,
+                            TextTrimming = TextTrimming.CharacterEllipsis,
+                        }),
+                    new TextBlock
+                    {
+                        Text = $"{FormatInstant(entry.Timestamp)}  ·  {ProcessLabel(entry)}:{entry.Tid}  ·  {entry.Buffer}",
+                        FontSize = 10,
+                        Foreground = muted,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                    },
+                },
+            };
+            Grid.SetColumn(body, 1);
+
+            var edge = SeverityEdge(entry.Level);
+            Grid.SetColumn(edge, 0);
+            return new Border
+            {
+                BorderBrush = separator,
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                Background = RowTint(entry.Level, dark),
+                Child = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("3,*"),
+                    Children = { edge, body },
+                },
+            };
+        });
+    }
+
+    /// <summary>
+    /// The plot teaches a color language; the table used to drop it, leaving an error row
+    /// and a verbose row identical apart from one character. The letter column stays, so
+    /// color is never the only carrier (ADR 0013).
+    /// </summary>
+    private static Border SeverityEdge(LogLevel level)
+    {
+        var edge = new Border
+        {
+            Background = LevelPalette.BrushOf(level),
+            Width = 3,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 1),
+        };
+        Grid.SetColumn(edge, 0);
+        return edge;
+    }
+
+    private static Avalonia.Media.Immutable.ImmutableSolidColorBrush? RowTint(LogLevel level, bool dark) =>
+        level is LogLevel.Warn or LogLevel.Error or LogLevel.Fatal
+            ? LevelPalette.Fill(level, dark ? (byte)14 : (byte)26)
+            : null;
+
+    private TextBlock MessageCell(NormalizedEntry entry, int column)
+    {
+        var cell = HighlightedText(
+            FirstLine(entry.Message),
+            _viewModel.Filter.Search,
+            static text => new TextBlock
+            {
+                Text = text,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(4, 2),
+            });
+        Grid.SetColumn(cell, column);
+        return cell;
+    }
+
+    /// <summary>
+    /// Builds a message block, marking the active search term inside it. Unmarked text —
+    /// the common case, and the only case while no search is active — keeps the plain
+    /// single-string block and never touches the inline machinery.
+    /// </summary>
+    private static TextBlock HighlightedText(
+        string text,
+        TextSearchSpec? search,
+        Func<string, TextBlock> build)
+    {
+        var spans = EntryHighlight.Match(text, search);
+        if (spans.Count == 0)
+        {
+            return build(text);
+        }
+
+        var block = build(string.Empty);
+        var inlines = new InlineCollection();
+        var cursor = 0;
+        foreach (var span in spans)
+        {
+            if (span.Start > cursor)
+            {
+                inlines.Add(new Run(text[cursor..span.Start]));
+            }
+
+            inlines.Add(new Run(text.Substring(span.Start, span.Length))
+            {
+                Background = SearchHighlightFill,
+                Foreground = SearchHighlightText,
+                FontWeight = FontWeight.Bold,
+            });
+            cursor = span.Start + span.Length;
+        }
+
+        if (cursor < text.Length)
+        {
+            inlines.Add(new Run(text[cursor..]));
+        }
+
+        block.Inlines = inlines;
+        return block;
+    }
+
+    /// <summary>The one rendered line of a possibly multi-line message, without the array
+    /// a per-row <c>Split</c> would allocate.</summary>
+    private static string FirstLine(string message)
+    {
+        var end = message.AsSpan().IndexOfAny('\r', '\n');
+        return end < 0 ? message : message[..end];
     }
 
     private static Grid EntryColumnHeader()
@@ -227,9 +380,17 @@ public sealed partial class SessionWorkspaceView : UserControl
 
             if (_entries.SelectedItem is NormalizedEntry entry)
             {
+                // Reading the table no longer costs the user their place in the plot
+                // (§14.9): the plot marks where this row sits, and says which way to look
+                // when the row is outside the current viewport.
+                _timeline.SetSelectedEntry(entry.Timestamp, entry.Level);
                 var timelineCount = _selectingTimelineEntry ? _selectedTimelineCellCount : (long?)null;
                 _selectingTimelineEntry = false;
                 BeginRawContextLoad(entry, timelineCount);
+            }
+            else
+            {
+                _timeline.SetSelectedEntry(null, null);
             }
         };
 
@@ -270,7 +431,10 @@ public sealed partial class SessionWorkspaceView : UserControl
                     UpdateStatistics();
                     break;
                 case nameof(SessionTabViewModel.Statistics):
+                    UpdateStatistics();
+                    break;
                 case nameof(SessionTabViewModel.Filter):
+                    UpdateTimelineLevels();
                     UpdateStatistics();
                     break;
                 case nameof(SessionTabViewModel.MatchesInView):

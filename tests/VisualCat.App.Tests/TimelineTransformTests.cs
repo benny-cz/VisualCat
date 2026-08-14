@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using VisualCat.App.Timeline;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Time;
@@ -6,6 +7,43 @@ namespace VisualCat.App.Tests;
 
 public sealed class TimelineTransformTests
 {
+    [Fact]
+    public void UnconstrainedLaneLayoutKeepsUnknownStableForTheSession()
+    {
+        var included = ImmutableHashSet<LogLevel>.Empty;
+
+        Assert.Equal(
+            [LogLevel.Fatal, LogLevel.Error, LogLevel.Warn, LogLevel.Info, LogLevel.Debug, LogLevel.Verbose],
+            TimelineLevelLayout.Resolve(included, sessionHasUnknown: false));
+        Assert.Equal(LogLevels.DisplayOrder.ToArray(), TimelineLevelLayout.Resolve(included, sessionHasUnknown: true));
+    }
+
+    [Fact]
+    public void FilteredLaneLayoutUsesAvailableIncludedLevelsInDisplayOrder()
+    {
+        var included = ImmutableHashSet.Create(
+            LogLevel.Unknown,
+            LogLevel.Info,
+            LogLevel.Fatal,
+            LogLevel.Warn,
+            LogLevel.Error);
+
+        Assert.Equal(
+            [LogLevel.Fatal, LogLevel.Error, LogLevel.Warn, LogLevel.Info],
+            TimelineLevelLayout.Resolve(included, sessionHasUnknown: false));
+        Assert.Equal(
+            [LogLevel.Fatal, LogLevel.Error, LogLevel.Warn, LogLevel.Info, LogLevel.Unknown],
+            TimelineLevelLayout.Resolve(included, sessionHasUnknown: true));
+    }
+
+    [Fact]
+    public void UnknownOnlyFilterRetainsAnExplanatoryEmptyLane()
+    {
+        var included = ImmutableHashSet.Create(LogLevel.Unknown);
+
+        Assert.Equal([LogLevel.Unknown], TimelineLevelLayout.Resolve(included, sessionHasUnknown: false));
+    }
+
     [Fact]
     public void InstantPixelRoundTripStaysWithinOneMicrosecond()
     {

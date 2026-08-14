@@ -115,6 +115,9 @@ public sealed partial class SessionWorkspaceView : UserControl
             LineSpacing = 6,
             Margin = new Thickness(4),
         };
+        actions.Children.Add(CountScopeLabel(
+            "COUNTS · THIS VIEW",
+            "Template counts follow the current timeline viewport and active filter."));
         var include = _templateInclude = new Button
         {
             Content = _mobile ? "Filter" : "Filter to template",
@@ -360,21 +363,46 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Grid BuildFacetPane()
     {
         var pane = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
-        pane.Children.Add(new TextBlock
+        var header = new StackPanel
         {
-            Text = "Counts are for the whole session under the current filter. " +
-                   "+ keeps only matching entries (several values in one group are combined with OR), " +
-                   "− hides them. Click an active + or − again to remove it.",
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 10,
-            Opacity = 0.72,
             Margin = new Thickness(7, 6, 7, 2),
-        });
+            Spacing = 2,
+            Children =
+            {
+                CountScopeLabel(
+                    "COUNTS · WHOLE SESSION",
+                    "Facet counts cover the whole session under the current filter."),
+                new TextBlock
+                {
+                    Text = "+ includes (OR within a group); − excludes; tap an active action again to remove it.",
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 10,
+                    Opacity = 0.72,
+                },
+            },
+        };
+        pane.Children.Add(header);
         _facetScroll = new ScrollViewer { Content = _facets };
         AutomationProperties.SetName(_facetScroll, "Facets");
         Grid.SetRow(_facetScroll, 1);
         pane.Children.Add(_facetScroll);
         return pane;
+    }
+
+    private static TextBlock CountScopeLabel(string text, string helpText)
+    {
+        var label = new TextBlock
+        {
+            Text = text,
+            FontSize = 10,
+            FontWeight = FontWeight.Bold,
+            Opacity = 0.82,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(3, 0),
+        };
+        ToolTip.SetTip(label, helpText);
+        AutomationProperties.SetName(label, $"{text}. {helpText}");
+        return label;
     }
 
 
@@ -497,7 +525,10 @@ public sealed partial class SessionWorkspaceView : UserControl
         _sessionInfoText = text.ToString().TrimStart('\n');
     }
 
-    private static TextBlock Cell(string text, int column, Color? foreground = null)
+    /// <summary>One value in a log row. The foreground takes a brush rather than a color so
+    /// the severity letter can use <see cref="LevelPalette"/>'s cached instances instead of
+    /// allocating a brush per row (§19.3).</summary>
+    private static TextBlock Cell(string text, int column, IBrush? foreground = null)
     {
         var cell = new TextBlock
         {
@@ -505,9 +536,9 @@ public sealed partial class SessionWorkspaceView : UserControl
             TextTrimming = TextTrimming.CharacterEllipsis,
             Margin = new Thickness(4, 2),
         };
-        if (foreground is { } color)
+        if (foreground is not null)
         {
-            cell.Foreground = new SolidColorBrush(color);
+            cell.Foreground = foreground;
         }
 
         Grid.SetColumn(cell, column);

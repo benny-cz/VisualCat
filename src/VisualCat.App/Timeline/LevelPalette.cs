@@ -20,6 +20,7 @@ public static class LevelPalette
     private static readonly ImmutableSolidColorBrush[] SolidBrushes = BuildSolidBrushes();
     private static readonly ImmutablePen[] BaselinePens = BuildBaselinePens();
     private static readonly ImmutablePen[] AccentPens = BuildAccentPens();
+    private static readonly ImmutablePen[] CaretPens = BuildCaretPens();
 
     public static Color ColorOf(LogLevel level) => Colors[IndexOf(level)];
 
@@ -38,6 +39,11 @@ public static class LevelPalette
 
     /// <summary>Cached 3-px pen used for the row label accent bar.</summary>
     public static ImmutablePen AccentPen(LogLevel level) => AccentPens[IndexOf(level)];
+
+    /// <summary>Cached 1-px pen for a full-height locator line. Held below the baseline
+    /// alpha so that spanning every lane locates a point without competing with the data
+    /// the lanes are drawing.</summary>
+    public static ImmutablePen CaretPen(LogLevel level) => CaretPens[IndexOf(level)];
 
     public static string Label(LogLevel level) =>
         level == LogLevel.Unknown ? "?" : level.ToLetter().ToString();
@@ -105,6 +111,19 @@ public static class LevelPalette
         for (var i = 0; i < pens.Length; i++)
         {
             pens[i] = new ImmutablePen(new ImmutableSolidColorBrush(Colors[i]), 3);
+        }
+
+        return pens;
+    }
+
+    private static ImmutablePen[] BuildCaretPens()
+    {
+        var pens = new ImmutablePen[Colors.Length];
+        for (var i = 0; i < pens.Length; i++)
+        {
+            pens[i] = new ImmutablePen(
+                new ImmutableSolidColorBrush(Color.FromArgb(150, Colors[i].R, Colors[i].G, Colors[i].B)),
+                1);
         }
 
         return pens;

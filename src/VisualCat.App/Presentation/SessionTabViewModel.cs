@@ -760,10 +760,18 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             levels = ImmutableHashSet<LogLevel>.Empty;
         }
 
-        Filter = Filter with
+        var filter = Filter with
         {
             IncludedLevels = levels,
         };
+        if (_detailLevel is { } detailLevel &&
+            filter.IncludedLevels.Count > 0 &&
+            !filter.IncludedLevels.Contains(detailLevel))
+        {
+            ClearDetailScope();
+        }
+
+        Filter = filter;
         await RefreshAsync().ConfigureAwait(false);
     }
 

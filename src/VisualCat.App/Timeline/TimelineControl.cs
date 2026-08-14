@@ -22,26 +22,6 @@ public sealed record TimelineHoverInsight(TimeRange Range, LogLevel Level, strin
 
 public sealed class TimelineControl : Control
 {
-    private static readonly LogLevel[] SixDisplayLevels =
-    [
-        LogLevel.Fatal,
-        LogLevel.Error,
-        LogLevel.Warn,
-        LogLevel.Info,
-        LogLevel.Debug,
-        LogLevel.Verbose,
-    ];
-    private static readonly LogLevel[] SevenDisplayLevels =
-    [
-        LogLevel.Fatal,
-        LogLevel.Error,
-        LogLevel.Warn,
-        LogLevel.Info,
-        LogLevel.Debug,
-        LogLevel.Verbose,
-        LogLevel.Unknown,
-    ];
-
     // Immutable, cached drawing resources: Render touches thousands of cells per frame,
     // so nothing in it may allocate per cell (R11, §15.2, §19.3).
     private static readonly Typeface MonoTypeface = new(
@@ -66,6 +46,12 @@ public sealed class TimelineControl : Control
     private static readonly Avalonia.Media.Immutable.ImmutablePen RangePen = new(new Avalonia.Media.Immutable.ImmutableSolidColorBrush(Color.Parse("#B84DA3FF")), 1);
     private static readonly Avalonia.Media.Immutable.ImmutablePen SelectionPen = new(Brushes.White, 2);
     private static readonly Avalonia.Media.Immutable.ImmutablePen SelectionPenHighContrast = new(Brushes.Yellow, 3);
+
+    /// <summary>Down-pointing marker with its base on the origin, built once and placed by
+    /// transform: the selected-entry mark must not allocate geometry per frame.</summary>
+    private static readonly StreamGeometry EntryMarkGlyph = BuildEntryMarkGlyph();
+
+    private LogLevel[] _displayLevels = TimelineLevelLayout.Resolve(new HashSet<LogLevel>(), sessionHasUnknown: false);
     private HeatMapResult? _result;
     private TimeRange? _sessionRange;
     private Point? _dragOrigin;
@@ -77,6 +63,8 @@ public sealed class TimelineControl : Control
     private int? _hoverColumn;
     private LogLevel? _hoverLevel;
     private TimelineHoverInsight? _hoverInsight;
+    private InstantUs? _entryMarkInstant;
+    private LogLevel? _entryMarkLevel;
     private SearchResult? _searchResult;
     private string _intensityScale = "Logarithmic";
     private string _normalization = "PerRow";
@@ -107,7 +95,7 @@ public sealed class TimelineControl : Control
             }
 
             _pinchViewport ??= _result.Viewport.Range;
-            var transform = new TimelineTransform(_pinchViewport.Value, geometry, DisplayLevels(_result));
+            var transform = new TimelineTransform(_pinchViewport.Value, geometry, _displayLevels);
             ViewportChanged?.Invoke(
                 this,
                 transform.Zoom(
@@ -133,6 +121,33 @@ public sealed class TimelineControl : Control
     public event EventHandler? SearchFocusRequested;
     public event EventHandler? ExportRequested;
     public event EventHandler<int>? EntryNavigationRequested;
+
+    /// <summary>
+    /// Makes lane geometry follow the active severity filter. Unknown is session-stable:
+    /// panning into one viewport cannot add a row and move every existing row under the
+    /// pointer. Changing the layout also invalidates hover state because its y-to-level
+    /// mapping no longer describes the same lane.
+    /// </summary>
+    public void SetDisplayLevels(IReadOnlySet<LogLevel> includedLevels, bool sessionHasUnknown)
+    {
+        var next = TimelineLevelLayout.Resolve(includedLevels, sessionHasUnknown);
+        if (_displayLevels.AsSpan().SequenceEqual(next))
+        {
+            return;
+        }
+
+        _displayLevels = next;
+        if (_selection is { } selection && !next.Contains(selection.Level))
+        {
+            _selection = null;
+        }
+
+        _hoverColumn = null;
+        _hoverLevel = null;
+        _hoverInsight = null;
+        HoverChanged?.Invoke(this, null);
+        InvalidateVisual();
+    }
 
     public void SetResult(HeatMapResult? result, TimeRange? sessionRange)
     {
@@ -180,6 +195,28 @@ public sealed class TimelineControl : Control
         InvalidateVisual();
     }
 
+    /// <summary>
+    /// Marks where the entry the table has selected sits in time (§14.9). Scrolling the
+    /// table used to cost the user their place in the plot; the caret is what keeps the
+    /// two surfaces one workspace. An untimed entry marks nothing rather than guessing a
+    /// position.
+    /// </summary>
+    public void SetSelectedEntry(InstantUs? instant, LogLevel? level)
+    {
+        if (_entryMarkInstant == instant && _entryMarkLevel == level)
+        {
+            return;
+        }
+
+        _entryMarkInstant = instant;
+        _entryMarkLevel = level;
+        InvalidateVisual();
+    }
+
+    internal InstantUs? SelectedEntryInstant => _entryMarkInstant;
+
+    internal LogLevel? SelectedEntryLevel => _entryMarkLevel;
+
     public void SetSearchResult(SearchResult? result)
     {
         _searchResult = result;
@@ -216,7 +253,7 @@ public sealed class TimelineControl : Control
             return;
         }
 
-        var transform = new TimelineTransform(_result.Viewport.Range, geometry, DisplayLevels(_result));
+        var transform = new TimelineTransform(_result.Viewport.Range, geometry, _displayLevels);
         ViewportChanged?.Invoke(
             this,
             transform.Zoom(
@@ -265,7 +302,7 @@ public sealed class TimelineControl : Control
             return;
         }
 
-        var levels = DisplayLevels(_result);
+        var levels = _displayLevels;
         var geometry = Geometry()!.Value;
         var transform = new TimelineTransform(_result.Viewport.Range, geometry, levels);
         var gridPen = isDark ? DarkGridPen : LightGridPen;
@@ -464,9 +501,56 @@ public sealed class TimelineControl : Control
                 new Rect(x0, y, selectionWidth, transform.RowHeight));
         }
 
+        DrawSelectedEntryMark(context, transform, geometry, levels);
+
         if (_hoverColumn is { } hover && hover >= 0 && hover < _result.Columns.Count)
         {
             DrawHoverReadout(context, transform, geometry, levels, hover, columnWidth, normalizationLabel, isDark);
+        }
+    }
+
+    /// <summary>
+    /// Where the table's selected entry sits in time: a caret spanning every lane, a solid
+    /// stub in the entry's own lane, and a marker in the gutter above the plot (§14.9). It
+    /// is drawn in the entry's severity color, so it cannot be mistaken for the magenta
+    /// search ticks or the white cell outline, and it names the lane to look in even when
+    /// that lane is filtered away.
+    ///
+    /// An out-of-viewport indicator is deliberately absent: the entry table is queried over
+    /// the viewport, so a listed — and therefore selectable — row is always inside it, and
+    /// any viewport change re-queries the list and drops the selection with it. An arrow
+    /// for that case would be unreachable chrome.
+    /// </summary>
+    private void DrawSelectedEntryMark(
+        DrawingContext context,
+        TimelineTransform transform,
+        TimelineGeometry geometry,
+        LogLevel[] levels)
+    {
+        if (_entryMarkInstant is not { } instant ||
+            _result is null ||
+            instant < _result.Viewport.Range.StartInclusive ||
+            instant >= _result.Viewport.Range.EndExclusive)
+        {
+            return;
+        }
+
+        var level = _entryMarkLevel ?? LogLevel.Unknown;
+        var brush = LevelPalette.BrushOf(level);
+        var x = transform.InstantToX(instant);
+        context.DrawLine(
+            LevelPalette.CaretPen(level),
+            new Point(x, geometry.Top),
+            new Point(x, geometry.Top + geometry.Height));
+        if (Array.IndexOf(levels, level) >= 0)
+        {
+            var laneTop = transform.LevelToY(level);
+            context.FillRectangle(brush, new Rect(x - 1, laneTop + 1, 2, Math.Max(1, transform.RowHeight - 2)));
+        }
+
+        using (context.PushTransform(Matrix.CreateTranslation(x, geometry.Top - 7)))
+        {
+            context.DrawGeometry(brush, null, EntryMarkGlyph);
         }
     }
 
@@ -607,7 +691,7 @@ public sealed class TimelineControl : Control
         {
             if (e.ClickCount >= 2 && _sessionRange is { } session && Geometry() is { } geometry)
             {
-                var transform = new TimelineTransform(_result.Viewport.Range, geometry, DisplayLevels(_result));
+                var transform = new TimelineTransform(_result.Viewport.Range, geometry, _displayLevels);
                 ViewportChanged?.Invoke(
                     this,
                     transform.Zoom(point.X, 0.5, MinimumSpan(geometry), MaximumSpan(session), session));
@@ -627,7 +711,7 @@ public sealed class TimelineControl : Control
         var current = e.GetPosition(this);
         if (_rangeOrigin is { } rangeOrigin && _result is not null && Geometry() is { } rangeGeometry)
         {
-            var rangeTransform = new TimelineTransform(_result.Viewport.Range, rangeGeometry, DisplayLevels(_result));
+            var rangeTransform = new TimelineTransform(_result.Viewport.Range, rangeGeometry, _displayLevels);
             var first = rangeTransform.XToInstant(Math.Clamp(rangeOrigin.X, rangeGeometry.Left, rangeGeometry.Left + rangeGeometry.Width));
             var second = rangeTransform.XToInstant(Math.Clamp(current.X, rangeGeometry.Left, rangeGeometry.Left + rangeGeometry.Width));
             var start = first <= second ? first : second;
@@ -654,7 +738,7 @@ public sealed class TimelineControl : Control
             return;
         }
 
-        var transform = new TimelineTransform(viewport, geometry.Value, DisplayLevels(_result!));
+        var transform = new TimelineTransform(viewport, geometry.Value, _displayLevels);
         ViewportChanged?.Invoke(this, transform.Pan(current.X - origin.X, session));
     }
 
@@ -703,7 +787,7 @@ public sealed class TimelineControl : Control
         var factor = Math.Pow(1.18, -e.Delta.Y);
         var minimum = MinimumSpan(geometry);
         var maximum = Math.Max(minimum, MaximumSpan(session));
-        var transform = new TimelineTransform(_result.Viewport.Range, geometry, DisplayLevels(_result));
+        var transform = new TimelineTransform(_result.Viewport.Range, geometry, _displayLevels);
         ViewportChanged?.Invoke(this, transform.Zoom(e.GetPosition(this).X, factor, minimum, maximum, session));
         e.Handled = true;
     }
@@ -716,7 +800,7 @@ public sealed class TimelineControl : Control
             return;
         }
 
-        var transform = new TimelineTransform(_result.Viewport.Range, geometry, DisplayLevels(_result));
+        var transform = new TimelineTransform(_result.Viewport.Range, geometry, _displayLevels);
         if (e.Key == Key.F && !e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
             FollowRequested?.Invoke(this, EventArgs.Empty);
@@ -773,7 +857,7 @@ public sealed class TimelineControl : Control
             return;
         }
 
-        var transform = new TimelineTransform(_result.Viewport.Range, geometry, DisplayLevels(_result));
+        var transform = new TimelineTransform(_result.Viewport.Range, geometry, _displayLevels);
         var level = transform.YToLevel(point.Y);
         if (level is null)
         {
@@ -834,7 +918,7 @@ public sealed class TimelineControl : Control
             return;
         }
 
-        var transform = new TimelineTransform(_result.Viewport.Range, geometry, DisplayLevels(_result));
+        var transform = new TimelineTransform(_result.Viewport.Range, geometry, _displayLevels);
         var level = transform.YToLevel(point.Y);
         if (level is null || point.X < geometry.Left || point.X >= geometry.Left + geometry.Width)
         {
@@ -859,9 +943,6 @@ public sealed class TimelineControl : Control
 
     private static long MaximumSpan(TimeRange session) =>
         Math.Max(1, checked((long)Math.Ceiling(session.DurationUs * 1.1)));
-
-    private static LogLevel[] DisplayLevels(HeatMapResult result) =>
-        result.HasUnknown ? SevenDisplayLevels : SixDisplayLevels;
 
     private string FormatTick(InstantUs instant, long spanUs)
     {
@@ -903,6 +984,20 @@ public sealed class TimelineControl : Control
             >= 1_000 => $"{count / 1_000d:0.#}k",
             _ => count.ToString(CultureInfo.InvariantCulture),
         };
+
+    private static StreamGeometry BuildEntryMarkGlyph()
+    {
+        var glyph = new StreamGeometry();
+        using (var sink = glyph.Open())
+        {
+            sink.BeginFigure(new Point(-5, 0), true);
+            sink.LineTo(new Point(5, 0));
+            sink.LineTo(new Point(0, 7));
+            sink.EndFigure(true);
+        }
+
+        return glyph;
+    }
 
     private static string Shorten(string value, int maximumLength) =>
         value.Length <= maximumLength ? value : value[..(maximumLength - 1)] + "…";

@@ -50,6 +50,7 @@ public sealed partial class SessionWorkspaceView : UserControl
 
     private void UpdateTimelines()
     {
+        UpdateTimelineLevels();
         if (_viewModel.Snapshot is { } snapshot)
         {
             _timeline.SetTimeZoneContext(snapshot.Descriptor.TimestampPolicy.TimeZoneId);
@@ -62,6 +63,13 @@ public sealed partial class SessionWorkspaceView : UserControl
             ? $"{FormatSpan(viewport.DurationUs)} · {FormatResolution(viewport.DurationUs / Math.Max(1d, _viewModel.HeatMap?.Viewport.DevicePixelWidth ?? 1))}"
             : string.Empty;
         UpdateSessionInfo();
+    }
+
+    private void UpdateTimelineLevels()
+    {
+        var sessionHasUnknown = _viewModel.Snapshot?.Segments.Any(
+            static segment => segment.SeverityBitmaps[LogLevel.Unknown].Cardinality > 0) == true;
+        _timeline.SetDisplayLevels(_viewModel.Filter.IncludedLevels, sessionHasUnknown);
     }
 
     private void UpdateCaptureActions()

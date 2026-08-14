@@ -256,6 +256,14 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         _rawContext.Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
+
+        // Entry rows carry theme colors resolved when the row was realized, and a theme
+        // change does not re-realize them. Reinstalling the template does, exactly once.
+        if (_entries.ItemTemplate is not null)
+        {
+            ApplyEntryTemplate();
+        }
+
         if (_mobile)
         {
             ApplyMobileModeButtonStyles();
