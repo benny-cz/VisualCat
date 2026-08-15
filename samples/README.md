@@ -28,3 +28,27 @@ dotnet run --project tools/VisualCat.GenerateLogs --configuration Release -- sam
 Arguments are `<output> [lines=1000000] [seed=42]`. The same seed always produces
 byte-identical output, so generated logs are reproducible and diffable across
 machines.
+
+## The demo capture
+
+`VisualCat.GenerateLogs` samples tags and messages uniformly, which is ideal for
+parser and throughput tests and useless as a picture: every severity is equally
+likely, so the heat map is a flat band. `tools/VisualCat.DemoLog` writes a log
+with a *shape* instead — the one every screenshot and demo in
+[`docs/assets`](../docs/assets/README.md) uses:
+
+```shell
+dotnet run --project tools/VisualCat.DemoLog --configuration Release -- .tmp/demo/northlight-transit-20260812.log
+```
+
+Arguments are `<output> [lines=1000000] [seed=20260812]`, and the default run
+produces 1,000,156 lines / ~115 MB of `threadtime` records spanning two hours:
+boot, an intermittent idle period, a commute, a network-failure patch, a doze
+window containing several minutes of genuine silence, a memory squeeze, an ANR,
+two Java crashes with full stack traces, a native tombstone, and a calm
+afternoon. Around 110 real AOSP tags are attributed to a coherent process table,
+and the app in the story — `com.northlight.transit` — is invented, as are its
+hosts, packages, and stations. Nothing is copied from a real device.
+
+Like the large fixtures it is **not** committed: it is 115 MB and fully
+reproducible from its seed.

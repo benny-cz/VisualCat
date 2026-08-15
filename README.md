@@ -16,8 +16,19 @@ lines. Processing is local, with no telemetry or log uploads.
 
 ![VisualCat zooming from the full log timeline into exact records](docs/assets/demo.gif)
 
-_The demo uses the checked-in deterministic synthetic fixture. No device-derived
-or private log data is distributed._
+_A 1,000,156-line synthetic capture: the full two-hour session, a dive into the
+error burst, and the exact records behind it. Every demo asset in this repository
+uses a seeded synthetic log — no device-derived or private data is distributed._
+
+### It also runs on the phone
+
+The Android companion opens a capture from the device's own storage, or reads
+this device's logcat live — no cable and no host machine.
+
+![VisualCat on Android: importing a million-line logcat and finding the crash](docs/assets/android-demo.gif)
+
+▶ **[Watch the full 70-second Android demo](docs/assets/android-demo.mp4)**
+(1920 × 1080, 3 MB)
 
 > **Status:** `2.0.2` is the current stable release. Download the checksummed,
 > self-contained desktop and CLI archives or the release-key-signed Android APK
@@ -122,6 +133,12 @@ Desktop packages are not code-signed or notarized. The
   `time`, `brief`, `long`, and `epoch` logcat formats.
 
 [![Readable crop of the VisualCat analysis workspace](docs/assets/heatmap-hero.jpg)](docs/assets/heatmap-analysis.jpg)
+
+The Android companion carries the same analysis onto the device — the heat map,
+search, facets, mined templates, and byte-faithful source context, sized for a
+phone and with an on-device live capture that never involves a host machine.
+
+![The VisualCat Android companion showing the heat map and a crash in raw source](docs/assets/android-companion.jpg)
 
 ## Why not just Android Studio, grep, pidcat, or lnav?
 

@@ -12,6 +12,21 @@ The current stable release is `2.0.2`. Ongoing work is recorded under
 
 ## [Unreleased]
 
+### Added
+- `tools/VisualCat.DemoLog` writes the deterministic demo capture used by every
+  screenshot and demo in the documentation: 1,000,156 synthetic `threadtime`
+  records over two hours, with a boot burst, intermittent idle windows, a
+  network-failure patch, minutes of genuine silence during doze, a memory
+  squeeze, an ANR, two Java crashes, and a native tombstone. The device, the app,
+  and its hosts are invented; nothing derives from a real capture.
+- `docs/assets/android-demo.mp4`, `android-demo.gif`, and `android-companion.jpg`
+  document the Android companion, recorded on a physical device.
+
+### Changed
+- Every documentation screenshot is recaptured against the million-line demo
+  capture instead of the 1,000-line quick-start fixture, so the README shows the
+  density the heat map is built for.
+
 ## [2.0.2] - 2026-08-14
 
 ### Added

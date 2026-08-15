@@ -1,40 +1,80 @@
 # Documentation screenshots
 
-These screenshots are captured from the real Windows desktop application, not
-mockups. They use the repository's deterministic synthetic sample data, so the
-repository does not ship private device logs.
+These are captured from the real applications — the Windows desktop build and the
+Android companion on a physical phone — not mockups. Every one of them shows the
+same seeded synthetic capture, so the repository ships no private or
+device-derived log data.
 
 | Asset | Documentation use | Capture state |
 |---|---|---|
-| [`heatmap-analysis.jpg`](heatmap-analysis.jpg) | Primary README product image | Checked-in synthetic [`samples/logcat_small.txt`](../../samples/logcat_small.txt) fixture, maximized at 3840 × 2112 |
-| [`heatmap-hero.jpg`](heatmap-hero.jpg) | Readable README workspace crop | Derived from `heatmap-analysis.jpg`; timeline and representative detail rows |
-| [`demo.gif`](demo.gif) | Short README interaction loop | Synthetic sample; zoom from overview to exact rows |
+| [`demo.gif`](demo.gif) | README interaction loop | Desktop; the full session, a dive into the error burst, and the records behind it |
+| [`heatmap-analysis.jpg`](heatmap-analysis.jpg) | Primary README product image | Desktop workspace maximized at 3840 × 2112 |
+| [`heatmap-hero.jpg`](heatmap-hero.jpg) | Readable README workspace crop | Derived from `heatmap-analysis.jpg` |
+| [`start-page.jpg`](start-page.jpg) | Secondary README image | Clean desktop start page at 1440 × 900 |
+| [`android-demo.gif`](android-demo.gif) | README Android loop | Composited from the on-device recording |
+| [`android-demo.mp4`](android-demo.mp4) | Full Android walkthrough | 70 s, 1920 × 1080, captured with `adb shell screenrecord` |
+| [`android-companion.jpg`](android-companion.jpg) | README Android feature image | Two on-device screenshots on the product background |
 | [`logo.svg`](logo.svg) | Repository/product mark | Source vector for the V plus severity-density motif |
-| [`social-preview.jpg`](social-preview.jpg) | GitHub link preview | 1280 × 640 crop of the synthetic analysis workspace |
-| [`start-page.jpg`](start-page.jpg) | Secondary README image | Clean desktop start page at the default 1440 × 900 window size |
+| [`social-preview.jpg`](social-preview.jpg) | GitHub link preview | 1280 × 640 crop of the analysis workspace |
 
-To recreate the analysis workspace from the repository root:
+## The capture used by every asset
+
+All of them show the same demo log: a synthetic 1,000,156-line, 115 MB Android
+capture spanning two hours — boot, a commute, a bad network patch, a doze window
+with real silence in it, a memory squeeze, an ANR, two Java crashes and a native
+tombstone, then a calm afternoon. Rebuild it from the repository root:
 
 ```shell
-dotnet run --project src/VisualCat.Desktop --configuration Release -- --log samples/logcat_small.txt
+dotnet run --project tools/VisualCat.DemoLog --configuration Release -- .tmp/demo/northlight-transit-20260812.log
 ```
 
-After the import completes, capture the entire application window. Run the same
-command without `--log` to reproduce the start page. Keep screenshots free of
-private paths, notifications, and device-derived content.
+The generator is deterministic, so the same command always produces the same
+115 MB file. It is not committed; see [`samples/README.md`](../../samples/README.md).
 
-For the demo, record a 15–25 second loop at 1280 × 720 or smaller: start at the
-full timeline, drag across a visible burst to zoom, select a severity cell, and
-end on the exact record/raw-context pane. Crop to the VisualCat window, remove
-idle frames, use 10–15 fps, and optimize the final GIF below 5 MiB. Regenerate
-both derived assets whenever the workspace chrome changes materially.
+## Desktop assets
 
-The checked-in loop was captured as four key frames from that interaction. To
-rebuild it after capturing replacement PNGs, put the frames in
-`.tmp/demo-frames/` as `00-overview.png` through `03-cell-details.png`, then run:
+```shell
+dotnet run --project src/VisualCat.Desktop --configuration Release -- --log .tmp/demo/northlight-transit-20260812.log
+```
+
+Maximize the window, wait for the status bar to read `Ready`, click once inside
+the heat map and press <kbd>0</kbd> to fit the whole session, then capture the
+window. Run the same command without `--log` at 1440 × 900 for the start page.
+Keep screenshots free of private paths, notifications, and device-derived content.
+
+`heatmap-hero.jpg` and `social-preview.jpg` are crops of `heatmap-analysis.jpg`
+and are regenerated, together with the application icons, by:
 
 ```powershell
-pwsh tools/generate-demo.ps1
+pwsh tools/generate-brand-assets.ps1
 ```
 
-The script emits a 15-second, looping `docs/assets/demo.gif` at 960 pixels wide.
+For `demo.gif`, capture the same workspace as a short frame sequence: hold on the
+fitted session, double-click the error burst about six times to dive into it,
+click once to scope the entry list, then press <kbd>0</kbd> to return so the loop
+closes cleanly. Crop to the client area, scale to 960 pixels wide, run at roughly
+2.4 frames per second, and keep the result below 5 MiB.
+
+## Android assets
+
+Install the companion on a device, push the demo log to `Downloads`, and record
+the interaction:
+
+```shell
+adb push .tmp/demo/northlight-transit-20260812.log /sdcard/Download/northlight-transit-20260812.txt
+adb shell settings put system show_touches 1
+adb shell screenrecord --time-limit 175 --bit-rate 16000000 /sdcard/demo.mp4
+```
+
+Drive the UI with `adb shell input tap` so the timing is repeatable, then pull the
+recording. `android-demo.mp4` composites that capture onto the product background
+with captions; `android-demo.gif` is a 15-second window of the same cut.
+
+Full-device live capture additionally needs the §4.4 log permission:
+
+```shell
+adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS
+```
+
+Regenerate all of the derived assets whenever the application chrome changes
+materially.
