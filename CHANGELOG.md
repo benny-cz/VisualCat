@@ -26,6 +26,13 @@ The current stable release is `2.0.2`. Ongoing work is recorded under
 - Every documentation screenshot is recaptured against the million-line demo
   capture instead of the 1,000-line quick-start fixture, so the README shows the
   density the heat map is built for.
+- The README covers the Android companion in its own section, with the recorded
+  walkthrough, the install and log-permission steps, and the measured on-device
+  import rate.
+
+### Removed
+- `docs/design/UX-IMPROVEMENTS.md`. Its implemented changes are already recorded
+  in the `2.0.2` entry below, and its backlog is tracked outside the repository.
 
 ## [2.0.2] - 2026-08-14
 

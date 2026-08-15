@@ -16,19 +16,10 @@ lines. Processing is local, with no telemetry or log uploads.
 
 ![VisualCat zooming from the full log timeline into exact records](docs/assets/demo.gif)
 
-_A 1,000,156-line synthetic capture: the full two-hour session, a dive into the
-error burst, and the exact records behind it. Every demo asset in this repository
-uses a seeded synthetic log — no device-derived or private data is distributed._
-
-### It also runs on the phone
-
-The Android companion opens a capture from the device's own storage, or reads
-this device's logcat live — no cable and no host machine.
-
-![VisualCat on Android: importing a million-line logcat and finding the crash](docs/assets/android-demo.gif)
-
-▶ **[Watch the full 70-second Android demo](docs/assets/android-demo.mp4)**
-(1920 × 1080, 3 MB)
+_A 1,000,156-line capture: the whole two-hour session, a dive into the error
+burst, and the exact records behind it. Every image and clip in this repository
+uses the same seeded synthetic log — no device-derived or private data is
+distributed. It also runs [on the phone](#analysis-on-the-phone)._
 
 > **Status:** `2.0.2` is the current stable release. Download the checksummed,
 > self-contained desktop and CLI archives or the release-key-signed Android APK
@@ -134,11 +125,39 @@ Desktop packages are not code-signed or notarized. The
 
 [![Readable crop of the VisualCat analysis workspace](docs/assets/heatmap-hero.jpg)](docs/assets/heatmap-analysis.jpg)
 
-The Android companion carries the same analysis onto the device — the heat map,
-search, facets, mined templates, and byte-faithful source context, sized for a
-phone and with an on-device live capture that never involves a host machine.
+## Analysis on the phone
+
+The Android companion is the same engine and the same workspace, sized for a
+phone. Open a capture from the device's own storage, or read this device's
+logcat live — no cable, no host machine, and nothing leaves the device.
+
+![VisualCat on Android: importing a million-line logcat and finding the crash](docs/assets/android-demo.gif)
+
+That clip imports a 115 MB, 1,000,156-line capture on the device at roughly
+50,000 lines per second, keeps the workspace interactive while it streams, and
+then finds the two `FATAL EXCEPTION` records in it.
+
+▶ **[Watch the full 70-second walkthrough](docs/assets/android-demo.mp4)**
+— import, heat map, zoom, search, mined templates, facets, and a live capture
+(1920 × 1080, 3 MB).
 
 ![The VisualCat Android companion showing the heat map and a crash in raw source](docs/assets/android-companion.jpg)
+
+Install the release-key-signed APK from the
+[latest release](https://github.com/benny-cz/VisualCat/releases/latest), or build
+it with the .NET Android workload:
+
+```shell
+dotnet workload install android
+dotnet build src/VisualCat.Android/VisualCat.Android.csproj --configuration Release
+```
+
+Full-device live capture needs Android's log-access permission, which the system
+asks for on first use; over ADB it can be granted directly:
+
+```shell
+adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS
+```
 
 ## Why not just Android Studio, grep, pidcat, or lnav?
 
