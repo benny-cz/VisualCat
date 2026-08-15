@@ -50,5 +50,13 @@ afternoon. Around 110 real AOSP tags are attributed to a coherent process table,
 and the app in the story — `com.northlight.transit` — is invented, as are its
 hosts, packages, and stations. Nothing is copied from a real device.
 
+Arrival timing matters as much as the message text. A generator that spaces lines
+evenly produces an inter-arrival time that is nearly constant, which looks
+plausible across two hours and turns into a solid band the moment the timeline is
+zoomed to milliseconds per pixel. This one emits bursts instead: one subsystem
+logs a handful of related lines within a couple of milliseconds, then nothing
+happens for far longer than the average spacing. Phase density is unchanged, so
+the capture is ragged at every zoom level the way a real one is.
+
 Like the large fixtures it is **not** committed: it is 115 MB and fully
 reproducible from its seed.

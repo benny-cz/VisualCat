@@ -184,6 +184,11 @@ foreach (var phase in phases)
     }
 
 
+    var clusterRemaining = 0;
+    var clusterInstant = cursor;
+    var clusterTightness = 0.1;
+    Channel? clusterChannel = null;
+
     for (var index = 0L; index < budget; index++)
     {
         var progress = index / (double)budget;
@@ -215,13 +220,48 @@ foreach (var phase in phases)
                 Marker("main");
             }
 
+            // An incident interrupts whatever was talking; the next burst starts clean.
+            clusterRemaining = 0;
             continue;
         }
 
-        // Jittered spacing rather than a fixed step: real logs arrive in ragged clusters,
-        // and an even comb is instantly recognisable as generated in a timeline heat map.
-        var jitter = 0.15 + (random.NextDouble() * 1.7);
-        var instant = cursor.AddTicks((long)(stepUs * jitter * TimeSpan.TicksPerMicrosecond));
+        // Micro-structure. Real logcat does not tick: one operation emits a handful of
+        // related lines within a couple of milliseconds and then nothing happens for far
+        // longer than the average spacing. Jittering a fixed step produces an inter-arrival
+        // time that is almost constant, which looks fine across two hours and turns into a
+        // solid wall the moment a reader zooms to milliseconds per pixel.
+        //
+        // A burst therefore runs at a fraction of the pacer's step, so it can only fall
+        // behind the pacer, and the next burst restarts at the pacer — the distance it fell
+        // behind is the silence in front of it. Phase density is untouched because the pacer
+        // itself never changes.
+        if (clusterRemaining <= 0)
+        {
+            clusterRemaining = random.NextDouble() < 0.18
+                ? random.Next(18, 70)
+                : random.Next(2, 9);
+            clusterInstant = cursor;
+            clusterTightness = 0.02 + (random.NextDouble() * 0.28);
+
+            // One burst is one subsystem talking. Picking the channel per line instead
+            // interleaves unrelated processes microseconds apart, which no device does.
+            var roll = random.NextDouble() * mixTotal;
+            clusterChannel = channels[phase.Mix[^1].Channel];
+            foreach (var (name, weight) in phase.Mix)
+            {
+                roll -= weight;
+                if (roll <= 0)
+                {
+                    clusterChannel = channels[name];
+                    break;
+                }
+            }
+        }
+
+        var instant = clusterInstant;
+        clusterInstant = clusterInstant.AddTicks(
+            (long)(stepUs * clusterTightness * TimeSpan.TicksPerMicrosecond));
+        clusterRemaining--;
 
         // VisualCat is built to keep late arrivals in place instead of clamping them, so the
         // demo log has to actually contain some.
@@ -230,18 +270,7 @@ foreach (var phase in phases)
             instant = instant.AddMilliseconds(-random.Next(40, 2600));
         }
 
-        var roll = random.NextDouble() * mixTotal;
-        var channel = channels[phase.Mix[^1].Channel];
-        foreach (var (name, weight) in phase.Mix)
-        {
-            roll -= weight;
-            if (roll <= 0)
-            {
-                channel = channels[name];
-                break;
-            }
-        }
-
+        var channel = clusterChannel!;
         var template = channel.Pick(random);
         var tid = channel.Process.ThreadFor(template.Tag, random);
         builder.Clear();

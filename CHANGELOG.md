@@ -17,8 +17,11 @@ The current stable release is `2.0.2`. Ongoing work is recorded under
   screenshot and demo in the documentation: 1,000,156 synthetic `threadtime`
   records over two hours, with a boot burst, intermittent idle windows, a
   network-failure patch, minutes of genuine silence during doze, a memory
-  squeeze, an ANR, two Java crashes, and a native tombstone. The device, the app,
-  and its hosts are invented; nothing derives from a real capture.
+  squeeze, an ANR, two Java crashes, and a native tombstone. Lines arrive in
+  bursts from one subsystem at a time rather than on a fixed cadence, so the
+  capture stays ragged at milliseconds per pixel instead of collapsing into a
+  solid band once a reader zooms in. The device, the app, and its hosts are
+  invented; nothing derives from a real capture.
 - `docs/assets/android-demo.mp4`, `android-demo.gif`, and `android-companion.jpg`
   document the Android companion, recorded on a physical device.
 
