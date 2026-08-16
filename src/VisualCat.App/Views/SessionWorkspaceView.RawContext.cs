@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
 using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
@@ -23,31 +24,365 @@ namespace VisualCat.App.Views;
 
 public sealed partial class SessionWorkspaceView : UserControl
 {
+    /// <summary>Automation id of the inspector's message block.</summary>
+    internal const string InspectorMessageId = "InspectorMessage";
+
     /// <summary>
-    /// The source inspector: a labelled, collapsible panel rather than the old full-height
-    /// read-only text box. Collapsed it costs one header row, so an unused inspector no
-    /// longer holds a screenful of empty space under the table; selecting a row opens it,
-    /// and it sizes to its content up to a modest cap (§14.1 density, §14.7).
+    /// The entry inspector §14.9 asks for: "message first line in the table, full
+    /// logical/raw content in an inspector". Only the raw half was ever built, so a
+    /// message wider than one clipped row — every stack trace, and every message of a
+    /// long-format capture, whose body lines are joined into one record — had no reachable
+    /// form anywhere in the product.
+    ///
+    /// The pane shows exactly one of two things: the selected entry, or a card saying why
+    /// there is no entry to show. Source bytes are a section inside the inspector with a
+    /// status of their own, because the message is on the row's own record and is ready
+    /// instantly, while the bytes need a file read — hiding the first behind the second is
+    /// what made a tap look like it did nothing.
     /// </summary>
-    private Control BuildRawContextPane()
+    private Control BuildEntryInspectorPane()
     {
         _rawContext.FontFamily = MonoFont;
         _rawContext.FontSize = 12;
+        _inspectMessage.FontFamily = MonoFont;
+        _inspectMessage.FontSize = _mobile ? 13 : 12.5;
         var scroller = _rawScroller = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            MaxHeight = _mobile ? double.PositiveInfinity : 150,
+            // Inside the mobile column the dump scrolls only sideways; the column owns the
+            // vertical axis, so the two scrollers never compete for the same drag.
+            VerticalScrollBarVisibility = _mobile ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto,
+            MaxHeight = _mobile ? double.PositiveInfinity : 132,
             Content = _rawContext,
         };
         _rawPlaceholder = new TextBlock
         {
-            Text = "Select a row to load the exact source bytes behind it, with a few lines on each side.",
+            Text = "Select a row to read its whole message, then the exact source bytes behind it.",
             FontSize = 11,
             FontStyle = FontStyle.Italic,
             TextWrapping = TextWrapping.Wrap,
         };
+
+        var inspector = BuildInspectorBody(scroller);
+        _rawDataSurface = inspector;
+        inspector.IsVisible = false;
+
         var content = new Grid();
+        if (_mobile)
+        {
+            _inspectScroll = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = inspector,
+            };
+            _rawCodeSurface = new Border
+            {
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10, 8),
+                Child = _inspectScroll,
+                IsVisible = false,
+            };
+            _rawDataSurface = _rawCodeSurface;
+            inspector.IsVisible = true;
+            content.Children.Add(_rawCodeSurface);
+
+            var chooseEntry = _rawChooseEntry = new Button
+            {
+                Content = "Choose an entry",
+                HorizontalAlignment = HorizontalAlignment.Center,
+                MinHeight = 48,
+            };
+            chooseEntry.Click += (_, _) =>
+            {
+                if (_mobileAnalysisTabs is { } tabs)
+                {
+                    tabs.SelectedIndex = 0;
+                }
+            };
+            AutomationProperties.SetName(chooseEntry, "Open Entries to choose a row");
+
+            _rawPlaceholder.Text =
+                "Choose a log entry to read its whole message and the source bytes behind it.";
+            _rawPlaceholder.FontStyle = FontStyle.Normal;
+            _rawPlaceholder.TextAlignment = TextAlignment.Center;
+            _rawPlaceholder.MaxWidth = 320;
+            _rawEmptyTitle = new TextBlock
+            {
+                Text = "No entry selected",
+                FontSize = 16,
+                FontWeight = FontWeight.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            var emptyPanel = new StackPanel
+            {
+                Spacing = 9,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "{  }",
+                        FontFamily = MonoFont,
+                        FontSize = 24,
+                        FontWeight = FontWeight.Bold,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                    },
+                    _rawEmptyTitle,
+                    _rawPlaceholder,
+                    chooseEntry,
+                },
+            };
+            _rawEmptyCard = new Border
+            {
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(22, 18),
+                Margin = new Thickness(14),
+                MaxWidth = 390,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = emptyPanel,
+            };
+            _rawEmptyState = _rawEmptyCard;
+            AutomationProperties.SetName(_rawEmptyCard, "No entry selected");
+            content.Children.Add(_rawEmptyCard);
+        }
+        else
+        {
+            _rawEmptyState = _rawPlaceholder;
+            content.Children.Add(inspector);
+            content.Children.Add(_rawPlaceholder);
+        }
+
+        _rawContentBorder = new Border
+        {
+            BorderThickness = new Thickness(_mobile ? 0 : 1),
+            CornerRadius = new CornerRadius(4),
+            Padding = _mobile ? new Thickness(0) : new Thickness(8, 6),
+            Child = content,
+        };
+
+        if (_mobile)
+        {
+            // Its own tab, so it is always open and fills the available height.
+            _rawContentBorder.Margin = new Thickness(6);
+            _rawExpanded = true;
+            return _rawContentBorder;
+        }
+
+        _rawContentBorder.Margin = new Thickness(0, 4, 0, 0);
+        _rawChevron = new TextBlock { Text = "▸", Width = 14, VerticalAlignment = VerticalAlignment.Center };
+        _rawHeaderLabel = new TextBlock
+        {
+            Text = "SELECTED ENTRY",
+            FontSize = 10,
+            FontWeight = FontWeight.Bold,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _rawHeaderHint = new TextBlock
+        {
+            Text = "full message and the source bytes behind it",
+            FontSize = 10,
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var header = new Button
+        {
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(2, 4),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Children = { _rawChevron, _rawHeaderLabel, _rawHeaderHint },
+            },
+        };
+        ToolTip.SetTip(header, "Show or hide the whole message and the source bytes behind the selected row.");
+        AutomationProperties.SetName(header, "Toggle the selected entry inspector");
+        header.Click += (_, _) => SetRawExpanded(!_rawExpanded);
+
+        var pane = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto"), Margin = new Thickness(0, 4, 0, 0) };
+        pane.Children.Add(header);
+        Grid.SetRow(_rawContentBorder, 1);
+        pane.Children.Add(_rawContentBorder);
+        SetRawExpanded(false);
+        return pane;
+    }
+
+    /// <summary>
+    /// Identity, then the whole message, then the source bytes. The order is the order the
+    /// questions arrive in: which entry is this, what did it say, and what exactly was on
+    /// the wire around it.
+    /// </summary>
+    private Grid BuildInspectorBody(ScrollViewer sourceScroller)
+    {
+        _rawSelectionHint = new TextBlock
+        {
+            FontSize = 10,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6),
+        };
+
+        _inspectPillText = new TextBlock
+        {
+            FontFamily = MonoFont,
+            FontSize = 11,
+            FontWeight = FontWeight.Bold,
+            Foreground = new SolidColorBrush(Color.Parse("#0A0F18")),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _inspectPill = new Border
+        {
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(7, 1),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = _inspectPillText,
+        };
+        _inspectTag = new TextBlock
+        {
+            FontWeight = FontWeight.Bold,
+            FontSize = _mobile ? 13 : 12.5,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(7, 0, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        _inspectMeta = new TextBlock
+        {
+            FontSize = 10.5,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(7, 0, 0, 0),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var identity = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal,
+            ItemSpacing = 0,
+            LineSpacing = 3,
+            Margin = new Thickness(0, 0, 0, 7),
+            Children = { _inspectPill, _inspectTag, _inspectMeta },
+        };
+        AutomationProperties.SetName(identity, "Selected entry");
+
+        // A phone pane cannot give two scrolling surfaces a fair share of one screen: in
+        // Split mode the fixed controls between them consumed everything and the dump was
+        // allocated nothing at all. On mobile the inspector is therefore one scrolling
+        // column — the ordinary detail-page shape — and only the desktop pane, which is
+        // height-capped inside the table, keeps a scroller per section.
+        Control messageSurface = _inspectMessage;
+        if (!_mobile)
+        {
+            messageSurface = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                MaxHeight = 150,
+                Content = _inspectMessage,
+            };
+        }
+        // The spoken name becomes the entry itself once one is selected, so the stable
+        // handle for automation is the id rather than the name.
+        AutomationProperties.SetAutomationId(_inspectMessage, InspectorMessageId);
+        AutomationProperties.SetName(_inspectMessage, "Full message");
+
+        _inspectTruncated = new TextBlock
+        {
+            FontSize = 10,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 5, 0, 0),
+            IsVisible = false,
+        };
+
+        var copyMessage = _copyMessage = new Button
+        {
+            Content = "Copy message",
+            MinHeight = _mobile ? 48 : 0,
+            Margin = new Thickness(0, 7, 6, 0),
+            IsEnabled = false,
+        };
+        ToolTip.SetTip(copyMessage, "Copy the whole message of the selected entry");
+        AutomationProperties.SetName(copyMessage, "Copy the whole message");
+        copyMessage.Click += async (_, _) => await RunUiActionAsync(CopyInspectedMessageAsync);
+
+        var messageActions = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal,
+            ItemSpacing = 0,
+            LineSpacing = 6,
+            Children = { copyMessage },
+        };
+
+        var sourceSection = BuildSourceSection(sourceScroller);
+
+        var body = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto"),
+        };
+        body.Children.Add(_rawSelectionHint);
+        Grid.SetRow(identity, 1);
+        body.Children.Add(identity);
+        Grid.SetRow(messageSurface, 2);
+        body.Children.Add(messageSurface);
+        Grid.SetRow(_inspectTruncated, 3);
+        body.Children.Add(_inspectTruncated);
+        Grid.SetRow(messageActions, 3);
+        body.Children.Add(messageActions);
+        Grid.SetRow(sourceSection, 4);
+        body.Children.Add(sourceSection);
+        SetSourceExpanded(!_mobile);
+        return body;
+    }
+
+    /// <summary>
+    /// The source dump, unchanged in what it shows and collapsible on a phone, where the
+    /// message is what the reader came for and the bytes are the follow-up question.
+    /// </summary>
+    private Grid BuildSourceSection(ScrollViewer scroller)
+    {
+        _sourceChevron = new TextBlock { Text = "▾", Width = 13, VerticalAlignment = VerticalAlignment.Center };
+        var label = new TextBlock
+        {
+            Text = "SOURCE CONTEXT",
+            FontSize = 10,
+            FontWeight = FontWeight.Bold,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var hint = new TextBlock
+        {
+            Text = "exact bytes, with the lines around them",
+            FontSize = 10,
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var header = _sourceHeader = new Button
+        {
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0, 4),
+            MinHeight = _mobile ? 44 : 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Children = { _sourceChevron, label, hint },
+            },
+        };
+        header.Click += (_, _) => SetSourceExpanded(!_sourceExpanded);
+
+        _sourceStatus = new TextBlock
+        {
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 2, 0, 4),
+            IsVisible = false,
+        };
+
+        Control tools;
         if (_mobile)
         {
             var panToggle = _rawPanToggle = new Button
@@ -122,163 +457,72 @@ public sealed partial class SessionWorkspaceView : UserControl
                 },
             };
             AutomationProperties.SetName(sourceTools, "Source navigation and selection controls");
-
-            _rawSelectionHint = new TextBlock
-            {
-                FontSize = 10,
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 7),
-            };
-            var codeGrid = new Grid
-            {
-                RowDefinitions = new RowDefinitions("Auto,Auto,*"),
-                Children =
-                {
-                    _rawSelectionHint,
-                    sourceTools,
-                    scroller,
-                },
-            };
-            Grid.SetRow(sourceTools, 1);
-            Grid.SetRow(scroller, 2);
+            tools = sourceTools;
             scroller.ScrollChanged += (_, _) => UpdateRawNavigationButtons();
             _rawContext.PointerReleased += (_, _) => Dispatcher.UIThread.Post(CompleteRawTextSelection);
             SetRawPanMode(false);
             SetRawWrap(false);
-            _rawCodeSurface = new Border
-            {
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(10, 8),
-                Child = codeGrid,
-                IsVisible = false,
-            };
-            _rawDataSurface = _rawCodeSurface;
-            content.Children.Add(_rawCodeSurface);
-
-            var chooseEntry = _rawChooseEntry = new Button
-            {
-                Content = "Choose an entry",
-                HorizontalAlignment = HorizontalAlignment.Center,
-                MinHeight = 48,
-            };
-            chooseEntry.Click += (_, _) =>
-            {
-                if (_mobileAnalysisTabs is { } tabs)
-                {
-                    tabs.SelectedIndex = 0;
-                }
-            };
-            AutomationProperties.SetName(chooseEntry, "Open Entries to choose a source row");
-
-            _rawPlaceholder.Text =
-                "Choose a log entry to inspect its exact source bytes and the surrounding lines.";
-            _rawPlaceholder.FontStyle = FontStyle.Normal;
-            _rawPlaceholder.TextAlignment = TextAlignment.Center;
-            _rawPlaceholder.MaxWidth = 320;
-            _rawEmptyTitle = new TextBlock
-            {
-                Text = "No source selected",
-                FontSize = 16,
-                FontWeight = FontWeight.SemiBold,
-                HorizontalAlignment = HorizontalAlignment.Center,
-            };
-            var emptyPanel = new StackPanel
-            {
-                Spacing = 9,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = "{  }",
-                        FontFamily = MonoFont,
-                        FontSize = 24,
-                        FontWeight = FontWeight.Bold,
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                    },
-                    _rawEmptyTitle,
-                    _rawPlaceholder,
-                    chooseEntry,
-                },
-            };
-            _rawEmptyCard = new Border
-            {
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(12),
-                Padding = new Thickness(22, 18),
-                Margin = new Thickness(14),
-                MaxWidth = 390,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = emptyPanel,
-            };
-            _rawEmptyState = _rawEmptyCard;
-            AutomationProperties.SetName(_rawEmptyCard, "No source selected");
-            content.Children.Add(_rawEmptyCard);
         }
         else
         {
-            _rawDataSurface = scroller;
-            _rawEmptyState = _rawPlaceholder;
-            content.Children.Add(scroller);
-            content.Children.Add(_rawPlaceholder);
-        }
-        _rawContentBorder = new Border
-        {
-            BorderThickness = new Thickness(_mobile ? 0 : 1),
-            CornerRadius = new CornerRadius(4),
-            Padding = _mobile ? new Thickness(0) : new Thickness(8, 6),
-            Child = content,
-        };
-
-        if (_mobile)
-        {
-            // Its own tab, so it is always open and fills the available height.
-            _rawContentBorder.Margin = new Thickness(6);
-            _rawExpanded = true;
-            return _rawContentBorder;
+            tools = new Panel { IsVisible = false };
         }
 
-        _rawContentBorder.Margin = new Thickness(0, 4, 0, 0);
-        _rawChevron = new TextBlock { Text = "▸", Width = 14, VerticalAlignment = VerticalAlignment.Center };
-        _rawHeaderLabel = new TextBlock
+        _rawSourceTools = tools;
+        var section = new Grid
         {
-            Text = "SOURCE CONTEXT",
-            FontSize = 10,
-            FontWeight = FontWeight.Bold,
-            VerticalAlignment = VerticalAlignment.Center,
+            RowDefinitions = new RowDefinitions(_mobile ? "Auto,Auto,Auto,*" : "Auto,Auto,Auto,Auto"),
         };
-        _rawHeaderHint = new TextBlock
-        {
-            Text = "raw bytes behind the selected row",
-            FontSize = 10,
-            Margin = new Thickness(8, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        var header = new Button
-        {
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(2, 4),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
-            Content = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Children = { _rawChevron, _rawHeaderLabel, _rawHeaderHint },
-            },
-        };
-        ToolTip.SetTip(header, "Show or hide the exact source bytes behind the selected row.");
-        AutomationProperties.SetName(header, "Toggle source context");
-        header.Click += (_, _) => SetRawExpanded(!_rawExpanded);
+        section.Children.Add(header);
+        Grid.SetRow(_sourceStatus, 1);
+        section.Children.Add(_sourceStatus);
+        Grid.SetRow(tools, 2);
+        section.Children.Add(tools);
+        Grid.SetRow(scroller, 3);
+        section.Children.Add(scroller);
+        return section;
+    }
 
-        var pane = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto"), Margin = new Thickness(0, 4, 0, 0) };
-        pane.Children.Add(header);
-        Grid.SetRow(_rawContentBorder, 1);
-        pane.Children.Add(_rawContentBorder);
-        SetRawExpanded(false);
-        return pane;
+    /// <summary>
+    /// Opens or closes the source section. On a phone the message and the bytes compete
+    /// for one screen, so closing the bytes gives the message all of it.
+    /// </summary>
+    private void SetSourceExpanded(bool expanded)
+    {
+        _sourceExpanded = expanded;
+        if (_sourceChevron is { } chevron)
+        {
+            chevron.Text = expanded ? "▾" : "▸";
+        }
+
+        if (_sourceStatus is { } status)
+        {
+            status.IsVisible = expanded && status.Text is { Length: > 0 };
+        }
+
+        if (_rawSourceTools is { } tools)
+        {
+            tools.IsVisible = expanded && _mobile && _sourceStatus?.Text is not { Length: > 0 };
+        }
+
+        if (_rawScroller is { } scroller)
+        {
+            scroller.IsVisible = expanded && _sourceStatus?.Text is not { Length: > 0 };
+        }
+
+        if (_sourceHeader is { } header)
+        {
+            AutomationProperties.SetName(
+                header,
+                expanded ? "Hide the source bytes" : "Show the source bytes");
+        }
+
+        // The context is loaded once and the section may open long afterwards, so the line
+        // the reader is looking for is put on screen here as well as on load.
+        if (expanded)
+        {
+            ScrollMarkedLineIntoView();
+        }
     }
 
     private void SetRawExpanded(bool expanded)
@@ -295,6 +539,118 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
     }
 
+    /// <summary>
+    /// Presents an entry the moment it is picked. Everything here comes off the record the
+    /// row is already bound to, so it costs no query and cannot be outrun by a live
+    /// snapshot; the source read that follows is the only asynchronous part.
+    /// </summary>
+    private void SetInspectedEntry(NormalizedEntry? entry)
+    {
+        _inspectedEntry = entry;
+        if (_openInspector is { } open)
+        {
+            open.IsEnabled = entry is not null;
+        }
+
+        if (_copyMessage is { } copy)
+        {
+            copy.IsEnabled = entry is not null;
+        }
+
+        if (entry is null)
+        {
+            _inspectMessage.Inlines?.Clear();
+            _inspectMessage.Text = string.Empty;
+            _presentedRawText = string.Empty;
+            _rawContext.Inlines?.Clear();
+            _rawContext.Text = string.Empty;
+            ShowNoEntryState();
+            return;
+        }
+
+        if (_inspectPill is { } pill)
+        {
+            pill.Background = LevelPalette.BrushOf(entry.Level);
+        }
+
+        if (_inspectPillText is { } pillText)
+        {
+            pillText.Text = LevelPalette.Label(entry.Level);
+        }
+
+        if (_inspectTag is { } tag)
+        {
+            tag.Text = entry.Tag;
+            tag.Foreground = LevelPalette.BrushOf(entry.Level);
+        }
+
+        if (_inspectMeta is { } meta)
+        {
+            // A capture without buffer names would otherwise render an empty slot between
+            // two separators, which reads as a missing value rather than an absent field.
+            var parts = new List<string>(4)
+            {
+                FormatInstant(entry.Timestamp),
+                $"{ProcessLabel(entry)}:{entry.Tid}",
+            };
+            if (!string.IsNullOrWhiteSpace(entry.Buffer))
+            {
+                parts.Add(entry.Buffer);
+            }
+
+            parts.Add($"tpl {entry.TemplateId}");
+            meta.Text = "·  " + string.Join("  ·  ", parts);
+        }
+
+        var capped = entry.Message.Length > InspectorMessageLimit;
+        var shown = capped ? entry.Message[..InspectorMessageLimit] : entry.Message;
+        ApplyHighlight(_inspectMessage, shown, _viewModel.Filter.Search);
+        _inspectMessage.IsVisible = true;
+        if (_inspectTruncated is { } truncated)
+        {
+            truncated.IsVisible = capped;
+            truncated.Text = capped
+                ? $"Showing the first {InspectorMessageLimit / 1024:N0} KB of {entry.Message.Length:N0} " +
+                  "characters. Copy message copies the whole record."
+                : string.Empty;
+        }
+
+        // A screen reader should hear the entry, not a megabyte of it.
+        AutomationProperties.SetName(
+            _inspectMessage,
+            $"Message of {entry.Level} {entry.Tag}: {RowPreview(entry.Message)}");
+        UpdateInspectorVisibility();
+    }
+
+    private async Task CopyInspectedMessageAsync()
+    {
+        if (_inspectedEntry is not { } entry || TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard)
+        {
+            return;
+        }
+
+        await clipboard.SetTextAsync(entry.Message);
+        _status.Text = $"Copied {entry.Message.Length:N0} characters";
+    }
+
+    /// <summary>
+    /// The pane shows the inspector whenever there is an entry to inspect, and the empty
+    /// card otherwise. A pending source read is a state of the source section, never a
+    /// reason to hide a message that is already in hand.
+    /// </summary>
+    private void UpdateInspectorVisibility()
+    {
+        var hasEntry = _inspectedEntry is not null;
+        if (_rawEmptyState is { } emptyState)
+        {
+            emptyState.IsVisible = !hasEntry;
+        }
+
+        if (_rawDataSurface is { } dataSurface)
+        {
+            dataSurface.IsVisible = hasEntry;
+        }
+    }
 
     private void BeginRawContextLoad(NormalizedEntry entry, long? timelineCount)
     {
@@ -498,51 +854,151 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void PresentRawContext()
     {
         var raw = _viewModel.RawContextText;
-        if (!string.Equals(_rawContext.Text, raw, StringComparison.Ordinal))
+        if (!string.Equals(_presentedRawText, raw, StringComparison.Ordinal))
         {
+            _presentedRawText = raw;
             _rawContext.ClearSelection();
-            _rawContext.Text = raw;
+            ApplyRawContextText();
             if (_rawCopySelection is { } copySelection)
             {
                 copySelection.IsEnabled = false;
             }
         }
 
-        var hasRaw = !string.IsNullOrEmpty(raw);
-        if (!hasRaw)
+        if (string.IsNullOrEmpty(raw))
         {
             ShowRawUnavailableState();
             return;
         }
 
-        if (_rawEmptyState is { } emptyState)
-        {
-            emptyState.IsVisible = !hasRaw;
-        }
+        SetSourceStatus(null);
+        ScrollMarkedLineIntoView();
 
-        if (_rawDataSurface is { } dataSurface)
-        {
-            dataSurface.IsVisible = hasRaw;
-        }
-
-        // Selecting a row is the request to read its source, so the panel opens
-        // itself the moment content arrives; the user can still collapse it.
-        if (hasRaw && !_mobile && !_rawExpanded)
+        // Selecting a row is the request to read it, so the panel opens itself the moment
+        // content arrives; the user can still collapse it.
+        if (!_mobile && !_rawExpanded)
         {
             SetRawExpanded(true);
         }
     }
 
-    private void ShowRawUnavailableState()
+    /// <summary>
+    /// Draws the dump with the entry's own line in its severity color and bold, and every
+    /// surrounding line muted. The <c>▶</c> the text already carried was a single character
+    /// that vanished the moment the lines wrapped; color and weight survive wrapping, and
+    /// three runs keep selection and copy working across the whole block.
+    /// </summary>
+    private void ApplyRawContextText()
+    {
+        var raw = _presentedRawText;
+        var marker = _viewModel.RawContextMarker;
+        var dark = ActualThemeVariant != ThemeVariant.Light;
+        if (marker is not { } mark ||
+            mark.Offset < 0 ||
+            mark.Length <= 0 ||
+            mark.Offset + mark.Length > raw.Length)
+        {
+            _rawContext.Inlines?.Clear();
+            _rawContext.Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
+            _rawContext.Text = raw;
+            return;
+        }
+
+        var muted = new SolidColorBrush(WorkspacePalette.TextMuted(dark));
+        var inlines = new InlineCollection();
+        if (mark.Offset > 0)
+        {
+            inlines.Add(new Run(raw[..mark.Offset]) { Foreground = muted });
+        }
+
+        inlines.Add(new Run(raw.Substring(mark.Offset, mark.Length))
+        {
+            Foreground = LevelPalette.BrushOf(_inspectedEntry?.Level ?? LogLevel.Unknown),
+            FontWeight = FontWeight.Bold,
+        });
+        var end = mark.Offset + mark.Length;
+        if (end < raw.Length)
+        {
+            inlines.Add(new Run(raw[end..]) { Foreground = muted });
+        }
+
+        _rawContext.Text = string.Empty;
+        _rawContext.Inlines = inlines;
+    }
+
+    /// <summary>
+    /// Puts the entry's own line on screen. Hit-testing the laid-out text is what makes
+    /// this exact under wrapping, where a line index would not be, and it has to wait for
+    /// layout to have run over the new text.
+    /// </summary>
+    private void ScrollMarkedLineIntoView()
+    {
+        if (_viewModel.RawContextMarker is not { } marker)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                // A hidden scroller has no extent to scroll within, so the offset would
+                // clamp to zero and the line would stay lost.
+                if (_rawScroller is not { IsVisible: true })
+                {
+                    return;
+                }
+
+                // Whoever owns the vertical axis does the scrolling: the surrounding column
+                // on mobile, the dump's own scroller on the desktop pane.
+                var scroller = _inspectScroll ?? _rawScroller;
+                var y = _rawContext.TextLayout.HitTestTextPosition(marker.Offset).Y;
+                if (scroller.Content is Control target &&
+                    _rawContext.TranslatePoint(new Point(0, y), target) is { } point)
+                {
+                    y = point.Y;
+                }
+
+                scroller.Offset = new Vector(
+                    scroller.Offset.X,
+                    Math.Clamp(y - 8, 0, Math.Max(0, scroller.Extent.Height - scroller.Viewport.Height)));
+            },
+            DispatcherPriority.Loaded);
+    }
+
+    /// <summary>Source bytes have their own status so a slow or failed read never removes
+    /// the message from the screen.</summary>
+    private void SetSourceStatus(string? status)
+    {
+        var pending = status is { Length: > 0 };
+        if (_sourceStatus is { } label)
+        {
+            label.Text = status ?? string.Empty;
+            label.IsVisible = pending && _sourceExpanded;
+        }
+
+        if (_rawScroller is { } scroller)
+        {
+            scroller.IsVisible = !pending && _sourceExpanded;
+        }
+
+        if (_rawSourceTools is { } tools)
+        {
+            tools.IsVisible = !pending && _sourceExpanded && _mobile;
+        }
+    }
+
+    private void ShowNoEntryState()
     {
         if (_rawEmptyTitle is { } title)
         {
-            title.Text = "Source unavailable";
+            title.Text = "No entry selected";
         }
 
         if (_rawPlaceholder is { } description)
         {
-            description.Text = "No source context was returned for this entry. Choose it again to retry.";
+            description.Text = _mobile
+                ? "Choose a log entry to read its whole message and the source bytes behind it."
+                : "Select a row to read its whole message, then the exact source bytes behind it.";
         }
 
         if (_rawChooseEntry is { } chooseEntry)
@@ -550,16 +1006,17 @@ public sealed partial class SessionWorkspaceView : UserControl
             chooseEntry.IsVisible = true;
         }
 
-        if (_rawEmptyState is { } emptyState)
+        if (_rawEmptyCard is { } emptyCard)
         {
-            emptyState.IsVisible = true;
+            AutomationProperties.SetName(emptyCard, "No entry selected");
         }
 
-        if (_rawDataSurface is { } dataSurface)
-        {
-            dataSurface.IsVisible = false;
-        }
+        UpdateInspectorVisibility();
+    }
 
+    private void ShowRawUnavailableState()
+    {
+        SetSourceStatus("No source context was returned for this entry. Choose it again to retry.");
         if (_rawEmptyCard is { } emptyCard)
         {
             AutomationProperties.SetName(emptyCard, "Source context unavailable");
@@ -568,33 +1025,39 @@ public sealed partial class SessionWorkspaceView : UserControl
 
     private void ShowRawLoadingState(long? timelineCount = null)
     {
+        if (_rawSelectionHint is { } selectionHint)
+        {
+            selectionHint.Text = timelineCount is > 0
+                ? $"First of {timelineCount:N0} in the selected bar · choose another row in Entries"
+                : "Selected entry";
+        }
+
+        SetSourceStatus("Reading the source bytes around this entry…");
+
+        // Before the cell query answers there is no entry yet, so the card explains the
+        // wait; once one is selected the message is already on screen and only the source
+        // section is still loading.
+        if (_inspectedEntry is not null)
+        {
+            UpdateInspectorVisibility();
+            return;
+        }
+
         if (_rawEmptyTitle is { } title)
         {
-            title.Text = timelineCount is > 0 ? "Loading first entry…" : "Loading source…";
+            title.Text = timelineCount is > 0 ? "Loading first entry…" : "Loading entry…";
         }
 
         if (_rawPlaceholder is { } description)
         {
             description.Text = timelineCount is > 0
                 ? $"Reading the first of {timelineCount:N0} entries in the selected timeline bar."
-                : "Reading the selected entry's exact bytes and surrounding lines.";
-        }
-
-        if (_rawSelectionHint is { } selectionHint)
-        {
-            selectionHint.Text = timelineCount is > 0
-                ? $"First of {timelineCount:N0} in selected bar · choose another row in Entries"
-                : "Selected entry · exact source bytes with surrounding lines";
+                : "Reading the selected entry.";
         }
 
         if (_rawChooseEntry is { } chooseEntry)
         {
             chooseEntry.IsVisible = false;
-        }
-
-        if (_rawEmptyState is { } emptyState)
-        {
-            emptyState.IsVisible = true;
         }
 
         if (_rawEmptyCard is { } emptyCard)
@@ -603,17 +1066,15 @@ public sealed partial class SessionWorkspaceView : UserControl
                 emptyCard,
                 timelineCount is > 0
                     ? "Loading first entry from selected timeline bar"
-                    : "Loading source context");
+                    : "Loading the selected entry");
         }
 
-        if (_rawDataSurface is { } dataSurface)
-        {
-            dataSurface.IsVisible = false;
-        }
+        UpdateInspectorVisibility();
     }
 
     private void ShowRawNoMatchesState()
     {
+        SetInspectedEntry(null);
         if (_rawEmptyTitle is { } title)
         {
             title.Text = "No matching entries";
@@ -629,47 +1090,35 @@ public sealed partial class SessionWorkspaceView : UserControl
             chooseEntry.IsVisible = true;
         }
 
-        if (_rawEmptyState is { } emptyState)
-        {
-            emptyState.IsVisible = true;
-        }
-
-        if (_rawDataSurface is { } dataSurface)
-        {
-            dataSurface.IsVisible = false;
-        }
-
         if (_rawEmptyCard is { } emptyCard)
         {
             AutomationProperties.SetName(emptyCard, "No matching entries in selected timeline bar");
         }
+
+        UpdateInspectorVisibility();
     }
 
     private void ShowRawErrorState(Exception exception)
     {
-        if (_rawEmptyTitle is { } title)
+        SetSourceStatus("VisualCat could not read this entry's source context. Choose it again to retry.");
+        if (_inspectedEntry is null)
         {
-            title.Text = "Source unavailable";
-        }
+            if (_rawEmptyTitle is { } title)
+            {
+                title.Text = "Source unavailable";
+            }
 
-        if (_rawPlaceholder is { } description)
-        {
-            description.Text = "VisualCat could not read this entry's source context. Choose another entry to retry.";
-        }
+            if (_rawPlaceholder is { } description)
+            {
+                description.Text = "VisualCat could not read this entry. Choose another row to retry.";
+            }
 
-        if (_rawChooseEntry is { } chooseEntry)
-        {
-            chooseEntry.IsVisible = true;
-        }
+            if (_rawChooseEntry is { } chooseEntry)
+            {
+                chooseEntry.IsVisible = true;
+            }
 
-        if (_rawEmptyState is { } emptyState)
-        {
-            emptyState.IsVisible = true;
-        }
-
-        if (_rawDataSurface is { } dataSurface)
-        {
-            dataSurface.IsVisible = false;
+            UpdateInspectorVisibility();
         }
 
         if (_rawEmptyCard is { } emptyCard)
@@ -679,6 +1128,4 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         _status.Text = $"Source unavailable · {exception.Message}";
     }
-
-
 }

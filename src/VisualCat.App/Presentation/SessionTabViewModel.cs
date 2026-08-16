@@ -21,6 +21,14 @@ namespace VisualCat.App.Presentation;
 /// </summary>
 public sealed record CellPattern(TimeRange Range, LogLevel Level, string? TemplateText, long TemplateCount);
 
+/// <summary>
+/// Character range of the selected entry's own line inside the rendered raw context. The
+/// context is one flat string so it stays selectable and copyable as a whole; the range is
+/// what lets the inspector mark that one line and scroll to it instead of leaving the
+/// reader to find a bare marker in eleven wrapped lines (§14.9).
+/// </summary>
+public readonly record struct RawContextMarker(int Offset, int Length);
+
 /// <summary>Filterable dimensions the facet panel exposes.</summary>
 public enum FacetDimension
 {
@@ -118,6 +126,18 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public event PropertyChangedEventHandler? PropertyChanged;
     public event EventHandler? SnapshotChanged;
 
+    /// <summary>
+    /// Raised on the UI thread immediately before <see cref="Entries"/> is emptied and
+    /// refilled by a refresh. A list control clears its selection when the collection
+    /// resets, which during a live capture silently deselected whatever the user was
+    /// reading every time a snapshot landed. The pair of events lets a view tell that
+    /// reset apart from a deliberate deselection.
+    /// </summary>
+    public event EventHandler? EntriesReloading;
+
+    /// <summary>Raised on the UI thread once <see cref="Entries"/> has been refilled.</summary>
+    public event EventHandler? EntriesReloaded;
+
     public string Title { get; }
     public string SessionPath => _sessionPath;
     public SessionSnapshot? Snapshot => _snapshot;
@@ -138,6 +158,14 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public bool HasNewData { get => _hasNewData; private set => Set(ref _hasNewData, value); }
     public EntryOrder EntryOrder { get => _entryOrder; private set => Set(ref _entryOrder, value); }
     public string RawContextText { get => _rawContextText; private set => Set(ref _rawContextText, value); }
+
+    /// <summary>
+    /// Where the selected entry's own line sits inside <see cref="RawContextText"/>, or
+    /// <c>null</c> when the context could not be rendered. Always assigned before
+    /// <see cref="RawContextText"/>, so a view reacting to the text change never reads a
+    /// range belonging to the previous entry.
+    /// </summary>
+    public RawContextMarker? RawContextMarker { get; private set; }
     public bool CanLoadMore => _nextEntryCursor is not null;
     public bool IsLoadingEntries => Volatile.Read(ref _entryLoadInProgress) != 0;
     public int LoadedEntryCount => Entries.Count;
@@ -379,6 +407,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     SearchStatus = string.Empty;
                 }
 
+                EntriesReloading?.Invoke(this, EventArgs.Empty);
                 Entries.Clear();
                 foreach (var entry in results.details.Entries)
                 {
@@ -388,6 +417,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 MatchesInView = results.details.TotalCount;
                 SetNextEntryCursor(results.details.NextCursor);
                 NotifyEntryLoadCounts();
+                EntriesReloaded?.Invoke(this, EventArgs.Empty);
             });
             ScheduleTemplateRefresh(filterKey, viewport.Value, filter, generation, token);
 
@@ -1005,6 +1035,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             var path = snapshot.RawPath;
             if (path is null || !File.Exists(path))
             {
+                RawContextMarker = null;
                 RawContextText = snapshot.Descriptor.Degraded
                     ? "Raw source is unavailable; the index remains queryable in degraded mode."
                     : "Raw source is unavailable.";
@@ -1019,14 +1050,16 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 64 * 1024,
                 FileOptions.Asynchronous | FileOptions.RandomAccess);
             var builder = new StringBuilder();
+            RawContextMarker? selectedLine = null;
             foreach (var record in records)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var bytes = new byte[record.Raw.Length];
                 stream.Position = record.Raw.Offset;
                 await stream.ReadExactlyAsync(bytes, cancellationToken).ConfigureAwait(false);
-                var marker = record.Sequence == entry.SourceSequence ? "▶" : " ";
-                builder.Append(marker)
+                var selected = record.Sequence == entry.SourceSequence;
+                var start = builder.Length;
+                builder.Append(selected ? '▶' : ' ')
                     .Append(' ')
                     .Append(record.Sequence)
                     .Append(" [")
@@ -1034,12 +1067,18 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     .Append("] ")
                     .Append(Encoding.UTF8.GetString(bytes).TrimEnd('\r', '\n'))
                     .AppendLine();
+                if (selected)
+                {
+                    selectedLine = new RawContextMarker(start, builder.Length - start);
+                }
             }
 
+            RawContextMarker = selectedLine;
             RawContextText = builder.ToString();
         }
         catch (EndOfStreamException)
         {
+            RawContextMarker = null;
             RawContextText = "Raw source changed or is truncated; the indexed entry is still available.";
         }
         finally

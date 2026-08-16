@@ -201,6 +201,103 @@ public sealed class SessionWorkspaceHeadlessTests
         }
     }
 
+    /// <summary>
+    /// A tap on a bar used to end at a clipped line with no way forward: the row did not
+    /// grow, and the whole message existed nowhere the reader could reach. The row now
+    /// opens for the entry the reader picked, and the inspector holds all of it.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task SelectingARowOpensItAndTheInspectorHoldsTheWholeMessage()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        WorkspaceViewModel.ConfigureTemporarySessionRoot(root);
+        try
+        {
+            var novel = "dlopen failed: library not found in " + new string('p', 400);
+            var sourcePath = Path.Combine(root, "wide-messages.txt");
+            await File.WriteAllTextAsync(
+                sourcePath,
+                "01-01 00:00:00.000000   100   101 I Worker         : short\n" +
+                $"01-01 00:00:01.000000   100   101 E Loader         : {novel}\n",
+                TestContext.Current.CancellationToken);
+
+            await using var workspace = new WorkspaceViewModel();
+            var tab = await workspace.ImportFileAsync(sourcePath, TestContext.Current.CancellationToken);
+            var view = new SessionWorkspaceView(tab);
+            var window = new Window { Content = view, Width = 1280, Height = 800 };
+            window.Show();
+            try
+            {
+                var entries = view.GetLogicalDescendants()
+                    .OfType<ListBox>()
+                    .Single(list => AutomationProperties.GetName(list) == "Filtered log entries");
+                var longIndex = tab.Entries.Count - 1;
+                Assert.Contains(novel, tab.Entries[longIndex].Message, StringComparison.Ordinal);
+
+                var openEntry = view.GetLogicalDescendants()
+                    .OfType<Button>()
+                    .Single(button => Equals(button.Content, "Full entry"));
+                Assert.False(openEntry.IsEnabled);
+
+                entries.SelectedIndex = longIndex;
+
+                // Exactly one row differs, so the table stays scannable while the row the
+                // reader picked shows more of its message.
+                Assert.Equal(2, MessageLines(entries, longIndex));
+                Assert.Equal(1, MessageLines(entries, 0));
+                Assert.True(openEntry.IsEnabled);
+
+                var inspector = view.GetLogicalDescendants()
+                    .OfType<SelectableTextBlock>()
+                    .Single(block => AutomationProperties.GetAutomationId(block) ==
+                                     SessionWorkspaceView.InspectorMessageId);
+                Assert.Equal(tab.Entries[longIndex].Message, inspector.Text);
+                Assert.True(inspector.IsVisible);
+
+                // A live snapshot replaces every row with an equal instance. The reader's
+                // entry — and the plot's mark for it — has to survive that.
+                var timeline = view.GetLogicalDescendants().OfType<TimelineControl>().Single();
+                var before = Assert.IsType<NormalizedEntry>(entries.SelectedItem);
+                await tab.RefreshAsync(TestContext.Current.CancellationToken);
+                var after = Assert.IsType<NormalizedEntry>(entries.SelectedItem);
+                Assert.Equal(before.EntryId, after.EntryId);
+                Assert.Equal(before.Timestamp, timeline.SelectedEntryInstant);
+
+                // Releasing the selection still releases the mark and the inspector.
+                entries.SelectedIndex = -1;
+                Assert.Null(timeline.SelectedEntryInstant);
+                Assert.False(openEntry.IsEnabled);
+                Assert.Equal(string.Empty, inspector.Text);
+            }
+            finally
+            {
+                window.Close();
+            }
+
+            await workspace.CloseAsync(tab);
+        }
+        finally
+        {
+            WorkspaceViewModel.ConfigureTemporarySessionRoot(null);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>Line budget the row at <paramref name="index"/> currently draws.</summary>
+    private static int MessageLines(ListBox entries, int index)
+    {
+        var container = entries.ContainerFromIndex(index);
+        Assert.NotNull(container);
+        return container.GetLogicalDescendants()
+            .OfType<TextBlock>()
+            .Single(block => block.Name == "EntryMessage")
+            .MaxLines;
+    }
+
     private static string BuildLog(int lines)
     {
         var builder = new StringBuilder(lines * 96);

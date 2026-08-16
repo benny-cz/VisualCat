@@ -33,6 +33,13 @@ public sealed partial class SessionWorkspaceView : UserControl
     private static readonly Avalonia.Media.Immutable.ImmutableSolidColorBrush SearchHighlightText =
         new(Color.Parse("#150411"));
 
+    /// <summary>Name given to the message block of every row, so the two styles below can
+    /// address it without the row template knowing anything about selection.</summary>
+    private const string MessageBlockName = "EntryMessage";
+
+    /// <summary>Name of the mobile row's "there is more of this" affordance.</summary>
+    private const string ExpandGlyphName = "EntryExpand";
+
     private void ConfigureEntryList()
     {
         _entries.SelectionMode = SelectionMode.Multiple;
@@ -54,8 +61,60 @@ public sealed partial class SessionWorkspaceView : UserControl
             _entries.Styles.Add(CompactItemStyle(64));
         }
 
+        // One clipped line is the right density for a table being scanned and the wrong
+        // answer for the one row the reader has actually picked (§14.9). Exactly one row
+        // ever differs, so the table stays scannable and virtualization is untouched.
+        // Both states come from styles because a local value in the template would
+        // outrank the selected-state setter and never yield.
+        _entries.Styles.Add(MessageLineStyle(collapsed: true, _mobile ? 1 : 1));
+        _entries.Styles.Add(MessageLineStyle(collapsed: false, _mobile ? 4 : 2));
+        if (_mobile)
+        {
+            _entries.Styles.Add(ExpandGlyphStyle(onSelectedRow: false));
+            _entries.Styles.Add(ExpandGlyphStyle(onSelectedRow: true));
+        }
+
         ApplyEntryTemplate();
         AutomationProperties.SetName(_entries, "Filtered log entries");
+    }
+
+    /// <summary>
+    /// Line budget for a row's message. The expanded style is added after the collapsed
+    /// one so it wins for the selected row; both are needed because a style cannot
+    /// override a value the template set locally.
+    /// </summary>
+    private static Avalonia.Styling.Style MessageLineStyle(bool collapsed, int maximumLines)
+    {
+        var style = new Avalonia.Styling.Style(selector =>
+        {
+            var item = Avalonia.Styling.Selectors.OfType<ListBoxItem>(selector);
+            return (collapsed ? item : item.Class(":selected"))
+                .Descendant()
+                .OfType<TextBlock>()
+                .Name(MessageBlockName);
+        });
+        style.Setters.Add(new Avalonia.Styling.Setter(TextBlock.TextWrappingProperty, TextWrapping.Wrap));
+        style.Setters.Add(new Avalonia.Styling.Setter(TextBlock.MaxLinesProperty, maximumLines));
+        return style;
+    }
+
+    /// <summary>
+    /// Shows the affordance on the selected row only. Both states are styles for the same
+    /// reason the line budget is: a local value in the template would outrank the
+    /// selected-state setter and the glyph would never appear.
+    /// </summary>
+    private static Avalonia.Styling.Style ExpandGlyphStyle(bool onSelectedRow)
+    {
+        var style = new Avalonia.Styling.Style(selector =>
+        {
+            var item = Avalonia.Styling.Selectors.OfType<ListBoxItem>(selector);
+            return (onSelectedRow ? item.Class(":selected") : item)
+                .Descendant()
+                .OfType<TextBlock>()
+                .Name(ExpandGlyphName);
+        });
+        style.Setters.Add(new Avalonia.Styling.Setter(Visual.IsVisibleProperty, onSelectedRow));
+        return style;
     }
 
     /// <summary>
@@ -129,13 +188,12 @@ public sealed partial class SessionWorkspaceView : UserControl
                         Foreground = LevelPalette.BrushOf(entry.Level),
                     },
                     HighlightedText(
-                        FirstLine(entry.Message),
+                        RowPreview(entry.Message),
                         _viewModel.Filter.Search,
                         static text => new TextBlock
                         {
+                            Name = MessageBlockName,
                             Text = text,
-                            TextWrapping = TextWrapping.Wrap,
-                            MaxLines = 1,
                             TextTrimming = TextTrimming.CharacterEllipsis,
                         }),
                     new TextBlock
@@ -149,6 +207,19 @@ public sealed partial class SessionWorkspaceView : UserControl
             };
             Grid.SetColumn(body, 1);
 
+            // Costs no row height and appears only on the row the reader picked, so the
+            // route to the rest of the message sits where the finger already is.
+            var expand = new TextBlock
+            {
+                Name = ExpandGlyphName,
+                Text = "⤢",
+                FontSize = 15,
+                Foreground = new SolidColorBrush(WorkspacePalette.Accent(dark)),
+                Margin = new Thickness(2, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(expand, 2);
+
             var edge = SeverityEdge(entry.Level);
             Grid.SetColumn(edge, 0);
             return new Border
@@ -158,8 +229,8 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Background = RowTint(entry.Level, dark),
                 Child = new Grid
                 {
-                    ColumnDefinitions = new ColumnDefinitions("3,*"),
-                    Children = { edge, body },
+                    ColumnDefinitions = new ColumnDefinitions("3,*,Auto"),
+                    Children = { edge, body, expand },
                 },
             };
         });
@@ -191,14 +262,24 @@ public sealed partial class SessionWorkspaceView : UserControl
     private TextBlock MessageCell(NormalizedEntry entry, int column)
     {
         var cell = HighlightedText(
-            FirstLine(entry.Message),
+            RowPreview(entry.Message),
             _viewModel.Filter.Search,
             static text => new TextBlock
             {
+                Name = MessageBlockName,
                 Text = text,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 Margin = new Thickness(4, 2),
             });
+
+        // A pointer already resting on a clipped message is the cheapest possible moment to
+        // answer "what does the rest say" — but only where a pointer exists, and only when
+        // something is actually hidden (the same rule the summary readout follows).
+        if (entry.Message.Length > 72 || entry.Message.AsSpan().IndexOfAny('\r', '\n') >= 0)
+        {
+            ToolTip.SetTip(cell, RowPreview(entry.Message));
+        }
+
         Grid.SetColumn(cell, column);
         return cell;
     }
@@ -220,6 +301,30 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         var block = build(string.Empty);
+        block.Inlines = HighlightInlines(text, spans);
+        return block;
+    }
+
+    /// <summary>
+    /// Marks the search term inside a block that already exists — the inspector's message,
+    /// which is re-pointed at a new entry rather than rebuilt per row.
+    /// </summary>
+    private static void ApplyHighlight(TextBlock block, string text, TextSearchSpec? search)
+    {
+        var spans = EntryHighlight.Match(text, search);
+        if (spans.Count == 0)
+        {
+            block.Inlines?.Clear();
+            block.Text = text;
+            return;
+        }
+
+        block.Text = string.Empty;
+        block.Inlines = HighlightInlines(text, spans);
+    }
+
+    private static InlineCollection HighlightInlines(string text, IReadOnlyList<HighlightSpan> spans)
+    {
         var inlines = new InlineCollection();
         var cursor = 0;
         foreach (var span in spans)
@@ -243,16 +348,35 @@ public sealed partial class SessionWorkspaceView : UserControl
             inlines.Add(new Run(text[cursor..]));
         }
 
-        block.Inlines = inlines;
-        return block;
+        return inlines;
     }
 
-    /// <summary>The one rendered line of a possibly multi-line message, without the array
-    /// a per-row <c>Split</c> would allocate.</summary>
-    private static string FirstLine(string message)
+    /// <summary>Lines of a message a row may ever draw.</summary>
+    private const int RowPreviewLines = 5;
+
+    /// <summary>Characters of a message a row may ever draw.</summary>
+    private const int RowPreviewLength = 640;
+
+    /// <summary>
+    /// The slice of a message a row can possibly show: one line collapsed, four selected.
+    /// Long-format captures join every body line into one message
+    /// (<c>SessionCoordinator</c>), so a record here can be megabytes, and laying all of it
+    /// out per realized row would be pure waste (§19.3). The inspector shows the rest.
+    /// </summary>
+    private static string RowPreview(string message)
     {
-        var end = message.AsSpan().IndexOfAny('\r', '\n');
-        return end < 0 ? message : message[..end];
+        var limit = Math.Min(message.Length, RowPreviewLength);
+        var lines = 0;
+        for (var index = 0; index < limit; index++)
+        {
+            if (message[index] == '\n' && ++lines >= RowPreviewLines)
+            {
+                limit = index;
+                break;
+            }
+        }
+
+        return limit >= message.Length ? message : message[..limit];
     }
 
     private static Grid EntryColumnHeader()
@@ -380,18 +504,66 @@ public sealed partial class SessionWorkspaceView : UserControl
 
             if (_entries.SelectedItem is NormalizedEntry entry)
             {
+                var fromTimeline = _selectingTimelineEntry;
+                _selectingTimelineEntry = false;
+                var replaced = _inspectedEntry is not { } inspected || inspected.EntryId != entry.EntryId;
+                _selectedEntryId = entry.EntryId;
+                SetInspectedEntry(entry);
+
                 // Reading the table no longer costs the user their place in the plot
                 // (§14.9): the plot marks where this row sits, and says which way to look
                 // when the row is outside the current viewport.
                 _timeline.SetSelectedEntry(entry.Timestamp, entry.Level);
-                var timelineCount = _selectingTimelineEntry ? _selectedTimelineCellCount : (long?)null;
-                _selectingTimelineEntry = false;
-                BeginRawContextLoad(entry, timelineCount);
+
+                // A refresh hands back an equal entry under a new instance. Re-reading its
+                // source bytes would restart the inspector the user is mid-read of, so only
+                // a genuinely different entry loads.
+                if (replaced || fromTimeline)
+                {
+                    BeginRawContextLoad(entry, fromTimeline ? _selectedTimelineCellCount : null);
+                }
             }
-            else
+            else if (!_reloadingEntries)
             {
+                // A collection reset is not a decision to stop reading an entry; only an
+                // actual deselection is.
+                _selectedEntryId = null;
+                SetInspectedEntry(null);
                 _timeline.SetSelectedEntry(null, null);
             }
+        };
+
+        // Where the finger already is: tapping the row that is already selected opens its
+        // full message. The press is what records "already selected", because by the time
+        // the tap is delivered the first tap of a fresh row has changed that answer.
+        if (_mobile)
+        {
+            _entries.AddHandler(
+                InputElement.PointerPressedEvent,
+                (_, eventArgs) => _pressedSelectedEntry =
+                    EntryUnder(eventArgs.Source as Control) is { } pressed &&
+                    _inspectedEntry is { } current &&
+                    pressed.EntryId == current.EntryId,
+                Avalonia.Interactivity.RoutingStrategies.Tunnel);
+            _entries.Tapped += (_, _) =>
+            {
+                if (_pressedSelectedEntry)
+                {
+                    _pressedSelectedEntry = false;
+                    ShowInspector();
+                }
+            };
+        }
+        else
+        {
+            _entries.DoubleTapped += (_, _) => ShowInspector();
+        }
+
+        _viewModel.EntriesReloading += (_, _) => _reloadingEntries = true;
+        _viewModel.EntriesReloaded += (_, _) =>
+        {
+            _reloadingEntries = false;
+            RestoreEntrySelection();
         };
 
         _viewModel.PropertyChanged += (_, eventArgs) => Dispatcher.UIThread.Post(() =>
@@ -657,6 +829,68 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
     }
 
+
+    /// <summary>The entry of the row containing <paramref name="source"/>, if any.</summary>
+    private static NormalizedEntry? EntryUnder(Control? source)
+    {
+        for (var control = source; control is not null; control = control.Parent as Control)
+        {
+            if (control is ListBoxItem item)
+            {
+                return item.DataContext as NormalizedEntry;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Re-selects the entry the reader had after a refresh replaced the collection. The
+    /// rows are new instances of an equal record, so identity is the entry id rather than
+    /// the object, and a selection that no longer matches the filter simply stays released.
+    /// </summary>
+    private void RestoreEntrySelection()
+    {
+        if (_selectedEntryId is not { } entryId || _entries.SelectedItem is NormalizedEntry)
+        {
+            return;
+        }
+
+        foreach (var candidate in _viewModel.Entries)
+        {
+            if (candidate.EntryId == entryId)
+            {
+                _entries.SelectedItem = candidate;
+                return;
+            }
+        }
+    }
+
+    /// <summary>Brings the selected entry's full message on screen (§14.9).</summary>
+    private void ShowInspector()
+    {
+        if (_inspectedEntry is null)
+        {
+            return;
+        }
+
+        if (_mobile)
+        {
+            if (_mobileWorkspaceState.DisplayMode == MobileWorkspaceDisplayMode.Plot)
+            {
+                SetMobileDisplayMode(MobileWorkspaceDisplayMode.Split);
+            }
+
+            if (_mobileAnalysisTabs is { } tabs)
+            {
+                tabs.SelectedIndex = tabs.Items.Count - 1;
+            }
+        }
+        else
+        {
+            SetRawExpanded(true);
+        }
+    }
 
     private void MoveEntrySelection(int delta)
     {

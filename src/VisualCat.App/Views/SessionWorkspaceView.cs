@@ -55,6 +55,34 @@ public sealed partial class SessionWorkspaceView : UserControl
     // Read-only by nature and copyable, so the source view reads as output instead of an
     // empty input the accent focus border invited people to type into (§14.1).
     private readonly SelectableTextBlock _rawContext = new() { TextWrapping = TextWrapping.NoWrap };
+
+    // The other half of the §14.9 inspector: the entry's own full message, wrapped and
+    // selectable. The table can only ever show one clipped line, and until this existed a
+    // long message had no reachable form anywhere in the product.
+    private readonly SelectableTextBlock _inspectMessage = new()
+    {
+        TextWrapping = TextWrapping.Wrap,
+        IsVisible = false,
+    };
+    private const int InspectorMessageLimit = 64 * 1024;
+    private NormalizedEntry? _inspectedEntry;
+    private long? _selectedEntryId;
+    private bool _reloadingEntries;
+    private bool _pressedSelectedEntry;
+    private string _presentedRawText = string.Empty;
+    private Border? _inspectPill;
+    private TextBlock? _inspectPillText;
+    private TextBlock? _inspectTag;
+    private TextBlock? _inspectMeta;
+    private TextBlock? _inspectTruncated;
+    private ScrollViewer? _inspectScroll;
+    private Button? _sourceHeader;
+    private TextBlock? _sourceChevron;
+    private bool _sourceExpanded;
+    private Button? _copyMessage;
+    private Button? _openInspector;
+    private TextBlock? _sourceStatus;
+    private Control? _rawSourceTools;
     private Border? _rawContentBorder;
     private TextBlock? _rawPlaceholder;
     private Border? _rawEmptyCard;
@@ -255,7 +283,23 @@ public sealed partial class SessionWorkspaceView : UserControl
             filterPanel.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
         }
 
-        _rawContext.Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
+        // The dump paints its own per-run colors, so it is redrawn rather than recolored.
+        ApplyRawContextText();
+        _inspectMessage.Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
+        if (_inspectMeta is { } inspectMeta)
+        {
+            inspectMeta.Foreground = muted;
+        }
+
+        if (_inspectTruncated is { } inspectTruncated)
+        {
+            inspectTruncated.Foreground = muted;
+        }
+
+        if (_sourceStatus is { } sourceStatus)
+        {
+            sourceStatus.Foreground = muted;
+        }
 
         // Entry rows carry theme colors resolved when the row was realized, and a theme
         // change does not re-realize them. Reinstalling the template does, exactly once.
@@ -291,6 +335,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                      _rawHeaderHint,
                      _rawSelectionHint,
                      _rawChevron,
+                     _sourceChevron,
                  })
         {
             if (element is { } textBlock)
@@ -346,6 +391,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (!control && !alt && !textInputFocused && eventArgs.Key is Key.J or Key.K)
         {
             MoveEntrySelection(eventArgs.Key == Key.J ? 1 : -1);
+            return true;
+        }
+
+        if (!control && !alt && !textInputFocused && eventArgs.Key == Key.Enter && _inspectedEntry is not null)
+        {
+            ShowInspector();
             return true;
         }
 
@@ -891,6 +942,21 @@ public sealed partial class SessionWorkspaceView : UserControl
         copyRaw.Click += async (_, _) => await RunUiActionAsync(CopySelectedRawAsync);
         DockPanel.SetDock(copyRaw, Dock.Right);
         entryActions.Children.Add(copyRaw);
+
+        // A clipped row promises text it cannot show. This is the named way to reach it,
+        // beside the actions that already act on the selected row, so the route does not
+        // depend on the user guessing that a second tap or another tab holds the message.
+        var openInspector = _openInspector = new Button
+        {
+            Content = _mobile ? "Entry ⤢" : "Full entry",
+            Margin = new Thickness(0, 0, 6, 0),
+            IsEnabled = false,
+        };
+        ToolTip.SetTip(openInspector, "Show the selected entry's full message and source bytes (Enter)");
+        AutomationProperties.SetName(openInspector, "Show the full message of the selected entry");
+        openInspector.Click += (_, _) => ShowInspector();
+        DockPanel.SetDock(openInspector, Dock.Right);
+        entryActions.Children.Add(openInspector);
         if (_mobile)
         {
             foreach (var touchTarget in new Control[]
@@ -898,6 +964,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                          _order,
                          _loadMore,
                          copyRaw,
+                         openInspector,
                          _fitMatches,
                          _clearScope,
                      })
@@ -939,7 +1006,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         Grid.SetRow(_entries, _mobile ? 1 : 2);
         entryPanel.Children.Add(_entries);
         var templatePane = BuildTemplatePane();
-        var rawPane = BuildRawContextPane();
+        var rawPane = BuildEntryInspectorPane();
         if (_mobile)
         {
             TabItem MobileDetailTab(string header, Control content) => new()
@@ -952,6 +1019,8 @@ public sealed partial class SessionWorkspaceView : UserControl
                 HorizontalContentAlignment = HorizontalAlignment.Center,
             };
 
+            // "Source" named the lower half of this pane and hid the half people actually
+            // come for. It is the selected entry's inspector: message first, bytes below.
             _mobileAnalysisTabs = new TabControl
             {
                 FontSize = 14,
@@ -959,7 +1028,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 {
                     MobileDetailTab("Entries", entryPanel),
                     MobileDetailTab("Insights", templatePane),
-                    MobileDetailTab("Source", rawPane),
+                    MobileDetailTab("Entry", rawPane),
                 },
             };
             AutomationProperties.SetName(_mobileAnalysisTabs, "Session detail views");

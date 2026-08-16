@@ -13,6 +13,15 @@ The current stable release is `2.0.2`. Ongoing work is recorded under
 ## [Unreleased]
 
 ### Added
+- An entry inspector completes §14.9's "full logical/raw content in an
+  inspector". Selecting a row now shows its whole message: the selected row
+  alone opens to four wrapped lines on a phone and two on the desktop, while
+  every other row keeps its single clipped line, and the `Full entry` action —
+  a second tap on the selected row, a double-click, or `Enter` — opens the
+  inspector, which carries the entry's identity, its complete message, `Copy
+  message`, and the source bytes below. Until now the table showed one clipped
+  line and the rest of a message was unreachable, which for `logcat -v long`
+  captures meant every body line of a multi-line record was invisible.
 - `tools/VisualCat.DemoLog` writes the deterministic demo capture used by every
   screenshot and demo in the documentation: 1,000,156 synthetic `threadtime`
   records over two hours, with a boot burst, intermittent idle windows, a
@@ -26,12 +35,28 @@ The current stable release is `2.0.2`. Ongoing work is recorded under
   document the Android companion, recorded on a physical device.
 
 ### Changed
+- The mobile `Source` tab is now `Entry`, and the desktop `SOURCE CONTEXT` pane
+  is `SELECTED ENTRY`: both lead with the message and keep the raw bytes as a
+  collapsible section beneath it. On a phone the pane is one scrolling column,
+  so the message and the bytes no longer compete for the same space.
+- The selected entry's own line in the source dump is drawn bold in its
+  severity color and scrolled into view. The `▶` marker it already carried
+  disappeared as soon as the lines wrapped, leaving the reader to find their
+  line by eye.
+- The desktop message column shows the full message as a tooltip when the cell
+  is clipped.
 - Every documentation screenshot is recaptured against the million-line demo
   capture instead of the 1,000-line quick-start fixture, so the README shows the
   density the heat map is built for.
 - The README covers the Android companion in its own section, with the recorded
   walkthrough, the install and log-permission steps, and the measured on-device
   import rate.
+
+### Fixed
+- A live snapshot no longer deselects the entry being read. Refreshing replaces
+  the entry collection, which cleared the list selection and with it the
+  timeline's caret for that row; the inspector now holds its own entry and the
+  selection is restored by entry id once the rows are back.
 
 ### Removed
 - `docs/design/UX-IMPROVEMENTS.md`. Its implemented changes are already recorded

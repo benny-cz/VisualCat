@@ -297,6 +297,12 @@ public sealed partial class SessionWorkspaceView : UserControl
             copyRaw.Margin = enabled ? new Thickness(0) : new Thickness(0, 0, 6, 0);
         }
 
+        if (_openInspector is { } openInspector)
+        {
+            openInspector.Content = enabled ? "⤢" : "Entry ⤢";
+            openInspector.Margin = enabled ? new Thickness(0) : new Thickness(0, 0, 6, 0);
+        }
+
         _timeline.Margin = splitTimeline ? new Thickness(6, 2, 3, 2) : new Thickness(0);
         _analysisGrid!.Margin = enabled
             ? splitTimeline ? new Thickness(3, 2, 6, 2) : new Thickness(6, 2)
