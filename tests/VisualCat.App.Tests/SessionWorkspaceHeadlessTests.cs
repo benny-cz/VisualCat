@@ -9,9 +9,12 @@ using Avalonia.LogicalTree;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 using VisualCat.App.Views;
+using VisualCat.Application.Coordination;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Queries;
+using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
+using VisualCat.Infrastructure.Testing;
 
 namespace VisualCat.App.Tests;
 
@@ -284,6 +287,102 @@ public sealed class SessionWorkspaceHeadlessTests
             {
                 Directory.Delete(root, recursive: true);
             }
+        }
+    }
+
+    /// <summary>
+    /// A device capture is parsed in UTC because that is what logcat is asked to emit, and
+    /// reading it back in UTC put the newest entry a whole offset in the past — on a
+    /// UTC+2 device a running capture with Follow engaged looked like it had stopped.
+    /// The clock the workspace reads in is the reader's; the clock it stores in is not.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task ADeviceCaptureIsReadInTheReadersOwnClock()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        WorkspaceViewModel.ConfigureTemporarySessionRoot(root);
+        try
+        {
+            var utcLog = Encoding.UTF8.GetBytes(
+                "2026-05-15 12:13:00.000000  6642 19876 I Worker         : request 1 completed\n" +
+                "2026-05-15 12:13:01.000000  6642 19876 E Loader         : request 2 failed\n");
+
+            await using var workspace = new WorkspaceViewModel();
+
+            // Built the way CaptureAsync builds one — an Android source parsed under a
+            // pinned UTC policy — without going through the live progress reporter, whose
+            // concurrent snapshot opens race the finalize on a capture this short.
+            var sessionRoot = Path.Combine(root, "device-session");
+            await using var device = new MemoryLogSource(utcLog, name: "on-device", kind: SourceKind.Android);
+            var result = await SessionCoordinator.ImportAsync(
+                device,
+                sessionRoot,
+                new IngestSettings(
+                    LogcatFormat.ThreadTime,
+                    "utf-8",
+                    TimestampPolicy.ForFile(device.Metadata.ReferenceInstant, "UTC"),
+                    new TemplateSettings(),
+                    PortableRaw: true),
+                cancellationToken: TestContext.Current.CancellationToken);
+            result.Snapshot.Dispose();
+            await using var captured = new SessionTabViewModel("on-device", sessionRoot);
+            await captured.LoadSnapshotAsync(true, TestContext.Current.CancellationToken);
+            var deviceView = new SessionWorkspaceView(captured);
+
+            // Stored as captured, read as the reader's own clock.
+            Assert.Equal(SourceKind.Android, captured.Snapshot?.Descriptor.SourceKind);
+            Assert.Equal("UTC", captured.Snapshot?.Descriptor.TimestampPolicy.TimeZoneId);
+            Assert.Equal(TimeZoneInfo.Local.Id, deviceView.DisplayZoneId());
+
+            // An imported file keeps its policy zone, which is what makes a rendered row
+            // agree with the raw line behind it.
+            var filePath = Path.Combine(root, "imported.txt");
+            await File.WriteAllTextAsync(
+                filePath,
+                "05-15 12:13:00.000000  6642 19876 I Worker         : request 1 completed\n",
+                TestContext.Current.CancellationToken);
+            var imported = await workspace.ImportFileAsync(filePath, TestContext.Current.CancellationToken);
+            var importedView = new SessionWorkspaceView(imported);
+            Assert.Equal(
+                imported.Snapshot?.Descriptor.TimestampPolicy.TimeZoneId,
+                importedView.DisplayZoneId());
+
+            await workspace.CloseAsync(imported);
+        }
+        finally
+        {
+            WorkspaceViewModel.ConfigureTemporarySessionRoot(null);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The capture status used to carry a session-long average that kept claiming lines
+    /// were arriving long after the source fell silent.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task CaptureStatusReportsARecentRateRatherThanASessionAverage()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await using var tab = new SessionTabViewModel("Live", root) { IsLiveCaptureActive = true };
+        try
+        {
+            var first = tab.DescribeCaptureProgress("On-device own-app logcat", 143);
+            Assert.Contains("143 lines", first, StringComparison.Ordinal);
+            Assert.Contains("On-device own-app logcat", first, StringComparison.Ordinal);
+
+            // No window has elapsed, so no rate has been measured yet — and crucially the
+            // status never inherits one from the burst that opened the capture.
+            Assert.Contains("0/s", first, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
         }
     }
 

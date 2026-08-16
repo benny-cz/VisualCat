@@ -73,6 +73,9 @@ public readonly record struct FacetKey
 public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
     private const long InitialFollowViewportUs = 30_000_000;
+
+    /// <summary>Silence after which a capture stops looking quiet and starts looking broken.</summary>
+    private const int StarvedCaptureSeconds = 20;
     public const int EntryPageSize = 500;
     private const int LoadAllBatchSize = 2_000;
 
@@ -115,6 +118,34 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private string? _templatesCacheKey;
     private CancellationTokenSource? _templateDebounce;
     private CancellationTokenSource? _hoverDebounce;
+
+    // Live-capture progress is only reported when a chunk actually arrives, and the rate it
+    // carried was an average over the whole session. A capture that burst at start and then
+    // went quiet therefore sat on "36/s" for minutes while nothing was arriving, which is
+    // the strongest possible claim that data is streaming. These track a recent rate and
+    // how long the source has been silent, and a heartbeat says so once it is.
+    private DispatcherTimer? _captureHeartbeat;
+    private string _captureScope = string.Empty;
+    private long _captureLines;
+    private long _captureLastAdvanceMs;
+    private long _captureWindowLines;
+    private long _captureWindowMs;
+    private double _captureRate;
+
+    /// <summary>
+    /// Why this capture may look empty, when the reason is the scope it was granted rather
+    /// than anything going wrong. Android restricts an unprivileged app to its own log
+    /// records, and an idle app writes none — indistinguishable, without being told, from a
+    /// capture that has broken.
+    ///
+    /// Two lengths because the surfaces have two widths: the status bar is one clipped line
+    /// and can only carry a marker, while the empty plot and the session pane both wrap and
+    /// can carry the command that actually fixes it.
+    /// </summary>
+    public string? CaptureScopeSummary { get; set; }
+
+    /// <summary>The full explanation, including the one route out of a restricted scope.</summary>
+    public string? CaptureScopeRemedy { get; set; }
 
     public SessionTabViewModel(string title, string sessionPath)
     {
@@ -1155,11 +1186,123 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             manual: false);
     }
 
+    /// <summary>
+    /// Records one live-capture progress report and returns the status to show for it. The
+    /// rate is measured over the last second rather than averaged across the session, so a
+    /// burst at connect time cannot go on describing a source that has since fallen silent.
+    /// </summary>
+    public string DescribeCaptureProgress(string scope, long lines)
+    {
+        var now = Environment.TickCount64;
+        _captureScope = scope;
+        if (lines != _captureLines)
+        {
+            _captureLines = lines;
+            _captureLastAdvanceMs = now;
+        }
+        else if (_captureLastAdvanceMs == 0)
+        {
+            _captureLastAdvanceMs = now;
+        }
+
+        var windowMs = now - _captureWindowMs;
+        if (_captureWindowMs == 0)
+        {
+            _captureWindowMs = now;
+            _captureWindowLines = lines;
+        }
+        else if (windowMs >= 1_000)
+        {
+            _captureRate = (lines - _captureWindowLines) * 1_000d / windowMs;
+            _captureWindowMs = now;
+            _captureWindowLines = lines;
+        }
+
+        StartCaptureHeartbeat();
+        return DescribeCapture();
+    }
+
+    /// <summary>
+    /// A quiet source is a normal state — an own-app capture of an idle app produces
+    /// nothing for minutes — but it is indistinguishable from a broken one unless the
+    /// workspace says which it is.
+    /// </summary>
+    private string DescribeCapture()
+    {
+        var quiet = TimeSpan.FromMilliseconds(Math.Max(0, Environment.TickCount64 - _captureLastAdvanceMs));
+        if (quiet.TotalSeconds < 3)
+        {
+            return $"Capturing · {_captureScope} · {_captureLines:N0} lines · {_captureRate:N0}/s";
+        }
+
+        // The scope only becomes worth raising once it is actually costing the reader
+        // something. A restricted capture that is delivering lines is working, and saying
+        // so up front would be crying wolf on every own-app session.
+        var hint = quiet.TotalSeconds >= StarvedCaptureSeconds && CaptureScopeSummary is { Length: > 0 } reason
+            ? $" · {reason}"
+            : string.Empty;
+        return $"Capturing · {_captureScope} · {_captureLines:N0} lines · no new lines for {FormatQuiet(quiet)}{hint}";
+    }
+
+    private static string FormatQuiet(TimeSpan quiet) =>
+        quiet.TotalMinutes < 1
+            ? $"{quiet.TotalSeconds:N0}s"
+            : quiet.TotalHours < 1
+                ? $"{(int)quiet.TotalMinutes}m {quiet.Seconds}s"
+                : $"{(int)quiet.TotalHours}h {quiet.Minutes}m";
+
+    /// <summary>
+    /// Nothing reports progress while a source is silent, so without a tick of its own the
+    /// status would simply freeze on whatever was last true.
+    /// </summary>
+    private void StartCaptureHeartbeat()
+    {
+        if (_captureHeartbeat is not null || !Dispatcher.UIThread.CheckAccess())
+        {
+            return;
+        }
+
+        _captureHeartbeat = new DispatcherTimer(
+            TimeSpan.FromSeconds(1),
+            DispatcherPriority.Background,
+            (_, _) =>
+            {
+                if (!IsLiveCaptureActive || Volatile.Read(ref _disposed) != 0)
+                {
+                    StopCaptureHeartbeat();
+                    return;
+                }
+
+                // Only speaks up once the source has gone quiet; while lines are arriving
+                // the reporter is already saying something true and more precise.
+                if (Environment.TickCount64 - _captureLastAdvanceMs >= 3_000)
+                {
+                    Status = DescribeCapture();
+                }
+            });
+        _captureHeartbeat.Start();
+    }
+
+    private void StopCaptureHeartbeat()
+    {
+        _captureHeartbeat?.Stop();
+        _captureHeartbeat = null;
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            StopCaptureHeartbeat();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(StopCaptureHeartbeat);
         }
 
         _queryCancellation.Cancel();

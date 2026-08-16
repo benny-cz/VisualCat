@@ -424,14 +424,36 @@ public sealed partial class SessionWorkspaceView : UserControl
         return style;
     }
 
-    private TimeZoneInfo ResolveSessionZone()
+    /// <summary>
+    /// Zone every rendered timestamp is read in.
+    ///
+    /// A device capture is <em>parsed</em> in UTC because that is the format logcat is
+    /// asked for (<c>-v …,UTC,…</c>), and that is a parsing decision, not a reading one.
+    /// Rendering it back as UTC put the newest entry a whole UTC offset in the past on any
+    /// device that is not on UTC — two hours, on the machine this was found on — so a
+    /// running capture with Follow engaged looked like it had stopped receiving data.
+    /// A capture of what is happening right now has to agree with the clock the reader is
+    /// looking at.
+    ///
+    /// Everything else keeps the session's own policy zone, which is what makes a rendered
+    /// row agree with the raw line behind it: an imported file's naive timestamps mean
+    /// whatever the policy says they mean, and a followed file is read the same way.
+    /// </summary>
+    internal string DisplayZoneId()
     {
-        var zoneId = _viewModel.Snapshot?.Descriptor.TimestampPolicy.TimeZoneId;
-        if (zoneId is null)
+        if (_viewModel.Snapshot?.Descriptor is not { } descriptor)
         {
-            return TimeZoneInfo.Utc;
+            return TimeZoneInfo.Utc.Id;
         }
 
+        return descriptor.SourceKind is SourceKind.Adb or SourceKind.Android
+            ? TimeZoneInfo.Local.Id
+            : descriptor.TimestampPolicy.TimeZoneId;
+    }
+
+    private TimeZoneInfo ResolveSessionZone()
+    {
+        var zoneId = DisplayZoneId();
         if (_sessionZone is { } cached && string.Equals(_sessionZoneId, zoneId, StringComparison.Ordinal))
         {
             return cached;
@@ -450,7 +472,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         return _sessionZone;
     }
 
-    /// <summary>Session-zone "MM-dd HH:mm:ss.ffffff" — the ISO round-trip form with its
+    /// <summary>Display-zone "MM-dd HH:mm:ss.ffffff" — the ISO round-trip form with its
     /// offset suffix overflowed every column it appeared in. Full precision lives in the
     /// raw context and the session pane.</summary>
     private string FormatInstant(InstantUs? instant) =>

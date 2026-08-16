@@ -51,9 +51,11 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void UpdateTimelines()
     {
         UpdateTimelineLevels();
-        if (_viewModel.Snapshot is { } snapshot)
+        if (_viewModel.Snapshot is not null)
         {
-            _timeline.SetTimeZoneContext(snapshot.Descriptor.TimestampPolicy.TimeZoneId);
+            // The axis reads in the same zone as the rows; a plot an offset away from the
+            // table would be worse than either choice on its own.
+            _timeline.SetTimeZoneContext(DisplayZoneId());
         }
 
         _timeline.SetResult(_viewModel.HeatMap, _viewModel.Snapshot?.TimedRange);
@@ -106,7 +108,11 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
         else if (live && _viewModel.Snapshot?.Descriptor.Counters.ParsedEntries == 0)
         {
-            _timeline.SetEmptyState("No log entries were captured", "Start Live again and generate app activity.");
+            // An own-app capture of an idle app is empty for a reason the platform imposes,
+            // not for one the user can fix by trying again.
+            _timeline.SetEmptyState(
+                "No log entries were captured",
+                _viewModel.CaptureScopeRemedy ?? "Start Live again and generate app activity.");
         }
         else
         {

@@ -12,6 +12,31 @@ The current stable release is `2.0.3`. Ongoing work is recorded under
 
 ## [Unreleased]
 
+### Added
+- A debug deploy of the Android companion grants `READ_LOGS` over adb as part of
+  installing. The permission is `signature|privileged|development`, so Android
+  never prompts for it and the app cannot request it, while a deploy uninstalls
+  first and drops it — every `dotnet run` therefore left the on-device capture
+  silently restricted to the app's own log lines. Debug configurations only; set
+  `GrantReadLogsOnDeploy=false` to opt out.
+- A restricted capture now says so. The session pane carries a `Log scope` row
+  explaining that only this app's own lines are visible and giving the adb
+  command that widens it, and the status bar adds `own-app scope only` once a
+  capture has been silent long enough to look broken rather than merely quiet.
+
+### Fixed
+- Live captures are read in the device's own clock. They are parsed in UTC
+  because that is the format logcat is asked for, but rendering them back in UTC
+  put the newest entry a whole UTC offset in the past — two hours, on a UTC+2
+  device — so a running capture with Follow engaged looked like it had stopped.
+  Storage is unchanged; imported files keep their policy zone so a rendered row
+  still agrees with the raw line behind it. The session pane names both zones.
+- The capture status no longer claims lines are arriving after a source falls
+  silent. The rate is measured over the last second instead of averaged across
+  the whole session, and a heartbeat reports how long it has been quiet —
+  previously a burst at connect time left `36/s` on screen indefinitely, because
+  nothing reports progress while a source produces nothing.
+
 ## [2.0.3] - 2026-08-16
 
 ### Added

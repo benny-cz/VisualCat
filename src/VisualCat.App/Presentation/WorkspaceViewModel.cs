@@ -192,6 +192,23 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
             // own-app versus full-device — which the user must be able to see
             // (§4.4, §13.9).
             var scope = source.Metadata.Description;
+
+            // READ_LOGS is signature|privileged|development, so an app cannot ask for it at
+            // runtime — Android never prompts, the source quietly falls back to its own
+            // records, and an idle app then produces a capture that looks broken. Naming
+            // the one route out of that is the difference between a quiet capture and an
+            // apparently dead one (§4.4).
+            if (source.Metadata.Properties?.TryGetValue("scope", out var granted) == true &&
+                string.Equals(granted, "own-app", StringComparison.Ordinal))
+            {
+                tab.CaptureScopeSummary = "own-app scope only";
+                tab.CaptureScopeRemedy =
+                    "This capture can only see this app's own log lines, so an idle app produces " +
+                    "almost nothing. Android cannot prompt for wider access — READ_LOGS is not a " +
+                    "runtime permission — so full-device capture has to be granted over adb, and " +
+                    "again after every uninstall or reinstall:\n" +
+                    "adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS";
+            }
             tab.Status = source.Metadata.Kind == SourceKind.Adb
                 ? $"Connecting · {scope}"
                 : $"Starting capture · {scope}";
@@ -201,7 +218,7 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
                 settings,
                 CreateProgressiveReporter(
                     tab,
-                    snapshot => $"Capturing · {scope} · {snapshot.LinesCommitted:N0} lines · {snapshot.ThroughputLinesPerSecond:N0}/s",
+                    snapshot => tab.DescribeCaptureProgress(scope, snapshot.LinesCommitted),
                     operationToken),
                 _diagnostics,
                 gracefulStopToken: gracefulStop.Token,

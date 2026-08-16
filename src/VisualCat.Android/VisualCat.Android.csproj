@@ -26,4 +26,39 @@
     <PackageReference Include="Xamarin.AndroidX.Core" />
     <ProjectReference Include="../VisualCat.App/VisualCat.App.csproj" />
   </ItemGroup>
+  <PropertyGroup>
+    <!-- READ_LOGS is signature|privileged|development, so Android never prompts for it and
+         the app cannot request it. A deploy uninstalls first, which drops the grant, so
+         every `dotnet run` used to leave the on-device capture silently restricted to this
+         app's own log lines — a capture of an idle app then looks broken rather than
+         limited. Re-granting it as part of a debug deploy keeps the debug loop usable.
+         Debug only: a Release or Play build must never assume the permission is held. -->
+    <GrantReadLogsOnDeploy Condition="'$(GrantReadLogsOnDeploy)' == '' And '$(Configuration)' == 'Debug'">true</GrantReadLogsOnDeploy>
+  </PropertyGroup>
+  <Target Name="_GrantDebugLogPermission"
+          AfterTargets="Install"
+          Condition="'$(GrantReadLogsOnDeploy)' == 'true'">
+    <PropertyGroup>
+      <_VisualCatAdbExe Condition="'$(AdbToolExe)' != ''">$(AdbToolExe)</_VisualCatAdbExe>
+      <_VisualCatAdbExe Condition="'$(_VisualCatAdbExe)' == ''">adb</_VisualCatAdbExe>
+      <_VisualCatAdb Condition="'$(AdbToolPath)' != ''">$([MSBuild]::NormalizePath('$(AdbToolPath)', '$(_VisualCatAdbExe)'))</_VisualCatAdb>
+      <_VisualCatAdb Condition="'$(_VisualCatAdb)' == '' And '$(AndroidSdkDirectory)' != ''">$([MSBuild]::NormalizePath('$(AndroidSdkDirectory)', 'platform-tools', '$(_VisualCatAdbExe)'))</_VisualCatAdb>
+      <_VisualCatAdb Condition="'$(_VisualCatAdb)' == ''">$(_VisualCatAdbExe)</_VisualCatAdb>
+    </PropertyGroup>
+    <!-- Never fails the build: the grant is a convenience, and a device that is offline or
+         a platform that refuses it must not break a deploy that otherwise succeeded. -->
+    <Exec Command="&quot;$(_VisualCatAdb)&quot; $(AdbTarget) shell pm grant $(ApplicationId) android.permission.READ_LOGS"
+          ContinueOnError="true"
+          IgnoreExitCode="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="_VisualCatGrantExit" />
+    </Exec>
+    <Message Condition="'$(_VisualCatGrantExit)' == '0'"
+             Importance="high"
+             Text="VisualCat: granted READ_LOGS — on-device capture can read the whole device log." />
+    <Message Condition="'$(_VisualCatGrantExit)' != '0'"
+             Importance="high"
+             Text="VisualCat: could not grant READ_LOGS; on-device capture will only see this app's own lines. Grant it with: adb shell pm grant $(ApplicationId) android.permission.READ_LOGS" />
+  </Target>
 </Project>

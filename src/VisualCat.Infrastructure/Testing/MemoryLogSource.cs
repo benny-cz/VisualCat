@@ -17,7 +17,8 @@ public sealed class MemoryLogSource : ILogSource
         IReadOnlyList<int>? chunkSizes = null,
         TimeSpan? delay = null,
         long? failAtOffset = null,
-        string name = "memory.log")
+        string name = "memory.log",
+        SourceKind kind = SourceKind.Memory)
     {
         _bytes = bytes.ToArray();
         _chunkSizes = chunkSizes?.ToArray() ?? [4096];
@@ -28,8 +29,11 @@ public sealed class MemoryLogSource : ILogSource
 
         _delay = delay ?? TimeSpan.Zero;
         _failAtOffset = failAtOffset;
+        // The kind is configurable because behaviour genuinely branches on it — a device
+        // capture is read in a different clock from an imported file — and that branch
+        // needs a source to exercise it without a device attached.
         Metadata = new SourceMetadata(
-            SourceKind.Memory,
+            kind,
             name,
             name,
             null,

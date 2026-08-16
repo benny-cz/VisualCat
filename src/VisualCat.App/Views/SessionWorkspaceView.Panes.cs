@@ -480,7 +480,26 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         Section("Session");
         Row("Source", $"{descriptor.SourceKind} · {descriptor.DisplayName}");
+
+        // Stated as a fact about the session rather than as a warning: this pane is where a
+        // reader comes to ask what they are looking at, and the scope is part of the answer
+        // whether or not it is currently a problem.
+        if (_viewModel.CaptureScopeRemedy is { Length: > 0 } scopeRemedy)
+        {
+            Row("Log scope", scopeRemedy);
+        }
         Row("Format", manifest.IngestSettings.FormatOverride?.ToString() ?? "auto-detected");
+
+        // Which clock the workspace is reading in, and — when they differ — which one the
+        // source was parsed in. A device capture is parsed in UTC and read locally, and a
+        // reader comparing a row against their own watch needs to be told that.
+        var displayZone = DisplayZoneId();
+        var parseZone = descriptor.TimestampPolicy.TimeZoneId;
+        Row(
+            "Times shown in",
+            string.Equals(displayZone, parseZone, StringComparison.Ordinal)
+                ? displayZone
+                : $"{displayZone} · captured as {parseZone}");
         Row("State", $"{descriptor.State}{(descriptor.Degraded ? " · degraded/index-only" : string.Empty)}", descriptor.Degraded);
         Row("Session id", descriptor.SessionId.ToString());
 
