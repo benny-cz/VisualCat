@@ -25,6 +25,14 @@ The current stable release is `2.0.3`. Ongoing work is recorded under
   capture has been silent long enough to look broken rather than merely quiet.
 
 ### Fixed
+- Re-engaging Follow opens a window on the live edge instead of keeping a
+  whole-session span. Fitting the session releases Follow, so turning it back on
+  is the ordinary way to return to the live edge — and it preserved the span it
+  found, leaving the capture "following" across the whole session, where a
+  second of new data occupies a fraction of a pixel and the plot is
+  indistinguishable from one that has stopped. A narrower span is a deliberate
+  choice of how much history to keep beside the live edge and is still
+  preserved.
 - A live capture no longer fails to finalize. Publishing a progressive snapshot and
   finalizing the session both rewrote the manifest through one fixed temporary
   path with no sequencing, so two writes in flight together opened the same file

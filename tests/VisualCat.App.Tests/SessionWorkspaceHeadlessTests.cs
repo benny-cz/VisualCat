@@ -353,6 +353,78 @@ public sealed class SessionWorkspaceHeadlessTests
     }
 
     /// <summary>
+    /// A logcat ring buffer can hold hours of history with very few entries in it, so a
+    /// capture opens on a session whose range is wide and whose contents are sparse.
+    /// Following the latest data has to mean a window on the end of it: at whole-session
+    /// span a second of new data is a fraction of a pixel, which is indistinguishable from
+    /// a capture that has stopped.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task FollowingASparseCaptureOpensOnAWindowNotTheWholeSession()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        WorkspaceViewModel.ConfigureTemporarySessionRoot(root);
+        try
+        {
+            // Two entries, two and a half hours apart: the shape a stale ring buffer has.
+            var sparse = Encoding.UTF8.GetBytes(
+                "2026-05-15 09:00:00.000000  6642 19876 I Worker         : oldest buffered line\n" +
+                "2026-05-15 11:30:00.000000  6642 19876 I Worker         : newest buffered line\n");
+
+            await using var workspace = new WorkspaceViewModel();
+            await using var device = new MemoryLogSource(
+                sparse,
+                name: "on-device",
+                kind: SourceKind.Android,
+                logTimeZoneId: "UTC");
+            var tab = await workspace.CaptureAsync(device, null, TestContext.Current.CancellationToken);
+
+            Assert.True(tab.FollowLatest);
+            var session = Assert.IsType<TimeRange>(tab.Snapshot?.TimedRange);
+            Assert.True(session.DurationUs > TimeSpan.FromHours(2).Ticks / 10, "the session should span hours");
+
+            var viewport = Assert.IsType<TimeRange>(tab.Viewport);
+            Assert.Equal(session.EndExclusive, viewport.EndExclusive);
+            Assert.True(
+                viewport.DurationUs <= TimeSpan.FromSeconds(30).Ticks / 10,
+                $"following opened on {viewport.DurationUs / 1_000_000d:N0}s of a {session.DurationUs / 1_000_000d:N0}s session");
+
+            // Fitting the whole session releases follow, which is right. Re-engaging it
+            // used to keep the whole-session span, leaving the capture "following" at a
+            // resolution where new data cannot be seen arriving at all.
+            //
+            // Fitted to very slightly less than the session, which is the only shape this
+            // ever has on a live capture: the session has already grown by the time the
+            // reader reaches for the button.
+            var fitted = new TimeRange(
+                new InstantUs(session.StartInclusive.Value + session.DurationUs / 50),
+                session.EndExclusive);
+            await tab.SetViewportAsync(fitted);
+            Assert.False(tab.FollowLatest);
+            Assert.Equal(fitted.DurationUs, Assert.IsType<TimeRange>(tab.Viewport).DurationUs);
+
+            await tab.ToggleFollowAsync();
+            Assert.True(tab.FollowLatest);
+            var refollowed = Assert.IsType<TimeRange>(tab.Viewport);
+            Assert.Equal(session.EndExclusive, refollowed.EndExclusive);
+            Assert.True(
+                refollowed.DurationUs <= TimeSpan.FromSeconds(30).Ticks / 10,
+                $"re-engaging follow kept {refollowed.DurationUs / 1_000_000d:N0}s of a {session.DurationUs / 1_000_000d:N0}s session");
+
+            await workspace.CloseAsync(tab);
+        }
+        finally
+        {
+            WorkspaceViewModel.ConfigureTemporarySessionRoot(null);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
     /// The capture status used to carry a session-long average that kept claiming lines
     /// were arriving long after the source fell silent.
     /// </summary>

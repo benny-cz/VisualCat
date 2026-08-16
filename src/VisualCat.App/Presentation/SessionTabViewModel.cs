@@ -1180,7 +1180,21 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         }
 
         HasNewData = false;
-        var span = Math.Min(viewport.DurationUs, session.DurationUs);
+
+        // Following at whole-session span is not following: a second of new data lands in a
+        // fraction of a pixel against the right edge, so the plot looks exactly like one
+        // that has stopped receiving anything. Engaging follow from a view of the whole
+        // session therefore opens the follow window instead of keeping the span — which is
+        // the state a capture lands in whenever its viewport was fitted first, and the one
+        // that made a live capture look frozen. A narrower span is a deliberate choice of
+        // how much history to keep beside the live edge, and is preserved.
+        // Compared with room to spare rather than exactly: a live session grows, so a
+        // viewport fitted to it a moment ago is already narrower than the session it was
+        // fitted to, and an exact test would never fire on the live captures this is for.
+        var coversWholeSession = viewport.DurationUs >= session.DurationUs * 0.9;
+        var span = coversWholeSession
+            ? Math.Min(InitialFollowViewportUs, session.DurationUs)
+            : Math.Min(viewport.DurationUs, session.DurationUs);
         return SetViewportAsync(
             new TimeRange(new InstantUs(session.EndExclusive.Value - span), session.EndExclusive),
             manual: false);
