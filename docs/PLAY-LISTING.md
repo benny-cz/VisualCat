@@ -191,7 +191,7 @@ description states before install.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version: `2.0.2` → `20002` |
+| versionCode | Derived from the release version: `2.0.3` → `20003` |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
 | ABIs | `arm64-v8a`, `x86_64` |
@@ -215,4 +215,15 @@ Timeline lanes now adapt to the active severity filter, Facets and Templates
 show their count scope, search matches are highlighted in log messages, and a
 selected entry is marked on the timeline. Android source loading is also more
 reliable after the app resumes.
+```
+
+Release notes for `2.0.3`:
+
+```text
+Read complete log messages without losing context: selected rows expand, and
+Full entry shows the whole message, a copy action, and raw source bytes. Live
+snapshots now keep the entry you are inspecting selected. The Source tab is
+renamed Entry and reorganized for phones, with the selected raw line
+highlighted. Documentation and demos now use a realistic million-line
+synthetic capture.
 ```

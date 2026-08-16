@@ -58,6 +58,24 @@ be published from an unmerged commit or one that would fail a pull request:
 
 ## Release records
 
+### v2.0.3 — 2026-08-16
+
+- The release-signed APK was clean-installed on a Motorola edge 60 pro running
+  Android 16/API 36 and reported application ID `com.barebit.visualcat`, version
+  `2.0.3`, and version code `20003`. Live capture reached 56 entries with a
+  visible capture status, then continued updating normally.
+- With Follow disabled, entry 59 stayed selected across live snapshots and an
+  app background/resume cycle. Its row expanded to show the complete wrapped
+  message, and the Entry inspector exposed the full message, copy action, and
+  exact source context with the selected raw line clearly highlighted.
+- Stop capture finalized cleanly at 163 entries/snapshot 12. No crash or ANR was
+  logged during clean install, launch, capture, inspection, resume, or shutdown.
+- The AAB and APK passed the release packager's application ID, API level, ABI,
+  16 KB alignment, version, signature-scheme, and pinned Google Play upload
+  certificate checks.
+- The four-hour ADB soak, accessibility review, macOS hardware validation, and
+  Windows/macOS code signing remain intentionally deferred.
+
 ### v2.0.2 — 2026-08-14
 
 - The release-signed APK was clean-installed on a Motorola edge 60 pro running
@@ -104,9 +122,9 @@ be published from an unmerged commit or one that would fail a pull request:
 ## Release rehearsal
 
 Run the release workflow with `workflow_dispatch` before creating the first
-tag. Dispatch runs are versioned `2.0.2-preview.<run>` and never publish a
-GitHub release or push to NuGet, so the packaging path can be exercised
-repeatedly and safely.
+tag. Dispatch runs derive `<VersionPrefix>-preview.<run>` from the checkout and
+never publish a GitHub release or push to NuGet, so the packaging path can be
+exercised repeatedly and safely.
 
 Download and inspect the resulting artifacts: Windows, Linux, Intel macOS, and
 Apple-silicon macOS desktop archives; the matching CLI archives; the `.nupkg`;
