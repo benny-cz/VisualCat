@@ -310,27 +310,18 @@ public sealed class SessionWorkspaceHeadlessTests
 
             await using var workspace = new WorkspaceViewModel();
 
-            // Built the way CaptureAsync builds one — an Android source parsed under a
-            // pinned UTC policy — without going through the live progress reporter, whose
-            // concurrent snapshot opens race the finalize on a capture this short.
-            var sessionRoot = Path.Combine(root, "device-session");
-            await using var device = new MemoryLogSource(utcLog, name: "on-device", kind: SourceKind.Android);
-            var result = await SessionCoordinator.ImportAsync(
-                device,
-                sessionRoot,
-                new IngestSettings(
-                    LogcatFormat.ThreadTime,
-                    "utf-8",
-                    TimestampPolicy.ForFile(device.Metadata.ReferenceInstant, "UTC"),
-                    new TemplateSettings(),
-                    PortableRaw: true),
-                cancellationToken: TestContext.Current.CancellationToken);
-            result.Snapshot.Dispose();
-            await using var captured = new SessionTabViewModel("on-device", sessionRoot);
-            await captured.LoadSnapshotAsync(true, TestContext.Current.CancellationToken);
+            // Goes through the live capture path, progress reporter and all. That reporter
+            // opens snapshots while the capture is still writing, which used to collide
+            // with the atomic manifest replace and fail a short capture outright.
+            await using var device = new MemoryLogSource(
+                utcLog,
+                name: "on-device",
+                kind: SourceKind.Android,
+                logTimeZoneId: "UTC");
+            var captured = await workspace.CaptureAsync(device, null, TestContext.Current.CancellationToken);
             var deviceView = new SessionWorkspaceView(captured);
 
-            // Stored as captured, read as the reader's own clock.
+            // Parsed in the zone the source declares, read in the reader's own clock.
             Assert.Equal(SourceKind.Android, captured.Snapshot?.Descriptor.SourceKind);
             Assert.Equal("UTC", captured.Snapshot?.Descriptor.TimestampPolicy.TimeZoneId);
             Assert.Equal(TimeZoneInfo.Local.Id, deviceView.DisplayZoneId());
@@ -348,6 +339,7 @@ public sealed class SessionWorkspaceHeadlessTests
                 imported.Snapshot?.Descriptor.TimestampPolicy.TimeZoneId,
                 importedView.DisplayZoneId());
 
+            await workspace.CloseAsync(captured);
             await workspace.CloseAsync(imported);
         }
         finally

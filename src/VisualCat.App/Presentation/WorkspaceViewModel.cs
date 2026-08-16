@@ -171,10 +171,21 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
         var operation = RegisterOperation(tab, cancellationToken);
         var operationToken = operation.Cancellation.Token;
         var acquired = false;
+
+        // Settling the logcat format first is what lets the policy below follow the zone the
+        // device actually agreed to write, instead of assuming one it may not be using.
+        if (source is VisualCat.Infrastructure.Adb.AdbLogSource adbSource)
+        {
+            await adbSource.PrepareAsync(operationToken).ConfigureAwait(false);
+        }
+
         var settings = new IngestSettings(
             VisualCat.Domain.Entries.LogcatFormat.ThreadTime,
             "utf-8",
-            TimestampPolicy.ForFile(source.Metadata.ReferenceInstant, "UTC"),
+            // Taken from the source rather than assumed: a device capture asks logcat for
+            // UTC, but a followed file on disk carries whatever wrote it, and pinning UTC
+            // for both parsed every local timestamp in a followed file as if it were UTC.
+            TimestampPolicy.ForFile(source.Metadata.ReferenceInstant, source.Metadata.ResolveLogTimeZoneId()),
             new TemplateSettings(),
             PortableRaw: true);
         using var timed = duration is { } value ? new CancellationTokenSource(value) : new CancellationTokenSource();

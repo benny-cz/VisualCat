@@ -440,17 +440,38 @@ public sealed class TimelineControl : Control
                 muted);
         }
 
-        var interval = NiceTicks.SelectInterval(_result.Viewport.Range.DurationUs, geometry.Width, 145);
+        // Spacing has to follow how wide the labels actually are: a whole-session view
+        // prints a date and is three times the width of a time, so a fixed target packed
+        // date labels into each other on a narrow plot. Measuring one sample is enough —
+        // every label at a given span uses the same format.
+        var sampleWidth = MeasureTextWidth(
+            FormatTick(_result.Viewport.Range.StartInclusive, _result.Viewport.Range.DurationUs),
+            10);
+        var interval = NiceTicks.SelectInterval(
+            _result.Viewport.Range,
+            geometry.Width,
+            Math.Max(145, sampleWidth + 24));
+        var lastLabelRight = double.NegativeInfinity;
         foreach (var instant in NiceTicks.Enumerate(_result.Viewport.Range, interval))
         {
             var x = transform.InstantToX(instant);
             context.DrawLine(gridPen, new Point(x, geometry.Top), new Point(x, geometry.Top + geometry.Height + 4));
             var label = FormatTick(instant, _result.Viewport.Range.DurationUs);
+            var width = MeasureTextWidth(label, 10);
             var labelX = Math.Clamp(
                 x + 3,
                 geometry.Left,
-                Math.Max(geometry.Left, geometry.Left + geometry.Width - MeasureTextWidth(label, 10)));
+                Math.Max(geometry.Left, geometry.Left + geometry.Width - width));
+
+            // The gridline still marks every tick; only the text is dropped, because two
+            // labels printed over each other read as neither.
+            if (labelX < lastLabelRight)
+            {
+                continue;
+            }
+
             DrawText(context, label, new Point(labelX, geometry.Top + geometry.Height + 7), 10, foreground);
+            lastLabelRight = labelX + width + 8;
         }
 
         if (_searchResult is { } search)

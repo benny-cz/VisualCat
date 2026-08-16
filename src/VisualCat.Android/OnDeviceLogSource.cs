@@ -27,6 +27,10 @@ public sealed class OnDeviceLogSource : ILogSource
             {
                 ["scope"] = fullDevice ? "full-device" : "own-app",
                 ["permission"] = fullDevice ? "READ_LOGS granted" : "platform restricted",
+
+                // ReadAsync asks logcat for UTC and has no fallback, so the source can say
+                // so rather than leaving the capture to assume it.
+                [SourceMetadata.LogTimeZoneProperty] = "UTC",
             });
     }
 

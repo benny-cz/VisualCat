@@ -151,6 +151,30 @@ public sealed class TimelineTransformTests
         }
     }
 
+    /// <summary>
+    /// One label states an instant but not a scale. A phone plot is about 300 logical
+    /// pixels wide against a 145 pixel target spacing, so the chosen interval regularly put
+    /// a single tick — or none — inside the viewport, leaving nothing on the axis to say how
+    /// much time its width represented.
+    /// </summary>
+    [Theory]
+    [InlineData(30_000_000L, 305)]
+    [InlineData(8_727_000_000L, 305)]
+    [InlineData(1_000_000L, 220)]
+    [InlineData(2_030_000_000L, 1832)]
+    [InlineData(999L, 305)]
+    public void NarrowPlotsStillGetAReadableScale(long spanUs, double pixelWidth)
+    {
+        var range = new TimeRange(new InstantUs(1_762_000_000_000_000), new InstantUs(1_762_000_000_000_000 + spanUs));
+        var interval = NiceTicks.SelectInterval(range, pixelWidth, 145);
+
+        Assert.True(NiceTicks.Enumerate(range, interval).Count() >= 2);
+
+        // Still a ladder value, so the labels stay on readable boundaries.
+        var magnitude = (long)Math.Pow(10, Math.Floor(Math.Log10(interval)));
+        Assert.Contains(interval / magnitude, new long[] { 1, 2, 5, 10 });
+    }
+
     [Theory]
     [InlineData(1200, 500, 600_000)]
     [InlineData(1328, 1, 1_328)]

@@ -26,7 +26,13 @@ public static class SessionStore
             manifestPath,
             FileMode.Open,
             FileAccess.Read,
-            FileShare.Read,
+            // A live capture republishes this manifest by atomic replace while readers are
+            // open on it. Without FileShare.Delete a Windows reader blocks that replace
+            // outright, so a progress snapshot opened at the wrong moment made the capture
+            // itself fail to finalize with UnauthorizedAccessException — reliably on a
+            // short capture, where the two coincide. Sharing delete lets the replace
+            // proceed; this handle goes on reading the version it opened.
+            FileShare.ReadWrite | FileShare.Delete,
             64 * 1024,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
         var manifest = await JsonSerializer.DeserializeAsync<SessionManifest>(stream, JsonOptions, cancellationToken).ConfigureAwait(false)

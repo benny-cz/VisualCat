@@ -26,6 +26,10 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     };
 
     private readonly string _root;
+
+    /// <summary>Serializes manifest rewrites; a progressive publish and the finalize can
+    /// otherwise be in flight over the same file at once.</summary>
+    private readonly SemaphoreSlim _manifestWriteLock = new(1, 1);
     private readonly IngestSettings _settings;
     private SourceIdentity _source;
     private readonly List<NormalizedEntry> _pending;
@@ -434,27 +438,88 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     /// Atomicity comes from the temporary-file rename either way (§11.7).
     /// </param>
     /// <param name="cancellationToken">Cancels serialization and publication.</param>
-    private static async Task AtomicJsonWriteAsync<T>(
+    private async Task AtomicJsonWriteAsync<T>(
         string path,
         T value,
         bool durable,
         CancellationToken cancellationToken)
     {
-        var temporary = path + ".tmp";
-        var options = FileOptions.Asynchronous | (durable ? FileOptions.WriteThrough : FileOptions.None);
-        await using (var stream = new FileStream(
-                         temporary,
-                         FileMode.Create,
-                         FileAccess.Write,
-                         FileShare.None,
-                         64 * 1024,
-                         options))
+        // Publishing a progressive snapshot and finalizing the session both rewrite the
+        // manifest, and nothing sequenced them. They shared one fixed temporary path, so
+        // two writes in flight together opened the same file with FileShare.None and the
+        // second failed the whole ingest with UnauthorizedAccessException — reliably on a
+        // capture short enough for a publish and the finalize to overlap. The write is
+        // serialized, and each attempt gets a temporary of its own so a stale or
+        // externally held one cannot block the next.
+        await _manifestWriteLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var temporary = $"{path}.{Guid.NewGuid():N}.tmp";
+        try
         {
-            await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken).ConfigureAwait(false);
-            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        }
+            var options = FileOptions.Asynchronous | (durable ? FileOptions.WriteThrough : FileOptions.None);
+            await using (var stream = new FileStream(
+                             temporary,
+                             FileMode.Create,
+                             FileAccess.Write,
+                             FileShare.None,
+                             64 * 1024,
+                             options))
+            {
+                await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
 
-        File.Move(temporary, path, true);
+            ReplaceWithRetry(temporary, path);
+        }
+        catch
+        {
+            // A half-written temporary is worthless and would otherwise accumulate in the
+            // session directory, one per failed publication.
+            TryDeleteFile(temporary);
+            throw;
+        }
+        finally
+        {
+            _manifestWriteLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Replaces <paramref name="path"/> atomically, tolerating a destination that is
+    /// momentarily held.
+    ///
+    /// Replacing a file on Windows fails outright while any handle to it lacks delete
+    /// sharing, and a live session's manifest is read by whoever is watching the capture
+    /// as well as by the scanners and indexers that run over a directory being written.
+    /// The window is milliseconds, but losing it failed the entire ingest, so a brief
+    /// retry is worth far more than the certainty of giving up first time.
+    /// </summary>
+    private static void ReplaceWithRetry(string temporary, string path)
+    {
+        const int attempts = 8;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(temporary, path, true);
+                return;
+            }
+            catch (Exception exception) when (
+                attempt < attempts && exception is UnauthorizedAccessException or IOException)
+            {
+                Thread.Sleep(attempt * 15);
+            }
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     private async Task<SessionManifest> WriteManifestAsync(SessionManifest manifest, CancellationToken cancellationToken)

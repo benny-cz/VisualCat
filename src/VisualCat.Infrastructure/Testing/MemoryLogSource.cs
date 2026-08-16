@@ -18,7 +18,8 @@ public sealed class MemoryLogSource : ILogSource
         TimeSpan? delay = null,
         long? failAtOffset = null,
         string name = "memory.log",
-        SourceKind kind = SourceKind.Memory)
+        SourceKind kind = SourceKind.Memory,
+        string? logTimeZoneId = null)
     {
         _bytes = bytes.ToArray();
         _chunkSizes = chunkSizes?.ToArray() ?? [4096];
@@ -29,9 +30,10 @@ public sealed class MemoryLogSource : ILogSource
 
         _delay = delay ?? TimeSpan.Zero;
         _failAtOffset = failAtOffset;
-        // The kind is configurable because behaviour genuinely branches on it — a device
-        // capture is read in a different clock from an imported file — and that branch
-        // needs a source to exercise it without a device attached.
+        // The kind and the declared timestamp zone are configurable because behaviour
+        // genuinely branches on both — a device capture is parsed and read in different
+        // clocks from an imported file — and those branches need a source to exercise them
+        // without a device attached.
         Metadata = new SourceMetadata(
             kind,
             name,
@@ -40,7 +42,10 @@ public sealed class MemoryLogSource : ILogSource
             _bytes.Length,
             DateTimeOffset.UtcNow,
             true,
-            true);
+            true,
+            Properties: logTimeZoneId is null
+                ? null
+                : new Dictionary<string, string> { [SourceMetadata.LogTimeZoneProperty] = logTimeZoneId });
     }
 
     public SourceMetadata Metadata { get; }

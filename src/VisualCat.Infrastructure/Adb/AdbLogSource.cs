@@ -19,6 +19,7 @@ public sealed class AdbLogSource : ILogSource, IProcessNameSource, ISourceDefect
     private readonly List<byte> _lineBuffer = new(512);
     private IAdbProcess? _activeProcess;
     private string? _resumeTimestamp;
+    private string? _negotiatedFormat;
     private long _reconnectGaps;
 
     public AdbLogSource(
@@ -75,7 +76,74 @@ public sealed class AdbLogSource : ILogSource, IProcessNameSource, ISourceDefect
             });
     }
 
-    public SourceMetadata Metadata { get; }
+    public SourceMetadata Metadata { get; private set; }
+
+    /// <summary>
+    /// Settles the logcat format, and with it the zone the device will write timestamps in,
+    /// before the session's timestamp policy has to be chosen.
+    ///
+    /// The ladder degrades one modifier at a time and may land on a format without the
+    /// <c>UTC</c> modifier, where the device writes local time. The capture used to pin the
+    /// policy to UTC regardless, so on any device that fell that far every timestamp was
+    /// parsed as UTC and came out wrong by the device's offset, silently and permanently.
+    /// Negotiating here lets the policy follow what the device actually agreed to.
+    ///
+    /// Idempotent, and the result is reused by <see cref="ReadAsync"/> rather than probed
+    /// a second time.
+    /// </summary>
+    public async Task PrepareAsync(CancellationToken cancellationToken)
+    {
+        if (_negotiatedFormat is not null)
+        {
+            return;
+        }
+
+        await EnsureDeviceIsCapturableAsync(cancellationToken).ConfigureAwait(false);
+        var format = await NegotiateFormatAsync(cancellationToken).ConfigureAwait(false);
+        var zone = format.Contains("UTC", StringComparison.Ordinal)
+            ? "UTC"
+            : await ReadDeviceTimeZoneAsync(cancellationToken).ConfigureAwait(false);
+        _negotiatedFormat = format;
+        Metadata = Metadata with
+        {
+            Properties = new Dictionary<string, string>(Metadata.Properties!, StringComparer.Ordinal)
+            {
+                ["format"] = format,
+                [SourceMetadata.LogTimeZoneProperty] = zone,
+            },
+        };
+    }
+
+    /// <summary>
+    /// The device's own zone, for the degraded formats that write local time. An id this
+    /// machine cannot resolve is worse than no answer, so it falls back to the local zone —
+    /// which a locally attached device usually shares anyway.
+    /// </summary>
+    private async Task<string> ReadDeviceTimeZoneAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _client
+                .RunAsync(["-s", _serial, "shell", "getprop", "persist.sys.timezone"], cancellationToken)
+                .ConfigureAwait(false);
+            var zone = result.StandardOutput.Trim();
+            if (result.ExitCode == 0 && zone.Length > 0)
+            {
+                TimeZoneInfo.FindSystemTimeZoneById(zone);
+                return zone;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is TimeZoneNotFoundException or InvalidTimeZoneException or IOException or InvalidOperationException)
+        {
+        }
+
+        return TimeZoneInfo.Local.Id;
+    }
 
     public Task<IReadOnlyList<ReadOnlyMemory<byte>>> ProbeAsync(int maximumUsefulLines, CancellationToken cancellationToken)
     {
@@ -95,7 +163,7 @@ public sealed class AdbLogSource : ILogSource, IProcessNameSource, ISourceDefect
         _ = context;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
         await EnsureDeviceIsCapturableAsync(linked.Token).ConfigureAwait(false);
-        var format = await NegotiateFormatAsync(linked.Token).ConfigureAwait(false);
+        var format = _negotiatedFormat ?? await NegotiateFormatAsync(linked.Token).ConfigureAwait(false);
         long offset = 0;
         var reconnectAttempt = 0;
         while (!linked.IsCancellationRequested)
@@ -312,10 +380,10 @@ public sealed class AdbLogSource : ILogSource, IProcessNameSource, ISourceDefect
             }
         }
 
-        // Every candidate failing is not evidence of an old device — the plainest
-        // candidate is universally supported. It means the device or buffer selection
-        // is unusable, and capturing anyway would produce an empty session that still
-        // reported success (§13.5, §14.13, §18.1).
+        // Every candidate failing means the device or buffer selection is unusable, or the
+        // device cannot emit UTC timestamps at all. Capturing anyway would produce either
+        // an empty session that still reported success, or one whose every timestamp is
+        // silently off by the device's UTC offset (§13.5, §14.13, §18.1).
         throw new AdbCaptureUnavailableException(await DescribeFailureAsync(lastError, cancellationToken).ConfigureAwait(false));
     }
 

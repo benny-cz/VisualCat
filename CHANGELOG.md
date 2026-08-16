@@ -25,6 +25,27 @@ The current stable release is `2.0.3`. Ongoing work is recorded under
   capture has been silent long enough to look broken rather than merely quiet.
 
 ### Fixed
+- A live capture no longer fails to finalize. Publishing a progressive snapshot and
+  finalizing the session both rewrote the manifest through one fixed temporary
+  path with no sequencing, so two writes in flight together opened the same file
+  exclusively and the second failed the whole ingest with
+  `UnauthorizedAccessException` — reliably on a capture short enough for the two
+  to overlap. Manifest writes are serialized, each takes a temporary of its own,
+  readers no longer block the replace, and the replace itself tolerates the
+  millisecond a scanner or reader can hold the destination.
+- An ADB capture is parsed in the zone the device actually agreed to write. The
+  format ladder degrades one modifier at a time and can land below the `UTC`
+  modifier, where the device emits local time, but the policy was pinned to UTC
+  regardless — so on any device that fell that far, every timestamp was silently
+  wrong by the device's offset. The format is now settled before the policy is
+  chosen, and a followed file is read in the local zone like an imported one
+  rather than being assumed to be UTC.
+- The time axis always shows at least two labels. Spacing alone only asks for a
+  tick count, and where the aligned instants fall decides how many land inside
+  the viewport, so a narrow plot — a phone in particular — regularly showed a
+  single label: an instant with nothing to say what a given width represents.
+  Label spacing also follows the width of the labels themselves, so the dates a
+  whole-session view prints no longer overlap each other.
 - Live captures are read in the device's own clock. They are parsed in UTC
   because that is the format logcat is asked for, but rendering them back in UTC
   put the newest entry a whole UTC offset in the past — two hours, on a UTC+2
