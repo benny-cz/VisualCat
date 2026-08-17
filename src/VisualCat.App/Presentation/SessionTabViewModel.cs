@@ -131,6 +131,11 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private long _captureWindowLines;
     private long _captureWindowMs;
     private double _captureRate;
+    private string? _captureHealthWarning;
+    private string? _lastCaptureWarning;
+    private string? _captureFailure;
+    private string? _refreshFailure;
+    private int _liveSegmentCount;
 
     /// <summary>
     /// Why this capture may look empty, when the reason is the scope it was granted rather
@@ -146,6 +151,31 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
     /// <summary>The full explanation, including the one route out of a restricted scope.</summary>
     public string? CaptureScopeRemedy { get; set; }
+
+    /// <summary>
+    /// Trouble the capture is currently working through without losing data, in the
+    /// reader's terms.
+    /// </summary>
+    /// <remarks>
+    /// A capture that is quietly failing to write, or a view that has quietly stopped
+    /// refreshing, used to look identical to a healthy quiet capture: the previous
+    /// failure of this kind was invisible for fourteen minutes and then surfaced as a
+    /// raw file path in a dead session. Anything the app recovers from is said out loud
+    /// while it is still recoverable, and clears itself the moment it stops being true
+    /// (§10.8, §15.2).
+    /// </remarks>
+    public string? CaptureHealthWarning
+    {
+        get => _captureHealthWarning;
+        private set => Set(ref _captureHealthWarning, value);
+    }
+
+    /// <summary>Gets how many segments the live session currently holds, for the session pane.</summary>
+    public int LiveSegmentCount
+    {
+        get => _liveSegmentCount;
+        private set => Set(ref _liveSegmentCount, value);
+    }
 
     public SessionTabViewModel(string title, string sessionPath)
     {
@@ -230,7 +260,12 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 return;
             }
 
-            var replacement = await SessionStore.OpenAsync(_sessionPath, cancellationToken).ConfigureAwait(false);
+            // Segments are immutable once published, so the replacement shares every
+            // segment this snapshot already holds and opens only the ones that are new.
+            // Opening a second complete set of mappings on each refresh is what made a
+            // live capture's descriptor use grow with its duration until the process ran
+            // out and killed the capture (§10.6, §12.4).
+            var replacement = await SessionStore.OpenAsync(_sessionPath, _snapshot, cancellationToken).ConfigureAwait(false);
             if (_snapshot is not null &&
                 (replacement.Generation < _snapshot.Generation ||
                  replacement.Generation == _snapshot.Generation &&
@@ -1237,16 +1272,72 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     }
 
     /// <summary>
+    /// Records one live-capture progress report, including anything the capture is
+    /// currently recovering from, and returns the status to show for it.
+    /// </summary>
+    public string DescribeCaptureProgress(string scope, VisualCat.Domain.Sessions.ProgressSnapshot progress)
+    {
+        ArgumentNullException.ThrowIfNull(progress);
+        LiveSegmentCount = progress.SegmentCount;
+        UpdateCaptureHealth(progress.Warning);
+        return DescribeCaptureProgress(scope, progress.LinesCommitted);
+    }
+
+    /// <summary>
+    /// Records that refreshing the view failed, or succeeded again. The capture itself is
+    /// unaffected either way — this is only about whether what is on screen is current.
+    /// </summary>
+    public void ReportRefreshOutcome(string? failure)
+    {
+        _refreshFailure = failure;
+        UpdateCaptureHealth(null, keepCaptureWarning: true);
+    }
+
+    /// <summary>
+    /// Records why a capture ended, so the whole explanation is readable somewhere.
+    /// </summary>
+    /// <remarks>
+    /// The status bar is one clipped line — long enough for "Failed · Storage refused 33
+    /// attempts in a row to save a…" and no further. A capture that ends after hours has
+    /// earned a full sentence about what happened and what survived, and the session pane
+    /// is the surface that wraps.
+    /// </remarks>
+    public void ReportCaptureFailure(string message)
+    {
+        _captureFailure = message;
+        UpdateCaptureHealth(null, keepCaptureWarning: true);
+    }
+
+    private void UpdateCaptureHealth(string? captureWarning, bool keepCaptureWarning = false)
+    {
+        if (!keepCaptureWarning)
+        {
+            _lastCaptureWarning = captureWarning;
+        }
+
+        // A capture that has already ended outranks anything it was working through on
+        // the way there: that is the state the reader is now in.
+        CaptureHealthWarning = _captureFailure
+                               ?? _lastCaptureWarning
+                               ?? (_refreshFailure is { Length: > 0 } refresh
+                                   ? $"The capture is still running, but the view stopped updating: {refresh}"
+                                   : null);
+    }
+
+    /// <summary>
     /// A quiet source is a normal state — an own-app capture of an idle app produces
     /// nothing for minutes — but it is indistinguishable from a broken one unless the
     /// workspace says which it is.
     /// </summary>
     private string DescribeCapture()
     {
+        // Trouble outranks the throughput readout: a rate is only worth reading when the
+        // number it describes is still reaching disk and screen.
+        var health = CaptureHealthWarning is { Length: > 0 } ? " · ⚠ see session details" : string.Empty;
         var quiet = TimeSpan.FromMilliseconds(Math.Max(0, Environment.TickCount64 - _captureLastAdvanceMs));
         if (quiet.TotalSeconds < 3)
         {
-            return $"Capturing · {_captureScope} · {_captureLines:N0} lines · {_captureRate:N0}/s";
+            return $"Capturing · {_captureScope} · {_captureLines:N0} lines · {_captureRate:N0}/s{health}";
         }
 
         // The scope only becomes worth raising once it is actually costing the reader
@@ -1255,7 +1346,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         var hint = quiet.TotalSeconds >= StarvedCaptureSeconds && CaptureScopeSummary is { Length: > 0 } reason
             ? $" · {reason}"
             : string.Empty;
-        return $"Capturing · {_captureScope} · {_captureLines:N0} lines · no new lines for {FormatQuiet(quiet)}{hint}";
+        return $"Capturing · {_captureScope} · {_captureLines:N0} lines · no new lines for {FormatQuiet(quiet)}{hint}{health}";
     }
 
     private static string FormatQuiet(TimeSpan quiet) =>

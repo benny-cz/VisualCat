@@ -610,6 +610,12 @@ public sealed partial class SessionWorkspaceView : UserControl
                     _status.Text = _viewModel.Status;
                     UpdateCaptureActions();
                     break;
+                case nameof(SessionTabViewModel.CaptureHealthWarning):
+                    // The status bar can only carry a marker pointing here, so the pane
+                    // has to rebuild the moment the warning appears or clears rather than
+                    // waiting for whatever refresh happens to come next.
+                    UpdateSessionInfo();
+                    break;
                 case nameof(SessionTabViewModel.SearchStatus):
                     _searchStatus.Text = _viewModel.SearchStatus;
                     break;

@@ -20,7 +20,10 @@ public sealed record SegmentManifest(
     long MaximumTimestampUs,
     long MinimumSequence,
     long MaximumSequence,
-    IReadOnlyDictionary<string, string> Checksums);
+    // Digests of the segment's files, populated only in sessions written before they
+    // moved to a per-segment sidecar. Read through SegmentChecksums.Load, which prefers
+    // this when present and falls back to the sidecar otherwise.
+    IReadOnlyDictionary<string, string>? Checksums = null);
 
 public sealed record SessionManifest(
     string FormatVersion,

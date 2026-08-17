@@ -17,12 +17,53 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     // that long while entries were plainly arriving. The ceiling only governs low-volume
     // sources — a busy one fills a segment by size (SegmentEntries) and flushes far sooner,
     // so lowering it costs nothing there and only trades a bounded number of extra small
-    // segments (finalization compacts them) for a far shorter visible gap (§10.6, §12.4).
+    // segments (compaction folds them away) for a far shorter visible gap (§10.6, §12.4).
     private static readonly TimeSpan MaximumFlushInterval = TimeSpan.FromSeconds(4);
 
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    // With nobody watching there is no plot to keep continuous, so the same trade runs
+    // the other way: a relaxed ceiling costs an unwatched viewer nothing and saves the
+    // sealing, hashing, and manifest rewrite that a screen-off capture would otherwise
+    // repeat every four seconds for hours. Returning to the foreground publishes at once
+    // rather than waiting this out.
+    //
+    // The cost is the crash window: entries live in memory until a segment is sealed, so
+    // a process killed while backgrounded loses up to this much of its tail instead of up
+    // to four seconds. That is the right way round for an unattended capture, where the
+    // alternative is spending the night writing segments no one will look at.
+    private static readonly TimeSpan UnobservedFlushInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// How many segments at the same merge level trigger a merge, and therefore how many
+    /// segments any one level can hold. See <see cref="CompactLiveSegments"/>.
+    /// </summary>
+    private const int MergeFactor = 8;
+
+    /// <summary>Marks a segment that has grown past <see cref="IngestSettings.SegmentEntries"/> and left the merge ladder.</summary>
+    private const int FullLevel = int.MaxValue;
+
+    /// <summary>
+    /// How many consecutive failed attempts to seal a segment, and how many segments'
+    /// worth of entries held in memory, before a storage failure stops being treated as
+    /// transient. See <see cref="TryFlushSegment"/>.
+    /// </summary>
+    private const int DeferredFlushAttemptCeiling = 32;
+    private const int DeferredFlushEntryCeiling = 4;
+
+    /// <summary>Flushes to skip compaction for after a failed round.</summary>
+    private const int CompactionCooldownFlushes = 16;
+
+    private static readonly JsonSerializerOptions IndentedJsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
+    };
+
+    // Progressive manifests are machine-read, superseded within seconds, and rewritten in
+    // full every time. Indenting one cost roughly a third of its bytes on every
+    // publication for a form no one reads; the finalized manifest stays indented because
+    // it is written once and is the copy a person may open.
+    private static readonly JsonSerializerOptions CompactJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = false,
     };
 
     private readonly string _root;
@@ -31,9 +72,24 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     /// otherwise be in flight over the same file at once.</summary>
     private readonly SemaphoreSlim _manifestWriteLock = new(1, 1);
     private readonly IngestSettings _settings;
+    private readonly LiveViewerPresence? _presence;
     private SourceIdentity _source;
     private readonly List<NormalizedEntry> _pending;
-    private readonly List<SegmentManifest> _segments = [];
+    private readonly List<LiveSegment> _segments = [];
+
+    /// <summary>
+    /// Segment directories compaction has folded into a larger segment, each recorded
+    /// with the generation at which it left the manifest.
+    /// </summary>
+    /// <remarks>
+    /// Deleting one is neither immediate nor demanded. It waits until a manifest that
+    /// omits it has actually been published, so a reader cannot be handed a manifest
+    /// naming a directory that is already gone; and a delete that fails is kept for the
+    /// next round, because a reader that opened the previous manifest may still hold the
+    /// directory mapped and Windows refuses the delete outright while it does.
+    /// </remarks>
+    private readonly Dictionary<string, long> _obsoleteSegmentDirectories = new(StringComparer.Ordinal);
+    private long _publishedGeneration = -1;
     private readonly Dictionary<string, uint> _tagIds = new(StringComparer.Ordinal);
     private readonly List<string> _tags = [];
     private readonly Dictionary<string, uint> _bufferIds = new(StringComparer.Ordinal);
@@ -49,12 +105,29 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     private bool _finalized;
     private long _lastFlushTimestamp = Stopwatch.GetTimestamp();
     private TimeSpan _flushInterval = InitialFlushInterval;
+    private bool _wasWatching = true;
+    private long _compactedSegments;
+    private long _compactionFailures;
+    private int _compactionCooldown;
+    private int _consecutiveFlushFailures;
+    private string? _lastFlushFailure;
 
     public SessionStoreWriter(string root, IngestSettings settings, SourceIdentity source)
+        : this(root, settings, source, null)
     {
+    }
+
+    public SessionStoreWriter(
+        string root,
+        IngestSettings settings,
+        SourceIdentity source,
+        LiveViewerPresence? presence)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
         _root = Path.GetFullPath(root);
         _settings = settings;
         _source = source;
+        _presence = presence;
         _pending = new List<NormalizedEntry>(settings.SegmentEntries);
         Directory.CreateDirectory(_root);
         Directory.CreateDirectory(Path.Combine(_root, "segments"));
@@ -101,21 +174,73 @@ public sealed class SessionStoreWriter : IAsyncDisposable
 
     public string RootPath => _root;
     public long Generation => _generation;
-    public IReadOnlyList<SegmentManifest> Segments => _segments;
+    public IReadOnlyList<SegmentManifest> Segments =>
+        _segments.Select(static segment => segment.Manifest).ToArray();
+
+    /// <summary>Gets how many segments the live session currently holds.</summary>
+    public int SegmentCount => _segments.Count;
+
+    /// <summary>Gets how many segments compaction has folded away over this capture.</summary>
+    public long CompactedSegments => _compactedSegments;
+
+    /// <summary>Gets how many compaction rounds failed and were skipped.</summary>
+    public long CompactionFailures => _compactionFailures;
+
+    /// <summary>
+    /// Gets the message of the storage failure the writer is currently working through,
+    /// or null when sealing segments is healthy. Entries are retained in memory
+    /// meanwhile, so a capture reporting this has lost nothing yet.
+    /// </summary>
+    public string? DeferredFlushFailure => _consecutiveFlushFailures > 0 ? _lastFlushFailure : null;
+
+    /// <summary>Gets how many entries are captured but not yet sealed into a segment.</summary>
+    public int PendingEntryCount => _pending.Count;
 
     public SegmentManifest? AddEntry(NormalizedEntry entry)
     {
         ThrowIfFinalized();
+        ArgumentNullException.ThrowIfNull(entry);
         if (entry.Timestamp is null)
         {
-            JsonSerializer.Serialize(_untimedWriter, entry, JsonOptions);
+            JsonSerializer.Serialize(_untimedWriter, entry, IndentedJsonOptions);
             return null;
         }
 
         _pending.Add(entry);
+
+        // While sealing is failing, every attempt costs the creation of twenty-six files
+        // and fails again for the same reason. Back off to the flush interval instead of
+        // retrying on each arriving entry; the entries themselves are retained either way.
+        // A fast source can still fill the retention ceiling inside one backoff, and at
+        // that point the attempt must be made so the failure can be raised rather than
+        // absorbed into unbounded memory.
+        if (_consecutiveFlushFailures > 0 &&
+            _pending.Count <= checked(_settings.SegmentEntries * DeferredFlushEntryCeiling) &&
+            Stopwatch.GetElapsedTime(_lastFlushTimestamp) < _flushInterval)
+        {
+            return null;
+        }
+
         if (_pending.Count >= _settings.SegmentEntries)
         {
-            return FlushSegment();
+            return TryFlushSegment();
+        }
+
+        // Returning to the foreground must not make the user wait out the relaxed
+        // interval that applied while they were away: publish what accumulated now, and
+        // restart the ramp so the next few seconds feel as live as the first ones did.
+        var watching = _presence?.IsWatching ?? true;
+        if (watching != _wasWatching)
+        {
+            _wasWatching = watching;
+            if (watching)
+            {
+                _flushInterval = InitialFlushInterval;
+                if (TryFlushSegment() is { } resumed)
+                {
+                    return resumed;
+                }
+            }
         }
 
         // A live capture reaches the entry threshold only after minutes, so waiting for
@@ -130,20 +255,70 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             return null;
         }
 
-        var flushed = FlushSegment();
+        var flushed = TryFlushSegment();
         if (flushed is not null)
         {
-            _flushInterval = _flushInterval < MaximumFlushInterval
-                ? TimeSpan.FromTicks(Math.Min(_flushInterval.Ticks * 2, MaximumFlushInterval.Ticks))
-                : MaximumFlushInterval;
+            var ceiling = watching ? MaximumFlushInterval : UnobservedFlushInterval;
+            _flushInterval = _flushInterval < ceiling
+                ? TimeSpan.FromTicks(Math.Min(_flushInterval.Ticks * 2, ceiling.Ticks))
+                : ceiling;
         }
 
         return flushed;
     }
 
+    /// <summary>
+    /// Seals a segment, treating a storage failure as something to work through rather
+    /// than something to end the capture with.
+    /// </summary>
+    /// <remarks>
+    /// The entries stay in <see cref="_pending"/> when sealing fails, so nothing is lost
+    /// and the next attempt writes them. That matters because the conditions that stop a
+    /// segment being written — a descriptor shortage, a handle another process is holding,
+    /// a momentarily unwritable volume — usually clear within seconds, and a live capture
+    /// killed by one of them takes hours of irreplaceable log with it. Persisting past
+    /// <see cref="DeferredFlushAttemptCeiling"/> attempts, or past
+    /// <see cref="DeferredFlushEntryCeiling"/> segments' worth of retained entries, is a
+    /// different condition — a full disk, a removed volume — and is raised to the caller
+    /// rather than absorbed into unbounded memory (§10.8).
+    /// </remarks>
+    private SegmentManifest? TryFlushSegment()
+    {
+        try
+        {
+            var flushed = FlushSegment();
+            _consecutiveFlushFailures = 0;
+            _lastFlushFailure = null;
+            return flushed;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _consecutiveFlushFailures++;
+            _lastFlushFailure = exception.Message;
+            _lastFlushTimestamp = Stopwatch.GetTimestamp();
+            if (_consecutiveFlushFailures > DeferredFlushAttemptCeiling ||
+                _pending.Count > checked(_settings.SegmentEntries * DeferredFlushEntryCeiling))
+            {
+                // Reported as its own condition rather than as whichever write happened
+                // to be the last to fail: after a long capture the only questions worth
+                // answering are how much was lost and whether the rest survived.
+                throw new SegmentWriteRefusedException(
+                    $"Storage refused {_consecutiveFlushFailures} attempts in a row to save a log segment, so the capture " +
+                    $"stopped. The {_pending.Count:N0} entries captured since the last successful save could not be " +
+                    "written; everything saved before then is intact and the session is still open.",
+                    _consecutiveFlushFailures,
+                    _pending.Count,
+                    exception);
+            }
+
+            return null;
+        }
+    }
+
     public void AddOutcome(ParseOutcome outcome, long? entryId = null)
     {
         ThrowIfFinalized();
+        ArgumentNullException.ThrowIfNull(outcome);
         WriteSourceRecord(new SourceRecord(
             outcome.Source.Sequence,
             outcome.Source.Raw,
@@ -161,10 +336,11 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         }
 
         var manifest = SegmentWriter.Write(_root, _nextSegmentId++, _pending, InternTag, InternBuffer);
-        _segments.Add(manifest);
+        _segments.Add(new LiveSegment(manifest, 0));
         _pending.Clear();
         _generation++;
         _lastFlushTimestamp = Stopwatch.GetTimestamp();
+        CompactLiveSegments();
         return manifest;
     }
 
@@ -201,14 +377,20 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             "2",
             _settings.TemplateSettings.AlgorithmVersion,
             _generation,
-            _segments.ToArray(),
+            Segments,
             _tags.ToArray(),
             _buffers.ToArray(),
             templates,
             false,
             DateTimeOffset.UtcNow,
             processNames);
-        await WriteManifestAsync(manifest, cancellationToken).ConfigureAwait(false);
+        await AtomicJsonWriteAsync(
+            Path.Combine(_root, "manifest.json"),
+            manifest,
+            durable: false,
+            indented: false,
+            cancellationToken).ConfigureAwait(false);
+        _publishedGeneration = _generation;
         return manifest;
     }
 
@@ -243,20 +425,31 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             "2",
             _settings.TemplateSettings.AlgorithmVersion,
             _generation,
-            _segments.ToArray(),
+            Segments,
             _tags.ToArray(),
             _buffers.ToArray(),
             templates,
             true,
             DateTimeOffset.UtcNow,
             processNames);
-        await AtomicJsonWriteAsync(Path.Combine(_root, "manifest.json"), manifest, true, cancellationToken).ConfigureAwait(false);
+        await AtomicJsonWriteAsync(
+            Path.Combine(_root, "manifest.json"),
+            manifest,
+            durable: true,
+            indented: true,
+            cancellationToken).ConfigureAwait(false);
         _finalized = true;
         foreach (var obsolete in obsoleteSegmentContainers)
         {
             TryDeleteDirectory(obsolete);
         }
 
+        // Directories compaction retired while readers still held them mapped. The
+        // finalized manifest is on disk, so nothing can be sent to them any more;
+        // anything still locked is left for the retention sweep rather than failing the
+        // save.
+        _publishedGeneration = _generation;
+        DrainObsoleteSegments(force: true);
         return manifest;
     }
 
@@ -271,6 +464,8 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             await _untimedWriter.DisposeAsync().ConfigureAwait(false);
             await _untimedStream.DisposeAsync().ConfigureAwait(false);
         }
+
+        _manifestWriteLock.Dispose();
     }
 
     public static async Task<SourceIdentity> CreateFileIdentityAsync(
@@ -326,6 +521,207 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         SourceRecordCodec.Write(_sourceRecords, record);
     }
 
+    /// <summary>
+    /// Folds small live segments into larger ones so the number of segments in a session
+    /// tracks how much was captured rather than how long the capture ran.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A quiet source is flushed by the time ceiling, not by the entry threshold, so
+    /// segments arrive at a steady rate for as long as the capture lasts — a few hundred
+    /// entries an hour still produced roughly nine hundred segments an hour. Every one of
+    /// them costs descriptors and mappings in each reader, a heat-map pass per query
+    /// (§12.4), an entry in every republished manifest, and a directory of twenty-six
+    /// mostly-empty files on disk. Left to accumulate, a capture that ran a little over an
+    /// hour exhausted the process descriptor limit and killed itself.
+    /// </para>
+    /// <para>
+    /// Merging is a base-<see cref="MergeFactor"/> counter over an explicit merge level
+    /// rather than over segment size: a run of <see cref="MergeFactor"/> adjacent segments
+    /// at level L becomes one segment at level L+1, which can then only merge with its own
+    /// kind. That is what keeps the total work logarithmic — a size-driven rule instead
+    /// re-merges the growing oldest segment with each new small one and rewrites the
+    /// session over and over. Only adjacent runs merge, so the segment order the query
+    /// engine relies on is preserved, and a segment that reaches
+    /// <see cref="IngestSettings.SegmentEntries"/> leaves the ladder entirely so no merge
+    /// ever costs more than writing one full-sized segment.
+    /// </para>
+    /// <para>
+    /// At most <see cref="MergeFactor"/>-1 segments survive per level, so a session holds
+    /// on the order of <c>MergeFactor × log(entries)</c> segments no matter how long the
+    /// capture runs. Failure is not fatal: the capture keeps its data and simply carries
+    /// more segments than it would have.
+    /// </para>
+    /// </remarks>
+    private void CompactLiveSegments()
+    {
+        DrainObsoleteSegments();
+
+        // A round that failed will pick the same run again and fail the same way, having
+        // first read up to a full segment's worth of entries to get there. Standing down
+        // for a few flushes keeps a persistent fault from turning every flush into that
+        // wasted read.
+        if (_compactionCooldown > 0)
+        {
+            _compactionCooldown--;
+            return;
+        }
+
+        try
+        {
+            while (TrySelectMergeRun(out var start, out var length))
+            {
+                MergeRun(start, length);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // Compaction is an optimisation. Losing a round costs a larger segment
+            // count; failing the capture would cost the user their log.
+            _compactionFailures++;
+            _compactionCooldown = CompactionCooldownFlushes;
+        }
+    }
+
+    private bool TrySelectMergeRun(out int start, out int length)
+    {
+        var index = 0;
+        while (index < _segments.Count)
+        {
+            var level = _segments[index].Level;
+            if (level == FullLevel)
+            {
+                index++;
+                continue;
+            }
+
+            var runEnd = index;
+            while (runEnd < _segments.Count && _segments[runEnd].Level == level)
+            {
+                runEnd++;
+            }
+
+            if (runEnd - index < MergeFactor)
+            {
+                index = runEnd;
+                continue;
+            }
+
+            long total = 0;
+            var take = 0;
+            while (take < MergeFactor &&
+                   index + take < runEnd &&
+                   total + _segments[index + take].Manifest.EntryCount <= _settings.SegmentEntries)
+            {
+                total += _segments[index + take].Manifest.EntryCount;
+                take++;
+            }
+
+            if (take >= 2)
+            {
+                start = index;
+                length = take;
+                return true;
+            }
+
+            // The oldest segment of this run already fills a segment on its own, so it
+            // leaves the ladder instead of blocking the run behind it forever.
+            _segments[index] = _segments[index] with { Level = FullLevel };
+        }
+
+        start = 0;
+        length = 0;
+        return false;
+    }
+
+    private void MergeRun(int start, int length)
+    {
+        var sources = _segments.GetRange(start, length);
+        var capacity = sources.Sum(static segment => segment.Manifest.EntryCount);
+        var merged = new List<NormalizedEntry>(capacity);
+        var readers = new List<SegmentSnapshot>(length);
+        try
+        {
+            foreach (var source in sources)
+            {
+                readers.Add(new SegmentSnapshot(_root, source.Manifest));
+            }
+
+            foreach (var reader in readers)
+            {
+                for (var index = 0; index < reader.Count; index++)
+                {
+                    merged.Add(reader.ReadEntry(index, Guid.Empty, _tags, _buffers, "2"));
+                }
+            }
+        }
+        finally
+        {
+            foreach (var reader in readers)
+            {
+                reader.Dispose();
+            }
+        }
+
+        var id = _nextSegmentId++;
+        SegmentManifest replacement;
+        try
+        {
+            // SegmentWriter sorts what it is handed, so a run of individually sorted
+            // segments needs no merge of its own here.
+            replacement = SegmentWriter.Write(_root, id, merged, InternTag, InternBuffer);
+        }
+        catch
+        {
+            TryDeleteDirectory(Path.Combine(_root, "segments", id.ToString("D6", System.Globalization.CultureInfo.InvariantCulture)));
+            throw;
+        }
+
+        _segments.RemoveRange(start, length);
+        _segments.Insert(start, new LiveSegment(replacement, sources[0].Level + 1));
+        _generation++;
+        _compactedSegments += length;
+        foreach (var source in sources)
+        {
+            _obsoleteSegmentDirectories[
+                Path.GetFullPath(Path.Combine(_root, source.Manifest.RelativePath.Replace('/', Path.DirectorySeparatorChar)))] = _generation;
+        }
+    }
+
+    /// <summary>
+    /// Deletes retired segment directories that a published manifest has already stopped
+    /// referencing. Anything still held open is left for a later round.
+    /// </summary>
+    private void DrainObsoleteSegments(bool force = false)
+    {
+        if (_obsoleteSegmentDirectories.Count == 0)
+        {
+            return;
+        }
+
+        List<string>? deleted = null;
+        foreach (var (directory, retiredAt) in _obsoleteSegmentDirectories)
+        {
+            // Until a manifest omitting this directory has actually reached disk, a
+            // reader can still be told to open it. Publication can fail and be retried,
+            // so this waits for the publication rather than assuming it.
+            if (!force && _publishedGeneration < retiredAt)
+            {
+                continue;
+            }
+
+            if (TryDeleteDirectory(directory))
+            {
+                (deleted ??= []).Add(directory);
+            }
+        }
+
+        foreach (var directory in deleted ?? [])
+        {
+            _obsoleteSegmentDirectories.Remove(directory);
+        }
+    }
+
     private string[] CompactSegments(CancellationToken cancellationToken)
     {
         if (_segments.Count <= 1 || AlreadyGloballySorted())
@@ -333,7 +729,7 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             return [];
         }
 
-        var previous = _segments.ToArray();
+        var previous = _segments.Select(static segment => segment.Manifest).ToArray();
         var readers = previous.Select(segment => new SegmentSnapshot(_root, segment)).ToArray();
         var container = $"segments-final-{_generation + 1:D8}";
         var compacted = new List<SegmentManifest>();
@@ -388,10 +784,14 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         }
 
         _segments.Clear();
-        _segments.AddRange(compacted);
+        _segments.AddRange(compacted.Select(static segment => new LiveSegment(segment, FullLevel)));
         _generation++;
+
+        // Everything the incremental ladder retired lives in a container the final pass
+        // is about to remove wholesale, so it no longer needs individual retries.
+        _obsoleteSegmentDirectories.Clear();
         return previous
-            .Select(segment => segment.RelativePath.Split('/')[0])
+            .Select(static segment => segment.RelativePath.Split('/')[0])
             .Distinct(StringComparer.Ordinal)
             .Select(name => Path.Combine(_root, name))
             .ToArray();
@@ -407,8 +807,8 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     {
         for (var index = 1; index < _segments.Count; index++)
         {
-            var previous = _segments[index - 1];
-            var current = _segments[index];
+            var previous = _segments[index - 1].Manifest;
+            var current = _segments[index].Manifest;
             if (current.MinimumTimestampUs < previous.MaximumTimestampUs)
             {
                 return false;
@@ -437,11 +837,13 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     /// commit thread, which was over half the wall time of a large import.
     /// Atomicity comes from the temporary-file rename either way (§11.7).
     /// </param>
+    /// <param name="indented">Whether to write human-readable JSON.</param>
     /// <param name="cancellationToken">Cancels serialization and publication.</param>
     private async Task AtomicJsonWriteAsync<T>(
         string path,
         T value,
         bool durable,
+        bool indented,
         CancellationToken cancellationToken)
     {
         // Publishing a progressive snapshot and finalizing the session both rewrite the
@@ -464,7 +866,11 @@ public sealed class SessionStoreWriter : IAsyncDisposable
                              64 * 1024,
                              options))
             {
-                await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken).ConfigureAwait(false);
+                await JsonSerializer.SerializeAsync(
+                    stream,
+                    value,
+                    indented ? IndentedJsonOptions : CompactJsonOptions,
+                    cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 
@@ -522,12 +928,6 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         }
     }
 
-    private async Task<SessionManifest> WriteManifestAsync(SessionManifest manifest, CancellationToken cancellationToken)
-    {
-        await AtomicJsonWriteAsync(Path.Combine(_root, "manifest.json"), manifest, false, cancellationToken).ConfigureAwait(false);
-        return manifest;
-    }
-
     private void ThrowIfFinalized()
     {
         if (_finalized)
@@ -536,7 +936,7 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         }
     }
 
-    private static void TryDeleteDirectory(string path)
+    private static bool TryDeleteDirectory(string path)
     {
         try
         {
@@ -544,14 +944,21 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             {
                 Directory.Delete(path, true);
             }
+
+            return true;
         }
         catch (IOException)
         {
             // Active progressive snapshots can keep old mappings alive on Windows.
+            return false;
         }
         catch (UnauthorizedAccessException)
         {
-            // The finalized manifest no longer references the obsolete container.
+            // The published manifest no longer references this directory.
+            return false;
         }
     }
+
+    /// <summary>A published segment together with the merge level that governs when it is folded into a larger one.</summary>
+    private readonly record struct LiveSegment(SegmentManifest Manifest, int Level);
 }

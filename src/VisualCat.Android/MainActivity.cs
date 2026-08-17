@@ -39,6 +39,17 @@ public sealed class MainActivity : AvaloniaMainActivity
         PlatformSourceRegistry.PublishAppResumed();
     }
 
+    /// <summary>
+    /// The screen turned off, or the user left the app. A live capture keeps running —
+    /// that is the point of leaving one going overnight — but nothing on screen needs
+    /// redrawing until <see cref="OnResume"/>.
+    /// </summary>
+    protected override void OnPause()
+    {
+        PlatformSourceRegistry.PublishAppPaused();
+        base.OnPause();
+    }
+
     protected override void OnNewIntent(Intent? intent)
     {
         base.OnNewIntent(intent);

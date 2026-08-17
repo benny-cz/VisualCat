@@ -21,6 +21,13 @@ public sealed class SessionSnapshot : IDisposable
     public long Generation => Manifest.SnapshotGeneration;
     public SessionDescriptor Descriptor => Manifest.Descriptor;
     public IReadOnlyList<SegmentSnapshot> Segments { get; }
+
+    /// <summary>
+    /// Gets the number of segment column files this snapshot currently has mapped. A
+    /// live capture's health surface reports it, because descriptor exhaustion is the
+    /// one resource limit a long capture can still reach before its disk does.
+    /// </summary>
+    public int MappedColumnCount => Segments.Sum(static segment => segment.MappedColumnCount);
     public IReadOnlyList<string> Tags => Manifest.Tags;
     public IReadOnlyList<string> Buffers => Manifest.Buffers;
     public IReadOnlyList<TemplateDefinition> Templates => Manifest.Templates;

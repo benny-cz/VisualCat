@@ -42,7 +42,16 @@ public static class SessionVerifier
                     previousSequence = sequence;
                 }
 
-                foreach (var checksum in segment.Manifest.Checksums)
+                var checksums = SegmentChecksums.Load(segment.Manifest, segment.DirectoryPath);
+                if (checksums.Count == 0)
+                {
+                    issues.Add(new VerificationIssue(
+                        "segment.checksum.missing",
+                        $"Segment {segment.Manifest.Id} has no checksums to verify against.",
+                        true));
+                }
+
+                foreach (var checksum in checksums)
                 {
                     var file = Path.GetFullPath(Path.Combine(segment.DirectoryPath, checksum.Key.Replace('/', Path.DirectorySeparatorChar)));
                     var segmentRoot = Path.GetFullPath(segment.DirectoryPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
@@ -66,7 +75,7 @@ public static class SessionVerifier
 
                 foreach (var required in SegmentFileContract.RequiredRelativePaths())
                 {
-                    if (!segment.Manifest.Checksums.ContainsKey(required))
+                    if (!checksums.ContainsKey(required))
                     {
                         issues.Add(new VerificationIssue(
                             "segment.checksum.missing",

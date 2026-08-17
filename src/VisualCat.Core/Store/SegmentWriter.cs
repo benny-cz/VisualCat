@@ -140,6 +140,12 @@ internal static class SegmentWriter
                 }
             }
 
+            // Written beside the segment rather than returned into the manifest: the
+            // manifest is republished in full on every snapshot, and carrying twenty-six
+            // digests per segment there is what made it grow without bound during a long
+            // live capture.
+            SegmentChecksums.Write(directory, checksums);
+
             return new SegmentManifest(
                 id,
                 relative.Replace('\\', '/'),
@@ -147,8 +153,7 @@ internal static class SegmentWriter
                 entries[0].Timestamp!.Value.Value,
                 entries[^1].Timestamp!.Value.Value,
                 minimumSequence,
-                maximumSequence,
-                checksums);
+                maximumSequence);
         }
         finally
         {

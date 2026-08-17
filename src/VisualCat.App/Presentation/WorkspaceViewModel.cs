@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using VisualCat.Application.Coordination;
 using VisualCat.Application.Ports;
 using VisualCat.Application.UseCases;
@@ -11,7 +13,7 @@ using VisualCat.Infrastructure.Files;
 
 namespace VisualCat.App.Presentation;
 
-public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposable
+public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
     private readonly object _operationGate = new();
     private readonly Dictionary<SessionTabViewModel, SessionOperation> _operations = [];
@@ -20,6 +22,12 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
     private int _uiRefreshLimit = 30;
     private SessionTabViewModel? _selected;
     private static string? s_temporarySessionRoot;
+
+    /// <summary>
+    /// Whether the workspace is on screen. Live captures keep running when it is not;
+    /// only the rate at which they publish and the view redraws is relaxed.
+    /// </summary>
+    private readonly LiveViewerPresence _presence = new();
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public event EventHandler<SessionTabViewModel>? TabAdded;
@@ -50,6 +58,38 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
     }
 
     public void ConfigureDiagnostics(IDiagnosticSink? diagnostics) => _diagnostics = diagnostics;
+
+    /// <summary>
+    /// Reports that the workspace has left the screen — the window was hidden, or on a
+    /// phone the activity was backgrounded or the display turned off.
+    /// </summary>
+    /// <remarks>
+    /// Captures continue; what stops is work whose only product is a picture. Refreshing
+    /// a snapshot re-runs the heat map, the overview, statistics and any active search,
+    /// and a live capture did all of that every few seconds for as long as it ran,
+    /// whether or not anyone could see the result. Over a night with the screen off that
+    /// is hours of CPU, and on a phone it is battery and flash wear too.
+    /// </remarks>
+    public void SuspendLiveViews() => _presence.IsWatching = false;
+
+    /// <summary>
+    /// Reports that the workspace is back on screen and brings every live tab up to date
+    /// at once, so returning never shows a stale plot while the ordinary cadence catches
+    /// up.
+    /// </summary>
+    public void ResumeLiveViews()
+    {
+        if (_presence.IsWatching)
+        {
+            return;
+        }
+
+        _presence.IsWatching = true;
+        foreach (var tab in Tabs.ToArray())
+        {
+            _ = LoadProgressSnapshotAsync(tab, CancellationToken.None);
+        }
+    }
 
     public void ConfigureUiRefreshLimit(int refreshesPerSecond) =>
         _uiRefreshLimit = Math.Clamp(refreshesPerSecond, 1, 60);
@@ -126,7 +166,9 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
         }
         catch (Exception exception)
         {
-            tab.Status = $"Failed · {exception.GetBaseException().Message}";
+            var reason = FriendlyMessage(exception);
+            tab.Status = $"Failed · {reason}";
+            tab.ReportCaptureFailure(reason);
             throw;
         }
         finally
@@ -229,9 +271,10 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
                 settings,
                 CreateProgressiveReporter(
                     tab,
-                    snapshot => tab.DescribeCaptureProgress(scope, snapshot.LinesCommitted),
+                    snapshot => tab.DescribeCaptureProgress(scope, snapshot),
                     operationToken),
                 _diagnostics,
+                _presence,
                 gracefulStopToken: gracefulStop.Token,
                 cancellationToken: operationToken).ConfigureAwait(false);
             var capturedEntries = result.Snapshot.Descriptor.Counters.ParsedEntries;
@@ -250,7 +293,9 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
         }
         catch (Exception exception)
         {
-            tab.Status = $"Failed · {exception.GetBaseException().Message}";
+            var reason = FriendlyMessage(exception);
+            tab.Status = $"Failed · {reason}";
+            tab.ReportCaptureFailure(reason);
             throw;
         }
         finally
@@ -376,23 +421,164 @@ public sealed class WorkspaceViewModel : INotifyPropertyChanged, IAsyncDisposabl
 
             Volatile.Write(ref lastUiProgress, now);
             tab.Status = describe(snapshot);
-            if (snapshot.SnapshotGeneration > (tab.Snapshot?.Generation ?? 0))
+
+            // With the workspace off screen there is nothing to redraw, and re-opening
+            // the snapshot only to run four queries against it and throw the answers
+            // away is the most expensive thing a backgrounded capture can do.
+            // ResumeLiveViews brings the tab straight up to date when it returns.
+            if (snapshot.SnapshotGeneration > (tab.Snapshot?.Generation ?? 0) && _presence.IsWatching)
             {
                 _ = LoadProgressSnapshotAsync(tab, cancellationToken);
             }
         });
     }
 
-    private static async Task LoadProgressSnapshotAsync(SessionTabViewModel tab, CancellationToken cancellationToken)
+    /// <summary>
+    /// Refreshes one tab from the session on disk, reporting the outcome to the tab
+    /// rather than discarding it.
+    /// </summary>
+    /// <remarks>
+    /// This runs detached from the progress callback, so an exception here has nowhere to
+    /// propagate to. Dropping it meant that when refreshing began failing — for fourteen
+    /// minutes, in the failure this was written for — the workspace showed a frozen
+    /// timeline and a status line that went on claiming the capture was healthy. The
+    /// capture genuinely is unaffected, so this is reported as a view-freshness problem
+    /// and clears itself as soon as a refresh succeeds.
+    /// </remarks>
+    private async Task LoadProgressSnapshotAsync(SessionTabViewModel tab, CancellationToken cancellationToken)
     {
         try
         {
             await tab.LoadSnapshotAsync(false, cancellationToken).ConfigureAwait(false);
+            tab.ReportRefreshOutcome(null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        catch (Exception exception)
+        {
+            tab.ReportRefreshOutcome(FriendlyMessage(exception));
+            await WriteRefreshDiagnosticAsync(tab, exception).ConfigureAwait(false);
+        }
     }
+
+    private async Task WriteRefreshDiagnosticAsync(SessionTabViewModel tab, Exception exception)
+    {
+        if (_diagnostics is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _diagnostics.WriteAsync(new DiagnosticEvent(
+                DateTimeOffset.UtcNow,
+                "warning",
+                "workspace",
+                "snapshot.refresh.failed",
+                tab.Snapshot?.SessionId ?? Guid.Empty,
+                tab.Snapshot?.Generation ?? 0,
+                new Dictionary<string, string>
+                {
+                    ["exceptionType"] = exception.GetType().FullName ?? exception.GetType().Name,
+                })).ConfigureAwait(false);
+        }
+        catch (Exception writeFailure) when (writeFailure is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Turns an exception into something a user can act on.
+    /// </summary>
+    /// <remarks>
+    /// The framework's own text for a resource limit is a bare errno phrase followed by
+    /// the path that happened to be unlucky — "Too many open files :
+    /// '…/segments/001058/flags.bin'" — which names neither what went wrong nor what to
+    /// do. These are the failures a long-running capture can actually reach, so they are
+    /// the ones worth translating; anything else keeps its own message.
+    /// </remarks>
+    internal static string FriendlyMessage(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        // Conditions are recognised anywhere in the chain, because the cause is usually
+        // wrapped by the stage that noticed it, and it is the cause that decides what the
+        // user can do about it.
+        if (Chain(exception).Any(IsResourceExhaustion))
+        {
+            return "VisualCat ran out of open files. Close some session tabs and try again; " +
+                   "if this keeps happening during a long capture, stop and reopen the capture to compact it.";
+        }
+
+        if (Chain(exception).Any(IsDiskFull))
+        {
+            return "The disk holding the session is full. Free some space, then continue.";
+        }
+
+        var cause = Unwrap(exception);
+        return cause switch
+        {
+            // Already phrased for a person, including what survived.
+            SegmentWriteRefusedException => cause.Message,
+            UnauthorizedAccessException =>
+                $"VisualCat is not allowed to read or write part of this session: {Shorten(cause.Message)}",
+            FileNotFoundException or DirectoryNotFoundException =>
+                "Part of the session is missing. It may have been moved or deleted while it was open.",
+            IOException =>
+                $"VisualCat could not read or write the session: {Shorten(cause.Message)}",
+            _ => Shorten(cause.Message),
+        };
+    }
+
+    /// <summary>Unwraps the reporting layers a failure passes through on its way here.</summary>
+    private static Exception Unwrap(Exception exception)
+    {
+        var current = exception;
+        while (current.InnerException is { } inner &&
+               current is SessionPipelineException or AggregateException or TargetInvocationException)
+        {
+            current = inner;
+        }
+
+        return current;
+    }
+
+    private static IEnumerable<Exception> Chain(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            yield return current;
+        }
+    }
+
+    /// <summary>
+    /// Collapses absolute paths inside a framework message to their last two components.
+    /// </summary>
+    /// <remarks>
+    /// A session path on Android runs to about 130 characters, and the status bar is one
+    /// clipped line: left whole, the path pushes out every word that says what went wrong.
+    /// The session pane carries the full path for anyone who needs it.
+    /// </remarks>
+    private static string Shorten(string message) =>
+        QuotedPath().Replace(message, static match =>
+        {
+            var parts = match.Value.Trim('\'').Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length <= 2 ? match.Value : $"'…/{parts[^2]}/{parts[^1]}'";
+        });
+
+    [GeneratedRegex(@"'[^']*[/\\][^']*'")]
+    private static partial Regex QuotedPath();
+
+    private static bool IsResourceExhaustion(Exception exception) =>
+        exception.Message.Contains("Too many open files", StringComparison.OrdinalIgnoreCase) ||
+        exception.Message.Contains("insufficient system resources", StringComparison.OrdinalIgnoreCase) ||
+        exception.Message.Contains("not enough memory resources", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDiskFull(Exception exception) =>
+        exception.Message.Contains("no space left", StringComparison.OrdinalIgnoreCase) ||
+        exception.Message.Contains("disk is full", StringComparison.OrdinalIgnoreCase) ||
+        exception.Message.Contains("not enough space", StringComparison.OrdinalIgnoreCase);
 
     private static string CreateTemporarySessionPath(string name, bool create = true)
     {

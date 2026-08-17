@@ -5,11 +5,124 @@ namespace VisualCat.Core.Store;
 
 public static class SessionStore
 {
+    /// <summary>
+    /// Upper bound on segments in one manifest. Live compaction keeps a real session far
+    /// below this (§10.4, §12.4); the limit exists so a corrupt or hostile manifest
+    /// cannot make opening a session allocate without bound.
+    /// </summary>
+    private const int MaximumSegments = 100_000;
+
+    /// <summary>
+    /// How many times to re-read the manifest when a segment it lists has already been
+    /// removed. Live compaction publishes a manifest that no longer references the
+    /// segments it merged and then deletes them, so a reader that read the previous
+    /// manifest a moment earlier can ask for a directory that is already gone. Re-reading
+    /// resolves it; the alternative is a spurious failure during an otherwise healthy
+    /// capture.
+    /// </summary>
+    private const int LiveReopenAttempts = 4;
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public static async Task<SessionSnapshot> OpenAsync(string path, CancellationToken cancellationToken = default)
+    public static Task<SessionSnapshot> OpenAsync(string path, CancellationToken cancellationToken = default) =>
+        OpenAsync(path, null, cancellationToken);
+
+    /// <summary>
+    /// Opens a session as an immutable snapshot.
+    /// </summary>
+    /// <param name="path">The session directory.</param>
+    /// <param name="reuseFrom">
+    /// An open snapshot of the same session whose segments may be shared with the new
+    /// one. Segments are immutable once published, so a republished manifest usually
+    /// differs from its predecessor by a handful of segments; sharing the rest is what
+    /// keeps a live capture's descriptor count flat instead of doubling it on every
+    /// refresh. The caller keeps ownership of <paramref name="reuseFrom"/> and must
+    /// still dispose it.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the open.</param>
+    public static async Task<SessionSnapshot> OpenAsync(
+        string path,
+        SessionSnapshot? reuseFrom,
+        CancellationToken cancellationToken = default)
     {
         var root = Path.GetFullPath(path);
+        var reusable = BuildReuseIndex(root, reuseFrom);
+        for (var attempt = 1; ; attempt++)
+        {
+            var manifest = await ReadManifestAsync(root, cancellationToken).ConfigureAwait(false);
+            var segments = new List<SegmentSnapshot>(manifest.Segments.Count);
+            try
+            {
+                foreach (var segment in manifest.Segments)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    segments.Add(Acquire(root, segment, reusable));
+                }
+
+                return new SessionSnapshot(root, manifest, segments);
+            }
+            catch (Exception exception) when (
+                !manifest.Finalized &&
+                attempt < LiveReopenAttempts &&
+                exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                foreach (var segment in segments)
+                {
+                    segment.Dispose();
+                }
+
+                await Task.Delay(20 * attempt, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                foreach (var segment in segments)
+                {
+                    segment.Dispose();
+                }
+
+                throw;
+            }
+        }
+    }
+
+    private static SegmentSnapshot Acquire(
+        string root,
+        SegmentManifest segment,
+        Dictionary<string, SegmentSnapshot>? reusable)
+    {
+        if (reusable is not null &&
+            reusable.TryGetValue(segment.RelativePath, out var existing) &&
+            existing.Manifest.EntryCount == segment.EntryCount &&
+            existing.TryAddReference())
+        {
+            return existing;
+        }
+
+        return new SegmentSnapshot(root, segment);
+    }
+
+    private static Dictionary<string, SegmentSnapshot>? BuildReuseIndex(string root, SessionSnapshot? reuseFrom)
+    {
+        if (reuseFrom is null ||
+            !string.Equals(
+                Path.TrimEndingDirectorySeparator(reuseFrom.RootPath),
+                Path.TrimEndingDirectorySeparator(root),
+                OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var index = new Dictionary<string, SegmentSnapshot>(reuseFrom.Segments.Count, StringComparer.Ordinal);
+        foreach (var segment in reuseFrom.Segments)
+        {
+            index[segment.Manifest.RelativePath] = segment;
+        }
+
+        return index;
+    }
+
+    private static async Task<SessionManifest> ReadManifestAsync(string root, CancellationToken cancellationToken)
+    {
         var manifestPath = Path.Combine(root, "manifest.json");
         var manifestInfo = new FileInfo(manifestPath);
         if (!manifestInfo.Exists)
@@ -56,26 +169,7 @@ public static class SessionStore
             }
         }
 
-        var segments = new List<SegmentSnapshot>(manifest.Segments.Count);
-        try
-        {
-            foreach (var segment in manifest.Segments)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                segments.Add(new SegmentSnapshot(root, segment));
-            }
-
-            return new SessionSnapshot(root, manifest, segments);
-        }
-        catch
-        {
-            foreach (var segment in segments)
-            {
-                segment.Dispose();
-            }
-
-            throw;
-        }
+        return manifest;
     }
 
     private static void ValidateManifest(SessionManifest manifest)
@@ -102,8 +196,17 @@ public static class SessionStore
             throw new InvalidDataException("Session descriptor is missing required fields.");
         }
 
-        if (manifest.Segments.Count > 10_000 ||
-            manifest.Tags.Count > 10_000_000 ||
+        // Named separately from the other dimension checks: this is the one a real
+        // session could once approach on its own, and "unreasonable dimensions" told a
+        // user nothing about a capture that had simply run for a very long time.
+        if (manifest.Segments.Count > MaximumSegments)
+        {
+            throw new InvalidDataException(
+                $"This session declares {manifest.Segments.Count:N0} segments, more than the {MaximumSegments:N0} " +
+                "VisualCat can open. The session directory is most likely damaged or was not written by VisualCat.");
+        }
+
+        if (manifest.Tags.Count > 10_000_000 ||
             manifest.Buffers.Count > 1_000_000 ||
             manifest.Templates.Count > 10_000_000 ||
             manifest.ProcessNames is { Count: > 10_000_000 })
@@ -128,8 +231,6 @@ public static class SessionStore
                 segment.EntryCount <= 0 ||
                 segment.EntryCount > 50_000_000 ||
                 string.IsNullOrWhiteSpace(segment.RelativePath) ||
-                segment.Checksums is null ||
-                segment.Checksums.Count > 256 ||
                 segment.MaximumTimestampUs < segment.MinimumTimestampUs ||
                 segment.MaximumSequence < segment.MinimumSequence)
             {

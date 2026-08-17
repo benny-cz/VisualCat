@@ -479,6 +479,14 @@ public sealed partial class SessionWorkspaceView : UserControl
         static string N(long value) => value.ToString("N0", System.Globalization.CultureInfo.CurrentCulture);
 
         Section("Session");
+
+        // First row in the pane when it applies, because the status bar's marker sends
+        // the reader here to find out what is wrong, and it must be the thing they see.
+        if (_viewModel.CaptureHealthWarning is { Length: > 0 } health)
+        {
+            Row("Needs attention", health, true);
+        }
+
         Row("Source", $"{descriptor.SourceKind} · {descriptor.DisplayName}");
 
         // Stated as a fact about the session rather than as a warning: this pane is where a
@@ -531,6 +539,17 @@ public sealed partial class SessionWorkspaceView : UserControl
         Row("Encoding fallback", N(defects.EncodingFallbacks), defects.EncodingFallbacks > 0);
         Row("Long-line overflow", N(defects.LongLineOverflows), defects.LongLineOverflows > 0);
         Row("Retention deleted", N(defects.RetentionDeleted), defects.RetentionDeleted > 0);
+
+        // Segment count is the one number that used to grow with how long a capture ran
+        // rather than with how much it captured, and exhausting it took the capture down
+        // with it. Compaction keeps it small; showing it is how a reader can tell that it
+        // still is.
+        Section("Storage");
+        Row("Segments", N(snapshot.Segments.Count));
+        Row("Open mappings", N(snapshot.MappedColumnCount));
+        Row("Entries per segment", snapshot.Segments.Count == 0
+            ? "—"
+            : N(counters.TimedEntries / Math.Max(1, snapshot.Segments.Count)));
 
         Section("Build");
         Row("Snapshot", $"{snapshot.Generation} · store {manifest.FormatVersion}");

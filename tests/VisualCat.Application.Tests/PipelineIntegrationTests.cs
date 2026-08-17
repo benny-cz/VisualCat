@@ -998,6 +998,72 @@ public sealed class PipelineIntegrationTests
         }
     }
 
+    /// <summary>
+    /// A capture must survive storage refusing to accept a segment, and it must say so
+    /// while it is happening. The failure this was written for was invisible for fourteen
+    /// minutes and then surfaced as a raw file path in a dead session.
+    /// </summary>
+    [Fact]
+    public async Task AStorageFailureIsReportedWhileTheCaptureWorksThroughIt()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-blocked-{Guid.NewGuid():N}.vcat");
+        Directory.CreateDirectory(Path.Combine(root, "segments"));
+
+        // Occupy the paths the first few segments will want. Whatever the underlying
+        // cause — a descriptor shortage, a locked path — this is how it reaches the
+        // writer.
+        for (var id = 1; id <= 3; id++)
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(root, "segments", id.ToString("D6", System.Globalization.CultureInfo.InvariantCulture)),
+                "in the way");
+        }
+
+        var warnings = new List<string>();
+        var healthyAfterRecovery = false;
+        var progress = new InlineProgress<ProgressSnapshot>(value =>
+        {
+            if (value.Warning is { Length: > 0 } warning)
+            {
+                lock (warnings)
+                {
+                    warnings.Add(warning);
+                }
+            }
+            else if (warnings.Count > 0 && value.LinesCommitted > 0)
+            {
+                healthyAfterRecovery = true;
+            }
+        });
+
+        await using var source = new MemoryLogSource(
+            Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat(Log, 200))),
+            [64],
+            TimeSpan.FromMilliseconds(20));
+        // A realistic segment size: the amount of capture the writer is willing to hold
+        // in memory while storage is refusing it scales with it, and the two-entry
+        // segments the other tests use would make that ceiling a handful of lines.
+        var result = await SessionCoordinator.ImportAsync(
+            source,
+            root,
+            Settings(2) with { SegmentEntries = 100 },
+            progress);
+        await using var imported = new ImportedSession(root, result.Snapshot);
+
+        Assert.NotEmpty(warnings);
+        Assert.Contains(warnings, static warning => warning.Contains("storage is not accepting writes", StringComparison.Ordinal));
+        Assert.Contains(warnings, static warning => warning.Contains("captured entries in memory", StringComparison.Ordinal));
+
+        // The warning is not a tombstone: once writes land again it stops being said.
+        Assert.True(healthyAfterRecovery, "The warning never cleared after the capture recovered.");
+
+        // And nothing was lost while it was being said.
+        Assert.Equal(600, result.Snapshot.Descriptor.Counters.TimedEntries);
+        Assert.Equal(
+            600,
+            result.Snapshot.Segments.Sum(static segment => (long)segment.Count));
+    }
+
     private static async Task<ImportedSession> ImportAsync(int[] chunks, int workers)
     {
         var root = Path.Combine(Path.GetTempPath(), $"visualcat-test-{Guid.NewGuid():N}.vcat");

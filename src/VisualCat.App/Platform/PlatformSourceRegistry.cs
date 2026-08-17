@@ -11,6 +11,13 @@ public static class PlatformSourceRegistry
     public static event Action<IReadOnlyList<string>>? LaunchFilesReceived;
     public static event Action? AppResumed;
 
+    /// <summary>
+    /// Raised when the app leaves the foreground — backgrounded, or the screen turned
+    /// off. A live capture keeps running; the workspace uses this to stop doing work
+    /// whose only product is a picture nobody can see.
+    /// </summary>
+    public static event Action? AppPaused;
+
     public static void PublishLaunchFiles(IReadOnlyList<string> paths)
     {
         if (paths.Count > 0)
@@ -20,4 +27,19 @@ public static class PlatformSourceRegistry
     }
 
     public static void PublishAppResumed() => AppResumed?.Invoke();
+
+    public static void PublishAppPaused() => AppPaused?.Invoke();
+
+    /// <summary>Reports a desktop window becoming visible or being minimized.</summary>
+    public static void PublishWindowVisibility(bool visible)
+    {
+        if (visible)
+        {
+            AppResumed?.Invoke();
+        }
+        else
+        {
+            AppPaused?.Invoke();
+        }
+    }
 }

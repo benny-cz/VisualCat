@@ -232,4 +232,12 @@ public sealed record ProgressSnapshot(
     bool IsCancellable,
     long SnapshotGeneration,
     SessionState? TerminalState = null,
-    string? Error = null);
+    string? Error = null,
+    // How many segments the live session currently holds. Compaction keeps this
+    // roughly logarithmic in captured entries; a number that climbs with wall-clock
+    // time instead means compaction is not keeping up, which is what the capture
+    // health surface reports (§10.4, §12.4).
+    int SegmentCount = 0,
+    // Non-fatal trouble the capture recovered from and kept going through, phrased for
+    // the person watching. Null while the capture is healthy.
+    string? Warning = null);

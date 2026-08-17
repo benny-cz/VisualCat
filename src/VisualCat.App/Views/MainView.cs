@@ -36,6 +36,7 @@ public sealed class MainView : UserControl, IAsyncDisposable
     private Window? _hostWindow;
     private readonly Action<IReadOnlyList<string>> _launchFilesHandler;
     private readonly Action _appResumedHandler;
+    private readonly Action _appPausedHandler;
 
     // Responsive command bar: primary actions are always inline, flexible actions render as
     // buttons while they fit and fold into "More" when they do not, and settings live in
@@ -77,9 +78,21 @@ public sealed class MainView : UserControl, IAsyncDisposable
             "VisualCat",
             "settings.json"));
         _launchFilesHandler = paths => Dispatcher.UIThread.Post(() => _ = OpenPathsAsync(paths));
-        _appResumedHandler = () => Dispatcher.UIThread.Post(RestoreAndroidLayoutAfterResume);
+        _appResumedHandler = () => Dispatcher.UIThread.Post(() =>
+        {
+            RestoreAndroidLayoutAfterResume();
+
+            // Ordered after the layout restore so the first refreshed frame lands in the
+            // layout the user left, not the one being rebuilt underneath it.
+            _viewModel.ResumeLiveViews();
+        });
+
+        // Suspension is not posted to the dispatcher: OnPause is the last moment the app
+        // reliably gets before the process is frozen, and a queued message may not run.
+        _appPausedHandler = () => _viewModel.SuspendLiveViews();
         PlatformSourceRegistry.LaunchFilesReceived += _launchFilesHandler;
         PlatformSourceRegistry.AppResumed += _appResumedHandler;
+        PlatformSourceRegistry.AppPaused += _appPausedHandler;
         Content = Build();
         SizeChanged += (_, eventArgs) => UpdateMobileChrome(eventArgs.NewSize);
         ActualThemeVariantChanged += (_, _) => ApplyThemeSurfaces();
@@ -1380,6 +1393,7 @@ public sealed class MainView : UserControl, IAsyncDisposable
     {
         PlatformSourceRegistry.LaunchFilesReceived -= _launchFilesHandler;
         PlatformSourceRegistry.AppResumed -= _appResumedHandler;
+        PlatformSourceRegistry.AppPaused -= _appPausedHandler;
         await _viewModel.DisposeAsync();
         if (_diagnostics is not null)
         {

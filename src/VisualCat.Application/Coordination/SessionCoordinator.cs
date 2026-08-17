@@ -24,6 +24,7 @@ public sealed class SessionCoordinator
         IngestSettings settings,
         IProgress<ProgressSnapshot>? progress = null,
         IDiagnosticSink? diagnostics = null,
+        LiveViewerPresence? presence = null,
         CancellationToken gracefulStopToken = default,
         CancellationToken cancellationToken = default)
     {
@@ -63,7 +64,7 @@ public sealed class SessionCoordinator
         var root = Path.GetFullPath(sessionDirectory);
         Directory.CreateDirectory(root);
         var identity = await InitialIdentityAsync(source.Metadata, settings.PortableRaw, cancellationToken).ConfigureAwait(false);
-        await using var store = new SessionStoreWriter(root, settings, identity);
+        await using var store = new SessionStoreWriter(root, settings, identity, presence);
         var resolver = new TimestampResolver(settings.TimestampPolicy);
 
         // Shard count changes only how the work is scheduled, never the templates it
@@ -101,6 +102,7 @@ public sealed class SessionCoordinator
         var pendingBatches = new SortedDictionary<long, ParsedBatch>();
         var lastProgress = TimeSpan.Zero;
         var hasReportedSnapshot = false;
+        string? publishFailure = null;
         if (state.State == SessionState.Connecting)
         {
             state.TransitionTo(SessionState.Streaming);
@@ -561,11 +563,34 @@ public sealed class SessionCoordinator
         async Task PublishFlushedSegmentAsync()
         {
             var partial = CreateDescriptor(state.State, false);
-            await store.PublishSnapshotAsync(
-                partial,
-                miner.GetDefinitions(),
-                processNames.Snapshot(),
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await store.PublishSnapshotAsync(
+                    partial,
+                    miner.GetDefinitions(),
+                    processNames.Snapshot(),
+                    cancellationToken).ConfigureAwait(false);
+                publishFailure = null;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Publication makes already-captured data visible; it is not what makes
+                // it durable. The segments are on disk and the next flush republishes a
+                // manifest covering them, so a momentarily unwritable manifest costs the
+                // viewer a few seconds of freshness rather than costing the user the
+                // capture (§10.8).
+                publishFailure = exception.Message;
+                await WriteDiagnosticAsync(
+                    "warning",
+                    "store.snapshot.deferred",
+                    new Dictionary<string, string>
+                    {
+                        ["snapshotGeneration"] = store.Generation.ToString(CultureInfo.InvariantCulture),
+                        ["exceptionType"] = exception.GetType().FullName ?? exception.GetType().Name,
+                    }).ConfigureAwait(false);
+                return;
+            }
+
             await WriteDiagnosticAsync(
                 "information",
                 "store.snapshot",
@@ -573,6 +598,8 @@ public sealed class SessionCoordinator
                 {
                     ["snapshotGeneration"] = store.Generation.ToString(CultureInfo.InvariantCulture),
                     ["timedEntries"] = counters.TimedEntries.ToString(CultureInfo.InvariantCulture),
+                    ["segments"] = store.SegmentCount.ToString(CultureInfo.InvariantCulture),
+                    ["compactedSegments"] = store.CompactedSegments.ToString(CultureInfo.InvariantCulture),
                 }).ConfigureAwait(false);
         }
 
@@ -665,7 +692,27 @@ public sealed class SessionCoordinator
                 terminal is null,
                 store.Generation,
                 terminal,
-                error));
+                error,
+                store.SegmentCount,
+                DescribeRecoveredTrouble()));
+        }
+
+        // Conditions the capture worked through rather than failed on. Reported so the
+        // user learns that something is wrong while it is still recoverable, instead of
+        // finding out when it stops being recoverable (§10.8, §15.2).
+        string? DescribeRecoveredTrouble()
+        {
+            if (store.DeferredFlushFailure is { } flushFailure)
+            {
+                return $"Holding {store.PendingEntryCount:N0} captured entries in memory — storage is not accepting writes: {flushFailure}";
+            }
+
+            if (publishFailure is { } manifestFailure)
+            {
+                return $"The view is a few seconds behind the capture — the session manifest could not be updated: {manifestFailure}";
+            }
+
+            return null;
         }
 
         async Task PublishPartialSafelyAsync(SessionState sessionState)

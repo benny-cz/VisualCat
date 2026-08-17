@@ -75,6 +75,18 @@ public sealed class MainWindow : Window
         }
         Content = view;
         view.AttachHostWindow(this);
+
+        // A minimized window is the desktop's version of a screen that has turned off:
+        // the capture must keep running, but re-running the heat map, overview,
+        // statistics and search every few seconds produces a frame nobody can see.
+        // Restoring brings every live tab straight up to date.
+        PropertyChanged += (_, change) =>
+        {
+            if (change.Property == WindowStateProperty)
+            {
+                Platform.PlatformSourceRegistry.PublishWindowVisibility(WindowState != WindowState.Minimized);
+            }
+        };
         Closed += async (_, _) =>
         {
             await view.PersistWindowStateAsync();

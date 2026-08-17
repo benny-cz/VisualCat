@@ -10,6 +10,7 @@ using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 using VisualCat.App.Views;
 using VisualCat.Application.Coordination;
+using VisualCat.Core.Store;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Queries;
 using VisualCat.Domain.Sessions;
@@ -449,6 +450,109 @@ public sealed class SessionWorkspaceHeadlessTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    /// <summary>
+    /// A capture that is quietly failing to write, or a view that has quietly stopped
+    /// refreshing, must not keep looking like a healthy quiet capture.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task CaptureStatusRaisesTroubleTheCaptureIsWorkingThrough()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await using var tab = new SessionTabViewModel("Live", root) { IsLiveCaptureActive = true };
+        try
+        {
+            Assert.Null(tab.CaptureHealthWarning);
+            Assert.DoesNotContain("⚠", tab.DescribeCaptureProgress("On-device logcat", 10), StringComparison.Ordinal);
+
+            var troubled = tab.DescribeCaptureProgress("On-device logcat", Progress(12, warning: "Storage is not accepting writes"));
+            Assert.Contains("⚠", troubled, StringComparison.Ordinal);
+            Assert.Contains("Storage is not accepting writes", tab.CaptureHealthWarning!, StringComparison.Ordinal);
+
+            // A refresh failure is a different claim from a capture failure: the capture
+            // is fine, the picture is not, and the wording has to say which.
+            _ = tab.DescribeCaptureProgress("On-device logcat", Progress(14));
+            Assert.Null(tab.CaptureHealthWarning);
+            tab.ReportRefreshOutcome("ran out of open files");
+            Assert.Contains("capture is still running", tab.CaptureHealthWarning!, StringComparison.OrdinalIgnoreCase);
+
+            tab.ReportRefreshOutcome(null);
+            Assert.Null(tab.CaptureHealthWarning);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The framework's text for a descriptor limit is an errno phrase and whichever path
+    /// happened to be unlucky. That is what a user saw when a long capture died, and it
+    /// named neither the problem nor a way out of it.
+    /// </summary>
+    [Fact]
+    public void ResourceFailuresAreTranslatedIntoSomethingActionable()
+    {
+        var exhausted = WorkspaceViewModel.FriendlyMessage(
+            new IOException("Too many open files : '/data/user/0/com.barebit.visualcat/files/x/segments/001058/flags.bin'"));
+        Assert.Contains("ran out of open files", exhausted, StringComparison.Ordinal);
+        Assert.DoesNotContain("flags.bin", exhausted, StringComparison.Ordinal);
+
+        Assert.Contains("full", WorkspaceViewModel.FriendlyMessage(new IOException("There is not enough space on the disk.")), StringComparison.Ordinal);
+        Assert.Contains("missing", WorkspaceViewModel.FriendlyMessage(new FileNotFoundException("nope")), StringComparison.Ordinal);
+
+        // A condition is recognised through the layers that wrapped it on the way here.
+        var wrapped = WorkspaceViewModel.FriendlyMessage(
+            new AggregateException(new IOException("Too many open files : '/a/b/c.bin'")));
+        Assert.Contains("ran out of open files", wrapped, StringComparison.Ordinal);
+
+        // A capture that gave up says how much it could not save and what survived,
+        // instead of naming whichever write happened to be last.
+        var refused = WorkspaceViewModel.FriendlyMessage(new SegmentWriteRefusedException(
+            "Storage refused 33 attempts in a row to save a log segment, so the capture stopped. The 4,120 entries " +
+            "captured since the last successful save could not be written; everything saved before then is intact " +
+            "and the session is still open.",
+            33,
+            4120,
+            new IOException("The file '/data/user/0/com.x/files/VisualCat/Sessions/s.vcat/segments/000342' already exists.")));
+        Assert.Contains("everything saved before then is intact", refused, StringComparison.Ordinal);
+        Assert.DoesNotContain("000342", refused, StringComparison.Ordinal);
+
+        // An ordinary write failure keeps its meaning but loses the 130-character path
+        // that would otherwise fill the whole status line.
+        var io = WorkspaceViewModel.FriendlyMessage(new IOException(
+            "The file '/data/user/0/com.barebit.visualcat/files/VisualCat/Sessions/20260817-171031-On-device logcat-48529e2a.vcat/segments/000342' already exists."));
+        Assert.Contains("already exists", io, StringComparison.Ordinal);
+        Assert.Contains("…/segments/000342", io, StringComparison.Ordinal);
+        Assert.DoesNotContain("/data/user/0/", io, StringComparison.Ordinal);
+        Assert.True(io.Length < 120, $"Status text is still {io.Length} characters: {io}");
+
+        // Anything without a better translation keeps its own message rather than being
+        // flattened into a generic apology.
+        Assert.Equal("something specific", WorkspaceViewModel.FriendlyMessage(new InvalidOperationException("something specific")));
+    }
+
+    private static ProgressSnapshot Progress(long lines, string? warning = null) => new(
+        Guid.NewGuid(),
+        1,
+        IngestStage.Committing,
+        0,
+        0,
+        lines,
+        lines,
+        null,
+        new SessionCounters(),
+        0,
+        TimeSpan.Zero,
+        null,
+        true,
+        true,
+        1,
+        null,
+        null,
+        SegmentCount: 3,
+        Warning: warning);
 
     /// <summary>Line budget the row at <paramref name="index"/> currently draws.</summary>
     private static int MessageLines(ListBox entries, int index)
