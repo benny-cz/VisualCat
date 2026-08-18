@@ -133,6 +133,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private DispatcherTimer? _captureHeartbeat;
     private string _captureScope = string.Empty;
     private long _captureLines;
+    private long _captureCommittedLines;
     private long _captureLastAdvanceMs;
     private long _captureWindowLines;
     private long _captureWindowMs;
@@ -1259,6 +1260,14 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 FileOptions.Asynchronous | FileOptions.RandomAccess);
             var builder = new StringBuilder();
             RawContextMarker? selectedLine = null;
+
+            // A fixed-width gutter, so the source column starts at the same character on every
+            // line and reads as the file's own bytes. It used to be a variable-length prefix
+            // — the sequence, then the ParseOutcomeKind enum name in brackets — which pushed
+            // each line's text to a different column and put a C# identifier in a panel
+            // subtitled "exact bytes" (finding 15a).
+            var sequenceWidth = records.Max(static record => record.Sequence).ToString(
+                System.Globalization.CultureInfo.InvariantCulture).Length;
             foreach (var record in records)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1268,11 +1277,10 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 var selected = record.Sequence == entry.SourceSequence;
                 var start = builder.Length;
                 builder.Append(selected ? '▶' : ' ')
+                    .Append(record.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture).PadLeft(sequenceWidth))
                     .Append(' ')
-                    .Append(record.Sequence)
-                    .Append(" [")
-                    .Append(record.Outcome)
-                    .Append("] ")
+                    .Append(DescribeOutcome(record.Outcome))
+                    .Append(" │ ")
                     .Append(Encoding.UTF8.GetString(bytes).TrimEnd('\r', '\n'))
                     .AppendLine();
                 if (selected)
@@ -1294,6 +1302,23 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             _loadLock.Release();
         }
     }
+
+    /// <summary>
+    /// A two-letter tag for what the parser made of a source line, for the source-context
+    /// gutter. The enum's own names are C# identifiers and belong in code, not in a panel a
+    /// reader compares against another tool's output (finding 15a).
+    /// </summary>
+    internal static string DescribeOutcome(ParseOutcomeKind outcome) => outcome switch
+    {
+        ParseOutcomeKind.ParsedEntry => "en",
+        ParseOutcomeKind.MetaRecord => "mt",
+        ParseOutcomeKind.Continuation => "..",
+        ParseOutcomeKind.UntimedEntry => "e?",
+        ParseOutcomeKind.IgnoredBlank => "  ",
+        ParseOutcomeKind.UnknownLine => "??",
+        ParseOutcomeKind.RejectedCandidate => "!!",
+        _ => "??",
+    };
 
     public async Task<string> ReadRawEntriesAsync(
         IEnumerable<NormalizedEntry> entries,
@@ -1384,6 +1409,15 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     /// </summary>
     public string DescribeCaptureProgress(string scope, long lines)
     {
+        // Callers that only have one count are describing work that is already visible; keep
+        // the overload's original semantics and avoid inventing a pending backlog. The richer
+        // ProgressSnapshot overload below supplies distinct source and committed counts.
+        _captureCommittedLines = lines;
+        return DescribeCaptureSourceProgress(scope, lines);
+    }
+
+    private string DescribeCaptureSourceProgress(string scope, long lines)
+    {
         var now = Environment.TickCount64;
         _captureScope = scope;
         if (lines != _captureLines)
@@ -1421,8 +1455,15 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     {
         ArgumentNullException.ThrowIfNull(progress);
         LiveSegmentCount = progress.SegmentCount;
+        _captureCommittedLines = progress.LinesCommitted;
         UpdateCaptureHealth(progress.Warning);
-        return DescribeCaptureProgress(scope, progress.LinesCommitted);
+
+        // Capture health is about the source, not the storage pipeline. LinesRead advances
+        // as soon as logcat data reaches VisualCat, while LinesCommitted can legitimately lag
+        // behind during parsing, segment sealing, compaction, or manifest publication. Using
+        // the latter made an active device stream say "no new lines" even while the reader
+        // was still receiving data. The pending count below separately explains any lag.
+        return DescribeCaptureSourceProgress(scope, progress.LinesRead);
     }
 
     /// <summary>
@@ -1484,10 +1525,12 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         // Trouble outranks the throughput readout: a rate is only worth reading when the
         // number it describes is still reaching disk and screen.
         var health = CaptureHealthWarning is { Length: > 0 } ? " · ⚠ see session details" : string.Empty;
+        var pendingLines = Math.Max(0, _captureLines - _captureCommittedLines);
+        var pending = pendingLines > 0 ? $" · {pendingLines:N0} pending" : string.Empty;
         var quiet = TimeSpan.FromMilliseconds(Math.Max(0, Environment.TickCount64 - _captureLastAdvanceMs));
         if (quiet.TotalSeconds < 3)
         {
-            return $"Capturing{health} · {_captureLines:N0} lines · {_captureRate:N0}/s · {_captureScope}";
+            return $"Capturing{health} · {_captureLines:N0} lines received · {_captureRate:N0}/s{pending} · {_captureScope}";
         }
 
         // The scope only becomes worth raising once it is actually costing the reader
@@ -1496,8 +1539,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         var hint = quiet.TotalSeconds >= StarvedCaptureSeconds && CaptureScopeSummary is { Length: > 0 } reason
             ? $" · {reason}"
             : string.Empty;
-        return $"Capturing{health} · {_captureLines:N0} lines · " +
-               $"no new lines for {FormatQuiet(quiet)}{hint} · {_captureScope}";
+        return $"Capturing{health} · {_captureLines:N0} lines received{pending} · " +
+               $"no source lines for {FormatQuiet(quiet)}{hint} · {_captureScope}";
     }
 
     private static string FormatQuiet(TimeSpan quiet) =>

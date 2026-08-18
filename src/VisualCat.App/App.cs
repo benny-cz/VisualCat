@@ -13,6 +13,10 @@ public sealed class App : Avalonia.Application
     public override void Initialize()
     {
         Styles.Add(Theme.ProductTheme.CreateFluentTheme());
+
+        // The product's own brushes come first: the styles below resolve them by key, and a
+        // style whose resource is not there yet resolves to nothing.
+        Resources.MergedDictionaries.Add(Theme.ProductTheme.BuildResources());
         foreach (var style in Theme.ProductTheme.BuildStyles())
         {
             Styles.Add(style);

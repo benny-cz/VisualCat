@@ -41,6 +41,20 @@ public abstract class DialogBody<TResult> : UserControl
     /// <summary>Smallest useful desktop window size.</summary>
     public Size MinimumSize { get; protected init; } = new(420, 320);
 
+    /// <summary>
+    /// Whether this body already scrolls its own content and must not be put inside a second
+    /// scroller.
+    /// </summary>
+    /// <remarks>
+    /// The in-page host wraps a dialog in a <see cref="ScrollViewer"/>, which is right for a
+    /// short form and wrong for one that ends in a decision. With nine cached sessions, the
+    /// whole of <c>Recent sessions</c> scrolled — list <em>and</em> its Cancel/Open row — so
+    /// the button that confirms the tapped session sat two screens below it and the first tap
+    /// read as a dead control (finding 16). A body that says it scrolls internally is given
+    /// the sheet's height directly and keeps its own footer where it put it.
+    /// </remarks>
+    internal bool ScrollsInternally { get; init; }
+
     /// <summary>Completes with the dialog's result, or the default when it is dismissed.</summary>
     public Task<TResult?> Completion => _completion.Task;
 

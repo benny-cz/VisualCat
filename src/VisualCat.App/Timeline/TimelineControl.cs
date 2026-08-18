@@ -493,12 +493,18 @@ public sealed class TimelineControl : Control
         var lastLabelRight = double.NegativeInfinity;
         foreach (var instant in NiceTicks.Enumerate(_result.Viewport.Range, interval))
         {
-            var x = transform.InstantToX(instant);
-            context.DrawLine(gridPen, new Point(x, geometry.Top), new Point(x, geometry.Top + geometry.Height + 4));
+            // Not while the axis is labelling its own ends: a gridline whose instant is
+            // printed nowhere states that something regular is happening without saying what,
+            // and a narrow portrait plot drew two to four of them under two end labels
+            // (finding 21.8). Where tick labels are drawn, an occasional line whose text was
+            // dropped for overlap still sits between two printed neighbours and reads.
             if (labelEndpoints)
             {
                 continue;
             }
+
+            var x = transform.InstantToX(instant);
+            context.DrawLine(gridPen, new Point(x, geometry.Top), new Point(x, geometry.Top + geometry.Height + 4));
 
             var label = FormatTick(instant, _result.Viewport.Range.DurationUs);
             var labelX = TimelineAxis.LabelX(instant, _result.Viewport.Range, geometry.Left, geometry.Width, sampleWidth);

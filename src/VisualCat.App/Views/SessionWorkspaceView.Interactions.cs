@@ -40,6 +40,12 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// <summary>Name of the mobile row's "there is more of this" affordance.</summary>
     private const string ExpandGlyphName = "EntryExpand";
 
+    /// <summary>Name of the mobile row's timestamp · process · buffer line.</summary>
+    private const string MetadataBlockName = "EntryMetadata";
+
+    private Avalonia.Styling.Style? _entryRowStyle;
+    private double _entryRowMinimumHeight = double.NaN;
+
     private void ConfigureEntryList()
     {
         _entries.SelectionMode = SelectionMode.Multiple;
@@ -54,11 +60,19 @@ public sealed partial class SessionWorkspaceView : UserControl
             // the rows must sit flush too — a list or item inset slides every value out
             // from under its label.
             _entries.Padding = new Thickness(0);
-            _entries.Styles.Add(CompactItemStyle());
+            ApplyEntryRowHeight(22);
         }
         else
         {
-            _entries.Styles.Add(CompactItemStyle(64));
+            ApplyEntryRowHeight(64);
+
+            // The metadata line is the row's own foreground and Fluent's selection is not,
+            // so a selected row printed muted grey on accent blue at 1.97:1 (finding 7). It
+            // is styled rather than set in the template for the reason every other
+            // state-dependent value here is: a local value in the template outranks the
+            // selected-state setter and would never yield.
+            _entries.Styles.Add(MetadataLineStyle(onSelectedRow: false));
+            _entries.Styles.Add(MetadataLineStyle(onSelectedRow: true));
         }
 
         // One clipped line is the right density for a table being scanned and the wrong
@@ -146,6 +160,63 @@ public sealed partial class SessionWorkspaceView : UserControl
             collapsed ? TextWrapping.NoWrap : TextWrapping.Wrap));
         style.Setters.Add(new Avalonia.Styling.Setter(TextBlock.MaxLinesProperty, maximumLines));
         return style;
+    }
+
+    /// <summary>
+    /// The row's secondary line, lifted to primary text on the row the reader has picked.
+    /// </summary>
+    /// <remarks>
+    /// Selection is a tint rather than a slab now (see <c>ProductTheme.SelectedRowFill</c>),
+    /// which restores the metadata line's contrast on its own — but the selected row is also
+    /// the one row being read rather than scanned, and muted is the wrong weight for it.
+    /// </remarks>
+    private Avalonia.Styling.Style MetadataLineStyle(bool onSelectedRow)
+    {
+        var dark = ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
+        var style = new Avalonia.Styling.Style(selector =>
+        {
+            var item = Avalonia.Styling.Selectors.OfType<ListBoxItem>(selector);
+            return (onSelectedRow ? item.Class(":selected") : item)
+                .Descendant()
+                .OfType<TextBlock>()
+                .Name(MetadataBlockName);
+        });
+        style.Setters.Add(new Avalonia.Styling.Setter(
+            TextBlock.ForegroundProperty,
+            new SolidColorBrush(onSelectedRow
+                ? WorkspacePalette.TextPrimary(dark)
+                : WorkspacePalette.TextMuted(dark))));
+        return style;
+    }
+
+    /// <summary>
+    /// Sets how short an entry row may be, and re-applies it when the viewport class changes.
+    /// </summary>
+    /// <remarks>
+    /// A landscape phone gives the analysis pane about a third of the height a portrait one
+    /// does, and the fixed chrome above the list did not shrink with it — the list was left
+    /// a few pixels tall and no log line was readable in any mode (finding 2). The row keeps
+    /// a 48 dp touch target there; the 64 dp portrait row is comfort, not reach. A style is
+    /// replaced rather than mutated because a setter's value is read when the style is
+    /// applied, not on every change.
+    /// </remarks>
+    private void ApplyEntryRowHeight(double minimumHeight)
+    {
+        if (_entryRowMinimumHeight.Equals(minimumHeight))
+        {
+            return;
+        }
+
+        _entryRowMinimumHeight = minimumHeight;
+        if (_entryRowStyle is { } previous)
+        {
+            _entries.Styles.Remove(previous);
+        }
+
+        // First in the collection: the message-line and glyph styles added after it are
+        // state-dependent and must keep winning.
+        _entryRowStyle = CompactItemStyle(minimumHeight);
+        _entries.Styles.Insert(0, _entryRowStyle);
     }
 
     /// <summary>
@@ -246,11 +317,13 @@ public sealed partial class SessionWorkspaceView : UserControl
                             Text = text,
                             TextTrimming = TextTrimming.CharacterEllipsis,
                         }),
+                    // No local Foreground: the two MetadataLineStyle rules own it, so the
+                    // selected row can lift it out of muted (finding 7).
                     new TextBlock
                     {
+                        Name = MetadataBlockName,
                         Text = $"{FormatInstant(entry.Timestamp)}  ·  {ProcessLabel(entry)}:{entry.Tid}  ·  {entry.Buffer}",
                         FontSize = 10,
-                        Foreground = muted,
                         TextTrimming = TextTrimming.CharacterEllipsis,
                     },
                 },

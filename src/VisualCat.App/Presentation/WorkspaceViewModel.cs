@@ -146,7 +146,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             // watching an import wants is how much of their log is already readable and how
             // fast the rest is arriving (finding 24).
             static snapshot =>
-                $"Reading · {snapshot.LinesCommitted:N0} lines · {snapshot.ThroughputLinesPerSecond:N0}/s",
+                $"Reading · {snapshot.LinesCommitted:N0} lines read · {snapshot.ThroughputLinesPerSecond:N0}/s",
             operationToken);
         try
         {
@@ -189,7 +189,15 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     public async Task<SessionTabViewModel> OpenSessionAsync(string path, CancellationToken cancellationToken = default)
     {
         using var snapshot = await SessionStore.OpenAsync(path, cancellationToken).ConfigureAwait(false);
-        var tab = new SessionTabViewModel(snapshot.Descriptor.DisplayName, Path.GetFullPath(path));
+        var fullPath = Path.GetFullPath(path);
+
+        // Not the manifest's stored name as-is: sessions imported by older builds recorded the
+        // materialised temporary file's name, so the tab, the shared archive and the exported
+        // CSV all inherited a 32-hex guid that the same session's row in Recent sessions never
+        // showed (finding 17).
+        var tab = new SessionTabViewModel(
+            Views.SessionCacheName.DescribeSession(fullPath, snapshot.Descriptor.DisplayName),
+            fullPath);
         Add(tab);
         await tab.LoadSnapshotAsync(true, cancellationToken).ConfigureAwait(false);
         return tab;
@@ -561,8 +569,10 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             return null;
         }
 
+        // No Markdown: this is read by a plain TextBlock, so backticks around logcat and .vcat
+        // rendered as literal backticks in the failure card (finding 20).
         return OperatingSystem.IsAndroid()
-            ? "VisualCat reads Android logcat text — the output of `logcat`, or a `.vcat` " +
+            ? "VisualCat reads Android logcat text — the output of logcat, or a .vcat " +
               "session or portable archive. Check that this file is a logcat capture and " +
               "not, say, a bug report or an application log in another format."
             : "Open it again and choose a format override in the import preview if you know " +

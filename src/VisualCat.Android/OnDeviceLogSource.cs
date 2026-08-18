@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text;
 using Android.Content.PM;
 using VisualCat.Application.Ports;
 using VisualCat.Domain.Sessions;
@@ -27,6 +28,8 @@ public sealed class OnDeviceLogSource : ILogSource
             {
                 ["scope"] = fullDevice ? "full-device" : "own-app",
                 ["permission"] = fullDevice ? "READ_LOGS granted" : "platform restricted",
+                ["buffers"] = "all",
+                ["start"] = "live-tail",
 
                 // ReadAsync asks logcat for UTC and has no fallback, so the source can say
                 // so rather than leaving the capture to assume it.
@@ -53,11 +56,36 @@ public sealed class OnDeviceLogSource : ILogSource
     {
         _ = context;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
-        var arguments = new[] { "logcat", "-b", "main,system,crash", "-v", "threadtime,year,UTC,usec" };
+        // Live means the live edge, not replaying the device's existing ring buffer first.
+        // Without -T the subprocess starts at the oldest retained record. On a busy device the
+        // app can then spend minutes ingesting history while `adb logcat` is already showing the
+        // present, which makes Follow look frozen even though the reader is working. `-T 1` keeps
+        // one real record for immediate continuity and then blocks for new records.
+        //
+        // Use every buffer logcat makes available to this UID. The previous main/system/crash
+        // subset silently omitted traffic that an operator could see with a broader adb capture
+        // (events/radio and, where available, other buffers), producing another false "quiet"
+        // state. Android still applies the caller's permissions to `all`; this does not bypass
+        // READ_LOGS restrictions.
+        var arguments = new[]
+        {
+            "logcat",
+            "-b", "all",
+            "-T", "1",
+            "-v", "threadtime,year,UTC,usec",
+        };
+        global::Android.Util.Log.Info(
+            "VisualCat",
+            $"Starting on-device logcat stream: buffers=all, start=live-tail, scope={Metadata.Properties?["scope"] ?? "unknown"}.");
+
         _process = Java.Lang.Runtime.GetRuntime()?.Exec(arguments)
             ?? throw new InvalidOperationException("Android logcat process could not be started.");
         using var registration = linked.Token.Register(static state => ((Java.Lang.Process)state!).Destroy(), _process);
         var input = _process.InputStream ?? throw new InvalidOperationException("Android logcat stdout is unavailable.");
+        var error = _process.ErrorStream;
+        var errorDrain = error is null
+            ? Task.CompletedTask
+            : DrainErrorStreamAsync(error, linked.Token);
 
         // Android normally limits an unprivileged app to its own UID's log records.
         // Emit one real logcat marker after the reader starts so the user gets prompt,
@@ -67,24 +95,92 @@ public sealed class OnDeviceLogSource : ILogSource
         global::Android.Util.Log.Info("VisualCat", "Live capture connected; waiting for app log activity.");
         var buffer = new byte[256 * 1024];
         long offset = 0;
-        while (!linked.IsCancellationRequested)
+        long chunksRead = 0;
+        try
+        {
+            while (!linked.IsCancellationRequested)
+            {
+                int read;
+                try
+                {
+                    read = await input.ReadAsync(buffer.AsMemory(), linked.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (linked.IsCancellationRequested)
+                {
+                    read = 0;
+                }
+                catch (IOException) when (linked.IsCancellationRequested)
+                {
+                    read = 0;
+                }
+                catch (Java.IO.IOException) when (linked.IsCancellationRequested)
+                {
+                    read = 0;
+                }
+
+                if (read <= 0)
+                {
+                    global::Android.Util.Log.Info(
+                        "VisualCat",
+                        $"On-device logcat stdout ended after {offset:N0} bytes in {chunksRead:N0} chunks; cancelled={linked.IsCancellationRequested}.");
+                    break;
+                }
+
+                var chunk = new byte[read];
+                Buffer.BlockCopy(buffer, 0, chunk, 0, read);
+                yield return new SourceChunk(offset, chunk);
+                offset += read;
+                chunksRead++;
+            }
+        }
+        finally
+        {
+            // Leaving the async enumeration means this source no longer has a consumer. Destroy
+            // the subprocess unconditionally so stdout/stderr both close, including the unusual
+            // case where stdout ended while the process itself had not exited yet. Always observe
+            // the stderr task so a diagnostic-stream failure never becomes unobserved.
+            _process?.Destroy();
+
+            try
+            {
+                await errorDrain.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (linked.IsCancellationRequested)
+            {
+            }
+            catch (IOException exception)
+            {
+                global::Android.Util.Log.Warn("VisualCat", $"Could not finish reading logcat stderr: {exception.Message}");
+            }
+            catch (Java.IO.IOException exception)
+            {
+                global::Android.Util.Log.Warn("VisualCat", $"Could not finish reading logcat stderr: {exception.Message}");
+            }
+        }
+    }
+
+    private static async Task DrainErrorStreamAsync(System.IO.Stream error, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[4 * 1024];
+        var pending = new StringBuilder();
+        while (!cancellationToken.IsCancellationRequested)
         {
             int read;
             try
             {
-                read = await input.ReadAsync(buffer.AsMemory(), linked.Token).ConfigureAwait(false);
+                read = await error.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (linked.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                read = 0;
+                break;
             }
-            catch (IOException) when (linked.IsCancellationRequested)
+            catch (IOException) when (cancellationToken.IsCancellationRequested)
             {
-                read = 0;
+                break;
             }
-            catch (Java.IO.IOException) when (linked.IsCancellationRequested)
+            catch (Java.IO.IOException) when (cancellationToken.IsCancellationRequested)
             {
-                read = 0;
+                break;
             }
 
             if (read <= 0)
@@ -92,10 +188,28 @@ public sealed class OnDeviceLogSource : ILogSource
                 break;
             }
 
-            var chunk = new byte[read];
-            Buffer.BlockCopy(buffer, 0, chunk, 0, read);
-            yield return new SourceChunk(offset, chunk);
-            offset += read;
+            pending.Append(Encoding.UTF8.GetString(buffer, 0, read));
+            while (true)
+            {
+                var text = pending.ToString();
+                var newline = text.IndexOf('\n', StringComparison.Ordinal);
+                if (newline < 0)
+                {
+                    break;
+                }
+
+                var line = text[..newline].TrimEnd('\r');
+                pending.Remove(0, newline + 1);
+                if (line.Length > 0)
+                {
+                    global::Android.Util.Log.Warn("VisualCat", $"logcat stderr: {line}");
+                }
+            }
+        }
+
+        if (pending.Length > 0)
+        {
+            global::Android.Util.Log.Warn("VisualCat", $"logcat stderr: {pending.ToString().TrimEnd('\r', '\n')}");
         }
     }
 

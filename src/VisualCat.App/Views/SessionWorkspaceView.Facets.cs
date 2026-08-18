@@ -34,9 +34,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         UpdateLevelChecks();
         if (filter.IncludedLevels.Count > 0)
         {
-            AddChip(
-                $"levels: {string.Join(',', filter.IncludedLevels.Order().Select(static level => level.ToLetter()))}",
-                () => _viewModel.ClearLevelFilterAsync());
+            AddChip(DescribeLevelFilter(filter.IncludedLevels), () => _viewModel.ClearLevelFilterAsync());
         }
 
         // Several values in one dimension are OR'd — a second included tag widens the
@@ -103,6 +101,29 @@ public sealed partial class SessionWorkspaceView : UserControl
         UpdateChipBarVisibility();
     }
 
+    /// <summary>
+    /// Names the severity filter by what it took away when that is the shorter statement.
+    /// </summary>
+    /// <remarks>
+    /// Hiding one level produced the chip <c>levels: V,D,I,W,F</c> — five values to read in
+    /// order to learn that one is missing, listed in reverse severity so the order did not
+    /// match the F/E/W/I/D/V chip row in the drawer either (finding 21.2). The chip now says
+    /// whichever of "kept" or "hidden" is the smaller set, in the drawer's own order.
+    /// </remarks>
+    private static string DescribeLevelFilter(System.Collections.Immutable.ImmutableHashSet<LogLevel> included)
+    {
+        var kept = new List<string>();
+        var hidden = new List<string>();
+        foreach (var level in LogLevels.DisplayOrder)
+        {
+            (included.Contains(level) ? kept : hidden).Add(LevelPalette.Label(level));
+        }
+
+        return hidden.Count > 0 && hidden.Count < kept.Count
+            ? $"levels: hiding {string.Join(',', hidden)}"
+            : $"levels: {string.Join(',', kept)}";
+    }
+
     private void UpdateMobileFilterCount(FilterSpec filter)
     {
         if (!_mobile)
@@ -155,7 +176,15 @@ public sealed partial class SessionWorkspaceView : UserControl
     {
         var hasChips = _chips.Children.Count > 1 || _rangeActions.IsVisible;
         var canFilter = _viewModel.Snapshot is not null;
-        _chipBar.IsVisible = !(_mobile && _mobileFiltersOpen) && (hasChips || canFilter);
+
+        // Reserving the row is worth a line of a tall portrait viewport. It is not worth one
+        // of a landscape viewport a third as tall, where the same line is the difference
+        // between the entry list showing rows and showing none (finding 2) — and what it
+        // reserves the row to say there is "nothing is filtered", which the Filters button
+        // beside the plot already says by not carrying a count.
+        var reserveRow = canFilter &&
+                         !(_mobile && _mobileLayoutMode == MobileWorkspaceMode.CompactHeight);
+        _chipBar.IsVisible = !(_mobile && _mobileFiltersOpen) && (hasChips || reserveRow);
         if (_chipEmptyLabel is { } empty)
         {
             empty.IsVisible = !hasChips;

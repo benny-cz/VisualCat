@@ -97,6 +97,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private TextBlock? _rawChevron;
     private ScrollViewer? _rawScroller;
     private Button? _rawPanToggle;
+    private Button? _rawSelectToggle;
     private TextBlock? _rawPanState;
     private Button? _rawWrapToggle;
     private Button? _rawRetry;
@@ -219,26 +220,42 @@ public sealed partial class SessionWorkspaceView : UserControl
         _templates.ItemsSource = viewModel.Templates;
         WireInteractions();
         RefreshPresentation();
+
+        // Avalonia surfaces help text as the Android accessibility node's content
+        // description, so a phone's screen reader was reading out a desktop keyboard map —
+        // including a bare "(0)" that has no meaning without a keyboard and is heard as a
+        // count of zero (finding 14). Each platform is told what it can actually do.
         AutomationProperties.SetHelpText(
             _timeline,
-            "Arrow keys pan; plus/minus zoom; 0 fits; F follows; Ctrl+F searches; J/K move between entries.");
-        AutomationProperties.SetHelpText(_search, "Ctrl+F focuses search; Enter applies it; F3 or N moves between matches.");
+            _mobile
+                ? "Drag to pan; pinch to zoom; double-tap to zoom in; Fit shows the whole session."
+                : "Arrow keys pan; plus/minus zoom; 0 fits; F follows; Ctrl+F searches; J/K move between entries.");
+        AutomationProperties.SetHelpText(
+            _search,
+            _mobile
+                ? "Filters the entries as you type. The keyboard's action key applies it and closes this panel."
+                : "Ctrl+F focuses search; Enter applies it; F3 or N moves between matches.");
         SizeChanged += (_, eventArgs) => ApplyMobileLayout(eventArgs.NewSize);
         ActualThemeVariantChanged += (_, _) => ApplyThemeSurfaces();
         ApplyThemeSurfaces();
-        AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(() =>
+        AttachedToVisualTree += (_, _) =>
         {
-            if (_mobile)
+            ObserveInputPane();
+            Dispatcher.UIThread.Post(() =>
             {
-                ApplyMobileLayout(Bounds.Size);
-                _root.InvalidateMeasure();
-                _root.InvalidateArrange();
-            }
+                if (_mobile)
+                {
+                    ApplyMobileLayout(Bounds.Size);
+                    _root.InvalidateMeasure();
+                    _root.InvalidateArrange();
+                }
 
-            ResumeInterruptedRawContextLoad();
-        });
+                ResumeInterruptedRawContextLoad();
+            });
+        };
         DetachedFromVisualTree += (_, _) =>
         {
+            StopObservingInputPane();
             _searchDebounce?.Cancel();
             _searchDebounce?.Dispose();
             _searchDebounce = null;
@@ -335,11 +352,11 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ApplyMobileChoiceAppearance(filterButton, _mobileFiltersOpen);
             }
 
-            if (_rawPanToggle is { } panToggle)
+            if (_rawPanToggle is not null || _rawSelectToggle is not null)
             {
-                // An action button, not a state: what mode the source is in is said in words
-                // beside it (§ finding 15).
-                ApplyMobileChoiceAppearance(panToggle, selected: false);
+                // A two-segment selector: the lit segment is the mode a drag is currently in,
+                // and the words beside it say what that means (findings 15 and 21.3).
+                SetRawPanMode(_rawPanMode);
             }
 
             if (_rawWrapToggle is { } wrapToggle)
@@ -631,7 +648,11 @@ public sealed partial class SessionWorkspaceView : UserControl
                 CornerRadius = new CornerRadius(4),
                 Theme = LevelToggleTheme,
             };
-            ToolTip.SetTip(toggle, $"{level}: click to show or hide these entries");
+            ToolTip.SetTip(
+                toggle,
+                _mobile
+                    ? $"{level}: tap to show or hide these entries"
+                    : $"{level}: click to show or hide these entries");
             AutomationProperties.SetName(toggle, $"{level} level");
             toggle.IsCheckedChanged += (_, _) =>
             {
@@ -649,8 +670,11 @@ public sealed partial class SessionWorkspaceView : UserControl
         var zoomOut = new Button { Content = "−", Padding = new Thickness(9, 3) };
         ToolTip.SetTip(zoomOut, "Zoom out");
         zoomOut.Click += (_, _) => _timeline.ZoomAtCenter(1.8);
-        var fit = new Button { Content = "Fit", Padding = new Thickness(9, 3) };
-        ToolTip.SetTip(fit, "Fit the complete session (0)");
+        var fit = new Button { Content = "Fit", Padding = new Thickness(9, 3), IsVisible = !_mobile };
+
+        // "(0)" is a keyboard shortcut, and a touch device has no keyboard to read it
+        // against — a screen reader announced it as a bare zero (finding 14).
+        ToolTip.SetTip(fit, _mobile ? "Fit the complete session" : "Fit the complete session (0)");
         fit.Click += (_, _) => _timeline.FitSession();
         var zoomIn = new Button { Content = "+", Padding = new Thickness(9, 3) };
         ToolTip.SetTip(zoomIn, "Zoom in");
@@ -780,7 +804,6 @@ public sealed partial class SessionWorkspaceView : UserControl
             _mobileFilterScroll = new ScrollViewer
             {
                 Content = filterBody,
-                MaxHeight = 520,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             };
@@ -828,15 +851,24 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Children = { _mobileFilterScroll, filterFooter },
             };
             Grid.SetRow(filterFooter, 1);
+
+            // The drawer is a full card in the workspace band, not a flap hanging under the
+            // toolbar. Capped at 520 px it ended a fifth of the screen above the bottom in
+            // portrait, leaving a blank band over a workspace it had already hidden
+            // (finding 21.6) — and with the keyboard open it had nowhere to go at all
+            // (finding 1). Filling the band gives the query field, the severity chips and the
+            // Reset/Done footer a fixed home at every viewport height.
             _mobileFilterPanel = new Border
             {
                 BorderBrush = new SolidColorBrush(Color.Parse("#2C4361")),
-                BorderThickness = new Thickness(1, 1, 1, 0),
-                CornerRadius = new CornerRadius(8, 8, 0, 0),
-                Margin = new Thickness(6, 2, 6, 0),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Margin = new Thickness(6, 2, 6, 4),
                 Child = filterPanelGrid,
                 IsVisible = false,
+                ZIndex = 5,
             };
+            AutomationProperties.SetName(_mobileFilterPanel, "Search and timeline filters");
 
             _mobileFilterButton = new Button
             {
@@ -929,8 +961,6 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ColumnDefinitions = new ColumnDefinitions("*"),
             };
             filterShell.Children.Add(quickActions);
-            Grid.SetRow(_mobileFilterPanel, 1);
-            filterShell.Children.Add(_mobileFilterPanel);
             filters = filterShell;
         }
         else
@@ -1237,6 +1267,15 @@ public sealed partial class SessionWorkspaceView : UserControl
         Grid.SetRow(analysis, 5);
         root.Children.Add(analysis);
 
+        // The filter drawer owns the same band the plot and the table do, so it can take
+        // whatever height the viewport has left once the soft keyboard has taken its share.
+        if (_mobileFilterPanel is { } drawer)
+        {
+            Grid.SetRow(drawer, 2);
+            Grid.SetRowSpan(drawer, 4);
+            root.Children.Add(drawer);
+        }
+
         // Occupies the whole workspace band, but only ever while the session has nothing to
         // show; the panes above are hidden rather than covered (see UpdateFailureState).
         var failureCard = BuildFailureCard();
@@ -1254,6 +1293,18 @@ public sealed partial class SessionWorkspaceView : UserControl
         DockPanel.SetDock(_searchStatus, Dock.Right);
         statusBar.Children.Add(_searchStatus);
         statusBar.Children.Add(_status);
+        if (_mobile)
+        {
+            // One clipped line is the right density for a status that rewrites itself several
+            // times a second, and the wrong answer when it ends mid-word on the part that
+            // says what went wrong — "Failed · No supported logcat format could be detected
+            // i…" had no continuation anywhere in the product (finding 21.7). Tapping the row
+            // gives the whole sentence; tapping again gives the row back.
+            statusBar.Tapped += (_, _) => SetStatusExpanded(!_statusExpanded);
+            AutomationProperties.SetName(statusBar, "Session status");
+            AutomationProperties.SetHelpText(statusBar, "Tap to show the whole status line.");
+        }
+
         Grid.SetRow(statusBar, 6);
         root.Children.Add(statusBar);
         return root;

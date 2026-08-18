@@ -6,6 +6,8 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 
@@ -29,6 +31,11 @@ public sealed partial class MainView
     {
         Orientation = Orientation.Horizontal,
         Spacing = 6,
+
+        // The strip's horizontal scrollbar is drawn over its content, not under it, so the
+        // thumb cut a grey line straight through the bottom edge of every tab. Reserving the
+        // thumb's own row is what stops it crossing the chrome (finding 11).
+        Margin = new Thickness(0, 0, 0, 7),
     };
 
     private readonly Dictionary<SessionTabViewModel, TabChip> _chips = [];
@@ -164,7 +171,7 @@ public sealed partial class MainView
             chip.Close.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
             if (isSelected)
             {
-                chip.Root.BringIntoView();
+                BringChipIntoView(chip.Root);
             }
         }
 
@@ -174,4 +181,19 @@ public sealed partial class MainView
                               (_chips.Count == 1 && !(OperatingSystem.IsAndroid() && _mobileCompactHeight));
         }
     }
+
+    /// <summary>
+    /// Scrolls the selected session's chip into view once it has a position to scroll to.
+    /// </summary>
+    /// <remarks>
+    /// This was already being asked for, in the same pass that creates the chip — before the
+    /// strip had laid anything out, so the chip's bounds were still empty and the request was
+    /// a no-op. Opening a third session therefore selected a tab that stayed off screen: the
+    /// workspace switched to a session whose tab reported a 10 px sliver at the right edge,
+    /// and nothing on screen said which session was showing (finding 11). Posted at
+    /// <see cref="DispatcherPriority.Loaded"/>, the request runs after the arrange it depends
+    /// on.
+    /// </remarks>
+    private static void BringChipIntoView(Control chip) =>
+        Dispatcher.UIThread.Post(chip.BringIntoView, DispatcherPriority.Loaded);
 }

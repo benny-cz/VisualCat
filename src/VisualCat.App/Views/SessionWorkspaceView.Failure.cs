@@ -152,6 +152,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         foreach (var suppressed in new[]
                  {
                      _filterHost,
+                     _mobileFilterPanel,
                      _chipBar,
                      (Control)_timeline,
                      _minimapFrame,

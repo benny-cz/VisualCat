@@ -59,7 +59,8 @@ public static class ExportService
         await output.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public static async Task ExportNormalizedCsvAsync(
+    /// <returns>The number of data rows written, not counting the header.</returns>
+    public static async Task<long> ExportNormalizedCsvAsync(
         SessionSnapshot snapshot,
         string destination,
         TimeRange range,
@@ -67,7 +68,7 @@ public static class ExportService
         EntryOrder order,
         CancellationToken cancellationToken = default)
     {
-        await ExportNormalizedCsvAsync(
+        return await ExportNormalizedCsvAsync(
             snapshot,
             destination,
             range,
@@ -77,7 +78,13 @@ public static class ExportService
             cancellationToken).ConfigureAwait(false);
     }
 
-    public static async Task ExportNormalizedCsvAsync(
+    /// <returns>The number of data rows written, not counting the header.</returns>
+    /// <remarks>
+    /// The count is returned so the caller can say how much was written. "Export CSV" is
+    /// scoped to a time range, and a reader who has zoomed in has no way to tell a complete
+    /// file from a truncated one by looking at it (finding 10).
+    /// </remarks>
+    public static async Task<long> ExportNormalizedCsvAsync(
         SessionSnapshot snapshot,
         string destination,
         TimeRange range,
@@ -86,6 +93,7 @@ public static class ExportService
         bool includeUtf8Bom,
         CancellationToken cancellationToken = default)
     {
+        var written = 0L;
         await using var output = new AtomicDestination(destination);
         await using (var writer = new StreamWriter(output.Stream, new UTF8Encoding(includeUtf8Bom), 1024 * 1024, leaveOpen: true))
         {
@@ -98,6 +106,7 @@ public static class ExportService
                 foreach (var entry in page.Entries)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    written++;
                     var values = new[]
                     {
                         entry.Timestamp?.ToString() ?? string.Empty,
@@ -120,6 +129,7 @@ public static class ExportService
         }
 
         await output.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return written;
     }
 
     public static async Task ExportTemplateReportAsync(

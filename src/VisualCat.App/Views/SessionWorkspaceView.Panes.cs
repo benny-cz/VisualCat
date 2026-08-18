@@ -65,11 +65,18 @@ public sealed partial class SessionWorkspaceView : UserControl
             AutomationProperties.SetName(count, $"{exactCount} matching entries");
             row.Children.Add(count);
             var totalMatching = Math.Max(template.Count, _viewModel.Statistics?.TotalMatching ?? template.Count);
+
+            // Scaled against the biggest template in the list, not against the whole matching
+            // set. The busiest template in a real session is a couple of percent of it, so
+            // every bar filled about one pixel of an 86 px track and six rows counting 864
+            // down to 570 drew six identical rules (finding 18). This list exists to rank
+            // templates against each other; the absolute share stays in the tooltip.
+            var leader = Math.Max(1, LargestTemplateCount());
             var prevalence = new ProgressBar
             {
                 Minimum = 0,
-                Maximum = totalMatching,
-                Value = template.Count,
+                Maximum = leader,
+                Value = Math.Min(template.Count, leader),
                 Width = metricWidth,
                 MinWidth = 0,
                 Height = 3,
@@ -81,7 +88,11 @@ public sealed partial class SessionWorkspaceView : UserControl
             };
             ToolTip.SetTip(
                 prevalence,
-                $"{exactCount} entries · {template.Count / (double)Math.Max(1, totalMatching):P1} of current matches");
+                $"{exactCount} entries · {template.Count / (double)Math.Max(1, totalMatching):P1} of current matches · " +
+                $"bar is relative to the largest template listed");
+            AutomationProperties.SetName(
+                prevalence,
+                $"{template.Count / (double)Math.Max(1, totalMatching):P1} of current matches");
             Grid.SetRow(prevalence, 1);
             row.Children.Add(prevalence);
             var canonical = new TextBlock
@@ -237,6 +248,26 @@ public sealed partial class SessionWorkspaceView : UserControl
                 new TabItem { Header = "Session", Content = panes[3] },
             },
         };
+    }
+
+    /// <summary>
+    /// The count the prevalence bars are scaled against: the busiest template currently
+    /// listed. The list is capped at a few dozen rows and only re-realized when the query
+    /// changes, so scanning it per row is cheaper than caching a value that can go stale
+    /// against the collection it describes.
+    /// </summary>
+    private long LargestTemplateCount()
+    {
+        var largest = 0L;
+        foreach (var template in _viewModel.Templates)
+        {
+            if (template.Count > largest)
+            {
+                largest = template.Count;
+            }
+        }
+
+        return largest;
     }
 
     internal static string FormatTemplateCount(long count)

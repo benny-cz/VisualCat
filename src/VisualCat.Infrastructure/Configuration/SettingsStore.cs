@@ -30,7 +30,16 @@ public sealed record ApplicationSettings(
     // Whether the reader has already been told what an on-device capture does before Android
     // asks them to allow it. Android's own prompt appears on every capture and says nothing
     // about where the data goes; this records that the app has explained itself once.
-    bool LiveCaptureNoticeAcknowledged = false);
+    bool LiveCaptureNoticeAcknowledged = false,
+
+    // The sessions that were open when the workspace was last on screen, and which of them
+    // was in front. On Android one Back press finishes the activity, so a workspace of three
+    // sessions — with their filters, viewports and selections — was gone with a gesture that
+    // is easy to hit by accident, and reassembling it took several taps per tab. The captures
+    // themselves are durable on disk and each session's view is already persisted; only the
+    // list of what was open was not.
+    string[]? OpenSessionPaths = null,
+    int OpenSessionIndex = 0);
 
 public sealed class SettingsStore(string path)
 {
@@ -111,6 +120,12 @@ public sealed class SettingsStore(string path)
             buffers = ["main", "system", "crash"];
         }
 
+        var openSessions = (settings.OpenSessionPaths ?? [])
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(12)
+            .ToArray();
+
         return settings with
         {
             Theme = theme,
@@ -132,6 +147,12 @@ public sealed class SettingsStore(string path)
                 : null,
             WindowWidth = settings.WindowWidth is { } width ? Math.Clamp(width, 900, 16_384) : null,
             WindowHeight = settings.WindowHeight is { } height ? Math.Clamp(height, 600, 16_384) : null,
+
+            // A restore that reopens a hundred sessions is not a restore. The cap is the
+            // number a person can plausibly have been working with, and the index has to
+            // address the list that survived it.
+            OpenSessionPaths = openSessions,
+            OpenSessionIndex = Math.Clamp(settings.OpenSessionIndex, 0, Math.Max(0, openSessions.Length - 1)),
         };
     }
 }

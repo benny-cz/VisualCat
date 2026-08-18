@@ -37,7 +37,24 @@ public sealed partial class MainView : IDialogHost
         string? Description,
         Func<Task> Action,
         Func<bool>? CanExecute,
-        bool IsSetting);
+        bool IsSetting,
+        CommandGroup Group = CommandGroup.ThisSession);
+
+    /// <summary>
+    /// Which heading a secondary command belongs under.
+    /// </summary>
+    /// <remarks>
+    /// "THIS SESSION" was emitted before the first non-setting command and then covered every
+    /// one of them, so it sat above Recent sessions…, Open portable archive… and Open
+    /// session… — three commands whose whole purpose is to open a <em>different</em> session
+    /// (finding 21.1). Only Share and Export CSV act on the session the reader is looking at.
+    /// </remarks>
+    private enum CommandGroup
+    {
+        Open,
+        ThisSession,
+        Settings,
+    }
 
     private readonly List<CommandDescriptor> _secondaryCommands = [];
 
@@ -58,17 +75,13 @@ public sealed partial class MainView : IDialogHost
     {
         var dark = ActualThemeVariant != ThemeVariant.Light;
         var items = new StackPanel { Spacing = 2 };
-        var addedSettingsHeader = false;
-        foreach (var command in _secondaryCommands)
+        CommandGroup? heading = null;
+        foreach (var command in _secondaryCommands.OrderBy(static command => command.Group))
         {
-            if (command.IsSetting && !addedSettingsHeader)
+            if (heading != command.Group)
             {
-                addedSettingsHeader = true;
-                items.Children.Add(SheetSectionLabel("SETTINGS", dark));
-            }
-            else if (!command.IsSetting && items.Children.Count == 0)
-            {
-                items.Children.Add(SheetSectionLabel("THIS SESSION", dark));
+                heading = command.Group;
+                items.Children.Add(SheetSectionLabel(GroupLabel(command.Group), dark));
             }
 
             items.Children.Add(BuildSheetItem(command, dark));
@@ -88,6 +101,13 @@ public sealed partial class MainView : IDialogHost
             });
         PushOverlay(sheet, () => RemoveOverlay(sheet));
     }
+
+    private static string GroupLabel(CommandGroup group) => group switch
+    {
+        CommandGroup.Open => "OPEN ANOTHER SESSION",
+        CommandGroup.ThisSession => "THIS SESSION",
+        _ => "SETTINGS",
+    };
 
     private static TextBlock SheetSectionLabel(string text, bool dark) => new()
     {
@@ -157,7 +177,16 @@ public sealed partial class MainView : IDialogHost
     /// A bottom sheet: a scrim that dismisses on tap and a panel anchored to the bottom edge,
     /// where a thumb is.
     /// </summary>
-    private Grid BuildSheet(string title, Control body, bool dark, Action dismiss)
+    /// <remarks>
+    /// <c>scrolls</c> says whether the sheet should scroll the body: a body that scrolls its
+    /// own content and ends in a decision row must not be put inside a second scroller, or the
+    /// decision scrolls away with the list above it (finding 16). <c>showClose</c> says
+    /// whether the sheet supplies its own dismissal — Appearance &amp; timeline offered Close
+    /// in the header <em>and</em> Cancel and Apply at the foot, with nothing saying whether
+    /// Close saved or discarded (finding 21.4), so a body that carries its own Cancel does not
+    /// get a second, differently-worded one above it.
+    /// </remarks>
+    private Grid BuildSheet(string title, Control body, bool dark, Action dismiss, bool scrolls = true, bool showClose = true)
     {
         var scrim = new Border
         {
@@ -168,16 +197,6 @@ public sealed partial class MainView : IDialogHost
             eventArgs.Handled = true;
             dismiss();
         };
-
-        var close = new Button
-        {
-            Content = "Close",
-            MinHeight = 44,
-            Padding = new Thickness(12, 0),
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
-        AutomationProperties.SetName(close, "Close this sheet");
-        close.Click += (_, _) => dismiss();
 
         var header = new Grid
         {
@@ -193,19 +212,33 @@ public sealed partial class MainView : IDialogHost
             Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark)),
         };
         header.Children.Add(heading);
-        Grid.SetColumn(close, 1);
-        header.Children.Add(close);
+        if (showClose)
+        {
+            var close = new Button
+            {
+                Content = "Close",
+                MinHeight = 44,
+                Padding = new Thickness(12, 0),
+                VerticalContentAlignment = VerticalAlignment.Center,
+            };
+            AutomationProperties.SetName(close, "Close this sheet");
+            close.Click += (_, _) => dismiss();
+            Grid.SetColumn(close, 1);
+            header.Children.Add(close);
+        }
 
         var content = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
         content.Children.Add(header);
-        var scroll = new ScrollViewer
-        {
-            Content = body,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        };
-        Grid.SetRow(scroll, 1);
-        content.Children.Add(scroll);
+        Control inner = scrolls
+            ? new ScrollViewer
+            {
+                Content = body,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            }
+            : body;
+        Grid.SetRow(inner, 1);
+        content.Children.Add(inner);
 
         var panel = new Border
         {
@@ -213,6 +246,10 @@ public sealed partial class MainView : IDialogHost
             BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark)),
             BorderThickness = new Thickness(1, 1, 1, 0),
             CornerRadius = new CornerRadius(16, 16, 0, 0),
+
+            // MainView uses Avalonia's automatic safe-area padding on Android, so the sheet
+            // is already inside the cutout/navigation-safe content rectangle. Keeping the
+            // sheet padding platform-independent avoids double-applying the navigation inset.
             Padding = new Thickness(12, 12, 12, 18),
             VerticalAlignment = VerticalAlignment.Bottom,
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -294,7 +331,13 @@ public sealed partial class MainView : IDialogHost
         // control keeps one parent, and a dialog presented twice would otherwise be stuck
         // inside a card nobody can see.
         var host = new ContentControl { Content = body };
-        var card = BuildSheet(body.DialogTitle, host, dark, body.Dismiss);
+        var card = BuildSheet(
+            body.DialogTitle,
+            host,
+            dark,
+            body.Dismiss,
+            scrolls: !body.ScrollsInternally,
+            showClose: false);
         PushOverlay(card, body.Dismiss);
         body.NotifyPresented();
         try

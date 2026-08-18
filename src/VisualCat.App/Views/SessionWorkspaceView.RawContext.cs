@@ -355,13 +355,23 @@ public sealed partial class SessionWorkspaceView : UserControl
             FontWeight = FontWeight.Bold,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        // The claim has to match what is drawn. Each line carries a sequence number and a
+        // parse tag before the file's own text, so "exact bytes" was wrong about the line and
+        // right only about the part after the divider (finding 15a).
         var hint = new TextBlock
         {
-            Text = "exact bytes, with the lines around them",
+            Text = _mobile
+                ? "exact bytes, after the │"
+                : "exact bytes after the │, with the lines around them",
             FontSize = 10,
             Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
         };
+        ToolTip.SetTip(
+            hint,
+            "Each line shows its source sequence number and how the parser read it, then the "
+            + "file's own bytes after the divider.");
         var header = _sourceHeader = new Button
         {
             Background = Brushes.Transparent,
@@ -407,13 +417,21 @@ public sealed partial class SessionWorkspaceView : UserControl
         Control tools;
         if (_mobile)
         {
-            var panToggle = _rawPanToggle = new Button
+            // A segmented pair, not one button that both shows a mode and switches it. Its
+            // neighbour "Wrap ✓" names the state the reader is in while this one named the
+            // action a tap performs, so two adjacent controls disagreed about what their own
+            // labels meant (finding 21.3). This is the same Plot/Split/Details idiom the
+            // workspace already uses: both modes are on screen, the current one is lit, and
+            // a tap selects rather than flips.
+            var panToggle = _rawPanToggle = RawModeSegment("Scroll", 0, pan: true);
+            var selectToggle = _rawSelectToggle = RawModeSegment("Select", 2, pan: false);
+            var modeSelector = new Grid
             {
-                MinHeight = 48,
-                MinWidth = 96,
-                Padding = new Thickness(8, 0),
+                ColumnDefinitions = new ColumnDefinitions("Auto,Auto"),
+                Children = { panToggle, selectToggle },
             };
-            panToggle.Click += (_, _) => SetRawPanMode(!_rawPanMode);
+            Grid.SetColumn(selectToggle, 1);
+            AutomationProperties.SetName(modeSelector, "What a drag over the source does");
 
             // What the mode currently is, in words, on screen. It was a ToolTip — which a
             // touch device never shows — so the only clue was a button labelled with the
@@ -480,7 +498,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 LineSpacing = 6,
                 Children =
                 {
-                    panToggle,
+                    modeSelector,
                     wrapToggle,
                     panLeft,
                     panRight,
@@ -875,6 +893,26 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// Switches what a drag over the source does. The button is labelled with the action it
     /// performs rather than with the mode it is in, and the mode itself is stated beside it.
     /// </summary>
+    /// <summary>One half of the source drag-mode selector.</summary>
+    private Button RawModeSegment(string label, int corner, bool pan)
+    {
+        var button = new Button
+        {
+            Content = label,
+            MinHeight = 48,
+            MinWidth = 74,
+            Padding = new Thickness(8, 0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            CornerRadius = corner == 0 ? new CornerRadius(7, 0, 0, 7) : new CornerRadius(0, 7, 7, 0),
+        };
+        AutomationProperties.SetName(
+            button,
+            pan ? "Drag to scroll the source" : "Drag to select source text");
+        button.Click += (_, _) => SetRawPanMode(pan);
+        return button;
+    }
+
     private void SetRawPanMode(bool pan)
     {
         _rawPanMode = pan;
@@ -886,16 +924,17 @@ public sealed partial class SessionWorkspaceView : UserControl
                 : "Dragging selects text; it returns to scrolling once you copy or lift.";
         }
 
-        if (_rawPanToggle is not { } panToggle)
+        if (_rawPanToggle is { } panToggle)
         {
-            return;
+            ApplyMobileChoiceAppearance(panToggle, selected: pan);
+            panToggle.FontWeight = pan ? FontWeight.SemiBold : FontWeight.Normal;
         }
 
-        panToggle.Content = pan ? "Select text" : "Scroll";
-        ApplyMobileChoiceAppearance(panToggle, selected: false);
-        AutomationProperties.SetName(
-            panToggle,
-            pan ? "Switch to selecting text" : "Switch to scrolling the source");
+        if (_rawSelectToggle is { } selectToggle)
+        {
+            ApplyMobileChoiceAppearance(selectToggle, selected: !pan);
+            selectToggle.FontWeight = pan ? FontWeight.Normal : FontWeight.SemiBold;
+        }
     }
 
     private void SetRawWrap(bool wrap)

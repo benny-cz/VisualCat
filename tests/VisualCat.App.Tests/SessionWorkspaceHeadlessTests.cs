@@ -455,6 +455,31 @@ public sealed class SessionWorkspaceHeadlessTests
     }
 
     /// <summary>
+    /// Source activity and committed visibility are different clocks. A busy Android reader
+    /// must not be described as quiet merely because parsing or publication is behind it.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task CaptureStatusUsesSourceLinesAndReportsCommitBacklogSeparately()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await using var tab = new SessionTabViewModel("Live", root) { IsLiveCaptureActive = true };
+        try
+        {
+            var progress = Progress(linesRead: 250, linesCommitted: 175);
+            var status = tab.DescribeCaptureProgress("On-device full-device logcat", progress);
+
+            Assert.Contains("250 lines received", status, StringComparison.Ordinal);
+            Assert.Contains("75 pending", status, StringComparison.Ordinal);
+            Assert.DoesNotContain("175 lines received", status, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// A capture that is quietly failing to write, or a view that has quietly stopped
     /// refreshing, must not keep looking like a healthy quiet capture.
     /// </summary>
@@ -536,14 +561,17 @@ public sealed class SessionWorkspaceHeadlessTests
         Assert.Equal("something specific", WorkspaceViewModel.FriendlyMessage(new InvalidOperationException("something specific")));
     }
 
-    private static ProgressSnapshot Progress(long lines, string? warning = null) => new(
+    private static ProgressSnapshot Progress(long lines, string? warning = null) =>
+        Progress(lines, lines, warning);
+
+    private static ProgressSnapshot Progress(long linesRead, long linesCommitted, string? warning = null) => new(
         Guid.NewGuid(),
         1,
         IngestStage.Committing,
         0,
         0,
-        lines,
-        lines,
+        linesRead,
+        linesCommitted,
         null,
         new SessionCounters(),
         0,

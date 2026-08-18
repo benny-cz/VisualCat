@@ -21,6 +21,25 @@
     -->
     <item name="android:windowBackground">@color/visualcat_window_background</item>
     <!--
+      The decor area *outside* the window's laid-out content — which is a different surface
+      from windowBackground, and the one that actually produced the white band. AppCompat
+      leaves it at a light default, so with the content laid out inside the display-cutout
+      safe inset, a 136 px stripe of it ran the full height of the screen beside a dark app in
+      landscape, and the same white filled the gap under the app while the keyboard animated
+      in. MainView also opts the window into drawing edge to edge and distributes the safe-area
+      inset itself, which is what stops the app's surface ending there in the first place; this
+      makes the failure mode dark rather than white if any surface is ever missed.
+    -->
+    <item name="android:windowBackgroundFallback">@color/visualcat_window_background</item>
+    <!--
+      Let the window reach the physical edge of a cutout display. Without it the platform lays
+      the content out inside the cutout-safe inset, which is both where the white band came
+      from and why every accessibility node's bounds were reported one status bar away from the
+      control it described: the nodes are in window coordinates, and the window did not start
+      at the screen's origin.
+    -->
+    <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    <!--
       Resize rather than pan when the soft keyboard appears. Panning slides the whole window up
       and leaves the drawer's own footer — TIME LENS, Reset, Done, and the active filter count —
       behind the keyboard with no way to reach them; resizing hands the app a smaller viewport,

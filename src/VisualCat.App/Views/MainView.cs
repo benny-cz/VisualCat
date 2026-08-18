@@ -74,6 +74,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private StackPanel? _recentList;
     private TextBlock? _recentHeading;
     private Control? _recentSection;
+    private Button? _recentShowAll;
 
     private static string DiagnosticsDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -99,7 +100,11 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
         // Suspension is not posted to the dispatcher: OnPause is the last moment the app
         // reliably gets before the process is frozen, and a queued message may not run.
-        _appPausedHandler = () => _viewModel.SuspendLiveViews();
+        _appPausedHandler = () =>
+        {
+            _viewModel.SuspendLiveViews();
+            PersistOpenWorkspaceOnPause();
+        };
         PlatformSourceRegistry.LaunchFilesReceived += _launchFilesHandler;
         PlatformSourceRegistry.AppResumed += _appResumedHandler;
         PlatformSourceRegistry.AppPaused += _appPausedHandler;
@@ -118,12 +123,14 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
             UpdateSessionStrip();
             UpdateSessionActionAvailability();
+            PersistOpenWorkspace();
         };
         AttachedToVisualTree += (_, _) =>
         {
             // The gesture is raised on the top level, so the handler belongs there; a
             // descendant never sees it.
             TopLevel.GetTopLevel(this)?.AddHandler(TopLevel.BackRequestedEvent, OnBackRequested);
+            ObserveSafeArea();
             if (!_startupOpened)
             {
                 _startupOpened = true;
@@ -131,7 +138,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             }
         };
         DetachedFromVisualTree += (_, _) =>
+        {
             TopLevel.GetTopLevel(this)?.RemoveHandler(TopLevel.BackRequestedEvent, OnBackRequested);
+            StopObservingSafeArea();
+        };
         AddHandler(KeyDownEvent, OnKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
     }
 
@@ -180,7 +190,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         _settings = updated;
-        await _settingsStore.SaveAsync(_settings, cancellationToken);
+        await SaveSettingsAsync(cancellationToken);
     }
 
     // The brand/command bar stays dark in both themes as the application's identity
@@ -188,8 +198,12 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private void ApplyThemeSurfaces()
     {
         var dark = ActualThemeVariant != ThemeVariant.Light;
-        _rootPanel.Background = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.Surface(dark));
+        var workspaceSurface = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.Surface(dark));
+        Background = workspaceSurface;
+        _rootPanel.Background = workspaceSurface;
+        ApplySystemBarSurface();
         _emptyState.Child = BuildEmptyState(dark);
+        ApplyNoticeTheme();
     }
 
     private Grid Build()
@@ -273,7 +287,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             },
             BorderBrush = new SolidColorBrush(Color.Parse("#243753")),
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Padding = new Thickness(OperatingSystem.IsAndroid() ? 10 : 12, 9),
+            Padding = CommandBarPadding(compact: false),
             Child = commandContent,
         };
         DockPanel.SetDock(commandBar, Dock.Top);
@@ -281,6 +295,12 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var sessionStrip = BuildSessionStrip();
         DockPanel.SetDock(sessionStrip, Dock.Top);
         root.Children.Add(sessionStrip);
+
+        // Docked rather than floated: a message that covers the status line it was raised
+        // beside answers one question by hiding another (finding 5).
+        var notice = BuildNotice();
+        DockPanel.SetDock(notice, Dock.Bottom);
+        root.Children.Add(notice);
         var workspaceHost = new Grid();
         workspaceHost.Children.Add(_tabs);
         // The overlay carries the get-started links now, so it must receive clicks. It is
@@ -299,6 +319,19 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         return shell;
     }
 
+    private static Thickness CommandBarPadding(bool compact)
+    {
+        if (!OperatingSystem.IsAndroid())
+        {
+            return new Thickness(12, 8);
+        }
+
+        // Keep the three primary mobile actions comfortably separated from the shell edge,
+        // but collapse vertical chrome before the log/insights viewport in compact-height
+        // landscape. Touch-target height is owned by the buttons themselves, not this padding.
+        return compact ? new Thickness(8, 4) : new Thickness(10, 6);
+    }
+
     private void UpdateMobileChrome(Size size)
     {
         if (!OperatingSystem.IsAndroid() || _brandRow is null || _commandBar is null)
@@ -315,9 +348,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // command; the empty/home state still carries the complete VisualCat masthead.
         _brandRow.IsVisible = !compactHeight && !sessionOpen;
         _commandContent.Spacing = compactHeight || sessionOpen ? 0 : 8;
-        _commandBar.Padding = compactHeight || sessionOpen
-            ? new Thickness(10, 5)
-            : new Thickness(10, 9);
+        _commandBar.Padding = CommandBarPadding(compact: compactHeight || sessionOpen);
         // Session tabs remain a compact top row. A side rail looks efficient on paper, but
         // wastes a large column when a phone has the common one-session workspace.
         _tabs.TabStripPlacement = Dock.Top;
@@ -428,12 +459,22 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             Spacing = 4,
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
+
+        // The heading states that some captures are not listed; the way to see them has to be
+        // beside the list that omits them, not three rows above it (finding 21.9).
+        var showAll = _recentShowAll = HeroLink(
+            "SHOW ALL CAPTURES",
+            OpenRecentAsync,
+            "List every capture this device holds",
+            dark);
+        showAll.HorizontalAlignment = HorizontalAlignment.Center;
+        showAll.IsVisible = false;
         var section = _recentSection = new StackPanel
         {
             Spacing = 6,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             IsVisible = false,
-            Children = { heading, list },
+            Children = { heading, list, showAll },
         };
         _ = RefreshRecentSessionsAsync();
         return section;
@@ -479,11 +520,20 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         section.IsVisible = recent.Length > 0;
+        var hasMore = sessions.Count > recent.Length;
         if (_recentHeading is { } heading && recent.Length > 0)
         {
-            heading.Text = sessions.Count > recent.Length
+            heading.Text = hasMore
                 ? $"RECENT CAPTURES ON THIS DEVICE · {recent.Length} OF {sessions.Count:N0}"
                 : "RECENT CAPTURES ON THIS DEVICE";
+        }
+
+        if (_recentShowAll is { } showAll)
+        {
+            showAll.IsVisible = hasMore && recent.Length > 0;
+            Avalonia.Automation.AutomationProperties.SetName(
+                showAll,
+                $"Show all {sessions.Count:N0} captures on this device");
         }
     }
 
@@ -652,7 +702,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             string menuLabel,
             Func<Task> action,
             string? description = null,
-            Func<bool>? canExecute = null)
+            Func<bool>? canExecute = null,
+            CommandGroup group = CommandGroup.ThisSession)
         {
             var command = new ToolbarCommand(
                 ActionButton(buttonLabel, action),
@@ -661,13 +712,19 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             _toolbarFlexible.Add(command);
             _toolbar.Children.Add(command.Button);
             _secondaryCommands.Add(
-                new CommandDescriptor(menuLabel, description, action, canExecute, IsSetting: false));
+                new CommandDescriptor(menuLabel, description, action, canExecute, IsSetting: false, group));
         }
 
         void Setting(string menuLabel, Func<Task> action, string? description = null)
         {
             _toolbarSettings.Add(MenuAction(menuLabel, action));
-            _secondaryCommands.Add(new CommandDescriptor(menuLabel, description, action, null, IsSetting: true));
+            _secondaryCommands.Add(new CommandDescriptor(
+                menuLabel,
+                description,
+                action,
+                null,
+                IsSetting: true,
+                CommandGroup.Settings));
         }
 
         Primary("＋  Open log", OpenLogAsync);
@@ -678,9 +735,26 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 Primary("●  Live", StartOnDeviceAsync);
             }
 
-            Flexible("Recent", "Recent sessions…", OpenRecentAsync, "Reopen a capture this device already holds");
-            Flexible("Open archive", "Open portable archive…", OpenArchiveAsync, "Open a .vcat.zip someone shared");
-            Flexible("Open session", "Open session…", OpenSessionAsync, "Open a .vcat session folder");
+            // These three open a different session, so they do not belong under "THIS
+            // SESSION" with Share and Export CSV (finding 21.1).
+            Flexible(
+                "Recent",
+                "Recent sessions…",
+                OpenRecentAsync,
+                "Reopen a capture this device already holds",
+                group: CommandGroup.Open);
+            Flexible(
+                "Open archive",
+                "Open portable archive…",
+                OpenArchiveAsync,
+                "Open a .vcat.zip someone shared",
+                group: CommandGroup.Open);
+            Flexible(
+                "Open session",
+                "Open session…",
+                OpenSessionAsync,
+                "Open a .vcat session folder",
+                group: CommandGroup.Open);
             if (PlatformSourceRegistry.ShareFileAsync is not null)
             {
                 Flexible(
@@ -701,10 +775,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         else
         {
             Primary("●  ADB live", StartAdbAsync);
-            Flexible("Open session", "Open session…", OpenSessionAsync);
-            Flexible("Recent", "Recent sessions…", OpenRecentAsync);
-            Flexible("Follow file", "Follow growing file…", FollowFileAsync);
-            Flexible("Open archive", "Open portable archive…", OpenArchiveAsync);
+            Flexible("Open session", "Open session…", OpenSessionAsync, group: CommandGroup.Open);
+            Flexible("Recent", "Recent sessions…", OpenRecentAsync, group: CommandGroup.Open);
+            Flexible("Follow file", "Follow growing file…", FollowFileAsync, group: CommandGroup.Open);
+            Flexible("Open archive", "Open portable archive…", OpenArchiveAsync, group: CommandGroup.Open);
             Flexible(
                 "Save",
                 "Save session…",
@@ -1024,9 +1098,11 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        _message.Text = OperatingSystem.IsAndroid()
-            ? "Folder-backed sessions are app-private on Android. Use Recent sessions or open a portable .vcat.zip archive."
-            : "The selected session folder is not exposed as a filesystem path.";
+        ShowNotice(
+            OperatingSystem.IsAndroid()
+                ? "Folder-backed sessions are app-private on Android. Use Recent sessions or open a portable .vcat.zip archive."
+                : "The selected session folder is not exposed as a filesystem path.",
+            NoticeKind.Failure);
     }
 
     private async Task OpenArchiveAsync()
@@ -1090,7 +1166,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         {
             await tab.PersistViewAsync();
             await SessionSaveService.SaveAsync(tab.Snapshot, destination, portable);
-            _message.Text = $"Saved: {destination}";
+            ShowNotice($"Saved: {destination}");
         });
     }
 
@@ -1103,30 +1179,83 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
+        var scope = await ResolveExportScopeAsync(tab, selectedRange);
+        if (scope is null)
+        {
+            return;
+        }
+
         var file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
         {
-            Title = "Export filtered entries",
-            SuggestedFileName = $"{Path.GetFileNameWithoutExtension(tab.Title)}.csv",
+            Title = $"Export {scope.Label.ToLowerInvariant()}",
+
+            // Without the extension. Android's DocumentsUI appends the one implied by the
+            // MIME type on top of whatever the suggestion carries, so a name ending in ".csv"
+            // was saved as "….csv.csv"; desktop pickers append DefaultExtension themselves
+            // when the typed name has none (finding 8).
+            SuggestedFileName = Path.GetFileNameWithoutExtension(tab.Title),
             DefaultExtension = "csv",
         });
-        if (file is not null)
+        if (file is null)
         {
-            using (file)
+            return;
+        }
+
+        using (file)
+        {
+            var written = 0L;
+            var name = file.Name;
+            await RunAsync(() => StorageFileBridge.WriteAsync(
+                file,
+                async (path, cancellationToken) => written = await ExportService.ExportNormalizedCsvAsync(
+                    tab.Snapshot,
+                    path,
+                    scope.Range,
+                    tab.Filter,
+                    _settings.ExportOrder == "Chronological"
+                        ? VisualCat.Domain.Queries.EntryOrder.Chronological
+                        : VisualCat.Domain.Queries.EntryOrder.SourceSequence,
+                    _settings.ExportEncoding != "utf-8",
+                    cancellationToken)));
+            if (written > 0)
             {
-                await RunAsync(() => StorageFileBridge.WriteAsync(
-                    file,
-                    (path, cancellationToken) => ExportService.ExportNormalizedCsvAsync(
-                        tab.Snapshot,
-                        path,
-                        selectedRange ?? tab.Filter.TimeRange ?? tab.Viewport.Value,
-                        tab.Filter,
-                        _settings.ExportOrder == "Chronological"
-                            ? VisualCat.Domain.Queries.EntryOrder.Chronological
-                            : VisualCat.Domain.Queries.EntryOrder.SourceSequence,
-                        _settings.ExportEncoding != "utf-8",
-                        cancellationToken)));
+                ShowNotice($"Exported {written:N0} rows ({scope.Label.ToLowerInvariant()}) to {name}");
             }
         }
+    }
+
+    /// <summary>
+    /// Settles what an export covers: the range the reader picked from the plot, or the
+    /// answer to the question the scope dialog asks.
+    /// </summary>
+    private async Task<ExportScope?> ResolveExportScopeAsync(SessionTabViewModel tab, TimeRange? selectedRange)
+    {
+        // "Export range" is already an explicit scope — the reader drew it on the plot — so
+        // asking again would be asking a question they have just answered.
+        if (selectedRange is { } chosen)
+        {
+            return new ExportScope(chosen, "The selected range", null);
+        }
+
+        var filterRange = tab.Filter.TimeRange;
+        var sessionRange = filterRange ?? tab.Snapshot?.TimedRange;
+        var viewport = filterRange ?? tab.Viewport ?? sessionRange;
+        if (viewport is not { } viewportRange)
+        {
+            return null;
+        }
+
+        var inView = new ExportScope(viewportRange, "Entries in view", tab.MatchesInView);
+        if (sessionRange is not { } whole ||
+            whole.StartInclusive >= viewportRange.StartInclusive && whole.EndExclusive <= viewportRange.EndExclusive)
+        {
+            // The view already is the whole matching set; there is no second answer to offer.
+            return inView with { Label = "Entries matching the filter", EstimatedRows = tab.Statistics?.TotalMatching };
+        }
+
+        return await ShowDialogAsync(new ExportScopeDialog(
+            inView,
+            new ExportScope(whole, "All entries matching the filter", tab.Statistics?.TotalMatching)));
     }
 
     /// <summary>
@@ -1163,7 +1292,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         _settings = _settings with { LiveCaptureNoticeAcknowledged = true };
         if (_settingsLoaded)
         {
-            await RunAsync(() => _settingsStore.SaveAsync(_settings));
+            await RunAsync(() => SaveSettingsAsync());
         }
 
         return true;
@@ -1179,7 +1308,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var source = PlatformSourceRegistry.CreateOnDeviceSource?.Invoke();
         if (source is null)
         {
-            _message.Text = "On-device log access is unavailable.";
+            ShowNotice("On-device log access is unavailable.", NoticeKind.Failure);
             return;
         }
 
@@ -1211,7 +1340,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             await tab.PersistViewAsync();
             await PortableSessionArchiveService.CreateAsync(tab.Snapshot, path);
             await share(path, CancellationToken.None);
-            _message.Text = "Portable session handed to the platform share sheet.";
+            ShowNotice("Portable session handed to the platform share sheet.");
         });
     }
 
@@ -1254,10 +1383,15 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         AddSessionChip(viewModel);
         UpdateSessionActionAvailability();
         UpdateMobileChrome(Bounds.Size);
+        PersistOpenWorkspace();
     }
 
     private void OnSessionSnapshotChanged(object? sender, EventArgs eventArgs) =>
-        Dispatcher.UIThread.Post(UpdateSessionActionAvailability);
+        Dispatcher.UIThread.Post(() =>
+        {
+            UpdateSessionActionAvailability();
+            PersistOpenWorkspace();
+        });
 
     private void RemoveTab(SessionTabViewModel viewModel)
     {
@@ -1278,6 +1412,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
         UpdateSessionActionAvailability();
         UpdateMobileChrome(Bounds.Size);
+        PersistOpenWorkspace();
     }
 
     private async Task FollowFileAsync()
@@ -1311,7 +1446,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var executable = AdbLocator.Find(_settings.AdbPath);
         if (executable is null)
         {
-            _message.Text = "ADB was not found. Install Android platform-tools or set ANDROID_SDK_ROOT.";
+            ShowNotice("ADB was not found. Install Android platform-tools or set ANDROID_SDK_ROOT.", NoticeKind.Failure);
             return;
         }
 
@@ -1371,7 +1506,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             }
             else
             {
-                _message.Text = $"Startup source not found: {path}";
+                ShowNotice($"Startup source not found: {path}", NoticeKind.Failure);
             }
         }
     }
@@ -1401,15 +1536,18 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     DateTimeOffset.UtcNow);
                 if (result.Errors.Count > 0)
                 {
-                    _message.Text = $"Temporary cleanup left {result.Errors.Count:N0} session(s) in place.";
+                    ShowNotice($"Temporary cleanup left {result.Errors.Count:N0} session(s) in place.", NoticeKind.Failure);
                 }
             }
 
+            // Restore first, then anything the launch intent carried: a file the reader has
+            // just tapped in another app belongs in front of the workspace they left behind.
+            await RestoreWorkspaceAsync();
             await OpenStartupPathsAsync();
         }
         catch (Exception exception)
         {
-            _message.Text = $"Startup settings: {exception.GetBaseException().Message}";
+            ShowNotice($"Startup settings: {exception.GetBaseException().Message}", NoticeKind.Failure);
         }
     }
 
@@ -1438,11 +1576,11 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             _viewModel.ConfigureUiRefreshLimit(_settings.UiRefreshLimit);
             await ConfigureDiagnosticsAsync();
             ApplyAppearance();
-            await _settingsStore.SaveAsync(_settings);
+            await SaveSettingsAsync();
         }
         catch (Exception exception)
         {
-            _message.Text = exception.GetBaseException().Message;
+            ShowNotice(exception.GetBaseException().Message, NoticeKind.Failure);
         }
     }
 
@@ -1457,7 +1595,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         _settings = updated;
-        await RunAsync(() => _settingsStore.SaveAsync(_settings));
+        await RunAsync(() => SaveSettingsAsync());
     }
 
     private async Task CreateDiagnosticBundleAsync()
@@ -1479,7 +1617,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = "Save VisualCat diagnostic bundle",
-            SuggestedFileName = $"visualcat-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.zip",
+
+            // Extension in DefaultExtension only: see the note in ExportAsync (finding 8).
+            SuggestedFileName = $"visualcat-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}",
             DefaultExtension = "zip",
         });
         if (file is null)
@@ -1498,7 +1638,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                         path,
                         _viewModel.Tabs.Select(static tab => tab.SessionPath),
                         cancellationToken);
-                    _message.Text = $"Diagnostic bundle saved: {file.Name}";
+                    ShowNotice($"Diagnostic bundle saved: {file.Name}");
                 }));
         }
     }
@@ -1595,7 +1735,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     {
         try
         {
-            _message.Text = string.Empty;
+            ShowNotice(string.Empty);
             await action();
         }
         catch (OperationCanceledException)
@@ -1612,7 +1752,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     {
         try
         {
-            _message.Text = string.Empty;
+            ShowNotice(string.Empty);
             _ = await action();
         }
         catch (OperationCanceledException)
@@ -1631,7 +1771,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// error banner accused the application of failing every time someone changed their
     /// mind, so it clears the banner instead.
     /// </summary>
-    private void ReportCancelled() => _message.Text = string.Empty;
+    private void ReportCancelled() => ShowNotice(string.Empty);
 
     /// <summary>
     /// A real failure is labelled as one. A bare framework message ("The operation was
@@ -1639,18 +1779,36 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// §18.1 asks a user message to state what happened and what remains usable.
     /// </summary>
     private void ReportFailure(Exception exception) =>
-        _message.Text = $"Could not complete that action · {exception.GetBaseException().Message}";
+        ShowNotice($"Could not complete that action · {exception.GetBaseException().Message}", NoticeKind.Failure);
 
     public async ValueTask DisposeAsync()
     {
         PlatformSourceRegistry.LaunchFilesReceived -= _launchFilesHandler;
         PlatformSourceRegistry.AppResumed -= _appResumedHandler;
         PlatformSourceRegistry.AppPaused -= _appPausedHandler;
+        StopNoticeTimer();
+        StopObservingSafeArea();
+
+        // No settings writer may still be waiting on the semaphore when it is disposed. The
+        // newest workspace task subsumes every older queued workspace snapshot; direct settings
+        // writes are awaited at their call sites.
+        Interlocked.Increment(ref _workspacePersistVersion);
+        try
+        {
+            await _lastWorkspacePersist;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            global::System.Diagnostics.Debug.WriteLine($"VisualCat final workspace persistence failed: {exception}");
+        }
+
         await _viewModel.DisposeAsync();
         if (_diagnostics is not null)
         {
             await _diagnostics.DisposeAsync();
             _diagnostics = null;
         }
+
+        _settingsSaveGate.Dispose();
     }
 }

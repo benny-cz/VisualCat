@@ -206,6 +206,10 @@ public sealed class SessionPersistenceTests
         try
         {
             var store = new SettingsStore(path);
+            var rememberedSessions = Enumerable.Range(0, 14)
+                .Select(index => Path.Combine(root, $"session-{index:D2}"))
+                .Concat([Path.Combine(root, "session-00"), " "])
+                .ToArray();
             await store.SaveAsync(new ApplicationSettings(
                 Theme: "invalid",
                 TextScale: 99,
@@ -217,7 +221,10 @@ public sealed class SessionPersistenceTests
                 ExportEncoding: "invalid",
                 TemporaryRetentionDays: 0,
                 WindowWidth: 1,
-                WindowHeight: 1));
+                WindowHeight: 1,
+                LiveCaptureNoticeAcknowledged: true,
+                OpenSessionPaths: rememberedSessions,
+                OpenSessionIndex: 99));
             var loaded = await store.LoadAsync();
 
             Assert.Equal("System", loaded.Theme);
@@ -230,6 +237,11 @@ public sealed class SessionPersistenceTests
             Assert.Equal("utf-8-bom", loaded.ExportEncoding);
             Assert.Equal(900, loaded.WindowWidth);
             Assert.Equal(600, loaded.WindowHeight);
+            Assert.True(loaded.LiveCaptureNoticeAcknowledged);
+            Assert.Equal(12, loaded.OpenSessionPaths!.Length);
+            Assert.Equal(rememberedSessions.Take(12), loaded.OpenSessionPaths);
+            Assert.Equal(11, loaded.OpenSessionIndex);
+            Assert.Contains("\"openSessionPaths\"", await File.ReadAllTextAsync(path), StringComparison.Ordinal);
             Assert.Contains("\"version\"", await File.ReadAllTextAsync(path), StringComparison.Ordinal);
         }
         finally

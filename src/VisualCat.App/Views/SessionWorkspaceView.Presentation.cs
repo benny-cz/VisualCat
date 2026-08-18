@@ -23,10 +23,35 @@ namespace VisualCat.App.Views;
 
 public sealed partial class SessionWorkspaceView : UserControl
 {
+    private bool _statusExpanded;
+
+    /// <summary>
+    /// Switches the status row between one clipped line and the whole sentence.
+    /// </summary>
+    private void SetStatusExpanded(bool expanded)
+    {
+        _statusExpanded = expanded;
+        _status.TextWrapping = expanded ? TextWrapping.Wrap : TextWrapping.NoWrap;
+        _status.TextTrimming = expanded ? TextTrimming.None : TextTrimming.CharacterEllipsis;
+        _searchStatus.TextWrapping = expanded ? TextWrapping.Wrap : TextWrapping.NoWrap;
+        _searchStatus.TextTrimming = expanded ? TextTrimming.None : TextTrimming.CharacterEllipsis;
+        if (_statusBar is { } statusBar)
+        {
+            statusBar.ClipToBounds = !expanded;
+            AutomationProperties.SetHelpText(
+                statusBar,
+                expanded ? "Tap to shorten the status line." : "Tap to show the whole status line.");
+        }
+    }
+
     private void RefreshPresentation()
     {
         _status.Text = _viewModel.Status;
         _searchStatus.Text = _viewModel.SearchStatus;
+
+        // The visible line may be clipped; what a screen reader is handed never is.
+        AutomationProperties.SetName(_status, _viewModel.Status);
+        ToolTip.SetTip(_status, _viewModel.Status is { Length: > 0 } status ? status : null);
         UpdateFollowButton();
         _search.Text = _viewModel.SearchText;
         _order.SelectedIndex = _viewModel.EntryOrder == EntryOrder.SourceSequence ? 1 : 0;
@@ -157,15 +182,62 @@ public sealed partial class SessionWorkspaceView : UserControl
                 return (
                     "No log entries were captured",
                     _viewModel.CaptureScopeRemedy ?? "Start Live again and generate app activity.");
+            // "Loaded" and "queried" are not the same moment. Opening a million-entry session
+            // showed the empty-view card with three remedies for two seconds while the status
+            // bar already read "Ready", so the app said the session was loaded and empty when
+            // it was loaded and still being read (finding 19).
+            case SessionActivity.Ready or SessionActivity.Stopped when _viewModel.Statistics is null:
+                return ("Preparing this view…", "Reading the first entries of the session.");
             case SessionActivity.Ready or SessionActivity.Stopped:
-                return (
-                    "Nothing to plot in this view",
-                    "Fit the timeline, widen the severity filter, or clear the query.");
+                return ("Nothing to plot in this view", DescribeEmptyPlotRemedy());
             default:
                 return (
                     "Open a logcat file or start a live capture.",
                     "The severity × time signal will appear here.");
         }
+    }
+
+    /// <summary>
+    /// Only the remedies that apply. "Fit the timeline, widen the severity filter, or clear
+    /// the query" was printed under a chip bar reading "No filters · showing everything in
+    /// view" and over an already-fitted timeline: three instructions, none of which the
+    /// reader could carry out (finding 19).
+    /// </summary>
+    private string DescribeEmptyPlotRemedy()
+    {
+        var remedies = new List<string>(3);
+        var session = _viewModel.Snapshot?.TimedRange;
+        if (session is { } whole && _viewModel.Viewport is { } viewport &&
+            (viewport.StartInclusive > whole.StartInclusive || viewport.EndExclusive < whole.EndExclusive))
+        {
+            remedies.Add("fit the timeline");
+        }
+
+        var filter = _viewModel.Filter;
+        if (filter.IncludedLevels.Count > 0)
+        {
+            remedies.Add("widen the severity filter");
+        }
+
+        if (filter.Search is not null)
+        {
+            remedies.Add("clear the query");
+        }
+
+        if (remedies.Count == 0 && filter.Fingerprint() != FilterSpec.All.Fingerprint())
+        {
+            remedies.Add("clear the active filters");
+        }
+
+        if (remedies.Count == 0)
+        {
+            return "This time range holds no entries.";
+        }
+
+        remedies[0] = char.ToUpperInvariant(remedies[0][0]) + remedies[0][1..];
+        return remedies.Count == 1
+            ? $"{remedies[0]}."
+            : $"{string.Join(", ", remedies[..^1])} or {remedies[^1]}.";
     }
 
     private static string FormatSpan(long microseconds) =>

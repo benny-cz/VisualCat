@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Platform;
 using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
@@ -11,6 +12,7 @@ using Avalonia.LogicalTree;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 using VisualCat.Domain.Entries;
@@ -23,6 +25,12 @@ namespace VisualCat.App.Views;
 
 public sealed partial class SessionWorkspaceView : UserControl
 {
+    private IInputPane? _inputPane;
+    private bool _inputPaneOpen;
+
+    /// <summary>The viewport the workspace was composed for before the keyboard took a share of it.</summary>
+    private Size _settledSize;
+
     private static TextBlock MobileSectionLabel(string text) =>
         new()
         {
@@ -33,16 +41,59 @@ public sealed partial class SessionWorkspaceView : UserControl
             Margin = new Thickness(1, 4, 0, 0),
         };
 
+    /// <summary>
+    /// Watches the soft keyboard, because the viewport it takes must not be read as a
+    /// different device.
+    /// </summary>
+    /// <remarks>
+    /// The activity resizes rather than pans when the IME opens, which is what keeps the
+    /// drawer's own footer reachable — but it also drops a 777 dp portrait viewport to about
+    /// 480 dp, below <see cref="MobileWorkspaceLayout.CompactHeightBreakpoint"/>. The size
+    /// class flipped, and the recomposition that follows a genuine rotation dismissed the
+    /// drawer and unmounted the very <see cref="TextBox"/> that had just been focused: the
+    /// query field could not be typed into at all, by touch, in either orientation
+    /// (finding 1). Opening a keyboard is not a change of device and not a change of user
+    /// intent, so the size class is held at the last settled viewport and only the space the
+    /// drawer is given shrinks.
+    /// </remarks>
+    private void ObserveInputPane()
+    {
+        if (!_mobile || _inputPane is not null)
+        {
+            return;
+        }
+
+        _inputPane = TopLevel.GetTopLevel(this)?.InputPane;
+        if (_inputPane is { } pane)
+        {
+            pane.StateChanged += OnInputPaneStateChanged;
+            _inputPaneOpen = pane.State == InputPaneState.Open;
+        }
+    }
+
+    private void StopObservingInputPane()
+    {
+        if (_inputPane is { } pane)
+        {
+            pane.StateChanged -= OnInputPaneStateChanged;
+            _inputPane = null;
+        }
+
+        _inputPaneOpen = false;
+    }
+
+    private void OnInputPaneStateChanged(object? sender, InputPaneStateEventArgs eventArgs)
+    {
+        _inputPaneOpen = eventArgs.NewState == InputPaneState.Open;
+        ApplyMobileLayout(Bounds.Size);
+    }
+
     private void SetMobileDisplayMode(MobileWorkspaceDisplayMode mode)
     {
         _mobileWorkspaceState.Select(mode);
         if (_mobileFiltersOpen)
         {
             _mobileFiltersOpen = false;
-            if (_mobileFilterPanel is { } panel)
-            {
-                panel.IsVisible = false;
-            }
         }
 
         ApplyMobileLayout(Bounds.Size);
@@ -51,12 +102,15 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void SetMobileFiltersOpen(bool open)
     {
         _mobileFiltersOpen = open;
-        if (_mobileFilterPanel is { } panel)
-        {
-            panel.IsVisible = open;
-        }
-
         ApplyMobileLayout(Bounds.Size);
+        if (!open && _mobileFilterButton is { } filterButton)
+        {
+            // Closing the drawer must also put the keyboard away: it was raised for a field
+            // that is no longer on screen, and leaving it up covers the results the query was
+            // typed to find. Moving focus to the control that closed the drawer is what makes
+            // the platform withdraw the IME.
+            filterButton.Focus();
+        }
     }
 
     private void ApplyMobileModeButtonStyles()
@@ -97,23 +151,34 @@ public sealed partial class SessionWorkspaceView : UserControl
             return;
         }
 
-        var layout = MobileWorkspaceLayout.ForSize(size.Width, size.Height);
+        // The keyboard's share of the screen changes how much room the drawer has and
+        // nothing else. Classifying against the settled viewport is what keeps a focused
+        // field mounted while the IME animates in (finding 1).
+        var settled = _inputPaneOpen && _settledSize.Height > size.Height ? _settledSize : size;
+        if (!_inputPaneOpen)
+        {
+            _settledSize = size;
+        }
+
+        var layout = MobileWorkspaceLayout.ForSize(settled.Width, settled.Height);
         var wideComposition = layout.UsesWideMobileComposition;
         _mobileWorkspaceState.ApplyLayout(layout);
 
         if (_mobileLayoutMode != layout.Mode)
         {
+            var first = _mobileLayoutMode is null;
             _mobileLayoutMode = layout.Mode;
+
             // A filter workspace is deliberately transient; the visualization mode is not.
             // This keeps Plot/Split/Details stable across rotation while preventing a tall
-            // portrait drawer from consuming a newly short landscape viewport.
-            _mobileFiltersOpen = false;
-            if (_mobileFilterPanel is { } panel)
+            // portrait drawer from consuming a newly short landscape viewport — but never
+            // while the reader is typing into it.
+            if (!first && !FilterDrawerHoldsFocus())
             {
-                panel.IsVisible = false;
+                _mobileFiltersOpen = false;
             }
 
-            if (!_rawWrapPreferenceSet && _rawWrapToggle is { } wrapToggle)
+            if (!_rawWrapPreferenceSet && _rawWrapToggle is not null)
             {
                 SetRawWrap(!wideComposition);
             }
@@ -128,11 +193,18 @@ public sealed partial class SessionWorkspaceView : UserControl
                               _mobileWorkspaceState.DisplayMode is not MobileWorkspaceDisplayMode.Details;
         var analysisVisible = !filtersOpen &&
                               _mobileWorkspaceState.DisplayMode is not MobileWorkspaceDisplayMode.Plot;
-        if (wideComposition)
+
+        // The drawer, the plot and the analysis pane all live in rows 2..5. Exactly one
+        // composition of that band is in force at a time.
+        if (filtersOpen)
         {
-            _root.RowDefinitions[2].Height = filtersOpen
-                ? new GridLength(0)
-                : new GridLength(1, GridUnitType.Star);
+            _root.RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
+            _root.RowDefinitions[3].Height = new GridLength(0);
+            _root.RowDefinitions[5].Height = new GridLength(0);
+        }
+        else if (wideComposition)
+        {
+            _root.RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
             _root.RowDefinitions[3].Height = new GridLength(0);
             _root.RowDefinitions[5].Height = new GridLength(0);
         }
@@ -153,7 +225,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 : new GridLength(0);
         }
 
-        ConfigureWideMobileComposition(wideComposition, timelineVisible, analysisVisible, size.Width);
+        ConfigureWideMobileComposition(wideComposition, timelineVisible, analysisVisible, settled.Width);
         UpdateSummaryText();
         _analysisGrid!.IsVisible = analysisVisible;
         UpdateChipBarVisibility();
@@ -173,14 +245,28 @@ public sealed partial class SessionWorkspaceView : UserControl
             minimap.IsVisible = timelineVisible && hasOverview && layout.MinimapHeight > 0;
         }
 
+        if (_mobileFilterPanel is { } filterPanel)
+        {
+            filterPanel.IsVisible = filtersOpen;
+            filterPanel.Margin = wideComposition
+                ? new Thickness(6, 2, 6, 2)
+                : new Thickness(6, 2, 6, 4);
+        }
+
         if (_mobileFilterScroll is { } filterScroll)
         {
-            var maximumPanelHeight = Math.Max(160, size.Height - 58);
-            filterScroll.MaxHeight = Math.Max(96, Math.Min(layout.FilterMaximumHeight, maximumPanelHeight - 58));
-            if (_mobileFilterPanel is { } filterPanel)
-            {
-                filterPanel.MaxHeight = maximumPanelHeight;
-            }
+            // The drawer fills the band it was given, so the footer stays pinned to the
+            // bottom of the card and the query section scrolls under the keyboard rather
+            // than being pushed off screen.
+            filterScroll.MaxHeight = double.PositiveInfinity;
+        }
+
+        if (_statusBar is { } statusRow)
+        {
+            // A landscape viewport with the keyboard up has about 140 dp left. The status
+            // line is a report on a workspace that is currently hidden behind the drawer, so
+            // its row goes to the drawer for as long as the drawer is open.
+            statusRow.IsVisible = !(filtersOpen && (wideComposition || _inputPaneOpen));
         }
 
         if (_mobileFilterButton is { } filterButton)
@@ -189,6 +275,15 @@ public sealed partial class SessionWorkspaceView : UserControl
             AutomationProperties.SetName(filterButton, filtersOpen ? "Close filters" : "Open search and timeline filters");
         }
     }
+
+    /// <summary>Whether the reader is currently working inside the filter drawer.</summary>
+    private bool FilterDrawerHoldsFocus() =>
+        _mobileFiltersOpen &&
+        (_inputPaneOpen ||
+         _search.IsFocused ||
+         _mobileFilterPanel is { } panel &&
+         TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is Visual focused &&
+         focused.GetSelfAndVisualAncestors().Contains(panel));
 
     private void ConfigureWideMobileComposition(
         bool enabled,
@@ -203,6 +298,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             Grid.SetColumn(topStrip, 0);
             Grid.SetColumnSpan(topStrip, splitTimeline ? 2 : 1);
+        }
+
+        if (_mobileFilterPanel is { } drawer)
+        {
+            Grid.SetColumn(drawer, 0);
+            Grid.SetColumnSpan(drawer, splitTimeline ? 2 : 1);
         }
 
         Grid.SetColumn(_chipBar, 0);
@@ -270,13 +371,23 @@ public sealed partial class SessionWorkspaceView : UserControl
                 item.Width = double.NaN;
                 item.FontSize = enabled ? 12.5 : 14;
                 item.Padding = enabled ? new Thickness(7, 0) : new Thickness(10, 0);
+
+                // A short viewport pays for every dp of chrome twice: once here and once in
+                // the header row below. 42 dp still exceeds the 40 dp Material floor for a
+                // tab and buys back a whole entry row (finding 2).
+                item.MinHeight = enabled ? 42 : 48;
             }
         }
 
         if (_entryHeader is { } entryHeader && _entryActions is { } entryActions)
         {
             var analysisWidth = splitTimeline ? availableWidth * 0.58 - 78 : availableWidth - (enabled ? 78 : 0);
-            var sideBySide = enabled && analysisWidth >= 540;
+
+            // 540 px never happened in a split landscape workspace — a 2 340 px screen at
+            // 2.75× leaves the analysis pane about 490 px — so the summary always took a
+            // second full touch row, and tab headers + summary + sort + actions came to more
+            // than the pane's whole height, leaving the entry list nothing (finding 2).
+            var sideBySide = enabled && analysisWidth >= 400;
             entryHeader.RowDefinitions = new RowDefinitions(sideBySide ? "Auto" : "Auto,Auto");
             entryHeader.ColumnDefinitions = new ColumnDefinitions(sideBySide ? "*,Auto" : "*");
             Grid.SetRow(_summary, 0);
@@ -287,11 +398,31 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ? HorizontalAlignment.Right
                 : HorizontalAlignment.Stretch;
             entryActions.MaxWidth = sideBySide
-                ? Math.Clamp(analysisWidth * 0.58, 280, 430)
+                ? Math.Clamp(analysisWidth * 0.62, 240, 430)
                 : double.PositiveInfinity;
             _summary.TextWrapping = sideBySide ? TextWrapping.NoWrap : TextWrapping.Wrap;
             _summary.TextTrimming = sideBySide ? TextTrimming.CharacterEllipsis : TextTrimming.None;
+            _summary.FontSize = enabled ? 11 : 12;
             _summary.Margin = sideBySide ? new Thickness(0, 0, 8, 0) : new Thickness(0, 0, 0, 4);
+        }
+
+        // A row of entries is the point of the pane, so it is the last thing that gives way.
+        // A short viewport still has to clear the 48 dp touch floor, which it does; the
+        // 64 dp portrait row exists for comfort, not for reach.
+        ApplyEntryRowHeight(enabled ? 48 : 64);
+        foreach (var control in new Control[] { _order, _loadMore, _fitMatches, _clearScope })
+        {
+            control.MinHeight = enabled ? 42 : 48;
+        }
+
+        if (_copyRaw is { } compactCopy)
+        {
+            compactCopy.MinHeight = enabled ? 42 : 48;
+        }
+
+        if (_openInspector is { } compactInspector)
+        {
+            compactInspector.MinHeight = enabled ? 42 : 48;
         }
 
         // Spacing is the panels' own (column and item spacing), so the labels change with
@@ -313,11 +444,10 @@ public sealed partial class SessionWorkspaceView : UserControl
             ? splitTimeline ? new Thickness(3, 2, 6, 2) : new Thickness(6, 2)
             : new Thickness(8, 4);
         _chipBar.Margin = enabled ? new Thickness(6, 0, 6, 2) : new Thickness(10, 0, 10, 5);
+        _chipBar.MinHeight = enabled ? 0 : 40;
         if (_statusBar is { } statusBar)
         {
-            statusBar.Margin = enabled ? new Thickness(6, 2, 6, 4) : new Thickness(8, 4, 8, 12);
+            statusBar.Margin = enabled ? new Thickness(6, 1, 6, 2) : new Thickness(8, 4, 8, 12);
         }
     }
-
-
 }
