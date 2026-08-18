@@ -94,12 +94,8 @@ public sealed partial class SessionWorkspaceView : UserControl
             : new GridLength(0, GridUnitType.Pixel);
     }
 
-    private void UpdateTimelineLevels()
-    {
-        var sessionHasUnknown = _viewModel.Snapshot?.Segments.Any(
-            static segment => segment.SeverityBitmaps[LogLevel.Unknown].Cardinality > 0) == true;
-        _timeline.SetDisplayLevels(_viewModel.Filter.IncludedLevels, sessionHasUnknown);
-    }
+    private void UpdateTimelineLevels() =>
+        _timeline.SetDisplayLevels(_viewModel.Filter.IncludedLevels, _viewModel.HasUnknownLevelEntries);
 
     /// <summary>
     /// Keeps the capture controls and the empty plot describing the state the session is

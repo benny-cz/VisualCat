@@ -232,6 +232,46 @@ public sealed class SessionActivityTests
     }
 
     /// <summary>
+    /// Whether the plot carries an Unknown lane is a fact about the session, answered once when
+    /// a snapshot is published. The workspace used to answer it by walking every segment's
+    /// severity bitmaps on each redraw, which put store internals in the render path and read
+    /// them from a queued job that could outlive the session it was reading.
+    /// </summary>
+    [AvaloniaTheory]
+    [InlineData('X', true)]
+    [InlineData('W', false)]
+    public async Task TheUnknownLaneIsASessionFactAnsweredOncePerSnapshot(char level, bool expected)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        WorkspaceViewModel.ConfigureTemporarySessionRoot(root);
+        try
+        {
+            var sourcePath = Path.Combine(root, "levels.txt");
+            await File.WriteAllTextAsync(
+                sourcePath,
+                "01-01 00:00:00.100000   100   101 I Worker         : one\n" +
+                $"01-01 00:00:01.200000   100   101 {level} Worker         : two\n",
+                TestContext.Current.CancellationToken);
+
+            await using var workspace = new WorkspaceViewModel();
+            var tab = await workspace.ImportFileAsync(sourcePath, TestContext.Current.CancellationToken);
+
+            Assert.Equal(expected, tab.HasUnknownLevelEntries);
+
+            await workspace.CloseAsync(tab);
+        }
+        finally
+        {
+            WorkspaceViewModel.ConfigureTemporarySessionRoot(null);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
     /// A failure keeps the whole reason for the workspace to show, and the platform-specific
     /// next step separate from it (finding 10).
     /// </summary>

@@ -6,6 +6,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.LogicalTree;
 using Avalonia.Media;
+using Avalonia.Threading;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 using VisualCat.App.Views;
@@ -271,6 +272,62 @@ public sealed class WorkspaceReviewFixHeadlessTests
 
         Assert.Equal(1, selections);
         Assert.True(zooms > 0, "the double-tap should have zoomed");
+    }
+
+    /// <summary>
+    /// A view answers its session through the dispatcher, so a change raised while the tab was
+    /// alive can arrive after it has been closed. The redraw then read a session that was being
+    /// torn down and threw <see cref="ObjectDisposedException"/> from inside the plot — which
+    /// on a real device is an unhandled exception on the UI thread, and in the test run showed
+    /// up as a cleanup failure. Closing a session must be safe at any moment.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AClosedSessionStopsDrivingItsWorkspace()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        WorkspaceViewModel.ConfigureTemporarySessionRoot(root);
+        try
+        {
+            var sourcePath = Path.Combine(root, "closing.txt");
+            await File.WriteAllTextAsync(
+                sourcePath,
+                "01-01 00:00:00.100000   100   101 I Worker         : one\n" +
+                "01-01 00:00:01.200000   100   101 E Loader         : two\n",
+                TestContext.Current.CancellationToken);
+
+            await using var workspace = new WorkspaceViewModel();
+            var tab = await workspace.ImportFileAsync(sourcePath, TestContext.Current.CancellationToken);
+            var view = new SessionWorkspaceView(tab);
+            var window = new Window { Content = view, Width = 1000, Height = 700 };
+            window.Show();
+            var snapshot = tab.Snapshot;
+            Assert.NotNull(snapshot);
+
+            await workspace.CloseAsync(tab);
+
+            // The snapshot is unpublished before it is released, so no reader can be handed a
+            // disposed one — the object itself really is dead.
+            Assert.True(tab.IsDisposed);
+            Assert.Null(tab.Snapshot);
+            Assert.NotEmpty(snapshot.Segments);
+            Assert.Throws<ObjectDisposedException>(() => _ = snapshot.Segments[0].SeverityBitmaps);
+
+            // And a notification that arrives after the close redraws nothing.
+            tab.Status = "Ready · 2 entries";
+            tab.FollowLatest = true;
+            tab.IsLiveCaptureActive = false;
+            Dispatcher.UIThread.RunJobs();
+            window.Close();
+        }
+        finally
+        {
+            WorkspaceViewModel.ConfigureTemporarySessionRoot(null);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
     }
 
     private static TextBlock MessageBlock(ListBox entries, int index)

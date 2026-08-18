@@ -99,6 +99,15 @@ The current stable release is `2.0.3`. Ongoing work is recorded under
   for the whole session.
 
 ### Fixed
+- Closing a session tab can no longer crash the workspace. The view answers the
+  view model through the dispatcher, so a change raised while the tab was alive
+  could still be queued after it closed, and the redraw then read a session that
+  was being torn down — `ObjectDisposedException` from inside the plot, which on
+  the UI thread takes the application with it. A closed session no longer drives
+  a view, the snapshot is unpublished before it is released so no reader can be
+  handed a disposed one, and whether the plot needs an Unknown lane is answered
+  once when a snapshot is published rather than by walking every segment's
+  severity bitmaps on each redraw.
 - An import ends showing the whole session. The viewport was seeded from the
   first progressive snapshot, when the session genuinely held one entry, and
   nothing ever re-fitted it — so every import finished with one row and an empty

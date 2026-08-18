@@ -208,6 +208,24 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public string Title { get; }
     public string SessionPath => _sessionPath;
     public SessionSnapshot? Snapshot => _snapshot;
+
+    /// <summary>
+    /// Whether this session has been closed.
+    /// </summary>
+    /// <remarks>
+    /// A view reacts to this tab through the dispatcher, so a notification raised before the
+    /// tab closed can still be waiting in the queue after it has: the job then redraws from a
+    /// session that is being torn down. Set before anything is released, so a queued job that
+    /// has not started yet can decline to start.
+    /// </remarks>
+    public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
+    /// <summary>
+    /// Whether the session holds any entry whose severity could not be determined, which is
+    /// what decides if the plot carries an Unknown lane. Session-stable, so panning cannot add
+    /// a lane and move every other one under the pointer.
+    /// </summary>
+    public bool HasUnknownLevelEntries { get; private set; }
     public HeatMapResult? HeatMap { get => _heatMap; private set => Set(ref _heatMap, value); }
     public HeatMapResult? Overview { get => _overview; private set => Set(ref _overview, value); }
     public StatisticsResult? Statistics { get => _statistics; private set => Set(ref _statistics, value); }
@@ -468,6 +486,12 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                             $"Reading · {replacement.Descriptor.Counters.TimedEntries:N0} entries ready");
                     }
 
+                    // Answered once per published snapshot, while this method owns it, rather
+                    // than by walking every segment's severity bitmaps on each redraw — which
+                    // put store internals in the render path and read them from a queued job
+                    // that could outlive the session it was reading.
+                    HasUnknownLevelEntries = replacement.Segments.Any(
+                        static segment => segment.SeverityBitmaps[LogLevel.Unknown].Cardinality > 0);
                     SnapshotChanged?.Invoke(this, EventArgs.Empty);
                 });
                 previous?.Dispose();
@@ -1556,8 +1580,12 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         await _loadLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            _snapshot?.Dispose();
-            _snapshot = null;
+            // Unpublished before it is disposed, never after. Disposing first left a window
+            // — two statements wide, but a whole thread switch long — in which the Snapshot
+            // property handed out an object whose segments had already been released, and a
+            // reader that took it threw ObjectDisposedException from deep inside a redraw.
+            var snapshot = Interlocked.Exchange(ref _snapshot, null);
+            snapshot?.Dispose();
         }
         finally
         {

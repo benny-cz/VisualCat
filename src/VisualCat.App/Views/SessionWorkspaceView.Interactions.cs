@@ -696,8 +696,17 @@ public sealed partial class SessionWorkspaceView : UserControl
             RestoreEntrySelection();
         };
 
+        // Both view-model notifications are answered through the dispatcher, so a change
+        // raised while the tab was alive can arrive after it has been closed — and a redraw
+        // then reads a session that is being torn down. A closed session does not drive a
+        // view: the work is dropped rather than performed against a corpse.
         _viewModel.PropertyChanged += (_, eventArgs) => Dispatcher.UIThread.Post(() =>
         {
+            if (_viewModel.IsDisposed)
+            {
+                return;
+            }
+
             switch (eventArgs.PropertyName)
             {
                 case nameof(SessionTabViewModel.HeatMap):
@@ -793,7 +802,15 @@ public sealed partial class SessionWorkspaceView : UserControl
                     break;
             }
         });
-        _viewModel.SnapshotChanged += (_, _) => Dispatcher.UIThread.Post(UpdateTimelines);
+        _viewModel.SnapshotChanged += (_, _) => Dispatcher.UIThread.Post(() =>
+        {
+            if (_viewModel.IsDisposed)
+            {
+                return;
+            }
+
+            UpdateTimelines();
+        });
     }
 
     private async Task SelectTimelineCellAsync(TimelineCellSelection cell)
