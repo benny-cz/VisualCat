@@ -58,6 +58,7 @@ public sealed class TimelineControl : Control
     private TimeRange? _dragViewport;
     private TimelineCellSelection? _selection;
     private Point? _rangeOrigin;
+    private bool _suppressCellSelection;
     private TimeRange? _rangeSelection;
     private TimeRange? _pinchViewport;
     private int? _hoverColumn;
@@ -75,11 +76,28 @@ public sealed class TimelineControl : Control
     private string _emptyTitle = "Open a logcat file or start a live capture.";
     private string _emptyDetail = "The severity × time signal will appear here.";
 
+    /// <summary>Band above the lanes: the header line and the selected-entry marker.</summary>
+    private const double HeaderBandHeight = 36;
+
+    /// <summary>
+    /// Band below the lanes: tick labels and search markers.
+    /// </summary>
+    /// <remarks>
+    /// Reserved inside the control's own geometry so the plot shrinks instead of the labels
+    /// being overdrawn. The control used to demand a minimum height instead, which a star-sized
+    /// row cannot refuse: with three session tabs open, or a capture row added, the arranged
+    /// height exceeded the row and the bottom of the axis labels was drawn underneath the
+    /// minimap panel that follows it in the grid (finding 18).
+    /// </remarks>
+    private const double AxisBandHeight = 34;
+
+    /// <summary>Lane band below which there is no plot worth drawing.</summary>
+    private const double MinimumLaneBandHeight = 36;
+
     public TimelineControl()
     {
         Focusable = true;
         ClipToBounds = true;
-        MinHeight = 240;
         AutomationProperties.SetName(this, "Severity by time heat map");
         AutomationProperties.SetHelpText(this, "Mouse wheel zooms, drag pans, right-drag selects a range, and arrow keys pan.");
         GestureRecognizers.Add(new PinchGestureRecognizer());
@@ -294,16 +312,24 @@ public sealed class TimelineControl : Control
         var foreground = isDark ? DarkForeground : LightForeground;
         var muted = isDark ? DarkMuted : LightMuted;
         context.FillRectangle(background, Bounds);
-        if (_result is null || Bounds.Width < 120 || Bounds.Height < 100)
+        if (_result is null || Geometry() is not { } plotGeometry)
         {
-            DrawText(context, "EVENT DENSITY", new Point(22, 20), 11, AccentBrush);
-            DrawText(context, _emptyTitle, new Point(22, 52), 17, foreground);
-            DrawText(context, _emptyDetail, new Point(22, 82), 12, muted);
+            // Having data and no room to draw it is a different situation from having no data,
+            // and saying "open a logcat file" to someone who has one open would be absurd.
+            if (_result is not null)
+            {
+                DrawText(context, "EVENT DENSITY", new Point(22, 14), 11, AccentBrush);
+                DrawText(context, "Not enough height to draw the plot.", new Point(22, 34), 12, foreground);
+                DrawText(context, "Make this pane taller, or show the plot on its own.", new Point(22, 52), 11, muted);
+                return;
+            }
+
+            DrawEmptyState(context, foreground, muted);
             return;
         }
 
         var levels = _displayLevels;
-        var geometry = Geometry()!.Value;
+        var geometry = plotGeometry;
         var transform = new TimelineTransform(_result.Viewport.Range, geometry, levels);
         var gridPen = isDark ? DarkGridPen : LightGridPen;
         var minorGridPen = isDark ? DarkMinorGridPen : LightMinorGridPen;
@@ -419,25 +445,28 @@ public sealed class TimelineControl : Control
                 column = last;
             }
 
+            // Sized from the lane it labels. A landscape phone gives each of six lanes about
+            // ten pixels, and a fixed 12-pixel glyph in an 18-pixel chip then overflowed its
+            // own lane, bled across the boundary, and sat half a row away from the stripe it
+            // named — so the count beside the `E` could belong to either lane (finding 3b).
+            var laneHeight = transform.RowHeight;
+            var laneTop = geometry.Top + row * laneHeight;
+            var labelSize = Math.Clamp(laneHeight - 3, 7, 12);
+            var showCount = laneHeight >= 20;
+            var chipHeight = Math.Max(5, laneHeight - 4);
+            var chipTop = laneTop + (laneHeight - chipHeight) / 2;
             context.FillRectangle(
                 LevelPalette.Fill(level, isDark ? (byte)54 : (byte)36),
-                new Rect(10, geometry.Top + row * transform.RowHeight + 3, 58, Math.Max(18, transform.RowHeight - 6)));
+                new Rect(10, chipTop, showCount ? 58 : 24, chipHeight));
             context.DrawLine(
                 LevelPalette.AccentPen(level),
-                new Point(10, geometry.Top + row * transform.RowHeight + 4),
-                new Point(10, geometry.Top + (row + 1) * transform.RowHeight - 4));
-            DrawText(
-                context,
-                LevelPalette.Label(level),
-                new Point(19, geometry.Top + row * transform.RowHeight + Math.Max(2, (transform.RowHeight - 16) / 2)),
-                12,
-                foreground);
-            DrawText(
-                context,
-                CompactCount(rowTotal),
-                new Point(36, geometry.Top + row * transform.RowHeight + Math.Max(3, (transform.RowHeight - 13) / 2)),
-                9,
-                muted);
+                new Point(10, chipTop),
+                new Point(10, chipTop + chipHeight));
+            DrawTextCentered(context, LevelPalette.Label(level), 19, laneTop, laneHeight, labelSize, foreground);
+            if (showCount)
+            {
+                DrawTextCentered(context, CompactCount(rowTotal), 36, laneTop, laneHeight, 9, muted);
+            }
         }
 
         // Spacing has to follow how wide the labels actually are: a whole-session view
@@ -451,17 +480,28 @@ public sealed class TimelineControl : Control
             _result.Viewport.Range,
             geometry.Width,
             Math.Max(145, sampleWidth + 24));
+
+        // Every label at a given span uses the same fixed-width format, so one measurement
+        // describes all of them and the overlap rule can be decided before anything is drawn.
+        var labelY = geometry.Top + geometry.Height + 6;
+        var labelEndpoints = TimelineAxis.UseEndpointLabels(
+            _result.Viewport.Range,
+            interval,
+            geometry.Left,
+            geometry.Width,
+            sampleWidth);
         var lastLabelRight = double.NegativeInfinity;
         foreach (var instant in NiceTicks.Enumerate(_result.Viewport.Range, interval))
         {
             var x = transform.InstantToX(instant);
             context.DrawLine(gridPen, new Point(x, geometry.Top), new Point(x, geometry.Top + geometry.Height + 4));
+            if (labelEndpoints)
+            {
+                continue;
+            }
+
             var label = FormatTick(instant, _result.Viewport.Range.DurationUs);
-            var width = MeasureTextWidth(label, 10);
-            var labelX = Math.Clamp(
-                x + 3,
-                geometry.Left,
-                Math.Max(geometry.Left, geometry.Left + geometry.Width - width));
+            var labelX = TimelineAxis.LabelX(instant, _result.Viewport.Range, geometry.Left, geometry.Width, sampleWidth);
 
             // The gridline still marks every tick; only the text is dropped, because two
             // labels printed over each other read as neither.
@@ -470,8 +510,20 @@ public sealed class TimelineControl : Control
                 continue;
             }
 
-            DrawText(context, label, new Point(labelX, geometry.Top + geometry.Height + 7), 10, foreground);
-            lastLabelRight = labelX + width + 8;
+            DrawText(context, label, new Point(labelX, labelY), 10, foreground);
+            lastLabelRight = labelX + sampleWidth + TimelineAxis.LabelGap;
+        }
+
+        if (labelEndpoints)
+        {
+            var span = _result.Viewport.Range;
+            DrawText(context, FormatTick(span.StartInclusive, span.DurationUs), new Point(geometry.Left, labelY), 10, foreground);
+            DrawText(
+                context,
+                FormatTick(span.EndExclusive, span.DurationUs),
+                new Point(geometry.Left + geometry.Width - sampleWidth, labelY),
+                10,
+                foreground);
         }
 
         if (_searchResult is { } search)
@@ -531,6 +583,35 @@ public sealed class TimelineControl : Control
     }
 
     /// <summary>
+    /// Why there is nothing to plot. Both lines wrap: an import failure states its reason
+    /// here, and a reason that runs off the right edge of the plot is no better than no
+    /// reason at all (finding 10).
+    /// </summary>
+    private void DrawEmptyState(DrawingContext context, IBrush foreground, IBrush muted)
+    {
+        var width = Math.Max(80, Bounds.Width - 44);
+        DrawText(context, "EVENT DENSITY", new Point(22, 20), 11, AccentBrush);
+        var title = FormatWrapped(_emptyTitle, Math.Min(17, Math.Max(12, Bounds.Height / 9)), foreground, width);
+        context.DrawText(title, new Point(22, 48));
+        var detail = FormatWrapped(_emptyDetail, 12, muted, width);
+        context.DrawText(detail, new Point(22, 52 + title.Height));
+    }
+
+    private static FormattedText FormatWrapped(string text, double size, IBrush brush, double maximumWidth) =>
+        new(
+            text,
+            CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            MonoTypeface,
+            size,
+            brush)
+        {
+            MaxTextWidth = maximumWidth,
+            MaxLineCount = 6,
+            Trimming = TextTrimming.CharacterEllipsis,
+        };
+
+    /// <summary>
     /// Where the table's selected entry sits in time: a caret spanning every lane, a solid
     /// stub in the entry's own lane, and a marker in the gutter above the plot (§14.9). It
     /// is drawn in the entry's severity color, so it cannot be mistaken for the magenta
@@ -552,6 +633,13 @@ public sealed class TimelineControl : Control
             _result is null ||
             instant < _result.Viewport.Range.StartInclusive ||
             instant >= _result.Viewport.Range.EndExclusive)
+        {
+            return;
+        }
+
+        // A lane the severity filter has removed cannot hold a selectable row, so a caret
+        // pointing into it marks an entry the table is not listing (finding 28).
+        if (_entryMarkLevel is { } markLevel && Array.IndexOf(levels, markLevel) < 0)
         {
             return;
         }
@@ -716,6 +804,13 @@ public sealed class TimelineControl : Control
                 ViewportChanged?.Invoke(
                     this,
                     transform.Zoom(point.X, 0.5, MinimumSpan(geometry), MaximumSpan(session), session));
+
+                // The release that ends this tap still arrives, and a release that did not
+                // move used to be read as "select this cell" — so one double-tap both zoomed
+                // and silently re-scoped the entry list to a single bar, complete with a
+                // "× Cell" chip the reader never asked for. One gesture, one meaning
+                // (finding 4).
+                _suppressCellSelection = true;
                 e.Handled = true;
                 return;
             }
@@ -779,10 +874,12 @@ public sealed class TimelineControl : Control
         }
 
         var moved = _dragOrigin is { } origin && Math.Abs(e.GetPosition(this).X - origin.X) > 3;
+        var consumedByZoom = _suppressCellSelection;
+        _suppressCellSelection = false;
         _dragOrigin = null;
         _dragViewport = null;
         e.Pointer.Capture(null);
-        if (!moved)
+        if (!moved && !consumedByZoom)
         {
             SelectCell(e.GetPosition(this));
         }
@@ -952,10 +1049,36 @@ public sealed class TimelineControl : Control
         InvalidateVisual();
     }
 
-    private TimelineGeometry? Geometry() =>
-        Bounds.Width < 120 || Bounds.Height < 100
+    /// <summary>
+    /// The height the plot would like: both reserved bands plus a lane band tall enough to
+    /// read. A star-sized row is free to give it less — and then the plot, not the axis, is
+    /// what shrinks.
+    /// </summary>
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        _ = base.MeasureOverride(availableSize);
+        return new Size(0, HeaderBandHeight + AxisBandHeight + 144);
+    }
+
+    /// <summary>
+    /// Splits the control into the header band, the lane band, and the axis band. The two
+    /// bands give way proportionally in a short viewport so that whatever height there is,
+    /// the labels stay inside the control instead of spilling over whatever is drawn next.
+    /// </summary>
+    private TimelineGeometry? Geometry()
+    {
+        if (Bounds.Width < 120)
+        {
+            return null;
+        }
+
+        var header = Math.Min(HeaderBandHeight, Bounds.Height * 0.22);
+        var axis = Math.Min(AxisBandHeight, Bounds.Height * 0.26);
+        var lanes = Bounds.Height - header - axis;
+        return lanes < MinimumLaneBandHeight
             ? null
-            : new TimelineGeometry(76, 36, Math.Max(1, Bounds.Width - 88), Math.Max(1, Bounds.Height - 72));
+            : new TimelineGeometry(76, header, Math.Max(1, Bounds.Width - 88), lanes);
+    }
 
     private long MinimumSpan(TimelineGeometry geometry) =>
         TimelineTransform.MinimumSpanUs(
@@ -1022,6 +1145,26 @@ public sealed class TimelineControl : Control
 
     private static string Shorten(string value, int maximumLength) =>
         value.Length <= maximumLength ? value : value[..(maximumLength - 1)] + "…";
+
+    /// <summary>Draws one label vertically centred in the band it belongs to.</summary>
+    private static void DrawTextCentered(
+        DrawingContext context,
+        string text,
+        double x,
+        double bandTop,
+        double bandHeight,
+        double size,
+        IBrush brush)
+    {
+        var formatted = new FormattedText(
+            text,
+            CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            MonoTypeface,
+            size,
+            brush);
+        context.DrawText(formatted, new Point(x, bandTop + Math.Max(0, (bandHeight - formatted.Height) / 2)));
+    }
 
     private static void DrawText(DrawingContext context, string text, Point point, double size, IBrush brush)
     {

@@ -108,7 +108,13 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private int _entryLoadInProgress;
     private bool _viewStateLoaded;
     private bool _growInitialFollowViewport;
+    private SessionActivity _activity = SessionActivity.Idle;
+    private string? _failureReason;
+    private string? _failureRemedy;
     private int _disposed;
+
+    // True until the reader first states what they want to look at. See ViewportIsAuto.
+    private bool _viewportIsAuto = true;
 
     // Statistics and the minimap overview depend only on the snapshot generation and
     // filter — not the viewport — so a zoom or pan must not re-run seven full facet
@@ -210,6 +216,72 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public ObservableCollection<TemplateSummary> Templates { get; } = [];
     public ObservableCollection<string> SavedViews { get; } = [];
     public string Status { get => _status; set => Set(ref _status, value); }
+
+    /// <summary>
+    /// What the tab is doing, for views that need to switch on it rather than read it.
+    /// Always assigned before <see cref="Status"/>, so a view reacting to the status change
+    /// already sees the state the new wording describes.
+    /// </summary>
+    public SessionActivity Activity { get => _activity; private set => Set(ref _activity, value); }
+
+    /// <summary>Whether a capture or import is still in flight.</summary>
+    public bool IsSessionWorkInFlight => Activity is
+        SessionActivity.Queued or
+        SessionActivity.Importing or
+        SessionActivity.Connecting or
+        SessionActivity.Starting or
+        SessionActivity.Capturing or
+        SessionActivity.Stopping;
+
+    /// <summary>
+    /// Whether a live source is currently attached, which is what makes Follow and the
+    /// new-data affordance mean anything. A finished capture is history: it cannot grow, so
+    /// there is nothing to follow and nothing new to jump to (finding 27).
+    /// </summary>
+    public bool IsLiveSourceAttached =>
+        IsLiveCaptureActive ||
+        Activity is SessionActivity.Connecting
+            or SessionActivity.Starting
+            or SessionActivity.Capturing
+            or SessionActivity.Stopping;
+
+    /// <summary>
+    /// Why this session has nothing to show, in full, and what the reader can do next on
+    /// this platform.
+    /// </summary>
+    /// <remarks>
+    /// The status bar is one clipped line, and for an import that never produced a session
+    /// it was the only place the failure appeared: the workspace still built a complete set
+    /// of panes over an empty store, so a failed import looked like a working session whose
+    /// data had not arrived yet, and the actionable half of the message was exactly the half
+    /// the ellipsis ate (finding 10). The workspace shows this instead of those panes.
+    /// </remarks>
+    public string? FailureReason { get => _failureReason; private set => Set(ref _failureReason, value); }
+
+    /// <summary>The next step, when there is one this platform can actually offer.</summary>
+    public string? FailureRemedy { get => _failureRemedy; private set => Set(ref _failureRemedy, value); }
+
+    /// <summary>Records that the session ended in a failure, with the whole reason.</summary>
+    public void ReportFailure(string reason, string? remedy)
+    {
+        FailureReason = reason;
+        FailureRemedy = remedy;
+        ReportCaptureFailure(remedy is { Length: > 0 } ? $"{reason} {remedy}" : reason);
+        ReportActivity(SessionActivity.Failed, $"Failed · {reason}");
+    }
+
+    /// <summary>Records the state and the sentence that describes it together.</summary>
+    public void ReportActivity(SessionActivity activity, string status)
+    {
+        Activity = activity;
+        Status = status;
+        if (activity is SessionActivity.Ready or SessionActivity.Stopped or SessionActivity.Failed)
+        {
+            // Nothing is arriving any more, so an offer to jump to newly arrived data is a
+            // promise about a source that has closed.
+            HasNewData = false;
+        }
+    }
     public string SearchStatus { get => _searchStatus; private set => Set(ref _searchStatus, value); }
     public string SearchText { get => _searchText; set => Set(ref _searchText, value); }
     public FilterSpec Filter { get => _filter; private set => Set(ref _filter, value); }
@@ -276,7 +348,9 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 {
                     await Dispatcher.UIThread.InvokeAsync(() =>
                     {
-                        Status = $"Ready · {current.Descriptor.Counters.TimedEntries:N0} entries · snapshot {current.Generation}";
+                        ReportActivity(
+                            SessionActivity.Ready,
+                            $"Ready · {current.Descriptor.Counters.TimedEntries:N0} entries");
                     });
                 }
 
@@ -334,6 +408,18 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                                 Viewport = sessionRange;
                             }
                         }
+                        else if (!FollowLatest && _viewportIsAuto)
+                        {
+                            // The viewport was seeded from the first progressive snapshot,
+                            // when the session genuinely held one entry — and nothing ever
+                            // re-fitted it, so every import finished showing one row and an
+                            // empty plot beside a minimap already drawing the whole session.
+                            // While the viewport is still the app's own choice it follows
+                            // the session; the first zoom or pan makes it the reader's and
+                            // it is never moved again (finding 1).
+                            Viewport = sessionRange;
+                            HasNewData = false;
+                        }
                         else if (FollowLatest)
                         {
                             var span = _growInitialFollowViewport
@@ -358,12 +444,30 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                         }
                     }
 
-                    Status = final
-                        ? $"Ready · {replacement.Descriptor.Counters.TimedEntries:N0} entries · snapshot {replacement.Generation}"
-                        : IsLiveCaptureActive
-                            ? $"Capturing · {replacement.Descriptor.SourceDescription} · " +
-                              $"{replacement.Descriptor.Counters.TimedEntries:N0} entries · snapshot {replacement.Generation}"
-                            : $"Importing · {replacement.Descriptor.Counters.TimedEntries:N0} committed · snapshot {replacement.Generation}";
+                    // Generation numbers, "committed" and "snapshot" are column-store words:
+                    // a reader watching an import wants to know how much of their log is
+                    // readable, not which generation the store is on. The session pane still
+                    // carries the storage view for anyone who needs it (finding 24).
+                    if (final)
+                    {
+                        ReportActivity(
+                            SessionActivity.Ready,
+                            $"Ready · {replacement.Descriptor.Counters.TimedEntries:N0} entries");
+                    }
+                    else if (IsLiveCaptureActive)
+                    {
+                        ReportActivity(
+                            SessionActivity.Capturing,
+                            $"Capturing · {replacement.Descriptor.Counters.TimedEntries:N0} entries · " +
+                            replacement.Descriptor.SourceDescription);
+                    }
+                    else
+                    {
+                        ReportActivity(
+                            SessionActivity.Importing,
+                            $"Reading · {replacement.Descriptor.Counters.TimedEntries:N0} entries ready");
+                    }
+
                     SnapshotChanged?.Invoke(this, EventArgs.Empty);
                 });
                 previous?.Dispose();
@@ -802,8 +906,22 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         }
     }
 
+    /// <summary>
+    /// Whether the viewport is still the application's choice rather than the reader's.
+    /// </summary>
+    /// <remarks>
+    /// An auto viewport tracks the session as it grows, which is what makes an import end on
+    /// the whole capture instead of on the single entry the first snapshot held. Any request
+    /// to move the view — a zoom, a pan, engaging Follow, restoring a saved view — hands
+    /// ownership to the reader, and from then on nothing moves the viewport but them. That
+    /// is what keeps the "no surprise viewport changes" commitment: the only viewport that
+    /// ever moves by itself is one nobody has touched.
+    /// </remarks>
+    internal bool ViewportIsAuto => _viewportIsAuto;
+
     public Task SetViewportAsync(TimeRange viewport, bool manual = true)
     {
+        _viewportIsAuto = false;
         if (manual)
         {
             FollowLatest = false;
@@ -1329,6 +1447,14 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     /// nothing for minutes — but it is indistinguishable from a broken one unless the
     /// workspace says which it is.
     /// </summary>
+    /// <remarks>
+    /// Ordered by how much the reader needs it, because the status bar is one clipped line
+    /// and the ellipsis takes whatever is last. The rate is the most volatile and most
+    /// watched number in the app and it used to be the first thing lost — the line read
+    /// <c>Capturing · On-device full-device logcat · 8 312 lines · 1…</c> — behind a source
+    /// description that never changes and that the session pane carries in full anyway
+    /// (finding 27).
+    /// </remarks>
     private string DescribeCapture()
     {
         // Trouble outranks the throughput readout: a rate is only worth reading when the
@@ -1337,7 +1463,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         var quiet = TimeSpan.FromMilliseconds(Math.Max(0, Environment.TickCount64 - _captureLastAdvanceMs));
         if (quiet.TotalSeconds < 3)
         {
-            return $"Capturing · {_captureScope} · {_captureLines:N0} lines · {_captureRate:N0}/s{health}";
+            return $"Capturing{health} · {_captureLines:N0} lines · {_captureRate:N0}/s · {_captureScope}";
         }
 
         // The scope only becomes worth raising once it is actually costing the reader
@@ -1346,7 +1472,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         var hint = quiet.TotalSeconds >= StarvedCaptureSeconds && CaptureScopeSummary is { Length: > 0 } reason
             ? $" · {reason}"
             : string.Empty;
-        return $"Capturing · {_captureScope} · {_captureLines:N0} lines · no new lines for {FormatQuiet(quiet)}{hint}{health}";
+        return $"Capturing{health} · {_captureLines:N0} lines · " +
+               $"no new lines for {FormatQuiet(quiet)}{hint} · {_captureScope}";
     }
 
     private static string FormatQuiet(TimeSpan quiet) =>
@@ -1382,7 +1509,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 // the reporter is already saying something true and more precise.
                 if (Environment.TickCount64 - _captureLastAdvanceMs >= 3_000)
                 {
-                    Status = DescribeCapture();
+                    ReportActivity(SessionActivity.Capturing, DescribeCapture());
                 }
             });
         _captureHeartbeat.Start();
@@ -1465,6 +1592,10 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         FollowLatest = view.FollowLatest;
         _growInitialFollowViewport = false;
         Viewport = ClampViewport(view.Viewport, sessionRange);
+
+        // A restored view is the reader's own last position, so it owns the viewport from
+        // here; only a view that carried no viewport leaves the session free to fit itself.
+        _viewportIsAuto = view.Viewport is null;
     }
 
     private static TimeRange? ClampViewport(TimeRange? saved, TimeRange? session)

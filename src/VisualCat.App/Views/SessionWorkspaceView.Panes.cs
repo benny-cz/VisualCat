@@ -369,13 +369,24 @@ public sealed partial class SessionWorkspaceView : UserControl
             Spacing = 2,
             Children =
             {
+                // The qualifier has to be visible. It was in a tooltip, which a touch device
+                // never shows, so a phone only ever read the misleading half: with a search
+                // active, "WHOLE SESSION" sat above counts that were already filtered
+                // (finding 11).
                 CountScopeLabel(
-                    "COUNTS · WHOLE SESSION",
-                    "Facet counts cover the whole session under the current filter."),
+                    "COUNTS · WHOLE SESSION · CURRENT FILTER",
+                    "Facet counts cover the whole session, not just the visible time range, " +
+                    "and they count only entries that match the current filter."),
+                // Kept to one line on a phone: in a landscape workspace the pane's own header
+                // was consuming the height the rows needed, and Details mode showed a heading
+                // and not one data row (finding 3d).
                 new TextBlock
                 {
-                    Text = "+ includes (OR within a group); − excludes; tap an active action again to remove it.",
-                    TextWrapping = TextWrapping.Wrap,
+                    Text = _mobile
+                        ? "+ include (OR) · − exclude · tap again to undo"
+                        : "+ includes (OR within a group); − excludes; tap an active action again to remove it.",
+                    TextWrapping = _mobile ? TextWrapping.NoWrap : TextWrapping.Wrap,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
                     FontSize = 10,
                     Opacity = 0.72,
                 },

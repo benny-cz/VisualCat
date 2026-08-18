@@ -90,6 +90,13 @@ public sealed partial class SessionWorkspaceView : UserControl
             return;
         }
 
+        // A session with nothing to show has no layout to compose; the failure card owns the
+        // workspace band until the tab is closed.
+        if (_failureVisible)
+        {
+            return;
+        }
+
         var layout = MobileWorkspaceLayout.ForSize(size.Width, size.Height);
         var wideComposition = layout.UsesWideMobileComposition;
         _mobileWorkspaceState.ApplyLayout(layout);
@@ -113,6 +120,10 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         var filtersOpen = _mobileFiltersOpen;
+
+        // Nothing to overview yet means no minimap row: an empty bordered frame is not worth a
+        // row of a phone screen (finding 28).
+        var hasOverview = _viewModel.Overview is not null && _viewModel.Snapshot?.TimedRange is not null;
         var timelineVisible = !filtersOpen &&
                               _mobileWorkspaceState.DisplayMode is not MobileWorkspaceDisplayMode.Details;
         var analysisVisible = !filtersOpen &&
@@ -132,7 +143,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                     _mobileWorkspaceState.DisplayMode == MobileWorkspaceDisplayMode.Plot ? 1 : layout.TimelineWeight,
                     GridUnitType.Star)
                 : new GridLength(0);
-            _root.RowDefinitions[3].Height = timelineVisible && layout.MinimapHeight > 0
+            _root.RowDefinitions[3].Height = timelineVisible && hasOverview && layout.MinimapHeight > 0
                 ? new GridLength(layout.MinimapHeight, GridUnitType.Pixel)
                 : new GridLength(0);
             _root.RowDefinitions[5].Height = analysisVisible
@@ -149,18 +160,17 @@ public sealed partial class SessionWorkspaceView : UserControl
         ApplyMobileModeButtonStyles();
 
         _timeline.IsVisible = timelineVisible;
-        _timeline.MinHeight = timelineVisible
-            ? layout.Mode switch
-            {
-                MobileWorkspaceMode.CompactHeight => 132,
-                MobileWorkspaceMode.CompactPortrait => 180,
-                _ => 180,
-            }
-            : 0;
+
+        // No minimum height. A star-sized row cannot refuse one, so the control was arranged
+        // taller than its cell whenever the chrome grew — and its own bottom, which is where
+        // the axis labels live, was then drawn underneath the minimap that follows it in the
+        // grid. The plot's bands give way instead (finding 18); the row weights above are what
+        // keep it a useful size.
+        _timeline.MinHeight = 0;
 
         if (_minimapFrame is { } minimap)
         {
-            minimap.IsVisible = timelineVisible && layout.MinimapHeight > 0;
+            minimap.IsVisible = timelineVisible && hasOverview && layout.MinimapHeight > 0;
         }
 
         if (_mobileFilterScroll is { } filterScroll)
@@ -247,23 +257,19 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         if (_mobileAnalysisTabs is { } tabs)
         {
-            var placement = enabled ? Dock.Left : Dock.Top;
-            if (tabs.TabStripPlacement != placement)
-            {
-                // Changing placement reapplies Avalonia's TabControl template. Preserve the
-                // active inspector so rotating the phone does not silently jump Source back
-                // to Entries in the middle of a select/copy/pan workflow.
-                var selectedIndex = tabs.SelectedIndex;
-                tabs.TabStripPlacement = placement;
-                Dispatcher.UIThread.Post(() => tabs.SelectedIndex = selectedIndex);
-            }
-
+            // The rail stays on top in every orientation. A left rail looked like it saved
+            // the height a short viewport needs, but the strip laid `Entries` and `Entry`
+            // side by side with `Insights` beneath, each item pinned to a width narrower
+            // than its own label, and rotating between placements reapplied the whole
+            // TabControl template — which is why the selected tab had to be restored by
+            // hand afterwards. Three short labels in one row cost one line and are always
+            // legible (finding 3c).
             foreach (var item in tabs.Items.OfType<TabItem>())
             {
                 item.MinWidth = enabled ? 78 : 92;
-                item.Width = enabled ? 78 : double.NaN;
+                item.Width = double.NaN;
                 item.FontSize = enabled ? 12.5 : 14;
-                item.Padding = enabled ? new Thickness(5, 0) : new Thickness(10, 0);
+                item.Padding = enabled ? new Thickness(7, 0) : new Thickness(10, 0);
             }
         }
 
@@ -288,19 +294,18 @@ public sealed partial class SessionWorkspaceView : UserControl
             _summary.Margin = sideBySide ? new Thickness(0, 0, 8, 0) : new Thickness(0, 0, 0, 4);
         }
 
+        // Spacing is the panels' own (column and item spacing), so the labels change with
+        // the available width and nothing else moves.
         _order.Width = enabled ? 112 : 126;
         _loadMore.Content = splitTimeline ? "More" : enabled ? "Load +500" : "Load next 500";
-        _loadMore.Margin = enabled ? new Thickness(0) : new Thickness(0, 0, 6, 0);
         if (_copyRaw is { } copyRaw)
         {
             copyRaw.Content = enabled ? "Copy" : "Copy raw";
-            copyRaw.Margin = enabled ? new Thickness(0) : new Thickness(0, 0, 6, 0);
         }
 
         if (_openInspector is { } openInspector)
         {
             openInspector.Content = enabled ? "⤢" : "Entry ⤢";
-            openInspector.Margin = enabled ? new Thickness(0) : new Thickness(0, 0, 6, 0);
         }
 
         _timeline.Margin = splitTimeline ? new Thickness(6, 2, 3, 2) : new Thickness(0);

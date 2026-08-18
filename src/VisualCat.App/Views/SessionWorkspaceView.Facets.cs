@@ -141,10 +141,30 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
     }
 
+    /// <summary>
+    /// Keeps the chip strip's height reserved for any session that can be filtered.
+    /// </summary>
+    /// <remarks>
+    /// The strip used to appear with the first chip, pushing the analysis tabs and everything
+    /// below them down by about a touch row: applying a filter moved every control the reader
+    /// was about to tap next (finding 26). Reserving the row costs one line and buys a
+    /// workspace that does not rearrange itself, and the line is not blank — it states that
+    /// nothing is filtered, which is the question the strip answers.
+    /// </remarks>
     private void UpdateChipBarVisibility()
     {
-        _chipBar.IsVisible = !(_mobile && _mobileFiltersOpen) &&
-                             (_chips.Children.Count > 1 || _rangeActions.IsVisible);
+        var hasChips = _chips.Children.Count > 1 || _rangeActions.IsVisible;
+        var canFilter = _viewModel.Snapshot is not null;
+        _chipBar.IsVisible = !(_mobile && _mobileFiltersOpen) && (hasChips || canFilter);
+        if (_chipEmptyLabel is { } empty)
+        {
+            empty.IsVisible = !hasChips;
+        }
+
+        if (_clearFilters is { } clear)
+        {
+            clear.IsVisible = hasChips;
+        }
     }
 
     /// <summary>
@@ -167,10 +187,16 @@ public sealed partial class SessionWorkspaceView : UserControl
             "Tags",
             FacetDimension.Tag,
             statistics.Tags.Select(facet => (FacetKey.OfText(facet.Value), facet.Value, facet.Count)));
+        // A process with no resolvable name is reported as "PID 9431", which made the
+        // Processes group an exact restatement of the PIDs group below it — the same values
+        // with the same counts, listed twice (finding 28). Named processes are what this
+        // group is for; the unnamed ones are already one group down.
         AddFacetGroup(
             "Processes",
             FacetDimension.Process,
-            (statistics.Processes ?? []).Select(facet => (FacetKey.OfText(facet.Value), facet.Value, facet.Count)));
+            (statistics.Processes ?? [])
+                .Where(static facet => !IsPidPlaceholder(facet.Value))
+                .Select(facet => (FacetKey.OfText(facet.Value), facet.Value, facet.Count)));
         AddFacetGroup(
             "PIDs",
             FacetDimension.Pid,
@@ -203,6 +229,22 @@ public sealed partial class SessionWorkspaceView : UserControl
     private static string Number(int value) =>
         value.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
+    /// <summary>
+    /// Whether a process facet value is the query engine's stand-in for a process whose name
+    /// could not be resolved (<c>PID 9431</c>) rather than an actual process name.
+    /// </summary>
+    private static bool IsPidPlaceholder(string value)
+    {
+        const string prefix = "PID ";
+        return value.StartsWith(prefix, StringComparison.Ordinal) &&
+               value.Length > prefix.Length &&
+               int.TryParse(
+                   value.AsSpan(prefix.Length),
+                   System.Globalization.NumberStyles.None,
+                   System.Globalization.CultureInfo.InvariantCulture,
+                   out _);
+    }
+
     private void AddFacetGroup(
         string heading,
         FacetDimension dimension,
@@ -212,6 +254,12 @@ public sealed partial class SessionWorkspaceView : UserControl
             .Select(value => (value.Key, value.Text, value.Count, State: _viewModel.StateOf(dimension, value.Key)))
             .OrderBy(static row => row.State == FacetState.Neutral ? 1 : 0)
             .ToArray();
+        if (rows.Length == 0)
+        {
+            // A heading with nothing under it is a promise of a group that does not exist.
+            return;
+        }
+
         var active = rows.Count(static row => row.State != FacetState.Neutral);
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 9, 0, 2) };
         header.Children.Add(new TextBlock { Text = heading, FontWeight = FontWeight.Bold });

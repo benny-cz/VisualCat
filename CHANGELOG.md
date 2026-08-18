@@ -13,6 +13,38 @@ The current stable release is `2.0.3`. Ongoing work is recorded under
 ## [Unreleased]
 
 ### Added
+- The Android companion reaches its secondary commands through a bottom sheet
+  instead of a flyout menu. A flyout is a popup: with the menu open and its eight
+  items plainly on screen, an accessibility dump contained none of them, so with
+  a screen reader Open session, Open portable archive, Recent sessions, Share,
+  Export CSV, Appearance, Session cache and the diagnostic bundle were
+  unreachable, and synthetic taps closed the menu without activating anything.
+  The sheet is ordinary content: every command is a named control with a
+  description, a command that needs a session says so instead of being tappable
+  and silent, and the system Back gesture closes it.
+- Dialogs work on the phone. Recent sessions, Appearance & timeline, Session
+  cache and the diagnostic-bundle confirmation were `Window`s guarded by a
+  desktop-only check, so on Android each returned immediately and did nothing.
+  Each is now a dialog body the host presents — a modal window on the desktop, an
+  in-page card on a platform that has no windows.
+- The empty state lists the captures this device already holds. A process
+  restart drops every open tab, and the first screen showed only a static
+  severity legend while the sessions sat on disk behind a menu item inside a
+  flyout; the four most recent are now one tap from the screen a cold start
+  opens, named after the capture rather than after their storage folder.
+- `Fit` sits beside the Plot/Split/Details selector on a phone. Zooming is not
+  filtering, and fitting the session is the most frequent thing anyone does to a
+  plot — it lived only inside a drawer labelled "Filters", two taps deep.
+- An on-device capture explains itself before Android asks. Tapping `Live` went
+  straight to the system's "Allow VisualCat to access all device logs?" prompt,
+  whose only affirmative is one-time access, with nothing having said what the
+  log was for or where the data goes. Shown once and remembered.
+- A failed import shows what happened in the workspace instead of building a
+  complete set of inert panes over an empty store: the whole reason, the step
+  that platform can actually offer, and the two actions worth taking. The
+  format-detection message no longer advises phone users to use a desktop
+  dialog — the reason is stated by the application layer and the remedy by
+  whoever is talking to the user.
 - A debug deploy of the Android companion grants `READ_LOGS` over adb as part of
   installing. The permission is `signature|privileged|development`, so Android
   never prompts for it and the app cannot request it, while a deploy uninstalls
@@ -24,7 +56,125 @@ The current stable release is `2.0.3`. Ongoing work is recorded under
   command that widens it, and the status bar adds `own-app scope only` once a
   capture has been silent long enough to look broken rather than merely quiet.
 
+### Changed
+- The product owns its accent colour. Fluent picks the platform accent up as
+  `SystemAccentColor`, so on Android every selection highlight, focus border and
+  tab underline took the device's Material You colour — a brick red on the phone
+  this was found on, which reads as an error tint under every selected row and
+  cannot be tested from a screenshot taken on another device. Selection, focus
+  and list surfaces now come from the workspace palette in both themes, which
+  also replaces Fluent's neutral grey list background (`#2B2B2B`) that painted a
+  slab into the navy workspace.
+- Tall buttons centre their labels. `VerticalContentAlignment` defaults to
+  stretch, which leaves a label in the top third of any control taller than its
+  text — every 48 dp touch target — and it had been fixed one control at a time.
+  It is a style now, so the next tall button added is right by default.
+- Session tabs are one scrolling row of chips. The built-in strip wraps and gives
+  each item the full width, so three open sessions became three full-width rows —
+  about 300 px of a phone viewport gone before any content — and each close
+  button sat outside its own tab. Titles are truncated in the middle, so
+  `northlight-transit-20260812.txt` keeps the date that distinguishes two
+  captures of the same app.
+- The status bar speaks about logs rather than about storage. "Snapshot 16",
+  "Committing", "import capacity" and "committed" are column-store words; a
+  reader watching an import wants to know how much is readable and how fast the
+  rest is arriving. The live line also puts the rate before the source
+  description, because the ellipsis takes whatever is last and the rate is the
+  most volatile number in the app.
+- Entry rows say what they count. `5 view · 5 session` above a status bar reading
+  `Ready · 10 entries` labelled three different numbers with two words; each now
+  carries what it counts, and a selected timeline bar is "in this bar".
+- Facet counts state their whole scope in the visible label. The qualifier was in
+  a tooltip, which a touch device never shows, so a phone only ever read the
+  misleading half: with a search active, `COUNTS · WHOLE SESSION` sat above
+  counts that were already filtered.
+- The source pane defaults to scrolling on a touch screen, labels its toggle with
+  the action it performs, and states the current mode in visible text rather than
+  in a tooltip. The first natural "scroll the trace" swipe used to select a block
+  of text.
+- Timestamps show the precision the capture actually carries. Logcat prints
+  milliseconds unless a capture asked for microseconds, so three constant zeros
+  were taking width from the message on the row where the message is already
+  being clipped. The first entry with sub-millisecond detail widens the column
+  for the whole session.
+
 ### Fixed
+- An import ends showing the whole session. The viewport was seeded from the
+  first progressive snapshot, when the session genuinely held one entry, and
+  nothing ever re-fitted it — so every import finished with one row and an empty
+  plot beside a minimap already drawing the whole capture, and recovering meant
+  finding `Fit` inside a drawer labelled "Filters". A viewport nobody has touched
+  follows the session; the first zoom or pan hands it to the reader for good.
+- Entry rows fill their width. A one-line budget under word wrapping draws the
+  text up to the last break opportunity that fits rather than the text that fits,
+  so rows ellipsised at a third of their width with two thirds empty beside them
+  — and whether it happened depended on where the break opportunities fell, which
+  is why it looked arbitrary: `Intent {` forbids a break after the brace and
+  filled the row, `Zntent Z` offered one and clipped. Only the selected row,
+  which has a real multi-line budget, wraps.
+- Double-tapping the plot zooms without also re-scoping the entry list. The press
+  that zoomed returned early without recording a drag origin, so the release that
+  ended it looked like a stationary click and selected a cell — one gesture both
+  zoomed and silently replaced the table with the contents of one bar, complete
+  with a chip the reader never asked for.
+- The source pane always resolves. A read that was superseded, or that outlived
+  the pane it was started for, left "Reading the source bytes around this entry…"
+  on screen with no timeout, no error and no way to ask again; there is now a
+  floor under every read, an interrupted read says so, and a failed one offers
+  Retry.
+- The inspector's context line describes the selection as it stands. It was
+  written once, from the cell count the load carried, so it went on reading
+  "First of 27 in the selected bar" after the bar had been released and the row
+  had been picked straight from the table.
+- Landscape is a layout rather than a squeezed portrait. The display-cutout inset
+  rendered as a pure white band down the whole edge of a dark-themed app, because
+  the window background was AppCompat's default; lane labels were drawn at a
+  fixed size that overflowed their own lanes and sat half a row from the stripe
+  they named; and the analysis rail pinned each item to a width narrower than its
+  label, laying two tabs side by side and the third beneath.
+- Axis labels are no longer drawn underneath the minimap. The plot demanded a
+  minimum height, which a star-sized row cannot refuse, so with three tabs open
+  or a capture row added the control was arranged taller than its cell and its
+  own bottom — where the labels live — was overdrawn. The plot's bands give way
+  instead.
+- The time axis always reads as a scale. Choosing a tick interval is not enough
+  to guarantee two labels: where the aligned instants fall decides how many land
+  inside the viewport, two that do can still be too close together to print, and
+  at very narrow spans no interval can help — a one-microsecond viewport contains
+  exactly one whole microsecond. A narrow plot therefore still showed a single
+  label, an instant with nothing to say what a given width represents. When the
+  ticks cannot supply two labels the viewport's own ends are labelled instead,
+  which is a scale by construction. Label spacing continues to follow the width
+  of the labels themselves, so the dates a whole-session view prints do not
+  overlap.
+- A screen reader hears log entries instead of debug dumps. A row with no
+  automation name of its own falls back to its content's `ToString()`, and the
+  content is a record whose generated text is a field-by-field dump including the
+  session guid and the raw span; rows now announce level, tag, time and message.
+- Session-dependent commands are enabled only when there is a session. Share,
+  Export CSV and Save each returned silently with no session loaded while their
+  controls stayed fully enabled, and the empty state offered a `SHARE` link that
+  by definition could never do anything.
+- The system Back gesture works. The workspace claimed every Back press whether
+  or not it had anything to dismiss, so the app could not be left with the
+  gesture at all — only with Home. Back now closes the sheet, the dialog or the
+  filter drawer, and falls through to the platform when there is nothing to
+  close.
+- Contextual actions keep their slots. `Load next 500` appearing pushed `Copy
+  raw` onto a second line, so two taps in the same place hit different controls;
+  the always-present actions have a row of their own and the chip strip's height
+  is reserved for any session that can be filtered.
+- Live captures stop offering to follow a source that has closed. `Follow` and
+  `↓ New data` survived the end of a capture, where neither means anything.
+- Smaller fixes: the empty plot no longer tells a reader who has just opened a
+  file to open a file; the severity chips carry a visible legend on mobile,
+  including `?`; the process facet group no longer restates the PID group when no
+  process name could be resolved; the plot's caret no longer marks an entry the
+  current view has filtered out; the redundant `Search` button on mobile is a
+  clear affordance instead, and the soft keyboard resizes the workspace rather
+  than sliding the drawer's footer out of reach; the selected source line lands
+  inside the view with the lines that follow it; the empty minimap frame no
+  longer floats over a session with nothing to overview.
 - Re-engaging Follow opens a window on the live edge instead of keeping a
   whole-session span. Fitting the session releases Follow, so turning it back on
   is the ordinary way to return to the live edge — and it preserved the span it
@@ -48,12 +198,6 @@ The current stable release is `2.0.3`. Ongoing work is recorded under
   wrong by the device's offset. The format is now settled before the policy is
   chosen, and a followed file is read in the local zone like an imported one
   rather than being assumed to be UTC.
-- The time axis always shows at least two labels. Spacing alone only asks for a
-  tick count, and where the aligned instants fall decides how many land inside
-  the viewport, so a narrow plot — a phone in particular — regularly showed a
-  single label: an instant with nothing to say what a given width represents.
-  Label spacing also follows the width of the labels themselves, so the dates a
-  whole-session view prints no longer overlap each other.
 - Live captures are read in the device's own clock. They are parsed in UTC
   because that is the format logcat is asked for, but rendering them back in UTC
   put the newest entry a whole UTC offset in the past — two hours, on a UTC+2

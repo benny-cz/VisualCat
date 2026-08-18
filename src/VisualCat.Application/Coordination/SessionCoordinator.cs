@@ -46,7 +46,12 @@ public sealed class SessionCoordinator
             : FormatDetector.Detect(samples);
         if (detection.PrimaryFormat == LogcatFormat.Unknown)
         {
-            throw new InvalidDataException("No supported logcat format could be detected. Select a format override to import ambiguous data.");
+            // States the fact only. What to do about it differs by platform — the desktop
+            // import preview offers a format override and the Android companion has no such
+            // control — so the remedy is added by whoever is talking to the user rather than
+            // baked into a message that was advising phone users to use a desktop dialog.
+            throw new InvalidDataException(
+                "No supported logcat format could be detected in this file.");
         }
 
         await WriteDiagnosticAsync(

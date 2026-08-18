@@ -144,9 +144,12 @@ public sealed class SessionWorkspaceHeadlessTests
                 Assert.Contains(
                     accessibleNames,
                     static name => name?.StartsWith("COUNTS · THIS VIEW.", StringComparison.Ordinal) == true);
+                // The scope qualifier is in the visible label, not only in a tooltip a touch
+                // device never shows (finding 11).
                 Assert.Contains(
                     accessibleNames,
-                    static name => name?.StartsWith("COUNTS · WHOLE SESSION.", StringComparison.Ordinal) == true);
+                    static name =>
+                        name?.StartsWith("COUNTS · WHOLE SESSION · CURRENT FILTER.", StringComparison.Ordinal) == true);
 
                 var search = view.GetLogicalDescendants()
                     .OfType<TextBox>()

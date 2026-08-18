@@ -141,11 +141,16 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             PortableRaw: false);
         var progress = CreateProgressiveReporter(
             tab,
-            static snapshot => $"{snapshot.Stage} · {snapshot.LinesCommitted:N0} lines · {snapshot.ThroughputLinesPerSecond:N0}/s",
+            SessionActivity.Importing,
+            // "Committing", generations and "capacity" are column-store words. What a reader
+            // watching an import wants is how much of their log is already readable and how
+            // fast the rest is arriving (finding 24).
+            static snapshot =>
+                $"Reading · {snapshot.LinesCommitted:N0} lines · {snapshot.ThroughputLinesPerSecond:N0}/s",
             operationToken);
         try
         {
-            tab.Status = "Waiting for import capacity…";
+            tab.ReportActivity(SessionActivity.Queued, "Queued · waiting for another log to finish reading");
             await _resourceGovernor.WaitAsync(operationToken).ConfigureAwait(false);
             acquired = true;
             var result = await SessionCoordinator.ImportAsync(
@@ -161,14 +166,13 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         }
         catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested)
         {
-            tab.Status = "Cancelled · partial session retained";
+            tab.ReportActivity(SessionActivity.Stopped, "Stopped · what was read so far is kept");
             throw;
         }
         catch (Exception exception)
         {
             var reason = FriendlyMessage(exception);
-            tab.Status = $"Failed · {reason}";
-            tab.ReportCaptureFailure(reason);
+            tab.ReportFailure(reason, ImportRemedy(exception));
             throw;
         }
         finally
@@ -234,7 +238,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         using var gracefulStop = CancellationTokenSource.CreateLinkedTokenSource(timed.Token, operation.GracefulStop.Token);
         try
         {
-            tab.Status = "Waiting for capture capacity…";
+            tab.ReportActivity(SessionActivity.Queued, "Queued · waiting for another log to finish reading");
             await _resourceGovernor.WaitAsync(operationToken).ConfigureAwait(false);
             acquired = true;
 
@@ -262,15 +266,22 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
                     "again after every uninstall or reinstall:\n" +
                     "adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS";
             }
-            tab.Status = source.Metadata.Kind == SourceKind.Adb
-                ? $"Connecting · {scope}"
-                : $"Starting capture · {scope}";
+            if (source.Metadata.Kind == SourceKind.Adb)
+            {
+                tab.ReportActivity(SessionActivity.Connecting, $"Connecting · {scope}");
+            }
+            else
+            {
+                tab.ReportActivity(SessionActivity.Starting, $"Starting capture · {scope}");
+            }
+
             var result = await SessionCoordinator.ImportAsync(
                 source,
                 sessionRoot,
                 settings,
                 CreateProgressiveReporter(
                     tab,
+                    SessionActivity.Capturing,
                     snapshot => tab.DescribeCaptureProgress(scope, snapshot),
                     operationToken),
                 _diagnostics,
@@ -282,20 +293,21 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             await tab.LoadSnapshotAsync(true, operationToken).ConfigureAwait(false);
             if (capturedEntries == 0)
             {
-                tab.Status = "Stopped · no log entries were received; retry Live and generate app activity";
+                tab.ReportActivity(
+                    SessionActivity.Stopped,
+                    "Stopped · no log entries were received; retry Live and generate app activity");
             }
+
             return tab;
         }
         catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested)
         {
-            tab.Status = "Stopped · partial session retained";
+            tab.ReportActivity(SessionActivity.Stopped, "Stopped · what was captured is kept");
             throw;
         }
         catch (Exception exception)
         {
-            var reason = FriendlyMessage(exception);
-            tab.Status = $"Failed · {reason}";
-            tab.ReportCaptureFailure(reason);
+            tab.ReportFailure(FriendlyMessage(exception), remedy: null);
             throw;
         }
         finally
@@ -324,7 +336,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         }
 
         operation.GracefulStop.Cancel();
-        tab.Status = "Stopping · draining committed data…";
+        tab.ReportActivity(SessionActivity.Stopping, "Stopping · saving the last of the capture…");
         await operation.Completion.Task.ConfigureAwait(false);
         return true;
     }
@@ -405,6 +417,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     /// </summary>
     private Progress<ProgressSnapshot> CreateProgressiveReporter(
         SessionTabViewModel tab,
+        SessionActivity activity,
         Func<ProgressSnapshot, string> describe,
         CancellationToken cancellationToken)
     {
@@ -420,7 +433,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             }
 
             Volatile.Write(ref lastUiProgress, now);
-            tab.Status = describe(snapshot);
+            tab.ReportActivity(activity, describe(snapshot));
 
             // With the workspace off screen there is nothing to redraw, and re-opening
             // the snapshot only to run four queries against it and throw the answers
@@ -529,6 +542,31 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
                 $"VisualCat could not read or write the session: {Shorten(cause.Message)}",
             _ => Shorten(cause.Message),
         };
+    }
+
+    /// <summary>
+    /// The next step for a failed import, when this platform has one to offer.
+    /// </summary>
+    /// <remarks>
+    /// A phone has no format override — the Android import path constructs its settings from
+    /// the detected format with no dialog — so telling a phone user to "select a format
+    /// override" named a control that does not exist there. Both platforms get the same
+    /// first sentence and only the actionable half differs (finding 10).
+    /// </remarks>
+    internal static string? ImportRemedy(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        if (Unwrap(exception) is not InvalidDataException)
+        {
+            return null;
+        }
+
+        return OperatingSystem.IsAndroid()
+            ? "VisualCat reads Android logcat text — the output of `logcat`, or a `.vcat` " +
+              "session or portable archive. Check that this file is a logcat capture and " +
+              "not, say, a bug report or an application log in another format."
+            : "Open it again and choose a format override in the import preview if you know " +
+              "which logcat format it is.";
     }
 
     /// <summary>Unwraps the reporting layers a failure passes through on its way here.</summary>

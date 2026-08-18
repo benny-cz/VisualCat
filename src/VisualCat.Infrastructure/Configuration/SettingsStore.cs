@@ -25,7 +25,12 @@ public sealed record ApplicationSettings(
     long? TemporaryRetentionMaximumBytes = null,
     double? WindowWidth = null,
     double? WindowHeight = null,
-    bool WindowMaximized = false);
+    bool WindowMaximized = false,
+
+    // Whether the reader has already been told what an on-device capture does before Android
+    // asks them to allow it. Android's own prompt appears on every capture and says nothing
+    // about where the data goes; this records that the app has explained itself once.
+    bool LiveCaptureNoticeAcknowledged = false);
 
 public sealed class SettingsStore(string path)
 {

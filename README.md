@@ -152,8 +152,9 @@ dotnet workload install android
 dotnet build src/VisualCat.Android/VisualCat.Android.csproj --configuration Release
 ```
 
-Full-device live capture needs Android's log-access permission, which the system
-asks for on first use; over ADB it can be granted directly:
+Full-device live capture needs Android's log-access permission. The system asks
+for it at the start of every capture, because what it grants is one-time access;
+over ADB it can be granted for good:
 
 ```shell
 adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS

@@ -5,17 +5,15 @@ using VisualCat.Infrastructure.Configuration;
 
 namespace VisualCat.App.Views;
 
-public sealed class RecentSessionsDialog : Window
+public sealed class RecentSessionsDialog : DialogBody<string>
 {
     private readonly ListBox _sessions = new();
 
     public RecentSessionsDialog(IReadOnlyList<TemporarySessionInfo> sessions)
+        : base("Recent VisualCat sessions")
     {
-        Title = "Recent VisualCat sessions";
-        Width = 760;
-        Height = 480;
-        MinWidth = 560;
-        MinHeight = 320;
+        PreferredSize = new Size(760, 480);
+        MinimumSize = new Size(560, 320);
         _sessions.ItemsSource = sessions;
         _sessions.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<TemporarySessionInfo>((session, _) =>
             session is null
@@ -25,10 +23,15 @@ public sealed class RecentSessionsDialog : Window
                     Margin = new Thickness(5),
                     Children =
                     {
-                        new TextBlock { Text = Path.GetFileName(session.Path), FontWeight = Avalonia.Media.FontWeight.Bold },
                         new TextBlock
                         {
-                            Text = $"{session.UpdatedUtc:g} · {FormatBytes(session.SizeBytes)} · {(session.Finalized ? "ready" : "partial")}",
+                            Text = SessionCacheName.Describe(session.Path),
+                            FontWeight = Avalonia.Media.FontWeight.Bold,
+                        },
+                        new TextBlock
+                        {
+                            Text = $"{session.UpdatedUtc.ToLocalTime():g} · {FormatBytes(session.SizeBytes)} · " +
+                                   (session.Finalized ? "ready" : "partial"),
                             Opacity = 0.75,
                         },
                     },
@@ -42,7 +45,7 @@ public sealed class RecentSessionsDialog : Window
             HorizontalAlignment = HorizontalAlignment.Right,
         };
         var cancel = new Button { Content = "Cancel" };
-        cancel.Click += (_, _) => Close(null);
+        cancel.Click += (_, _) => Complete(null);
         buttons.Children.Add(cancel);
         var open = new Button { Content = "Open", IsDefault = true };
         open.Click += (_, _) => OpenSelected();
@@ -84,12 +87,12 @@ public sealed class RecentSessionsDialog : Window
     {
         if (_sessions.SelectedItem is TemporarySessionInfo session)
         {
-            Close(session.Path);
+            Complete(session.Path);
         }
     }
 }
 
-public sealed class AppearanceDialog : Window
+public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
 {
     private readonly ComboBox _theme = new() { ItemsSource = new[] { "System", "Light", "Dark" }, Width = 180 };
     private readonly CheckBox _highContrast = new() { Content = "Prefer high-contrast presentation" };
@@ -135,12 +138,11 @@ public sealed class AppearanceDialog : Window
     private readonly ApplicationSettings _settings;
 
     public AppearanceDialog(ApplicationSettings settings)
+        : base("Appearance & timeline")
     {
         _settings = settings;
-        Title = "Appearance";
-        Width = 520;
-        Height = 820;
-        MinHeight = 620;
+        PreferredSize = new Size(520, 820);
+        MinimumSize = new Size(420, 620);
         _theme.SelectedItem = settings.Theme;
         _highContrast.IsChecked = settings.HighContrast;
         _textScale.Value = (decimal)settings.TextScale;
@@ -216,10 +218,10 @@ public sealed class AppearanceDialog : Window
             Margin = new Thickness(0, 12, 0, 0),
         };
         var cancel = new Button { Content = "Cancel" };
-        cancel.Click += (_, _) => Close(null);
+        cancel.Click += (_, _) => Complete(null);
         buttons.Children.Add(cancel);
         var save = new Button { Content = "Apply", IsDefault = true };
-        save.Click += (_, _) => Close(_settings with
+        save.Click += (_, _) => Complete(_settings with
         {
             Theme = _theme.SelectedItem as string ?? "System",
             HighContrast = _highContrast.IsChecked == true,
@@ -255,7 +257,7 @@ public sealed class AppearanceDialog : Window
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
 
-public sealed class SessionCacheDialog : Window
+public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
 {
     private readonly string _cacheRoot;
     private readonly ApplicationSettings _settings;
@@ -266,14 +268,12 @@ public sealed class SessionCacheDialog : Window
     private readonly ListBox _sessions = new();
 
     public SessionCacheDialog(string cacheRoot, ApplicationSettings settings)
+        : base("Temporary session cache")
     {
         _cacheRoot = Path.GetFullPath(cacheRoot);
         _settings = settings;
-        Title = "Temporary session cache";
-        Width = 780;
-        Height = 590;
-        MinWidth = 620;
-        MinHeight = 460;
+        PreferredSize = new Size(780, 590);
+        MinimumSize = new Size(620, 460);
         _enabled.IsChecked = settings.TemporaryCleanupEnabled;
         _days.Value = settings.TemporaryRetentionDays;
         _maximumGiB.Value = settings.TemporaryRetentionMaximumBytes is { } bytes
@@ -284,7 +284,8 @@ public sealed class SessionCacheDialog : Window
                 ? new TextBlock()
                 : new TextBlock
                 {
-                    Text = $"{Path.GetFileName(session.Path)} · {session.UpdatedUtc:g} · {RecentSessionsDialog.FormatBytes(session.SizeBytes)}",
+                    Text = $"{SessionCacheName.Describe(session.Path)} · {session.UpdatedUtc.ToLocalTime():g} · " +
+                           RecentSessionsDialog.FormatBytes(session.SizeBytes),
                     Margin = new Thickness(4),
                 });
 
@@ -314,10 +315,10 @@ public sealed class SessionCacheDialog : Window
         clean.Click += async (_, _) => await CleanAsync();
         buttons.Children.Add(clean);
         var cancel = new Button { Content = "Cancel" };
-        cancel.Click += (_, _) => Close(null);
+        cancel.Click += (_, _) => Complete(null);
         buttons.Children.Add(cancel);
         var save = new Button { Content = "Save policy", IsDefault = true };
-        save.Click += (_, _) => Close(CurrentSettings());
+        save.Click += (_, _) => Complete(CurrentSettings());
         buttons.Children.Add(save);
 
         var root = new Grid
@@ -340,8 +341,10 @@ public sealed class SessionCacheDialog : Window
         Grid.SetRow(buttons, 4);
         root.Children.Add(buttons);
         Content = root;
-        Opened += async (_, _) => await RefreshAsync();
     }
+
+    /// <summary>The cache is scanned once the dialog is on screen, not while it is built.</summary>
+    protected override void OnPresented() => _ = RefreshAsync();
 
     private ApplicationSettings CurrentSettings()
     {
@@ -372,10 +375,10 @@ public sealed class SessionCacheDialog : Window
             return;
         }
 
-        var confirmation = new ConfirmationDialog(
+        var confirmed = await ShowNestedAsync(new ConfirmationDialog(
             "Delete eligible temporary sessions?",
-            "Sessions older than the configured age, and oldest sessions above the size cap, will be permanently removed.");
-        if (!await confirmation.ShowDialog<bool>(this))
+            "Sessions older than the configured age, and oldest sessions above the size cap, will be permanently removed."));
+        if (confirmed != true)
         {
             return;
         }
@@ -394,14 +397,13 @@ public sealed class SessionCacheDialog : Window
     }
 }
 
-public sealed class ConfirmationDialog : Window
+public sealed class ConfirmationDialog : DialogBody<bool>
 {
     public ConfirmationDialog(string title, string message, string confirmText = "Delete")
+        : base(title)
     {
-        Title = title;
-        Width = 480;
-        Height = 210;
-        CanResize = false;
+        PreferredSize = new Size(480, 230);
+        MinimumSize = new Size(360, 200);
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -409,10 +411,10 @@ public sealed class ConfirmationDialog : Window
             HorizontalAlignment = HorizontalAlignment.Right,
         };
         var cancel = new Button { Content = "Cancel", IsCancel = true };
-        cancel.Click += (_, _) => Close(false);
+        cancel.Click += (_, _) => Complete(false);
         buttons.Children.Add(cancel);
         var confirm = new Button { Content = confirmText, IsDefault = true };
-        confirm.Click += (_, _) => Close(true);
+        confirm.Click += (_, _) => Complete(true);
         buttons.Children.Add(confirm);
         Content = new StackPanel
         {

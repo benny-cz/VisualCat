@@ -97,8 +97,12 @@ public sealed partial class SessionWorkspaceView : UserControl
     private TextBlock? _rawChevron;
     private ScrollViewer? _rawScroller;
     private Button? _rawPanToggle;
+    private TextBlock? _rawPanState;
     private Button? _rawWrapToggle;
+    private Button? _rawRetry;
     private Button? _rawCopySelection;
+    private DispatcherTimer? _rawLoadWatchdog;
+    private bool _rawLoadPending;
     private Button? _rawPanLeft;
     private Button? _rawPanRight;
     private bool _rawExpanded;
@@ -165,6 +169,14 @@ public sealed partial class SessionWorkspaceView : UserControl
     private ScrollViewer? _mobileFilterScroll;
     private Grid? _mobileFilterShell;
     private Grid? _mobileFilterBody;
+    private Control? _filterHost;
+    private Control? _rowSplitter;
+    private Button? _mobileFit;
+    private Grid? _entryPrimaryActions;
+    private Panel? _entryContextActions;
+    private TextBlock? _severityLegend;
+    private TextBlock? _chipEmptyLabel;
+    private Button? _clearFilters;
     private Control? _mobileQuerySection;
     private Control? _mobileSeveritySection;
     private Control? _mobileTimeSection;
@@ -174,7 +186,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Border? _minimapFrame;
     private TabControl? _mobileAnalysisTabs;
     private Grid? _entryHeader;
-    private WrapPanel? _entryActions;
+    private Grid? _entryActions;
     private Button? _copyRaw;
     private Button? _templateInclude;
     private Button? _templateExclude;
@@ -195,6 +207,9 @@ public sealed partial class SessionWorkspaceView : UserControl
     private bool _updatingLevelChecks;
     private TimeZoneInfo? _sessionZone;
     private string? _sessionZoneId;
+
+    // One-way per session: see ObserveTimestampPrecision.
+    private bool _microsecondTimestamps;
 
     public SessionWorkspaceView(SessionTabViewModel viewModel)
     {
@@ -231,6 +246,10 @@ public sealed partial class SessionWorkspaceView : UserControl
             _loadAllEntriesCancellation?.Dispose();
             _loadAllEntriesCancellation = null;
             CancelRawContextLoad(resumeOnAttach: true);
+
+            // The read is not running any more, so neither is the clock that would have
+            // called it failed; re-attaching resumes both.
+            DisarmRawLoadWatchdog();
         };
     }
 
@@ -318,7 +337,9 @@ public sealed partial class SessionWorkspaceView : UserControl
 
             if (_rawPanToggle is { } panToggle)
             {
-                ApplyMobileChoiceAppearance(panToggle, _rawPanMode);
+                // An action button, not a state: what mode the source is in is said in words
+                // beside it (§ finding 15).
+                ApplyMobileChoiceAppearance(panToggle, selected: false);
             }
 
             if (_rawWrapToggle is { } wrapToggle)
@@ -343,6 +364,13 @@ public sealed partial class SessionWorkspaceView : UserControl
                 textBlock.Foreground = muted;
             }
         }
+
+        if (_severityLegend is { } severityLegend)
+        {
+            severityLegend.Foreground = muted;
+        }
+
+        ApplyFailureTheme();
 
         // The session pane paints its own label/value/warn brushes, so it is rebuilt with
         // the theme rather than left in the previous variant's colors.
@@ -384,7 +412,15 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         if (eventArgs.Key == Key.Escape)
         {
-            _ = RunUiActionAsync(HandleEscapeAsync);
+            // Only claim the key when there is something to dismiss. Claiming it
+            // unconditionally is what made the Android Back gesture inert everywhere in the
+            // app: the press was reported handled, so the platform never got to background
+            // the task and the app could not be left at all (finding 20).
+            if (!TryDismissTransientState())
+            {
+                return false;
+            }
+
             return true;
         }
 
@@ -447,6 +483,31 @@ public sealed partial class SessionWorkspaceView : UserControl
     private bool FocusFirstFacet() =>
         _facets.GetLogicalDescendants().OfType<Button>().FirstOrDefault()?.Focus() == true;
 
+    /// <summary>
+    /// Closes the innermost thing the reader has opened — the filter drawer, an active query,
+    /// a selected timeline bar, the filter itself — and reports whether there was one.
+    /// </summary>
+    /// <remarks>
+    /// Shared by Escape and by the Android Back gesture, and the return value is what lets
+    /// Back fall through to the platform when the workspace has nothing to give up.
+    /// </remarks>
+    internal bool TryDismissTransientState()
+    {
+        if (!HasTransientState())
+        {
+            return false;
+        }
+
+        _ = RunUiActionAsync(HandleEscapeAsync);
+        return true;
+    }
+
+    private bool HasTransientState() =>
+        _mobileFiltersOpen ||
+        _search.IsFocused && !string.IsNullOrWhiteSpace(_viewModel.SearchText) ||
+        _viewModel.DetailRange is not null ||
+        _viewModel.Filter.Fingerprint() != FilterSpec.All.Fingerprint();
+
     private async Task HandleEscapeAsync()
     {
         if (_mobileFiltersOpen)
@@ -490,13 +551,43 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         _search.Width = _mobile ? double.NaN : 310;
-        var searchButton = new Button { Content = "Search" };
-        searchButton.Click += async (_, _) => await RunUiActionAsync(ApplySearchAsync);
+
+        // A "Search" button beside a field that already searches as you type promises a step
+        // that does not exist. On the desktop it is at least the visible statement of what
+        // Enter does; on a phone the row is narrow and what a query field actually needs
+        // there is a way to empty it again with one thumb (finding 28).
+        var searchAction = new Button
+        {
+            Content = _mobile ? "✕" : "Search",
+        };
+        AutomationProperties.SetName(searchAction, _mobile ? "Clear the query" : "Apply the query");
+        ToolTip.SetTip(
+            searchAction,
+            _mobile
+                ? "Clear the query"
+                : "Apply the query now; it also applies as you type");
+        searchAction.Click += async (_, _) =>
+        {
+            if (_mobile)
+            {
+                _search.Text = string.Empty;
+            }
+
+            await RunUiActionAsync(ApplySearchAsync);
+        };
         _search.KeyDown += async (_, eventArgs) =>
         {
             if (eventArgs.Key == Avalonia.Input.Key.Enter)
             {
                 await RunUiActionAsync(ApplySearchAsync);
+
+                // On a phone the IME's action key is how a query is committed, and the drawer
+                // it was typed into is covering the results.
+                if (_mobile)
+                {
+                    SetMobileFiltersOpen(false);
+                }
+
                 eventArgs.Handled = true;
             }
         };
@@ -582,7 +673,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                          _search,
                          _regex,
                          _caseSensitive,
-                         searchButton,
+                         searchAction,
                          zoomOut,
                          fit,
                          zoomIn,
@@ -600,8 +691,8 @@ public sealed partial class SessionWorkspaceView : UserControl
 
             var queryRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
             queryRow.Children.Add(_search);
-            Grid.SetColumn(searchButton, 1);
-            queryRow.Children.Add(searchButton);
+            Grid.SetColumn(searchAction, 1);
+            queryRow.Children.Add(searchAction);
 
             var queryOptions = new WrapPanel
             {
@@ -635,6 +726,28 @@ public sealed partial class SessionWorkspaceView : UserControl
                     queryOptions,
                 },
             };
+            // The chips carry a letter each and their meaning lived only in a tooltip, which
+            // a touch device never shows — so "?" in particular had no legend anywhere in the
+            // mobile UI even though its automation name knew what it meant (finding 28).
+            var legend = new System.Text.StringBuilder();
+            foreach (var level in LogLevels.DisplayOrder)
+            {
+                if (legend.Length > 0)
+                {
+                    legend.Append("  ·  ");
+                }
+
+                legend.Append(LevelPalette.Label(level))
+                    .Append(' ')
+                    .Append(level.ToString().ToLowerInvariant());
+            }
+
+            var severityLegend = _severityLegend = new TextBlock
+            {
+                Text = legend.ToString(),
+                FontSize = 10,
+                TextWrapping = TextWrapping.Wrap,
+            };
             var severitySection = _mobileSeveritySection = new StackPanel
             {
                 Spacing = 6,
@@ -643,6 +756,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 {
                     MobileSectionLabel("SEVERITY"),
                     levelGroup,
+                    severityLegend,
                 },
             };
             var timeSection = _mobileTimeSection = new StackPanel
@@ -769,6 +883,24 @@ public sealed partial class SessionWorkspaceView : UserControl
             AddModeButton("Split", MobileWorkspaceDisplayMode.Split, 1);
             AddModeButton("Details", MobileWorkspaceDisplayMode.Details, 2);
 
+            // Zooming is not filtering, and fitting the session is the most frequent thing
+            // anyone does to a plot. It lived only inside a drawer labelled "Filters", two
+            // taps deep, which is the wrong place for the action a reader reaches for most
+            // (finding 14). The drawer keeps its TIME LENS group for discoverability and for
+            // stepped zoom; this is the one-tap route back to the whole session.
+            var mobileFit = _mobileFit = new Button
+            {
+                Content = "Fit",
+                MinHeight = 48,
+                MinWidth = 56,
+                Padding = new Thickness(8, 0),
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+            };
+            ToolTip.SetTip(mobileFit, "Fit the complete session in the plot");
+            AutomationProperties.SetName(mobileFit, "Fit the complete session");
+            mobileFit.Click += (_, _) => _timeline.FitSession();
+
             var quickActions = _mobileQuickActions = new WrapPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -776,10 +908,14 @@ public sealed partial class SessionWorkspaceView : UserControl
                 LineSpacing = 6,
                 Margin = new Thickness(6, 3, 6, 3),
                 VerticalAlignment = VerticalAlignment.Center,
+
+                // Only the trailing controls appear and disappear, so nothing the reader
+                // aims at moves when a capture starts or stops (finding 26).
                 Children =
                 {
                     _mobileFilterButton,
                     modeSelector,
+                    mobileFit,
                     _follow,
                     _newData,
                     _stopCapture,
@@ -809,7 +945,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             desktopFilters.Children.Add(_search);
             desktopFilters.Children.Add(_regex);
             desktopFilters.Children.Add(_caseSensitive);
-            desktopFilters.Children.Add(searchButton);
+            desktopFilters.Children.Add(searchAction);
             desktopFilters.Children.Add(levelGroup);
             desktopFilters.Children.Add(zoomOut);
             desktopFilters.Children.Add(fit);
@@ -822,13 +958,21 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         AutomationProperties.SetName(filters, "Session filters");
+        _filterHost = filters;
         Grid.SetRow(filters, 0);
         root.Children.Add(filters);
 
         var chipBar = _chipBar;
         chipBar.Margin = new Thickness(10, 0, 10, 5);
         chipBar.LastChildFill = true;
-        var clear = new Button { Content = "Clear all", Margin = new Thickness(6, 0, 0, 0) };
+        chipBar.MinHeight = _mobile ? 40 : 0;
+        var clear = _clearFilters = new Button
+        {
+            Content = "Clear all",
+            Margin = new Thickness(6, 0, 0, 0),
+            MinHeight = _mobile ? 40 : 0,
+            IsVisible = false,
+        };
         clear.Click += async (_, _) =>
         {
             _search.Text = string.Empty;
@@ -839,6 +983,16 @@ public sealed partial class SessionWorkspaceView : UserControl
         };
         DockPanel.SetDock(clear, Dock.Right);
         chipBar.Children.Add(clear);
+        var chipEmptyLabel = _chipEmptyLabel = new TextBlock
+        {
+            Text = "No filters · showing everything in view",
+            FontSize = 11,
+            Opacity = 0.62,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        DockPanel.SetDock(chipEmptyLabel, Dock.Left);
+        chipBar.Children.Add(chipEmptyLabel);
         _rangeActions.Children.Add(_rangeText);
         var zoomRange = new Button { Content = "Zoom range" };
         zoomRange.Click += (_, _) =>
@@ -883,6 +1037,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Background = new SolidColorBrush(Color.Parse("#304F7199")),
                 Margin = new Thickness(10, 0),
             };
+            _rowSplitter = rowSplitter;
             Grid.SetRow(rowSplitter, 4);
             root.Children.Add(rowSplitter);
         }
@@ -901,37 +1056,11 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             RowDefinitions = new RowDefinitions("Auto,Auto"),
         };
-        Panel entryActions = _mobile
-            ? _entryActions = new WrapPanel
-            {
-                Orientation = Orientation.Horizontal,
-                ItemSpacing = 6,
-                LineSpacing = 6,
-            }
-            : new DockPanel { LastChildFill = false };
         _order.SelectionChanged += (_, _) => _ = _viewModel.SetEntryOrderAsync(
             _order.SelectedIndex == 1 ? EntryOrder.SourceSequence : EntryOrder.Chronological);
-        DockPanel.SetDock(_order, Dock.Right);
-        entryActions.Children.Add(_order);
         ToolTip.SetTip(_loadMore, $"Load the next {SessionTabViewModel.EntryPageSize:N0} matching rows");
         AutomationProperties.SetName(_loadMore, $"Load next {SessionTabViewModel.EntryPageSize:N0} matching rows");
         _loadMore.Click += async (_, _) => await RunUiActionAsync(() => _viewModel.LoadNextEntryPageAsync());
-        DockPanel.SetDock(_loadMore, Dock.Right);
-        if (!_mobile)
-        {
-            _loadAll.Click += async (_, _) => await ToggleLoadAllEntriesAsync();
-            DockPanel.SetDock(_loadAll, Dock.Right);
-            entryActions.Children.Add(_loadAll);
-        }
-
-        entryActions.Children.Add(_loadMore);
-        if (!_mobile)
-        {
-            DockPanel.SetDock(_entryLoadStatus, Dock.Right);
-            entryActions.Children.Add(_entryLoadStatus);
-        }
-
-        UpdateEntryLoadControls();
         var copyRaw = _copyRaw = new Button
         {
             Content = "Copy raw",
@@ -940,8 +1069,6 @@ public sealed partial class SessionWorkspaceView : UserControl
         };
         ToolTip.SetTip(copyRaw, "Copy the raw text of the selected entries");
         copyRaw.Click += async (_, _) => await RunUiActionAsync(CopySelectedRawAsync);
-        DockPanel.SetDock(copyRaw, Dock.Right);
-        entryActions.Children.Add(copyRaw);
 
         // A clipped row promises text it cannot show. This is the named way to reach it,
         // beside the actions that already act on the selected row, so the route does not
@@ -955,8 +1082,16 @@ public sealed partial class SessionWorkspaceView : UserControl
         ToolTip.SetTip(openInspector, "Show the selected entry's full message and source bytes (Enter)");
         AutomationProperties.SetName(openInspector, "Show the full message of the selected entry");
         openInspector.Click += (_, _) => ShowInspector();
-        DockPanel.SetDock(openInspector, Dock.Right);
-        entryActions.Children.Add(openInspector);
+
+        // Filters are session-wide but this table is not: when the filter matches
+        // nothing inside the current view, offer the one action that reconciles them
+        // instead of leaving an empty table next to a facet promising thousands of hits.
+        ToolTip.SetTip(_fitMatches, "Move the timeline to the range that contains the matching entries");
+        _fitMatches.Click += (_, _) => FitToMatches();
+        ToolTip.SetTip(_clearScope, "Stop listing one selected cell and follow the visible time range again");
+        _clearScope.Click += async (_, _) => await RunUiActionAsync(() => _viewModel.ClearDetailScopeAsync());
+
+        Panel entryActions;
         if (_mobile)
         {
             foreach (var touchTarget in new Control[]
@@ -970,26 +1105,73 @@ public sealed partial class SessionWorkspaceView : UserControl
                      })
             {
                 touchTarget.MinHeight = 48;
+                touchTarget.Margin = new Thickness(0);
             }
+
+            // Fixed slots. These three are always present, so the sort dropdown, Copy raw
+            // and the inspector never move: previously they shared one wrap panel with the
+            // contextual actions, and `Load next 500` appearing pushed Copy raw onto a
+            // second line — two taps in the same place hit different controls (finding 26).
+            var primaryActions = _entryPrimaryActions = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"),
+                ColumnSpacing = 6,
+            };
+            _order.HorizontalAlignment = HorizontalAlignment.Left;
+            primaryActions.Children.Add(_order);
+            Grid.SetColumn(copyRaw, 2);
+            primaryActions.Children.Add(copyRaw);
+            Grid.SetColumn(openInspector, 3);
+            primaryActions.Children.Add(openInspector);
+
+            // Contextual actions get their own row below, so what they push is the table
+            // rather than the controls above them.
+            var contextActions = _entryContextActions = new WrapPanel
+            {
+                Orientation = Orientation.Horizontal,
+                ItemSpacing = 6,
+                LineSpacing = 6,
+                Margin = new Thickness(0, 6, 0, 0),
+                IsVisible = false,
+                Children = { _loadMore, _fitMatches, _clearScope },
+            };
+            AutomationProperties.SetName(contextActions, "Actions for the current view");
+
+            var actionShell = _entryActions = new Grid
+            {
+                RowDefinitions = new RowDefinitions("Auto,Auto"),
+            };
+            actionShell.Children.Add(primaryActions);
+            Grid.SetRow(contextActions, 1);
+            actionShell.Children.Add(contextActions);
+            entryActions = actionShell;
+        }
+        else
+        {
+            _loadAll.Click += async (_, _) => await ToggleLoadAllEntriesAsync();
+            _insightsToggle.Click += (_, _) => ToggleInsights();
+            var dock = new DockPanel { LastChildFill = false };
+            foreach (var control in new Control[]
+                     {
+                         _order,
+                         _loadAll,
+                         _loadMore,
+                         _entryLoadStatus,
+                         copyRaw,
+                         openInspector,
+                         _fitMatches,
+                         _clearScope,
+                         _insightsToggle,
+                     })
+            {
+                DockPanel.SetDock(control, Dock.Right);
+                dock.Children.Add(control);
+            }
+
+            entryActions = dock;
         }
 
-        // Filters are session-wide but this table is not: when the filter matches
-        // nothing inside the current view, offer the one action that reconciles them
-        // instead of leaving an empty table next to a facet promising thousands of hits.
-        ToolTip.SetTip(_fitMatches, "Move the timeline to the range that contains the matching entries");
-        _fitMatches.Click += (_, _) => FitToMatches();
-        DockPanel.SetDock(_fitMatches, Dock.Right);
-        entryActions.Children.Add(_fitMatches);
-        ToolTip.SetTip(_clearScope, "Stop listing one selected cell and follow the visible time range again");
-        _clearScope.Click += async (_, _) => await RunUiActionAsync(() => _viewModel.ClearDetailScopeAsync());
-        DockPanel.SetDock(_clearScope, Dock.Right);
-        entryActions.Children.Add(_clearScope);
-        if (!_mobile)
-        {
-            _insightsToggle.Click += (_, _) => ToggleInsights();
-            DockPanel.SetDock(_insightsToggle, Dock.Right);
-            entryActions.Children.Add(_insightsToggle);
-        }
+        UpdateEntryLoadControls();
 
         entryHeader.Children.Add(_summary);
         Grid.SetRow(entryActions, 1);
@@ -1054,6 +1236,13 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         Grid.SetRow(analysis, 5);
         root.Children.Add(analysis);
+
+        // Occupies the whole workspace band, but only ever while the session has nothing to
+        // show; the panes above are hidden rather than covered (see UpdateFailureState).
+        var failureCard = BuildFailureCard();
+        Grid.SetRow(failureCard, 0);
+        Grid.SetRowSpan(failureCard, 6);
+        root.Children.Add(failureCard);
 
         _status.TextTrimming = TextTrimming.CharacterEllipsis;
         _searchStatus.TextTrimming = TextTrimming.CharacterEllipsis;

@@ -66,7 +66,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         // ever differs, so the table stays scannable and virtualization is untouched.
         // Both states come from styles because a local value in the template would
         // outrank the selected-state setter and never yield.
-        _entries.Styles.Add(MessageLineStyle(collapsed: true, _mobile ? 1 : 1));
+        _entries.Styles.Add(MessageLineStyle(collapsed: true, maximumLines: 1));
         _entries.Styles.Add(MessageLineStyle(collapsed: false, _mobile ? 4 : 2));
         if (_mobile)
         {
@@ -74,8 +74,42 @@ public sealed partial class SessionWorkspaceView : UserControl
             _entries.Styles.Add(ExpandGlyphStyle(onSelectedRow: true));
         }
 
+        // A row's automation name has to be set on the container, not inside the template:
+        // a ListBoxItem with no name of its own falls back to its content's ToString(), and
+        // the content here is the NormalizedEntry record, whose generated ToString() is a
+        // ~400-character dump of every field including the session guid and the raw span.
+        // TalkBack read that, in full, for every row. ContainerPrepared is the hook that
+        // survives virtualization: a recycled container is prepared again for its new item.
+        _entries.ContainerPrepared += (_, eventArgs) =>
+        {
+            if (eventArgs.Container.DataContext is NormalizedEntry entry)
+            {
+                AutomationProperties.SetName(eventArgs.Container, EntryAutomationName(entry));
+            }
+        };
+        _entries.ContainerClearing += (_, eventArgs) =>
+            AutomationProperties.SetName(eventArgs.Container, string.Empty);
+
         ApplyEntryTemplate();
         AutomationProperties.SetName(_entries, "Filtered log entries");
+    }
+
+    /// <summary>Characters of a message a screen reader is given for one row.</summary>
+    private const int RowSpokenMessageLength = 320;
+
+    /// <summary>
+    /// What a screen reader should hear for one row: which severity, which tag, when, and
+    /// what it said — the same shape the inspector's message block already uses, and in the
+    /// order the questions arrive. The message is capped because a row is a table cell, not
+    /// the record: the inspector reads the rest.
+    /// </summary>
+    private string EntryAutomationName(NormalizedEntry entry)
+    {
+        var message = entry.Message.Length > RowSpokenMessageLength
+            ? entry.Message[..RowSpokenMessageLength] + "…"
+            : entry.Message;
+        return $"{entry.Level} {entry.Tag} at {FormatInstant(entry.Timestamp)}: " +
+               message.ReplaceLineEndings(" ");
     }
 
     /// <summary>
@@ -83,6 +117,20 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// one so it wins for the selected row; both are needed because a style cannot
     /// override a value the template set locally.
     /// </summary>
+    /// <remarks>
+    /// The collapsed row must not wrap. A one-line budget under <see cref="TextWrapping.Wrap"/>
+    /// lays the message out as wrapped lines and then keeps the first one, so what the row
+    /// draws is the text up to the last <em>word-break opportunity</em> that fits — not the
+    /// text that fits. A message whose next token is long and unbreakable ends its first
+    /// line early, and the row then ellipsised at a third of its width with two thirds
+    /// empty beside it, while a neighbouring row of the same length filled the row. Whether
+    /// it happened depended on where the break opportunities fell, which is why it looked
+    /// arbitrary: <c>Intent {</c> forbids a break after the brace (UAX #14) and filled the
+    /// row, <c>Zntent Z</c> offered one and clipped. <see cref="TextWrapping.NoWrap"/> plus
+    /// character ellipsis fills the row and clips at the exact pixel it runs out — which is
+    /// what a single-line cell means. Only the selected row, which has a real multi-line
+    /// budget, wraps (finding 2).
+    /// </remarks>
     private static Avalonia.Styling.Style MessageLineStyle(bool collapsed, int maximumLines)
     {
         var style = new Avalonia.Styling.Style(selector =>
@@ -93,7 +141,9 @@ public sealed partial class SessionWorkspaceView : UserControl
                 .OfType<TextBlock>()
                 .Name(MessageBlockName);
         });
-        style.Setters.Add(new Avalonia.Styling.Setter(TextBlock.TextWrappingProperty, TextWrapping.Wrap));
+        style.Setters.Add(new Avalonia.Styling.Setter(
+            TextBlock.TextWrappingProperty,
+            collapsed ? TextWrapping.NoWrap : TextWrapping.Wrap));
         style.Setters.Add(new Avalonia.Styling.Setter(TextBlock.MaxLinesProperty, maximumLines));
         return style;
     }
@@ -472,14 +522,71 @@ public sealed partial class SessionWorkspaceView : UserControl
         return _sessionZone;
     }
 
-    /// <summary>Display-zone "MM-dd HH:mm:ss.ffffff" — the ISO round-trip form with its
-    /// offset suffix overflowed every column it appeared in. Full precision lives in the
-    /// raw context and the session pane.</summary>
+    /// <summary>Display-zone month-day time — the ISO round-trip form with its offset
+    /// suffix overflowed every column it appeared in. Full precision lives in the raw
+    /// context and the session pane.</summary>
+    /// <remarks>
+    /// The fraction shows the digits the capture actually carries. Every logcat text format
+    /// prints milliseconds unless the capture asked for the <c>usec</c> modifier, so a fixed
+    /// six digits printed three constant zeros on most sessions — width taken from the
+    /// message on the row where the message is already being clipped (finding 25). The
+    /// decision is per session and one-way: the first entry that carries sub-millisecond
+    /// detail widens every timestamp, so precision is never hidden and the column never
+    /// oscillates while paging.
+    /// </remarks>
     private string FormatInstant(InstantUs? instant) =>
         instant is { } value
             ? TimeZoneInfo.ConvertTime(value.ToDateTimeOffset(), ResolveSessionZone())
-                .ToString("MM-dd HH:mm:ss.ffffff", System.Globalization.CultureInfo.InvariantCulture)
+                .ToString(
+                    _microsecondTimestamps
+                        ? TimestampPrecision.MicrosecondFormat
+                        : TimestampPrecision.MillisecondFormat,
+                    System.Globalization.CultureInfo.InvariantCulture)
             : "untimed";
+
+    /// <summary>
+    /// Widens the timestamp column the first time the session shows sub-millisecond detail.
+    /// Rows are realized once and keep the text they were built with, so the template is
+    /// reinstalled on the transition — exactly once per session, and never afterwards.
+    /// </summary>
+    private void ObserveTimestampPrecision()
+    {
+        if (_microsecondTimestamps)
+        {
+            return;
+        }
+
+        var needed = TimestampPrecision.NeedsMicroseconds(_viewModel.Statistics?.FirstInstant) ||
+                     TimestampPrecision.NeedsMicroseconds(_viewModel.Statistics?.LastInstant);
+        if (!needed)
+        {
+            foreach (var entry in _viewModel.Entries)
+            {
+                if (TimestampPrecision.NeedsMicroseconds(entry.Timestamp))
+                {
+                    needed = true;
+                    break;
+                }
+            }
+        }
+
+        if (!needed)
+        {
+            return;
+        }
+
+        _microsecondTimestamps = true;
+        if (_entries.ItemTemplate is not null)
+        {
+            ApplyEntryTemplate();
+        }
+
+        UpdateSummaryText();
+        if (_inspectedEntry is { } inspected)
+        {
+            SetInspectedEntry(inspected);
+        }
+    }
 
     private string ProcessLabel(NormalizedEntry entry)
     {
@@ -585,6 +692,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         _viewModel.EntriesReloaded += (_, _) =>
         {
             _reloadingEntries = false;
+            ObserveTimestampPrecision();
             RestoreEntrySelection();
         };
 
@@ -610,6 +718,10 @@ public sealed partial class SessionWorkspaceView : UserControl
                     _status.Text = _viewModel.Status;
                     UpdateCaptureActions();
                     break;
+                case nameof(SessionTabViewModel.Activity):
+                case nameof(SessionTabViewModel.FailureReason):
+                    UpdateCaptureActions();
+                    break;
                 case nameof(SessionTabViewModel.CaptureHealthWarning):
                     // The status bar can only carry a marker pointing here, so the pane
                     // has to rebuild the moment the warning appears or clears rather than
@@ -628,6 +740,9 @@ public sealed partial class SessionWorkspaceView : UserControl
                         _timeline.ClearSelection();
                     }
 
+                    // The inspector says which of a bar's entries is on screen, so releasing
+                    // the bar has to be able to change that sentence (finding 6).
+                    UpdateSelectionHint();
                     UpdateStatistics();
                     break;
                 case nameof(SessionTabViewModel.Statistics):
@@ -638,6 +753,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                     UpdateStatistics();
                     break;
                 case nameof(SessionTabViewModel.MatchesInView):
+                    UpdateSelectionHint();
                     UpdateStatistics();
                     UpdateEntryLoadControls();
                     break;
@@ -695,7 +811,10 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             if (generation == Volatile.Read(ref _timelineSelectionGeneration))
             {
+                // Nothing newer is loading — the view moved, which released the scope — so
+                // the pane must stop claiming that something is still being read (finding 5).
                 _timelineEntryPending = false;
+                await Dispatcher.UIThread.InvokeAsync(ResolveInterruptedRawLoad);
             }
 
             return;
@@ -828,6 +947,7 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         _loadMore.IsEnabled = _viewModel.CanLoadMore && !loading && _loadAllEntriesCancellation is null;
         _loadMore.IsVisible = !_mobile || _viewModel.CanLoadMore;
+        UpdateEntryActionRows();
         if (!_mobile)
         {
             _entryLoadStatus.Text = total is { } count
@@ -857,6 +977,20 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
     }
 
+
+    /// <summary>
+    /// Collapses the contextual action row when nothing in it applies, so an empty row costs
+    /// no height while the controls above it keep their slots (finding 26).
+    /// </summary>
+    private void UpdateEntryActionRows()
+    {
+        if (_entryContextActions is not { } contextActions)
+        {
+            return;
+        }
+
+        contextActions.IsVisible = contextActions.Children.Any(static child => child.IsVisible);
+    }
 
     /// <summary>The entry of the row containing <paramref name="source"/>, if any.</summary>
     private static NormalizedEntry? EntryUnder(Control? source)
@@ -891,6 +1025,17 @@ public sealed partial class SessionWorkspaceView : UserControl
                 _entries.SelectedItem = candidate;
                 return;
             }
+        }
+
+        // The entry is not among the loaded rows. While rows remain unloaded it may simply be
+        // further down the list, but a complete page that does not contain it means the
+        // current view no longer holds it — and the plot's caret then marks a row the table
+        // cannot show, in a lane whose own header reads zero (finding 28).
+        if (!_viewModel.CanLoadMore)
+        {
+            _selectedEntryId = null;
+            SetInspectedEntry(null);
+            _timeline.SetSelectedEntry(null, null);
         }
     }
 

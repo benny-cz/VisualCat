@@ -8,8 +8,24 @@
   -->
   <style name="MyTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
     <item name="android:windowActionModeOverlay">true</item>
-    <item name="colorAccent">#4DA3FF</item>
+    <item name="colorAccent">#43B4FF</item>
     <item name="android:navigationBarColor">#11151C</item>
     <item name="android:statusBarColor">#11151C</item>
+    <!--
+      The window's own background, which is what shows through wherever the app's surface does
+      not reach: the letterboxed display-cutout inset in landscape, and the first frame before
+      Avalonia has drawn anything. It was AppCompat's default, so a dark-themed app rendered a
+      pure white band down the whole cutout edge of the screen in landscape — the loudest
+      possible bug on a screen full of dark chrome. It follows the workspace surface, with a
+      values-night variant, so the inset reads as part of the app in either theme.
+    -->
+    <item name="android:windowBackground">@color/visualcat_window_background</item>
+    <!--
+      Resize rather than pan when the soft keyboard appears. Panning slides the whole window up
+      and leaves the drawer's own footer — TIME LENS, Reset, Done, and the active filter count —
+      behind the keyboard with no way to reach them; resizing hands the app a smaller viewport,
+      which the mobile layout already composes for.
+    -->
+    <item name="android:windowSoftInputMode">adjustResize</item>
   </style>
 </resources>

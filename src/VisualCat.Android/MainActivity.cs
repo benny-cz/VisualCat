@@ -13,7 +13,17 @@ namespace VisualCat.Android;
     Theme = "@style/MyTheme.NoActionBar",
     MainLauncher = true,
     LaunchMode = LaunchMode.SingleTask,
-    ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode)]
+    // The soft keyboard shrinks the viewport instead of sliding the window out from under
+    // itself, which is what lets the filter drawer keep its footer reachable while a query is
+    // being typed. Screen-layout and smallest-width changes are handled in place for the same
+    // reason orientation is: a live capture must survive them.
+    WindowSoftInputMode = global::Android.Views.SoftInput.AdjustResize,
+    ConfigurationChanges = ConfigChanges.Orientation |
+                           ConfigChanges.ScreenSize |
+                           ConfigChanges.ScreenLayout |
+                           ConfigChanges.SmallestScreenSize |
+                           ConfigChanges.KeyboardHidden |
+                           ConfigChanges.UiMode)]
 [IntentFilter(
     [Intent.ActionView],
     Categories = [Intent.CategoryDefault, Intent.CategoryBrowsable],

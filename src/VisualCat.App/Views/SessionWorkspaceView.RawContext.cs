@@ -27,6 +27,9 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// <summary>Automation id of the inspector's message block.</summary>
     internal const string InspectorMessageId = "InspectorMessage";
 
+    /// <summary>Automation id of the line describing which entry the inspector is showing.</summary>
+    internal const string InspectorSelectionHintId = "InspectorSelectionHint";
+
     /// <summary>
     /// The entry inspector §14.9 asks for: "message first line in the table, full
     /// logical/raw content in an inspector". Only the raw half was ever built, so a
@@ -226,6 +229,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 6),
         };
+        AutomationProperties.SetAutomationId(_rawSelectionHint, InspectorSelectionHintId);
 
         _inspectPillText = new TextBlock
         {
@@ -382,17 +386,45 @@ public sealed partial class SessionWorkspaceView : UserControl
             IsVisible = false,
         };
 
+        // The floor under every source read. A read that is superseded, or that outlives the
+        // pane it was started for, used to leave "Reading the source bytes around this
+        // entry…" on screen with no timeout, no error and no way to ask again — the feature
+        // the tool is trusted for, failing silently and indistinguishably from a slow disk
+        // (finding 5). The state always resolves now, and when it resolves badly this is how
+        // the reader asks again.
+        var retry = _rawRetry = new Button
+        {
+            Content = "Retry",
+            MinHeight = _mobile ? 48 : 0,
+            Margin = new Thickness(0, 0, 0, 6),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            IsVisible = false,
+        };
+        ToolTip.SetTip(retry, "Read this entry's source bytes again");
+        AutomationProperties.SetName(retry, "Read the source bytes again");
+        retry.Click += (_, _) => RetryRawContextLoad();
+
         Control tools;
         if (_mobile)
         {
             var panToggle = _rawPanToggle = new Button
             {
                 MinHeight = 48,
-                Width = 76,
-                Padding = new Thickness(6, 0),
+                MinWidth = 96,
+                Padding = new Thickness(8, 0),
             };
             panToggle.Click += (_, _) => SetRawPanMode(!_rawPanMode);
-            ToolTip.SetTip(panToggle, "Select mode: drag selects text. Pan mode: drag scrolls in both directions.");
+
+            // What the mode currently is, in words, on screen. It was a ToolTip — which a
+            // touch device never shows — so the only clue was a button labelled with the
+            // name of a mode, and the first natural "scroll the trace" swipe selected a
+            // block of source text instead of scrolling it (finding 15).
+            var panState = _rawPanState = new TextBlock
+            {
+                FontSize = 10.5,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(1, 0, 0, 4),
+            };
 
             var wrapToggle = _rawWrapToggle = new Button
             {
@@ -441,12 +473,11 @@ public sealed partial class SessionWorkspaceView : UserControl
             ToolTip.SetTip(copySelection, "Copy selected source text");
             AutomationProperties.SetName(copySelection, "Copy selected source text");
 
-            var sourceTools = new WrapPanel
+            var sourceButtons = new WrapPanel
             {
                 Orientation = Orientation.Horizontal,
                 ItemSpacing = 4,
                 LineSpacing = 6,
-                Margin = new Thickness(0, 0, 0, 7),
                 Children =
                 {
                     panToggle,
@@ -456,11 +487,20 @@ public sealed partial class SessionWorkspaceView : UserControl
                     copySelection,
                 },
             };
+            var sourceTools = new StackPanel
+            {
+                Spacing = 2,
+                Margin = new Thickness(0, 0, 0, 7),
+                Children = { sourceButtons, panState },
+            };
             AutomationProperties.SetName(sourceTools, "Source navigation and selection controls");
             tools = sourceTools;
             scroller.ScrollChanged += (_, _) => UpdateRawNavigationButtons();
             _rawContext.PointerReleased += (_, _) => Dispatcher.UIThread.Post(CompleteRawTextSelection);
-            SetRawPanMode(false);
+
+            // Pan first on a touch screen: the swipe a reader arrives with is a scroll, and
+            // selecting text is the deliberate second act.
+            SetRawPanMode(true);
             SetRawWrap(false);
         }
         else
@@ -471,14 +511,16 @@ public sealed partial class SessionWorkspaceView : UserControl
         _rawSourceTools = tools;
         var section = new Grid
         {
-            RowDefinitions = new RowDefinitions(_mobile ? "Auto,Auto,Auto,*" : "Auto,Auto,Auto,Auto"),
+            RowDefinitions = new RowDefinitions(_mobile ? "Auto,Auto,Auto,Auto,*" : "Auto,Auto,Auto,Auto,Auto"),
         };
         section.Children.Add(header);
         Grid.SetRow(_sourceStatus, 1);
         section.Children.Add(_sourceStatus);
-        Grid.SetRow(tools, 2);
+        Grid.SetRow(retry, 2);
+        section.Children.Add(retry);
+        Grid.SetRow(tools, 3);
         section.Children.Add(tools);
-        Grid.SetRow(scroller, 3);
+        Grid.SetRow(scroller, 4);
         section.Children.Add(scroller);
         return section;
     }
@@ -498,6 +540,14 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_sourceStatus is { } status)
         {
             status.IsVisible = expanded && status.Text is { Length: > 0 };
+        }
+
+        if (_rawRetry is { } retry)
+        {
+            retry.IsVisible = expanded &&
+                              !_rawLoadPending &&
+                              _sourceStatus?.Text is { Length: > 0 } &&
+                              _inspectedEntry is not null;
         }
 
         if (_rawSourceTools is { } tools)
@@ -619,7 +669,56 @@ public sealed partial class SessionWorkspaceView : UserControl
         AutomationProperties.SetName(
             _inspectMessage,
             $"Message of {entry.Level} {entry.Tag}: {RowPreview(entry.Message)}");
+        UpdateSelectionHint();
         UpdateInspectorVisibility();
+    }
+
+    /// <summary>
+    /// States what the inspected entry is, from the selection as it stands now.
+    /// </summary>
+    /// <remarks>
+    /// This line was written once, when a load began, from the cell count that load carried —
+    /// so it went on reading "First of 27 in the selected bar · choose another row in Entries"
+    /// after the bar had been released and the row had been picked straight from the table,
+    /// quoting a count that belonged to a scope that no longer existed (finding 6). Everything
+    /// here is read at the moment it is rendered.
+    /// </remarks>
+    private void UpdateSelectionHint()
+    {
+        if (_rawSelectionHint is not { } hint)
+        {
+            return;
+        }
+
+        if (_viewModel.DetailRange is null || _viewModel.MatchesInView is not { } inCell || inCell <= 1)
+        {
+            hint.Text = "Selected entry";
+            return;
+        }
+
+        var position = IndexOfInspectedEntry();
+        hint.Text = position >= 0
+            ? $"Row {position + 1:N0} of {inCell:N0} in the selected bar · choose another row in Entries"
+            : $"One of {inCell:N0} in the selected bar · choose another row in Entries";
+    }
+
+    /// <summary>Position of the inspected entry among the loaded rows, or -1.</summary>
+    private int IndexOfInspectedEntry()
+    {
+        if (_inspectedEntry is not { } entry)
+        {
+            return -1;
+        }
+
+        for (var index = 0; index < _viewModel.Entries.Count; index++)
+        {
+            if (_viewModel.Entries[index].EntryId == entry.EntryId)
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     private async Task CopyInspectedMessageAsync()
@@ -772,20 +871,31 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
     }
 
+    /// <summary>
+    /// Switches what a drag over the source does. The button is labelled with the action it
+    /// performs rather than with the mode it is in, and the mode itself is stated beside it.
+    /// </summary>
     private void SetRawPanMode(bool pan)
     {
         _rawPanMode = pan;
         _rawContext.IsHitTestVisible = !pan;
+        if (_rawPanState is { } panState)
+        {
+            panState.Text = pan
+                ? "Dragging scrolls the source."
+                : "Dragging selects text; it returns to scrolling once you copy or lift.";
+        }
+
         if (_rawPanToggle is not { } panToggle)
         {
             return;
         }
 
-        panToggle.Content = pan ? "Pan" : "Select";
-        ApplyMobileChoiceAppearance(panToggle, pan);
+        panToggle.Content = pan ? "Select text" : "Scroll";
+        ApplyMobileChoiceAppearance(panToggle, selected: false);
         AutomationProperties.SetName(
             panToggle,
-            pan ? "Pan mode; tap to select text" : "Select mode; tap to pan source");
+            pan ? "Switch to selecting text" : "Switch to scrolling the source");
     }
 
     private void SetRawWrap(bool wrap)
@@ -958,16 +1068,29 @@ public sealed partial class SessionWorkspaceView : UserControl
                     y = point.Y;
                 }
 
+                // A margin above the line, so the entry's own line lands inside the view with
+                // the lines that follow it visible. Eight pixels put it flush against the
+                // bottom edge on first open, half-clipped, with no following context at all
+                // until the reader scrolled (finding 28).
+                var margin = Math.Clamp(scroller.Viewport.Height * 0.3, 12, 160);
                 scroller.Offset = new Vector(
                     scroller.Offset.X,
-                    Math.Clamp(y - 8, 0, Math.Max(0, scroller.Extent.Height - scroller.Viewport.Height)));
+                    Math.Clamp(y - margin, 0, Math.Max(0, scroller.Extent.Height - scroller.Viewport.Height)));
             },
             DispatcherPriority.Loaded);
     }
 
+    /// <summary>How long a source read may sit on "reading…" before it is called a failure.</summary>
+    private static readonly TimeSpan RawLoadTimeout = TimeSpan.FromSeconds(12);
+
     /// <summary>Source bytes have their own status so a slow or failed read never removes
     /// the message from the screen.</summary>
-    private void SetSourceStatus(string? status)
+    /// <param name="status">The line to show, or <c>null</c> once bytes are on screen.</param>
+    /// <param name="loading">
+    /// Whether this status describes a read still in flight. A read in flight arms the
+    /// watchdog; anything else disarms it and, when it is a failure, offers Retry.
+    /// </param>
+    private void SetSourceStatus(string? status, bool loading = false)
     {
         var pending = status is { Length: > 0 };
         if (_sourceStatus is { } label)
@@ -984,6 +1107,107 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_rawSourceTools is { } tools)
         {
             tools.IsVisible = !pending && _sourceExpanded && _mobile;
+        }
+
+        _rawLoadPending = pending && loading;
+        if (_rawRetry is { } retry)
+        {
+            retry.IsVisible = pending && !loading && _sourceExpanded && _inspectedEntry is not null;
+        }
+
+        if (_rawLoadPending)
+        {
+            ArmRawLoadWatchdog();
+        }
+        else
+        {
+            DisarmRawLoadWatchdog();
+        }
+    }
+
+    private void ArmRawLoadWatchdog()
+    {
+        _rawLoadWatchdog ??= new DispatcherTimer(
+            RawLoadTimeout,
+            DispatcherPriority.Background,
+            (_, _) => HandleRawLoadTimeout());
+        _rawLoadWatchdog.Stop();
+        _rawLoadWatchdog.Start();
+    }
+
+    private void DisarmRawLoadWatchdog() => _rawLoadWatchdog?.Stop();
+
+    /// <summary>
+    /// Turns a read that never answered into a stated failure. Whatever the underlying race
+    /// is — a superseded load whose result was dropped, a pane that was never attached when
+    /// the read began — the reader is told, and can ask again.
+    /// </summary>
+    private void HandleRawLoadTimeout()
+    {
+        DisarmRawLoadWatchdog();
+        if (!_rawLoadPending)
+        {
+            return;
+        }
+
+        CancelRawContextLoad();
+        _timelineEntryPending = false;
+        SetSourceStatus(
+            $"Reading this entry's source bytes took longer than {RawLoadTimeout.TotalSeconds:N0} seconds " +
+            "and was stopped. The message above is complete.");
+        if (_inspectedEntry is null)
+        {
+            if (_rawEmptyTitle is { } title)
+            {
+                title.Text = "Source read timed out";
+            }
+
+            if (_rawPlaceholder is { } description)
+            {
+                description.Text = "Choose a row in Entries to read it again.";
+            }
+
+            if (_rawChooseEntry is { } chooseEntry)
+            {
+                chooseEntry.IsVisible = true;
+            }
+
+            UpdateInspectorVisibility();
+        }
+
+        if (_rawEmptyCard is { } emptyCard)
+        {
+            AutomationProperties.SetName(emptyCard, "Source read timed out");
+        }
+    }
+
+    /// <summary>
+    /// Resolves a "reading…" state whose read was abandoned before it could answer, so the
+    /// pane never outlives the work it is describing.
+    /// </summary>
+    private void ResolveInterruptedRawLoad()
+    {
+        if (!_rawLoadPending || HasRawContextLoad())
+        {
+            return;
+        }
+
+        if (_inspectedEntry is null)
+        {
+            SetSourceStatus(null);
+            ShowNoEntryState();
+            return;
+        }
+
+        SetSourceStatus("Reading this entry's source bytes was interrupted.");
+    }
+
+    /// <summary>Reads the selected entry's source bytes again after a failure.</summary>
+    private void RetryRawContextLoad()
+    {
+        if ((_inspectedEntry ?? _rawLoadEntry) is { } entry)
+        {
+            BeginRawContextLoad(entry, _rawLoadTimelineCount);
         }
     }
 
@@ -1025,14 +1249,8 @@ public sealed partial class SessionWorkspaceView : UserControl
 
     private void ShowRawLoadingState(long? timelineCount = null)
     {
-        if (_rawSelectionHint is { } selectionHint)
-        {
-            selectionHint.Text = timelineCount is > 0
-                ? $"First of {timelineCount:N0} in the selected bar · choose another row in Entries"
-                : "Selected entry";
-        }
-
-        SetSourceStatus("Reading the source bytes around this entry…");
+        UpdateSelectionHint();
+        SetSourceStatus("Reading the source bytes around this entry…", loading: true);
 
         // Before the cell query answers there is no entry yet, so the card explains the
         // wait; once one is selected the message is already on screen and only the source

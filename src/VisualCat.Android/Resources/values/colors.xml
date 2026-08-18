@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <color name="ic_launcher_background">#0B1220</color>
+  <!-- WorkspacePalette.Surface(dark: false). The night variant carries the dark one. -->
+  <color name="visualcat_window_background">#F4F7FC</color>
 </resources>

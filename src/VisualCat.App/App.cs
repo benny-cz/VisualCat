@@ -2,7 +2,6 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform;
-using Avalonia.Themes.Fluent;
 using VisualCat.App.Views;
 
 namespace VisualCat.App;
@@ -13,7 +12,12 @@ public sealed class App : Avalonia.Application
 
     public override void Initialize()
     {
-        Styles.Add(new FluentTheme());
+        Styles.Add(Theme.ProductTheme.CreateFluentTheme());
+        foreach (var style in Theme.ProductTheme.BuildStyles())
+        {
+            Styles.Add(style);
+        }
+
         RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Default;
     }
 

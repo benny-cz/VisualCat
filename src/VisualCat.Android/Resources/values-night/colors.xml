@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- WorkspacePalette.Surface(dark: true). -->
+  <color name="visualcat_window_background">#080D16</color>
+</resources>

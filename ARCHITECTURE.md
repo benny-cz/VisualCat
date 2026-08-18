@@ -141,8 +141,19 @@ and exported state. `MainView` supplies application chrome and platform file
 pickers, while `SessionWorkspaceView` composes the timeline, minimap, facets,
 templates, details, raw context, and session metadata panes. Its code-only
 composition is split across `SessionWorkspaceView*.cs` partials by concern
-(facets, interactions, mobile layout, panes, presentation, and raw context),
-keeping each behavior area reviewable without introducing a second UI tree.
+(facets, interactions, mobile layout, panes, presentation, raw context, and the
+failure state), keeping each behavior area reviewable without introducing a
+second UI tree.
+
+Dialogs are `DialogBody<TResult>` content rather than windows, because one of the
+two platforms has no windows: `MainView` is the `IDialogHost` and presents a body
+either as a modal `Window` (desktop) or as an in-page card on the overlay layer
+it also uses for the Android command sheet. That layer is ordinary content in the
+ordinary tree, so automation can walk it and the Android Back gesture — handled
+through `TopLevel.BackRequested` — can dismiss it. Product theming lives in
+`VisualCat.App/Theme`: Fluent's palette is overridden per variant so selection,
+focus, and list surfaces come from the product palette instead of from whatever
+accent the device happens to be using.
 
 Desktop and Android are thin hosts around `VisualCat.App`. Platform-specific
 files and capture implementations are registered through `PlatformSourceRegistry`

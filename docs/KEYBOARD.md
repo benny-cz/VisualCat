@@ -13,7 +13,7 @@ ignored while typing unless they use Ctrl, Alt, Escape, or a function key.
 | Ctrl+F | Focus and select the search field |
 | F3 or N | Move the viewport to the next search marker |
 | Shift+F3 or Shift+N | Move to the previous search marker |
-| Escape | Close mobile filters, clear focused search, clear a selected timeline scope, or clear filters (in that order) |
+| Escape | Close mobile filters, clear focused search, clear a selected timeline scope, or clear filters (in that order); ignored when there is nothing to dismiss |
 | Alt+1 | Focus the timeline |
 | Alt+2 | Focus the entry list |
 | Alt+3 | Focus the template list |
