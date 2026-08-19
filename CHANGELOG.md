@@ -8,11 +8,38 @@ Version numbers correspond to git tags and the GitHub [Releases](https://github.
 page.
 
 The current stable release is `2.0.3`. Ongoing work is recorded under
-`[Unreleased]`.
+`[Unreleased]`, and development builds carry a `-dev` version suffix so a
+screenshot says which build it came from.
 
 ## [Unreleased]
 
 ### Added
+- The Android companion honours the device's own text size. Every font size in
+  the product was a fixed logical value, so setting Android's accessibility text
+  scale to 130% produced a pixel-identical app; the platform scale is now the
+  baseline and the in-app *Text scale* setting multiplies it rather than
+  replacing it. A reader who has already told the operating system they need
+  larger text does not have to find a second switch six controls into a settings
+  sheet.
+- The entries list has a floor. It is what the product is for and it was the
+  smallest thing on screen: 173 px of a 2340 px display in *Split*, less than one
+  192 px row, and 60 px with a notice showing. The analysis pane now measures its
+  own chrome and reserves four entry rows in *Split* and six in *Details*, and
+  the plot gives way down to the smallest band it can still be read in.
+- A capture is named for when it started. Every on-device capture was called
+  "On-device logcat" — in the tab strip, in *Recent sessions*, in the empty
+  state, in *Session cache* and in the suggested export filename — so two open
+  tabs were two identical chips with nothing to choose between them.
+- Settings choices with two or three options are shown as segments instead of
+  dropdowns on a phone. A combo box answers by opening a popup over the page, and
+  in the in-page sheet presentation that popup went somewhere unusable: tapping
+  *Default export order* scrolled the form back to the top and drew its list over
+  *Timeline normalization*, four fields away, while the control it belonged to had
+  scrolled off the screen.
+- The workspace can publish to the notice lane. `Copy raw`, the Insights *Copy*,
+  and filtering or muting a template wrote their result somewhere off screen and
+  said nothing at all; the lane was reachable only from the application shell.
+
 - The Android companion reaches its secondary commands through a bottom sheet
   instead of a flyout menu. A flyout is a popup: with the menu open and its eight
   items plainly on screen, an accessibility dump contained none of them, so with
@@ -57,6 +84,48 @@ The current stable release is `2.0.3`. Ongoing work is recorded under
   capture has been silent long enough to look broken rather than merely quiet.
 
 ### Changed
+- The command bar follows the theme. It painted one fixed near-black gradient in
+  both variants as the application's identity band, which on a phone set to light
+  is a `#0C1422` slab between a white system status bar and a white page, present
+  from a cold start. The band keeps its shape and its wordmark; only the ground
+  under them follows the variant, and the platform's own status and navigation
+  bars follow it too.
+- A theme change repaints the whole product rather than four surfaces. Switching
+  a running app to light left the active session tab at 1.10:1, the timeline axis
+  at 1.05:1 and the selected row's metadata at 1.11:1 — text that is not hard to
+  read but invisible — with the minimap a solid navy rectangle on a white page,
+  and only a restart put it right. The workspace palette is now a set of theme
+  resources that styles name instead of capturing, both plots repaint on the
+  variant change, and the whole path runs once more after the top level has
+  settled its variant, so a cold start in light mode cannot be served dark
+  values.
+- Scrolling surfaces lay their content out beside the scrollbar instead of under
+  it. Fluent draws the bar over the content and the bar takes pointer input: in
+  *Appearance & timeline* its page-down region measured 718 px tall over the
+  right edge of two combo boxes, so a tap squarely on a chevron paged the form
+  instead of opening the dropdown.
+- `Load next 500` is a footer under the list it extends, rather than a full touch
+  row above it, and it says how many rows are left.
+- `Filters`, the workspace mode selector and `Fit` share one touch row. Five
+  buttons were taking 306 px of a screen where the entries list was getting 173,
+  because the row measured 334 px against the 324 a portrait phone has and `Fit`
+  fell to a second full-height row. The live-capture controls have a band of
+  their own that exists only while there is a capture.
+- Numbers and dates are formatted in the interface's own culture. On a Czech
+  phone the English interface printed `19,76 min`, `34,63 KiB`, `18.08.2026` and
+  `59 640` with a non-breaking-space separator — two conventions in one line,
+  which makes both look accidental. Dates and times use ISO patterns, which is
+  already what the timeline axis and the entry rows draw.
+- Every list describes a stored session in the same words, and the words say what
+  they mean: "complete" and "still being written" rather than "ready" and
+  "partial", neither of which was explained anywhere in the product.
+- A confirmation that records something durable — a file exported, a session
+  shared, a diagnostic bundle written — stays on the notice lane until it is
+  dismissed or replaced. Six seconds and then nothing left a reader who looked
+  away during an export with no evidence that it had run.
+- Time-axis labels print milliseconds only where a span can distinguish them. A
+  twenty-minute view drew `.000` under every tick.
+
 - The product owns its accent colour. Fluent picks the platform accent up as
   `SystemAccentColor`, so on Android every selection highlight, focus border and
   tab underline took the device's Material You colour — a brick red on the phone
@@ -99,6 +168,78 @@ The current stable release is `2.0.3`. Ongoing work is recorded under
   for the whole session.
 
 ### Fixed
+- An on-device capture no longer claims to be reading the whole device when it is
+  not. On Android 13 and later the system asks for consent on every capture and
+  its only affirmative grants one-time access; declining does not fail — `logcat`
+  starts, the app receives its own process's records and nothing else, and every
+  permission check the app can make still reports success. A declined capture
+  went on describing its source as "On-device full-device logcat" while
+  delivering 24 lines in 40 seconds. The source now says what it is actually
+  seeing, from the stream it already has, and a restricted capture is reported on
+  the notice lane as the failure it is, with the route to widening it.
+- The entry row's metadata line is readable in the light theme. It resolved
+  `TextMuted(dark)` — `#8FA5C4` on `#E9EFF7`, 2.17:1 — on a cold start in light
+  mode, because the styles that own it captured a brush when the list was built
+  and were never rebuilt.
+- The Insights list and both stored-session lists announce their rows instead of
+  their C# records. `TemplateSummary { TemplateId = 16, … }` and a
+  `TemporarySessionInfo` complete with the private storage path and the session
+  guid were being read out in full.
+- The session status row's accessible description tracks the status. It kept
+  whatever it was first given, so a finished session was announced as "Starting
+  capture" and one of 59 640 entries as "Importing…".
+- A sheet takes the workspace out of the accessibility tree. The scrim caught
+  pointer input, so touch was safe, but nothing marked the sheet as modal and
+  assistive technology walked straight past it into *Open log*, *Live*, the mode
+  buttons and every entry row underneath.
+- Numeric spinner buttons have names. All eight across two sheets announced
+  themselves as `Avalonia.Controls.PathIcon`.
+- *Recent sessions* no longer offers *Open* with nothing selected. Tapping it was
+  accepted and produced no result, no message and no state change.
+- The workspace mode survives a text-size or display-size change. Those are not
+  in the activity's `configChanges` and should not be — every font size has to be
+  re-measured — so Android recreates the activity, and the reader's choice of
+  *Plot*, *Split* or *Details* went with the view that owned it.
+- A nearly empty live capture no longer draws a plot at a precision it does not
+  have. One entry produced a one-microsecond window, two axis labels reading the
+  same instant, and a *Follow* that never widened as lines arrived. `Fit` is
+  clamped to the resolution the plot has pixels for.
+- `Fit` leaves with the plot. In *Details* it stayed present and enabled, acting
+  on a surface that was not on screen and costing a share of the row it sits in.
+- The filter drawer has padding at both ends of its travel. At rest the *Time
+  lens* buttons were cut by the viewport edge; one swipe put the **QUERY** heading
+  under the card's top border instead.
+- Two sheets no longer cut their last control in half against a pinned decision
+  row. There is a divider, a gap the last field finishes inside, and — on a
+  touch device, where there is no pointer to hover — a scrollbar that stays
+  visible to say there is more below.
+- *Session cache* decides on one line. *Delete eligible sessions… / Cancel* sat
+  on the first line with *Save policy* orphaned below the cancel, the destructive
+  action widest and first.
+- A disabled numeric spinner recedes like every other disabled control. The
+  spin buttons are `RepeatButton`s, which the rule that removed Fluent's disabled
+  fill everywhere else did not match, so a greyed-out decrement was the brightest
+  thing in its row.
+- The *Entry* tab's empty state keeps its button inside its own card, instead of
+  drawing it half outside and through the rounded border.
+- Cache-policy fields recede while automatic cleanup is switched off, rather than
+  staying fully interactive under a switch that governs them.
+- The session tab strip is inset to the same gutter as every other band, instead
+  of running full-bleed with the first tab's rounded corner on the screen edge.
+- A short viewport keeps the minimap, in a slimmer band beside the plot rather
+  than under both panes, and the analysis pane clips to its own band instead of
+  painting entry rows through the status line.
+- `Entry ⤢` keeps its label in landscape instead of collapsing to a bare glyph
+  with 200 px of the row unused beside it.
+- The status line says that it can be expanded. Tapping it opens the whole
+  sentence — the only route to the end of a clipped failure message — and only
+  the accessible help text had ever mentioned it.
+- *Export CSV…* describes the question it asks rather than promising one of the
+  answers.
+- The displayed version tracks the build. It read 2.0.3 on a build made long
+  after 2.0.3 shipped; the version has moved on and a non-release build says so
+  in the version itself.
+
 - Closing a session tab can no longer crash the workspace. The view answers the
   view model through the dispatcher, so a change raised while the tab was alive
   could still be queued after it closed, and the redraw then read a session that

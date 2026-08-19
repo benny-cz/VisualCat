@@ -49,6 +49,12 @@ public sealed class MinimapControl : Control
         ClipToBounds = true;
         AutomationProperties.SetName(this, "Full-session minimap and viewport brush");
         AutomationProperties.SetHelpText(this, "Drag the brush to pan; drag either edge to resize the timeline viewport.");
+
+        // Both palettes are resolved inside Render, so a variant change is a repaint and
+        // nothing more -- but nothing was asking for the repaint, so the plot kept the
+        // variant it happened to be drawn in until a pan or a new snapshot moved it
+        // (audit 2, A1b).
+        ActualThemeVariantChanged += (_, _) => InvalidateVisual();
     }
 
     public event EventHandler<TimeRange>? ViewportChanged;

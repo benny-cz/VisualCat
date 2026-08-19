@@ -20,9 +20,30 @@ public sealed partial class MainView
     private NoticeKind _noticeKind;
     private long _noticeRevision;
 
+    /// <summary>What a notice is, which decides how long it stays.</summary>
     internal enum NoticeKind
     {
+        /// <summary>
+        /// A confirmation of something that happened inside the app and can be repeated at
+        /// no cost — a copy, a filter. It gets a reading window and then gets out of the way.
+        /// </summary>
         Information,
+
+        /// <summary>
+        /// A record that something durable happened outside the app: a file written, a
+        /// session handed to another app, a cache emptied.
+        /// </summary>
+        /// <remarks>
+        /// These used to vanish after six seconds like any other confirmation, so a reader
+        /// who looked away during an export came back to a screen with no evidence that it
+        /// had run and nowhere to look for any (audit 2, E8). The lane holds them until they
+        /// are dismissed or another action replaces them, which is the same rule failures
+        /// follow and for the same reason: the reader, not a timer, decides when they have
+        /// read it.
+        /// </remarks>
+        Completion,
+
+        /// <summary>Something did not work. Stays until dismissed.</summary>
         Failure,
     }
 
@@ -37,7 +58,7 @@ public sealed partial class MainView
         {
             TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center,
-            FontSize = OperatingSystem.IsAndroid() ? 12.5 : 12,
+            FontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 12.5 : 12),
         };
         AutomationProperties.SetName(text, "Application status message");
 
@@ -111,8 +132,9 @@ public sealed partial class MainView
         ApplyNoticeTheme();
         StopNoticeTimer();
 
-        // Success/confirmation copy gets a guaranteed reading window and then gets out of the
-        // way. Failures remain until the reader dismisses them or begins another action.
+        // A repeatable in-app confirmation gets a guaranteed reading window and then gets out
+        // of the way. Anything that recorded a durable result, and anything that failed,
+        // stays until the reader dismisses it or begins another action.
         if (OperatingSystem.IsAndroid() && kind == NoticeKind.Information && !string.IsNullOrWhiteSpace(text))
         {
             _noticeTimer = new DispatcherTimer(TimeSpan.FromSeconds(6), DispatcherPriority.Background, (_, _) =>
@@ -139,7 +161,11 @@ public sealed partial class MainView
 
         var dark = ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
         var failure = _noticeKind == NoticeKind.Failure;
-        var accent = failure ? Color.Parse("#FF6B70") : WorkspacePalette.Accent(dark);
+        var accent = failure
+            ? Color.Parse("#FF6B70")
+            : _noticeKind == NoticeKind.Completion
+                ? Color.Parse(dark ? "#3FD69B" : "#0E7A52")
+                : WorkspacePalette.Accent(dark);
         var surface = WorkspacePalette.SurfaceRaised(dark);
         host.Background = new SolidColorBrush(Color.FromArgb(dark ? (byte)248 : (byte)252, surface.R, surface.G, surface.B));
         host.BorderBrush = new SolidColorBrush(accent);

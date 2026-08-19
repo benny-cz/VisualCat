@@ -145,4 +145,56 @@ public static class WorkspacePalette
     public static Color TextMuted(bool dark) => dark ? Color.Parse("#8FA5C4") : Color.Parse("#54647A");
     public static Color Accent(bool dark) => Color.Parse(dark ? "#43B4FF" : "#0B78D0");
     public static Color ChipFill(bool dark) => dark ? Color.Parse("#304DA3FF") : Color.Parse("#334DA3FF");
+
+    /// <summary>Top of the command bar's gradient.</summary>
+    /// <remarks>
+    /// The shell band used to be one fixed near-black gradient in both variants, described as
+    /// the application's identity band. On a phone set to light that is a #0C1422 slab wedged
+    /// between a white system status bar and a white page, present from a cold start, and no
+    /// amount of brand intent makes it read as anything but a rendering fault. The band keeps
+    /// its shape and its wordmark in both variants; only the ground under them follows the
+    /// theme (audit 2, A1a).
+    /// </remarks>
+    public static Color ShellTop(bool dark) => dark ? Color.Parse("#111C2D") : Color.Parse("#FFFFFF");
+
+    /// <summary>Bottom of the command bar's gradient.</summary>
+    public static Color ShellBottom(bool dark) => dark ? Color.Parse("#0B1220") : Color.Parse("#EDF2F9");
+
+    /// <summary>The hairline that separates the command bar from the workspace.</summary>
+    public static Color ShellEdge(bool dark) => dark ? Color.Parse("#243753") : Color.Parse("#C6D3E4");
+
+    /// <summary>The wordmark and any primary label drawn on the shell band.</summary>
+    public static Color ShellText(bool dark) => dark ? Color.Parse("#EAF2FF") : Color.Parse("#172033");
+
+    /// <summary>The strapline and the transient message drawn on the shell band.</summary>
+    /// <remarks>
+    /// 6.7:1 on the light band and 4.9:1 on the dark one, so the 8 pt strapline clears AA for
+    /// normal text in both variants rather than only in the one it was picked against.
+    /// </remarks>
+    public static Color ShellTextMuted(bool dark) => dark ? Color.Parse("#93A8C6") : Color.Parse("#4A5C74");
+
+    /// <summary>What the platform's own status and navigation bars are painted with.</summary>
+    /// <remarks>
+    /// Avalonia's Android insets manager derives the bar's icon appearance from the luminance
+    /// of this color, so a light value here is also what turns the status-bar glyphs dark.
+    /// </remarks>
+    public static Color SystemBar(bool dark) => dark ? Color.Parse("#11151C") : Color.Parse("#FFFFFF");
+
+    /// <summary>The ground of a primary (accented) shell action.</summary>
+    public static Color PrimaryActionFill(bool dark) => dark ? Color.Parse("#174F78") : Color.Parse("#D7EBFB");
+
+    /// <summary>The outline of a primary (accented) shell action.</summary>
+    public static Color PrimaryActionEdge(bool dark) => dark ? Color.Parse("#3CAFEF") : Color.Parse("#2E93D8");
+
+    /// <summary>The label of a primary (accented) shell action.</summary>
+    public static Color PrimaryActionText(bool dark) => dark ? Color.Parse("#EDF6FF") : Color.Parse("#10314C");
+
+    /// <summary>The ground of a secondary shell action.</summary>
+    public static Color SecondaryActionFill(bool dark) => dark ? Color.Parse("#172235") : Color.Parse("#E4ECF6");
+
+    /// <summary>The outline of a secondary shell action.</summary>
+    public static Color SecondaryActionEdge(bool dark) => dark ? Color.Parse("#2A3B55") : Color.Parse("#BFCFE2");
+
+    /// <summary>An alpha variant of <paramref name="color"/>, for tints and scrims.</summary>
+    public static Color Tint(Color color, byte alpha) => Color.FromArgb(alpha, color.R, color.G, color.B);
 }

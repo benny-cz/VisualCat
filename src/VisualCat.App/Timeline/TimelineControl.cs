@@ -100,6 +100,12 @@ public sealed class TimelineControl : Control
         ClipToBounds = true;
         AutomationProperties.SetName(this, "Severity by time heat map");
         AutomationProperties.SetHelpText(this, "Mouse wheel zooms, drag pans, right-drag selects a range, and arrow keys pan.");
+
+        // Both palettes are resolved inside Render, so a variant change is a repaint and
+        // nothing more -- but nothing was asking for the repaint, so the plot kept the
+        // variant it happened to be drawn in until a pan or a new snapshot moved it
+        // (audit 2, A1b).
+        ActualThemeVariantChanged += (_, _) => InvalidateVisual();
         GestureRecognizers.Add(new PinchGestureRecognizer());
         AddHandler(InputElement.PinchEvent, (_, eventArgs) =>
         {
@@ -282,12 +288,33 @@ public sealed class TimelineControl : Control
                 session));
     }
 
+    /// <summary>
+    /// Shows the whole session, at no more resolution than the plot has pixels for.
+    /// </summary>
+    /// <remarks>
+    /// A session holding one entry spans one microsecond, and Fit handed that straight to
+    /// the viewport: the header read <c>DENSITY · 1 µs · 1,34 ns/px</c> and both axis labels
+    /// printed the same instant (audit 2, C6). Zooming has always been clamped by
+    /// <see cref="MinimumSpan"/> for exactly this reason — a window narrower than the plot
+    /// can resolve states a precision the drawing does not have — and fitting is a zoom.
+    /// The session's newest instant is the one kept, because it is the end a live capture is
+    /// growing from.
+    /// </remarks>
     public void FitSession()
     {
-        if (_sessionRange is { } session)
+        if (_sessionRange is not { } session)
         {
-            ViewportChanged?.Invoke(this, session);
+            return;
         }
+
+        var minimum = Geometry() is { } geometry ? MinimumSpan(geometry) : 1;
+        ViewportChanged?.Invoke(
+            this,
+            session.DurationUs >= minimum
+                ? session
+                : new TimeRange(
+                    new InstantUs(checked(session.EndExclusive.Value - minimum)),
+                    session.EndExclusive));
     }
 
     public void SetTimeZoneContext(string timeZoneId)
@@ -606,7 +633,7 @@ public sealed class TimelineControl : Control
     private static FormattedText FormatWrapped(string text, double size, IBrush brush, double maximumWidth) =>
         new(
             text,
-            CultureInfo.CurrentCulture,
+            DisplayCulture.Current,
             FlowDirection.LeftToRight,
             MonoTypeface,
             size,
@@ -1094,13 +1121,25 @@ public sealed class TimelineControl : Control
     private static long MaximumSpan(TimeRange session) =>
         Math.Max(1, checked((long)Math.Ceiling(session.DurationUs * 1.1)));
 
+    /// <summary>
+    /// One label of the time axis, at the precision the span can actually distinguish.
+    /// </summary>
+    /// <remarks>
+    /// Milliseconds were printed for every span up to a day, so a twenty-minute view drew
+    /// <c>.000</c> under every tick — three characters of nothing, on the axis where width is
+    /// most expensive (audit 2, E6). The precision follows the span because the labels have
+    /// to stay one fixed width: the axis measures one of them and lays out all of them from
+    /// that, and a format that varied per label would break the overlap rule that keeps them
+    /// from being drawn over each other.
+    /// </remarks>
     private string FormatTick(InstantUs instant, long spanUs)
     {
         var time = TimeZoneInfo.ConvertTime(instant.ToDateTimeOffset(), _timeZone);
         return spanUs switch
         {
             < 1_000_000 => time.ToString("HH:mm:ss.ffffff", CultureInfo.InvariantCulture),
-            < 86_400_000_000 => time.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture),
+            < 60_000_000 => time.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture),
+            < 86_400_000_000 => time.ToString("HH:mm:ss", CultureInfo.InvariantCulture),
             _ => time.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
         };
     }
@@ -1164,7 +1203,7 @@ public sealed class TimelineControl : Control
     {
         var formatted = new FormattedText(
             text,
-            CultureInfo.CurrentCulture,
+            DisplayCulture.Current,
             FlowDirection.LeftToRight,
             MonoTypeface,
             size,
@@ -1176,7 +1215,7 @@ public sealed class TimelineControl : Control
     {
         var formatted = new FormattedText(
             text,
-            CultureInfo.CurrentCulture,
+            DisplayCulture.Current,
             FlowDirection.LeftToRight,
             MonoTypeface,
             size,
@@ -1188,7 +1227,7 @@ public sealed class TimelineControl : Control
     {
         var formatted = new FormattedText(
             text,
-            CultureInfo.CurrentCulture,
+            DisplayCulture.Current,
             FlowDirection.LeftToRight,
             MonoTypeface,
             size,

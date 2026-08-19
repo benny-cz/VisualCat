@@ -8,6 +8,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
+using VisualCat.Application.Ports;
 using VisualCat.Application.UseCases;
 using VisualCat.Domain;
 using VisualCat.Domain.Sessions;
@@ -68,6 +69,16 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private Menu? _moreMenu;
     private Grid? _brandRow;
     private Border? _commandBar;
+    private TextBlock? _brandWordmark;
+    private TextBlock? _brandStrapline;
+
+    // Every shell control that paints itself rather than inheriting a themed brush, so a
+    // theme change can reach all of them instead of the four ApplyThemeSurfaces used to
+    // know about (audit 2, A1b).
+    private readonly List<ShellButton> _shellButtons = [];
+
+    /// <summary>A shell action and which of the two appearances it carries.</summary>
+    private sealed record ShellButton(Button Button, bool Primary);
     private double _lastToolbarWidth = -1;
     private bool _reflowingToolbar;
     private bool _mobileCompactHeight;
@@ -131,6 +142,14 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             // descendant never sees it.
             TopLevel.GetTopLevel(this)?.AddHandler(TopLevel.BackRequestedEvent, OnBackRequested);
             ObserveSafeArea();
+
+            // ActualThemeVariant is only meaningful once there is a top level to inherit it
+            // from: everything built in the constructor resolved it as Default, which the
+            // "is it Light?" test reads as dark, so a cold start on a phone set to light was
+            // served the dark palette and no variant change ever arrived to correct it
+            // (audit 2, A1c). Re-running once the tree has settled is what makes a cold
+            // start in either variant produce the same result as a switch into it.
+            Dispatcher.UIThread.Post(ApplyThemeSurfaces, DispatcherPriority.Loaded);
             if (!_startupOpened)
             {
                 _startupOpened = true;
@@ -193,8 +212,20 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         await SaveSettingsAsync(cancellationToken);
     }
 
-    // The brand/command bar stays dark in both themes as the application's identity
-    // band; only the workspace surface below it follows the requested theme variant.
+    /// <summary>
+    /// Repaints every shell surface that owns its own brushes for the variant now in force.
+    /// </summary>
+    /// <remarks>
+    /// This used to touch four things — the root, the system bar, the empty state and the
+    /// notice lane — and the command bar was excluded on purpose, as the application's
+    /// identity band. Everything else it missed by accident: switching a running app to
+    /// light left the session tabs at 1.10:1, the entry metadata at 1.11:1 and the minimap a
+    /// solid navy rectangle on a white page, and only a restart put them right (audit 2, A1).
+    ///
+    /// The rule now is that a surface painted in code is repainted here, and the list of
+    /// them is not a list this method has to keep: the tab strip, the notice lane, the empty
+    /// state and each open workspace all own one entry point that this calls.
+    /// </remarks>
     private void ApplyThemeSurfaces()
     {
         var dark = ActualThemeVariant != ThemeVariant.Light;
@@ -202,8 +233,64 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         Background = workspaceSurface;
         _rootPanel.Background = workspaceSurface;
         ApplySystemBarSurface();
+        ApplyCommandBarTheme(dark);
         _emptyState.Child = BuildEmptyState(dark);
         ApplyNoticeTheme();
+        UpdateSessionStrip();
+    }
+
+    /// <summary>Paints the command bar, its wordmark and its actions for the variant.</summary>
+    private void ApplyCommandBarTheme(bool dark)
+    {
+        if (_commandBar is { } bar)
+        {
+            bar.Background = new LinearGradientBrush
+            {
+                StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+                EndPoint = new RelativePoint(1, 0, RelativeUnit.Relative),
+                GradientStops =
+                {
+                    new GradientStop(VisualCat.App.Timeline.WorkspacePalette.ShellTop(dark), 0),
+                    new GradientStop(VisualCat.App.Timeline.WorkspacePalette.ShellBottom(dark), 1),
+                },
+            };
+            bar.BorderBrush = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.ShellEdge(dark));
+        }
+
+        if (_brandWordmark is { } wordmark)
+        {
+            wordmark.Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.ShellText(dark));
+        }
+
+        if (_brandStrapline is { } strapline)
+        {
+            strapline.Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.ShellTextMuted(dark));
+        }
+
+        _message.Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.ShellTextMuted(dark));
+        if (_moreMenu is { } menu)
+        {
+            menu.Background = new SolidColorBrush(
+                VisualCat.App.Timeline.WorkspacePalette.SecondaryActionFill(dark));
+        }
+
+        foreach (var (button, primary) in _shellButtons)
+        {
+            ApplyShellButtonTheme(button, primary, dark);
+        }
+    }
+
+    private static void ApplyShellButtonTheme(Button button, bool primary, bool dark)
+    {
+        button.Background = new SolidColorBrush(primary
+            ? VisualCat.App.Timeline.WorkspacePalette.PrimaryActionFill(dark)
+            : VisualCat.App.Timeline.WorkspacePalette.SecondaryActionFill(dark));
+        button.BorderBrush = new SolidColorBrush(primary
+            ? VisualCat.App.Timeline.WorkspacePalette.PrimaryActionEdge(dark)
+            : VisualCat.App.Timeline.WorkspacePalette.SecondaryActionEdge(dark));
+        button.Foreground = new SolidColorBrush(primary
+            ? VisualCat.App.Timeline.WorkspacePalette.PrimaryActionText(dark)
+            : VisualCat.App.Timeline.WorkspacePalette.TextPrimary(dark));
     }
 
     private Grid Build()
@@ -237,55 +324,41 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             {
                 Text = "V",
                 FontWeight = FontWeight.Black,
-                FontSize = 17,
+                FontSize = TextScale.Of(17),
                 Foreground = Brushes.White,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             },
         });
+        _brandWordmark = new TextBlock
+        {
+            Text = "VISUALCAT",
+            FontWeight = FontWeight.Bold,
+            FontSize = TextScale.Of(15),
+        };
+        _brandStrapline = new TextBlock
+        {
+            Text = "LOGCAT SIGNAL ANALYZER",
+            FontSize = TextScale.Of(8),
+        };
         brand.Children.Add(new StackPanel
         {
             Spacing = -2,
-            Children =
-            {
-                new TextBlock
-                {
-                    Text = "VISUALCAT",
-                    FontWeight = FontWeight.Bold,
-                    FontSize = 15,
-                    Foreground = new SolidColorBrush(Color.Parse("#EAF2FF")),
-                },
-                new TextBlock
-                {
-                    Text = "LOGCAT SIGNAL ANALYZER",
-                    FontSize = 8,
-                    Foreground = new SolidColorBrush(Color.Parse("#7187A6")),
-                },
-            },
+            Children = { _brandWordmark, _brandStrapline },
         });
         brandRow.Children.Add(brand);
         _message.VerticalAlignment = VerticalAlignment.Center;
         _message.TextTrimming = TextTrimming.CharacterEllipsis;
-        _message.Foreground = new SolidColorBrush(Color.Parse("#9EB1CB"));
         Grid.SetColumn(_message, 2);
         brandRow.Children.Add(_message);
         commandContent.Children.Add(brandRow);
 
         commandContent.Children.Add(BuildActionToolbar());
 
+        // Both brushes are supplied by ApplyCommandBarTheme, which runs before the first
+        // frame and again on every variant change.
         var commandBar = _commandBar = new Border
         {
-            Background = new LinearGradientBrush
-            {
-                StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
-                EndPoint = new RelativePoint(1, 0, RelativeUnit.Relative),
-                GradientStops =
-                {
-                    new GradientStop(Color.Parse("#111C2D"), 0),
-                    new GradientStop(Color.Parse("#0B1220"), 1),
-                },
-            },
-            BorderBrush = new SolidColorBrush(Color.Parse("#243753")),
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = CommandBarPadding(compact: false),
             Child = commandContent,
@@ -310,6 +383,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         _emptyState.SetValue(Panel.ZIndexProperty, 1);
         workspaceHost.Children.Add(_emptyState);
         root.Children.Add(workspaceHost);
+
+        InitializeOverlayModality();
 
         // Sheets and dialogs live in the ordinary tree above the workspace, so automation can
         // walk them and the system Back gesture can take them down (findings 8 and 20).
@@ -387,7 +462,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 Child = new TextBlock
                 {
                     Text = level.ToString().ToUpperInvariant(),
-                    FontSize = 9,
+                    FontSize = TextScale.Of(9),
                     FontWeight = FontWeight.Bold,
                     Foreground = new SolidColorBrush(parsed),
                 },
@@ -406,7 +481,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 new TextBlock
                 {
                     Text = "SEE THE SHAPE OF YOUR LOG",
-                    FontSize = OperatingSystem.IsAndroid() ? 22 : 28,
+                    FontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 22 : 28),
                     FontWeight = FontWeight.Bold,
                     TextAlignment = TextAlignment.Center,
                     Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextPrimary(dark)),
@@ -414,7 +489,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 new TextBlock
                 {
                     Text = "Turn raw Android logcat into a navigable severity × time signal.",
-                    FontSize = OperatingSystem.IsAndroid() ? 13 : 15,
+                    FontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 13 : 15),
                     TextAlignment = TextAlignment.Center,
                     TextWrapping = TextWrapping.Wrap,
                     Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextMuted(dark)),
@@ -425,7 +500,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 new TextBlock
                 {
                     Text = $"VisualCat {ProductInfo.DisplayVersion} · local-first · no telemetry",
-                    FontSize = 10,
+                    FontSize = TextScale.Of(10),
                     TextAlignment = TextAlignment.Center,
                     Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextMuted(dark)),
                     Opacity = 0.8,
@@ -449,7 +524,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var heading = _recentHeading = new TextBlock
         {
             Text = "RECENT CAPTURES ON THIS DEVICE",
-            FontSize = 10,
+            FontSize = TextScale.Of(10),
             FontWeight = FontWeight.Bold,
             TextAlignment = TextAlignment.Center,
             Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextMuted(dark)),
@@ -540,8 +615,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private Button BuildRecentEntry(TemporarySessionInfo session, bool dark)
     {
         var name = SessionCacheName.Describe(session.Path);
-        var detail = $"{session.UpdatedUtc.ToLocalTime():g} · {RecentSessionsDialog.FormatBytes(session.SizeBytes)}" +
-                     (session.Finalized ? string.Empty : " · partial");
+
+        // The same sentence Recent sessions and Session cache use. Three lists describing the
+        // same three captures in three vocabularies was the whole of E2.
+        var detail = SheetForm.DescribeSessionState(session);
         var button = new Button
         {
             MinHeight = OperatingSystem.IsAndroid() ? 56 : 0,
@@ -561,14 +638,14 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     new TextBlock
                     {
                         Text = name,
-                        FontSize = 12.5,
+                        FontSize = TextScale.Of(12.5),
                         TextTrimming = TextTrimming.CharacterEllipsis,
                         Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextPrimary(dark)),
                     },
                     new TextBlock
                     {
                         Text = detail,
-                        FontSize = 10.5,
+                        FontSize = TextScale.Of(10.5),
                         Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextMuted(dark)),
                     },
                 },
@@ -622,7 +699,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 row.Children.Add(new TextBlock
                 {
                     Text = "·",
-                    FontSize = 11,
+                    FontSize = TextScale.Of(11),
                     FontWeight = FontWeight.Bold,
                     VerticalAlignment = VerticalAlignment.Center,
                     Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextMuted(dark)),
@@ -642,7 +719,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var label = new TextBlock
         {
             Text = text,
-            FontSize = 11,
+            FontSize = TextScale.Of(11),
             FontWeight = FontWeight.Bold,
             Foreground = accent,
         };
@@ -671,19 +748,18 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         return button;
     }
 
-    private static Button ActionButton(string text, Func<Task> action, bool primary = false)
+    private Button ActionButton(string text, Func<Task> action, bool primary = false)
     {
         var button = new Button
         {
             Content = text,
             Padding = new Thickness(12, 7),
             CornerRadius = new CornerRadius(6),
-            Background = new SolidColorBrush(Color.Parse(primary ? "#174F78" : "#172235")),
-            BorderBrush = new SolidColorBrush(Color.Parse(primary ? "#3CAFEF" : "#2A3B55")),
             BorderThickness = new Thickness(1),
-            Foreground = new SolidColorBrush(Color.Parse("#EDF6FF")),
             MinHeight = OperatingSystem.IsAndroid() ? 48 : 0,
         };
+        ApplyShellButtonTheme(button, primary, ActualThemeVariant != ThemeVariant.Light);
+        _shellButtons.Add(new ShellButton(button, primary));
         button.Click += async (_, _) => await action();
         return button;
     }
@@ -769,7 +845,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 "Export",
                 "Export CSV…",
                 () => ExportAsync(),
-                "Write the filtered entries as CSV",
+                // The sheet promised "the filtered entries" and then opened a dialog whose
+                // default answer is the entries in view — a different and usually much
+                // smaller set (audit 2, E4). The command opens a question; it says so.
+                "Choose which entries to write, then save a CSV",
                 CanExportSelectedSession);
         }
         else
@@ -812,7 +891,6 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             _moreMenu = new Menu
             {
                 VerticalAlignment = VerticalAlignment.Center,
-                Background = new SolidColorBrush(Color.Parse("#172235")),
                 Items = { _moreItem },
             };
             _toolbar.Children.Add(_moreMenu);
@@ -1166,7 +1244,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         {
             await tab.PersistViewAsync();
             await SessionSaveService.SaveAsync(tab.Snapshot, destination, portable);
-            ShowNotice($"Saved: {destination}");
+            ShowNotice($"Saved: {destination}", NoticeKind.Completion);
         });
     }
 
@@ -1219,7 +1297,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     cancellationToken)));
             if (written > 0)
             {
-                ShowNotice($"Exported {written:N0} rows ({scope.Label.ToLowerInvariant()}) to {name}");
+                ShowNotice(
+                    $"Exported {written:N0} rows ({scope.Label.ToLowerInvariant()}) to {name}",
+                    NoticeKind.Completion);
             }
         }
     }
@@ -1271,8 +1351,20 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// </remarks>
     private async Task<bool> ConfirmLiveCaptureAsync()
     {
-        if (!OperatingSystem.IsAndroid() || _settings.LiveCaptureNoticeAcknowledged)
+        if (!OperatingSystem.IsAndroid())
         {
+            return true;
+        }
+
+        if (_settings.LiveCaptureNoticeAcknowledged)
+        {
+            // The full explanation is shown once and remembered, because Android's own prompt
+            // arrives on every capture and this must not become a second thing to dismiss.
+            // But the prompt really does arrive every time, and a reader who has met it once
+            // and forgotten still deserves a second of warning before a system dialog covers
+            // the screen (audit 2, C1). The lane is not a dialog: it says so and gets out of
+            // the way.
+            ShowNotice("Android will ask you to allow log access. It asks on every capture.");
             return true;
         }
 
@@ -1312,6 +1404,26 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
+        // The one thing the platform will not tell the app up front is whether this capture
+        // was actually allowed: declining Android's prompt does not fail, it silently
+        // narrows the capture to VisualCat's own records while every permission check still
+        // reports success. The source works that out from what arrives and says so here,
+        // once, as a failure — because from the reader's point of view it is one
+        // (audit 2, C1).
+        if (source is ISourceScopeReporter reporter)
+        {
+            reporter.ScopeResolved += report =>
+            {
+                if (!report.FullDevice && report.Summary is { Length: > 0 })
+                {
+                    ShowNotice(
+                        "Only VisualCat's own log lines are being captured — " +
+                        $"{report.Summary}. See the session details for how to widen it.",
+                        NoticeKind.Failure);
+                }
+            };
+        }
+
         await RunAsync(async () =>
         {
             await using (source)
@@ -1340,7 +1452,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             await tab.PersistViewAsync();
             await PortableSessionArchiveService.CreateAsync(tab.Snapshot, path);
             await share(path, CancellationToken.None);
-            ShowNotice("Portable session handed to the platform share sheet.");
+            ShowNotice("Portable session handed to the platform share sheet.", NoticeKind.Completion);
         });
     }
 
@@ -1369,6 +1481,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             Content = workspace,
             Tag = viewModel,
         };
+        workspace.NoticeRaised += (message, failure) =>
+            ShowNotice(message, failure ? NoticeKind.Failure : NoticeKind.Information);
+        workspace.RestoreDisplayMode(_settings.WorkspaceDisplayMode);
+        workspace.DisplayModeChanged += PersistWorkspaceDisplayMode;
         workspace.ExportRequested += range => _ = ExportAsync(range);
         workspace.StopRequested += () => _viewModel.StopAsync(viewModel);
 
@@ -1638,7 +1754,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                         path,
                         _viewModel.Tabs.Select(static tab => tab.SessionPath),
                         cancellationToken);
-                    ShowNotice($"Diagnostic bundle saved: {file.Name}");
+                    ShowNotice($"Diagnostic bundle saved: {file.Name}", NoticeKind.Completion);
                 }));
         }
     }
@@ -1672,7 +1788,15 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             };
         }
 
-        FontSize = 14 * _settings.TextScale;
+        // The device's setting is the baseline and the product's own multiplies it, so a
+        // reader who has only ever used Android's text-size control still gets larger text
+        // (audit 2, B5). Views read the result while they are built; Android recreates the
+        // activity when the scale changes, and the persisted workspace is what keeps the
+        // reader's place across that (see C5).
+        TextScale.Platform = PlatformSourceRegistry.PlatformFontScale ?? 1;
+        TextScale.User = _settings.TextScale;
+        FontSize = TextScale.Of(14);
+        ApplyTextScaleToShell();
         foreach (var item in _tabItems.Values)
         {
             if (item.Content is SessionWorkspaceView workspace)
@@ -1685,6 +1809,43 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     _settings.TimelineMinimumBarWidth);
             }
         }
+    }
+
+    /// <summary>
+    /// Re-sizes the few shell labels that were built before the stored settings arrived.
+    /// </summary>
+    /// <remarks>
+    /// Settings are read from disk, so the command bar exists before the reader's own text
+    /// scale is known. Everything in the bar that does not state a size of its own already
+    /// follows this view's <c>FontSize</c>; these four state one,
+    /// and they are the shell's own identity rather than session content, so they are
+    /// re-stated here rather than by rebuilding the bar under the reader.
+    /// </remarks>
+    private void ApplyTextScaleToShell()
+    {
+        if (_brandWordmark is { } wordmark)
+        {
+            wordmark.FontSize = TextScale.Of(15);
+        }
+
+        if (_brandStrapline is { } strapline)
+        {
+            strapline.FontSize = TextScale.Of(8);
+        }
+
+        if (_noticeText is { } notice)
+        {
+            notice.FontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 12.5 : 12);
+        }
+
+        foreach (var chip in _chips.Values)
+        {
+            chip.Title.FontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 12.5 : 12);
+        }
+
+        // The empty state states several sizes and is cheap to rebuild, and it is the first
+        // thing a cold start shows.
+        _emptyState.Child = BuildEmptyState(ActualThemeVariant != ThemeVariant.Light);
     }
 
     private void ApplyWindowSettings(Window window)

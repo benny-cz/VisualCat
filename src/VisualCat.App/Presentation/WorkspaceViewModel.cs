@@ -212,6 +212,25 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         return await OpenSessionAsync(sessionRoot, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// The words a running capture uses for its own source, which the source may revise.
+    /// </summary>
+    /// <remarks>
+    /// Volatile because the writer is the source's reading thread and the reader is the
+    /// progress reporter: the point of the revision is that the status line stops saying
+    /// "full-device" the moment the platform makes clear that it is not.
+    /// </remarks>
+    private sealed class CaptureScopeLabel(string initial)
+    {
+        private volatile string _value = initial;
+
+        public string Value
+        {
+            get => _value;
+            set => _value = value;
+        }
+    }
+
     public async Task<SessionTabViewModel> CaptureAsync(
         ILogSource source,
         TimeSpan? duration,
@@ -225,6 +244,26 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         var operation = RegisterOperation(tab, cancellationToken);
         var operationToken = operation.Cancellation.Token;
         var acquired = false;
+
+        // Held in a cell rather than a local because it is rewritten from the source's own
+        // thread the moment the platform reveals what the capture can actually see, and read
+        // from the progress path that describes it (audit 2, C1).
+        var scope = new CaptureScopeLabel(source.Metadata.Description);
+        void OnScopeResolved(SourceScopeReport report)
+        {
+            scope.Value = report.Description;
+            tab.CaptureScopeSummary = report.Summary;
+            tab.CaptureScopeRemedy = report.Remedy;
+        }
+
+        // A source that only learns its own reach by exercising it says so when it knows.
+        // Until then the status line carries the neutral name the source chose, rather than
+        // promising a device-wide capture that may already have been declined.
+        if (source is ISourceScopeReporter reporter)
+        {
+            reporter.ScopeResolved += OnScopeResolved;
+        }
+
 
         // Settling the logcat format first is what lets the policy below follow the zone the
         // device actually agreed to write, instead of assuming one it may not be using.
@@ -256,31 +295,13 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             // The description also carries the scope an on-device source resolved —
             // own-app versus full-device — which the user must be able to see
             // (§4.4, §13.9).
-            var scope = source.Metadata.Description;
-
-            // READ_LOGS is signature|privileged|development, so an app cannot ask for it at
-            // runtime — Android never prompts, the source quietly falls back to its own
-            // records, and an idle app then produces a capture that looks broken. Naming
-            // the one route out of that is the difference between a quiet capture and an
-            // apparently dead one (§4.4).
-            if (source.Metadata.Properties?.TryGetValue("scope", out var granted) == true &&
-                string.Equals(granted, "own-app", StringComparison.Ordinal))
-            {
-                tab.CaptureScopeSummary = "own-app scope only";
-                tab.CaptureScopeRemedy =
-                    "This capture can only see this app's own log lines, so an idle app produces " +
-                    "almost nothing. Android cannot prompt for wider access — READ_LOGS is not a " +
-                    "runtime permission — so full-device capture has to be granted over adb, and " +
-                    "again after every uninstall or reinstall:\n" +
-                    "adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS";
-            }
             if (source.Metadata.Kind == SourceKind.Adb)
             {
-                tab.ReportActivity(SessionActivity.Connecting, $"Connecting · {scope}");
+                tab.ReportActivity(SessionActivity.Connecting, $"Connecting · {scope.Value}");
             }
             else
             {
-                tab.ReportActivity(SessionActivity.Starting, $"Starting capture · {scope}");
+                tab.ReportActivity(SessionActivity.Starting, $"Starting capture · {scope.Value}");
             }
 
             var result = await SessionCoordinator.ImportAsync(
@@ -290,7 +311,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
                 CreateProgressiveReporter(
                     tab,
                     SessionActivity.Capturing,
-                    snapshot => tab.DescribeCaptureProgress(scope, snapshot),
+                    snapshot => tab.DescribeCaptureProgress(scope.Value, snapshot),
                     operationToken),
                 _diagnostics,
                 _presence,
@@ -321,6 +342,11 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         finally
         {
             tab.IsLiveCaptureActive = false;
+            if (source is ISourceScopeReporter finished)
+            {
+                finished.ScopeResolved -= OnScopeResolved;
+            }
+
             if (acquired)
             {
                 _resourceGovernor.Release();

@@ -46,6 +46,27 @@ internal static class ProductTheme
     /// <summary>Outline of a control that cannot be used.</summary>
     internal const string ControlEdgeDisabledKey = "VisualCatControlEdgeDisabled";
 
+    /// <summary>Primary reading foreground of the workspace.</summary>
+    internal const string TextPrimaryKey = "VisualCatTextPrimary";
+
+    /// <summary>Secondary foreground: metadata, straplines, units.</summary>
+    internal const string TextMutedKey = "VisualCatTextMuted";
+
+    /// <summary>The workspace ground.</summary>
+    internal const string SurfaceKey = "VisualCatSurface";
+
+    /// <summary>A card, list or drawer raised off the workspace ground.</summary>
+    internal const string SurfaceRaisedKey = "VisualCatSurfaceRaised";
+
+    /// <summary>A header band or a resting control fill.</summary>
+    internal const string SurfaceHeaderKey = "VisualCatSurfaceHeader";
+
+    /// <summary>The hairline between two bands.</summary>
+    internal const string BorderLineKey = "VisualCatBorderLine";
+
+    /// <summary>The workspace accent for the variant in force.</summary>
+    internal const string AccentKey = "VisualCatAccent";
+
     /// <summary>
     /// Builds the themed Fluent instance the application installs. The palette is keyed by
     /// variant because both are first-class (§14.1): the accent is the workspace accent for
@@ -101,6 +122,19 @@ internal static class ProductTheme
             [ControlFillKey] = new SolidColorBrush(WorkspacePalette.SurfaceHeader(dark)),
             [ControlEdgeKey] = new SolidColorBrush(WorkspacePalette.BorderLine(dark)),
             [ControlEdgeDisabledKey] = Tint(muted, 56),
+
+            // The workspace palette itself, so a style can name a color instead of
+            // capturing one. A style is installed once and lives for the process, and every
+            // brush it captured at construction is a brush the theme can never change
+            // afterwards -- which is how a light-mode entry row ended up printing #EAF2FF
+            // metadata on #E9EFF7 at 1.11:1 (audit 2, A1b/A1c).
+            [TextPrimaryKey] = new SolidColorBrush(WorkspacePalette.TextPrimary(dark)),
+            [TextMutedKey] = new SolidColorBrush(muted),
+            [SurfaceKey] = new SolidColorBrush(WorkspacePalette.Surface(dark)),
+            [SurfaceRaisedKey] = new SolidColorBrush(WorkspacePalette.SurfaceRaised(dark)),
+            [SurfaceHeaderKey] = new SolidColorBrush(WorkspacePalette.SurfaceHeader(dark)),
+            [BorderLineKey] = new SolidColorBrush(WorkspacePalette.BorderLine(dark)),
+            [AccentKey] = new SolidColorBrush(accent),
         };
     }
 
@@ -128,8 +162,22 @@ internal static class ProductTheme
         yield return RecessiveDisabledFill<Button>();
         yield return RecessiveDisabledFill<ToggleButton>();
         yield return RecessiveDisabledFill<ComboBox>();
+
+        // A NumericUpDown's spin buttons are RepeatButtons, which OfType<Button> does not
+        // match, so they were the one control left carrying Fluent's disabled fill: Session
+        // cache's Maximum total size sits at its minimum and its greyed-out decrement was
+        // the brightest thing in the row (audit 2, D4).
+        yield return RecessiveDisabledFill<RepeatButton>();
         yield return SelectedRowFill();
         yield return SelectedRowFill(pointerOver: true);
+        yield return SelectedChoiceFill();
+        yield return SelectedChoiceFill(pointerOver: true);
+        yield return ScrollBarKeepsOffTheContent(ScrollBarVisibility.Auto);
+        yield return ScrollBarKeepsOffTheContent(ScrollBarVisibility.Visible);
+        if (OperatingSystem.IsAndroid())
+        {
+            yield return ScrollBarStaysVisible();
+        }
     }
 
     private static Style CenterContentVertically<T>()
@@ -210,6 +258,90 @@ internal static class ProductTheme
         style.Setters.Add(new Setter(ContentPresenter.BackgroundProperty, Resource(SelectionFillKey)));
         style.Setters.Add(new Setter(ContentPresenter.BorderBrushProperty, Resource(SelectionEdgeKey)));
         style.Setters.Add(new Setter(ContentPresenter.BorderThicknessProperty, new Thickness(1)));
+        return style;
+    }
+
+    /// <summary>
+    /// The same tint-and-outline for a chosen row of a dropdown as for a chosen row of a list.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SelectedRowFill"/> covered <see cref="ListBoxItem"/> only, so every combo
+    /// popup in the product still marked its current value with Fluent solid accent slab --
+    /// one control type keeping the exact appearance the rest of the product had deliberately
+    /// replaced (audit 2, A4).
+    /// </remarks>
+    private static Style SelectedChoiceFill(bool pointerOver = false)
+    {
+        var style = new Style(selector =>
+        {
+            var item = Selectors.OfType<ComboBoxItem>(selector).Class(":selected");
+            return (pointerOver ? item.Class(":pointerover") : item)
+                .Template()
+                .OfType<ContentPresenter>();
+        });
+        style.Setters.Add(new Setter(ContentPresenter.BackgroundProperty, Resource(SelectionFillKey)));
+        style.Setters.Add(new Setter(ContentPresenter.BorderBrushProperty, Resource(SelectionEdgeKey)));
+        style.Setters.Add(new Setter(ContentPresenter.BorderThicknessProperty, new Thickness(1)));
+        return style;
+    }
+
+    /// <summary>
+    /// Width a vertical scrollbar is given, and kept clear of, in every scrolling surface.
+    /// </summary>
+    /// <remarks>
+    /// Measured from the device: the bar's own regions occupied 48 device pixels at 3.0x,
+    /// so 16 logical pixels is the whole track including its margins. A style cannot read a
+    /// control's arranged width, so this is a constant — and
+    /// <c>ScrollBarLaneIsWideEnoughForTheBar</c> in the test suite fails if a theme update
+    /// ever makes the real bar wider than the lane reserved for it.
+    /// </remarks>
+    internal const double ScrollBarLane = 16;
+
+    /// <summary>
+    /// Keeps a vertical scrollbar out of the content it scrolls.
+    /// </summary>
+    /// <remarks>
+    /// Fluent lays the scrolled content across the full width of the viewport and draws the
+    /// bar on top of it, and the bar takes pointer input: in Appearance &amp; timeline the
+    /// bar's page-down region measured 718 px tall over the right edge of two combo boxes, so
+    /// a tap squarely on a chevron paged the form instead of opening the dropdown, with no
+    /// way for the reader to tell why (audit 2, A3). Insetting the presenter by the bar's own
+    /// width gives it a lane nothing else is laid into.
+    ///
+    /// The lane is reserved whether or not the bar is currently showing, which also means a
+    /// list that grows past its viewport no longer reflows every row it holds at the moment
+    /// the bar appears. It is not reserved for a scroller whose vertical bar is disabled,
+    /// which is what keeps the horizontal session strip full width.
+    /// </remarks>
+    private static Style ScrollBarKeepsOffTheContent(ScrollBarVisibility visibility)
+    {
+        var style = new Style(selector => Selectors
+            .PropertyEquals(
+                Selectors.OfType<ScrollViewer>(selector),
+                ScrollViewer.VerticalScrollBarVisibilityProperty,
+                visibility)
+            .Template()
+            .OfType<ScrollContentPresenter>());
+        style.Setters.Add(new Setter(
+            Layoutable.MarginProperty,
+            new Thickness(0, 0, ScrollBarLane, 0)));
+        return style;
+    }
+
+    /// <summary>
+    /// On a touch device the bar is also the only thing that says there is more below.
+    /// </summary>
+    /// <remarks>
+    /// A phone has no pointer to hover, so an auto-hiding bar is only ever seen mid-drag —
+    /// which is exactly when the reader already knows the surface scrolls. Two sheets were
+    /// cutting their last control in half against a pinned decision row with nothing on
+    /// screen saying anything was below it (audit 2, D2). Now that the bar has a lane of its
+    /// own it costs no width to leave it there.
+    /// </remarks>
+    private static Style ScrollBarStaysVisible()
+    {
+        var style = new Style(static selector => Selectors.OfType<ScrollViewer>(selector));
+        style.Setters.Add(new Setter(ScrollViewer.AllowAutoHideProperty, false));
         return style;
     }
 

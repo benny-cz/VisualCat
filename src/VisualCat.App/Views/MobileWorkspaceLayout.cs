@@ -51,6 +51,29 @@ internal sealed class MobileWorkspaceState
         DisplayMode = mode;
         _initialized = true;
     }
+
+    /// <summary>
+    /// Adopts a mode the reader chose before the process that is now running.
+    /// </summary>
+    /// <remarks>
+    /// Restoring counts as initialisation, so a later size class cannot overwrite it — the
+    /// same rule <see cref="Select"/> follows, for the same reason: only the reader changes
+    /// the mode.
+    /// </remarks>
+    public bool Restore(string? persisted)
+    {
+        if (!Enum.TryParse<MobileWorkspaceDisplayMode>(persisted, ignoreCase: true, out var mode))
+        {
+            return false;
+        }
+
+        DisplayMode = mode;
+        _initialized = true;
+        return true;
+    }
+
+    /// <summary>The stored form of the current mode.</summary>
+    public string Persisted => DisplayMode.ToString();
 }
 
 internal readonly record struct MobileWorkspaceLayout(
@@ -85,11 +108,16 @@ internal readonly record struct MobileWorkspaceLayout(
 
         if (width > height || height < CompactHeightBreakpoint)
         {
+            // The minimap is 26 px here rather than absent. A short viewport is exactly
+            // where the plot is at its widest and most zoomed, so dropping the one control
+            // that shows where the viewport sits in the whole session — silently — took the
+            // aid away at the moment it was worth most (audit 2, D9). It costs the plot
+            // column alone: the analysis column beside it keeps the full band.
             return new MobileWorkspaceLayout(
                 MobileWorkspaceMode.CompactHeight,
                 TimelineWeight: 2.1,
                 AnalysisWeight: 2.9,
-                MinimapHeight: 0,
+                MinimapHeight: 26,
                 FilterMaximumHeight: 240,
                 DefaultDisplayMode: MobileWorkspaceDisplayMode.Split);
         }

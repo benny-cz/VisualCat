@@ -116,6 +116,28 @@ public sealed partial class MainView
         }
     }
 
+    /// <summary>
+    /// Records the phone workspace mode the reader has just chosen.
+    /// </summary>
+    /// <remarks>
+    /// One value for the workspace rather than one per session: the mode is how this reader
+    /// wants to look at a log, not a property of any particular log, and a phone shows one
+    /// session at a time anyway.
+    /// </remarks>
+    private void PersistWorkspaceDisplayMode(string mode)
+    {
+        if (!_settingsLoaded ||
+            _restoringWorkspace ||
+            string.Equals(_settings.WorkspaceDisplayMode, mode, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _settings = _settings with { WorkspaceDisplayMode = mode };
+        var version = Interlocked.Increment(ref _workspacePersistVersion);
+        _lastWorkspacePersist = PersistOpenWorkspaceAsync(version, _settings);
+    }
+
     private async Task PersistOpenWorkspaceAsync(long version, ApplicationSettings snapshot)
     {
         // One dispatcher turn coalesces AddTab + SelectionChanged + chip updates into one disk

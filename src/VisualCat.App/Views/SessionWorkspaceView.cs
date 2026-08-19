@@ -24,7 +24,19 @@ namespace VisualCat.App.Views;
 public sealed partial class SessionWorkspaceView : UserControl
 {
     private readonly SessionTabViewModel _viewModel;
-    private readonly bool _mobile = OperatingSystem.IsAndroid();
+    /// <summary>
+    /// Forces the phone composition on or off, for tests that need to exercise it.
+    /// </summary>
+    /// <remarks>
+    /// Everything the two Android audits are about lives in the branch this field selects,
+    /// and none of it could be checked without a device: a headless run on a desktop always
+    /// took the desktop branch. Read once per view, so a test sets it before constructing
+    /// the workspace and restores it afterwards. Null means "ask the platform", which is
+    /// what every shipping build does.
+    /// </remarks>
+    internal static bool? PhoneCompositionOverride { get; set; }
+
+    private readonly bool _mobile = PhoneCompositionOverride ?? OperatingSystem.IsAndroid();
     private readonly TimelineControl _timeline = new();
     private readonly MinimapControl _minimap = new();
     private readonly TextBlock _status = new();
@@ -173,8 +185,10 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Control? _filterHost;
     private Control? _rowSplitter;
     private Button? _mobileFit;
+    private Grid? _mobileModeSelector;
     private Grid? _entryPrimaryActions;
     private Panel? _entryContextActions;
+    private Border? _entryFooter;
     private TextBlock? _severityLegend;
     private TextBlock? _chipEmptyLabel;
     private Button? _clearFilters;
@@ -182,7 +196,8 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Control? _mobileSeveritySection;
     private Control? _mobileTimeSection;
     private TextBlock? _mobileFilterCount;
-    private WrapPanel? _mobileQuickActions;
+    private Grid? _mobileQuickActions;
+    private Grid? _mobileCaptureActions;
     private readonly Dictionary<MobileWorkspaceDisplayMode, Button> _mobileModeButtons = [];
     private Border? _minimapFrame;
     private TabControl? _mobileAnalysisTabs;
@@ -193,6 +208,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Button? _templateExclude;
     private Button? _templateCopy;
     private DockPanel? _statusBar;
+    private TextBlock? _statusChevron;
     private MobileWorkspaceMode? _mobileLayoutMode;
     private readonly MobileWorkspaceState _mobileWorkspaceState = new();
     private bool _mobileFiltersOpen;
@@ -236,6 +252,15 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ? "Filters the entries as you type. The keyboard's action key applies it and closes this panel."
                 : "Ctrl+F focuses search; Enter applies it; F3 or N moves between matches.");
         SizeChanged += (_, eventArgs) => ApplyMobileLayout(eventArgs.NewSize);
+
+        // The entries floor is computed from the pane's own arranged chrome, so it is
+        // re-checked after every arrange rather than guessed before the first one. The
+        // check is a handful of comparisons and only touches the layout when the answer
+        // has actually moved, so it settles in one further pass instead of oscillating.
+        if (_mobile)
+        {
+            LayoutUpdated += (_, _) => EnforceEntriesFloor();
+        }
         ActualThemeVariantChanged += (_, _) => ApplyThemeSurfaces();
         ApplyThemeSurfaces();
         AttachedToVisualTree += (_, _) =>
@@ -243,6 +268,11 @@ public sealed partial class SessionWorkspaceView : UserControl
             ObserveInputPane();
             Dispatcher.UIThread.Post(() =>
             {
+                // ActualThemeVariant only means anything once there is a top level to
+                // inherit it from, and everything above was built before there was one, so
+                // a cold start in light mode had been served dark values throughout
+                // (audit 2, A1c).
+                ApplyThemeSurfaces();
                 if (_mobile)
                 {
                     ApplyMobileLayout(Bounds.Size);
@@ -319,6 +349,23 @@ public sealed partial class SessionWorkspaceView : UserControl
             filterPanel.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
         }
 
+        if (_minimapFrame is { } minimapFrame)
+        {
+            minimapFrame.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
+        }
+
+        if (_entryFooter is { } entryFooter)
+        {
+            entryFooter.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
+        }
+
+        // Both plots resolve their palette inside Render, so they need telling that the
+        // answer has changed and nothing else. Without this the minimap stayed a solid
+        // navy rectangle in the middle of a white page until something else moved it
+        // (audit 2, A1b).
+        _timeline.InvalidateVisual();
+        _minimap.InvalidateVisual();
+
         // The dump paints its own per-run colors, so it is redrawn rather than recolored.
         ApplyRawContextText();
         _inspectMessage.Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
@@ -374,6 +421,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                      _rawSelectionHint,
                      _rawChevron,
                      _sourceChevron,
+                     _statusChevron,
                  })
         {
             if (element is { } textBlock)
@@ -389,6 +437,13 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         ApplyFailureTheme();
 
+        // The chip bar caches what it last drew against the filter that produced it, so a
+        // repaint has to say that the cache is stale before asking for one; the summary and
+        // the status line are rewritten by the same call.
+        _renderedChipFilter = null;
+        _renderedFacets = null;
+        RefreshPresentation();
+
         // The session pane paints its own label/value/warn brushes, so it is rebuilt with
         // the theme rather than left in the previous variant's colors.
         UpdateSessionInfo();
@@ -396,6 +451,37 @@ public sealed partial class SessionWorkspaceView : UserControl
 
     public event Action<TimeRange?>? ExportRequested;
     public event Func<Task>? StopRequested;
+
+    /// <summary>Raised when the reader picks a different phone workspace mode.</summary>
+    internal event Action<string>? DisplayModeChanged;
+
+    /// <summary>
+    /// Something the reader should be told about, for the application's notice lane.
+    /// </summary>
+    /// <remarks>
+    /// The lane was driven only from <see cref="MainView"/>, so a workspace action had no
+    /// route to it: <c>Copy raw</c> wrote the clipboard and returned, with no notice, no
+    /// status change, and nothing from the platform either — the reader had no way at all to
+    /// know whether it had worked (audit 2, C4). The workspace does not reach into the shell;
+    /// it says what happened and the shell decides where that is shown.
+    /// </remarks>
+    internal event Action<string, bool>? NoticeRaised;
+
+    /// <summary>Reports the result of an action whose only other evidence is off screen.</summary>
+    private void Notify(string message, bool failure = false) =>
+        NoticeRaised?.Invoke(message, failure);
+
+    /// <summary>The phone workspace mode, in the form settings.json stores.</summary>
+    internal string DisplayMode => _mobileWorkspaceState.Persisted;
+
+    /// <summary>Re-adopts the mode the reader had before this process started.</summary>
+    internal void RestoreDisplayMode(string? persisted)
+    {
+        if (_mobile && _mobileWorkspaceState.Restore(persisted))
+        {
+            ApplyMobileLayout(Bounds.Size);
+        }
+    }
 
     public void ApplyDisplaySettings(
         string intensityScale,
@@ -642,7 +728,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Height = _mobile ? 48 : 26,
                 Padding = new Thickness(0),
                 FontWeight = FontWeight.Bold,
-                FontSize = 12,
+                FontSize = TextScale.Of(12),
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 VerticalContentAlignment = VerticalAlignment.Center,
                 CornerRadius = new CornerRadius(4),
@@ -769,7 +855,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             var severityLegend = _severityLegend = new TextBlock
             {
                 Text = legend.ToString(),
-                FontSize = 10,
+                FontSize = TextScale.Of(10),
                 TextWrapping = TextWrapping.Wrap,
             };
             var severitySection = _mobileSeveritySection = new StackPanel
@@ -806,6 +892,13 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Content = filterBody,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+
+                // The drawer had no padding of its own, so at rest the Time lens buttons were
+                // cut by the viewport edge, and one swipe put the QUERY heading under the
+                // card's top border instead: the pane looked broken at one end or the other
+                // whatever the reader did with it (audit 2, D1). A scrolling surface needs a
+                // margin at both ends of its travel, not only between its sections.
+                Padding = new Thickness(0, 6, 0, 10),
             };
 
             var filterCount = _mobileFilterCount = new TextBlock
@@ -882,10 +975,15 @@ public sealed partial class SessionWorkspaceView : UserControl
             _mobileFilterButton.Click += (_, _) => SetMobileFiltersOpen(!_mobileFiltersOpen);
             AutomationProperties.SetName(_mobileFilterButton, "Open search and timeline filters");
 
-            var modeSelector = new Grid
+            // No fixed width. Filters (76) + this (190) + Fit (56) + two 6 px gaps came to
+            // 334 against the 324 a 1080 px portrait phone actually has, so Fit fell to a
+            // second full-height row and five buttons cost 306 px of a screen where the
+            // entries list was getting 173 (audit 2, A2/D6). The three segments share
+            // whatever the row has left instead.
+            var modeSelector = _mobileModeSelector = new Grid
             {
                 ColumnDefinitions = new ColumnDefinitions("*,*,*"),
-                Width = 190,
+                MinWidth = 168,
                 Height = 48,
             };
             void AddModeButton(string label, MobileWorkspaceDisplayMode mode, int column)
@@ -933,34 +1031,54 @@ public sealed partial class SessionWorkspaceView : UserControl
             AutomationProperties.SetName(mobileFit, "Fit the complete session");
             mobileFit.Click += (_, _) => _timeline.FitSession();
 
-            var quickActions = _mobileQuickActions = new WrapPanel
+            // Three fixed slots that always fit, rather than a wrap panel that decides how
+            // many rows the workspace loses. The mode selector takes the slack, so Fit stays
+            // beside it at every phone width, and nothing the reader aims at moves.
+            var quickActions = _mobileQuickActions = new Grid
             {
-                Orientation = Orientation.Horizontal,
-                ItemSpacing = 6,
-                LineSpacing = 6,
+                ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+                ColumnSpacing = 6,
                 Margin = new Thickness(6, 3, 6, 3),
                 VerticalAlignment = VerticalAlignment.Center,
-
-                // Only the trailing controls appear and disappear, so nothing the reader
-                // aims at moves when a capture starts or stops (finding 26).
-                Children =
-                {
-                    _mobileFilterButton,
-                    modeSelector,
-                    mobileFit,
-                    _follow,
-                    _newData,
-                    _stopCapture,
-                },
             };
-            AutomationProperties.SetName(quickActions, "Filters, workspace mode, and capture controls");
+            quickActions.Children.Add(_mobileFilterButton);
+            Grid.SetColumn(modeSelector, 1);
+            quickActions.Children.Add(modeSelector);
+            Grid.SetColumn(mobileFit, 2);
+            quickActions.Children.Add(mobileFit);
+            AutomationProperties.SetName(quickActions, "Filters and workspace mode");
+
+            // The capture controls are a band of their own, and the band only exists while
+            // there is a capture: a session being read back costs one 48 dp row here rather
+            // than two, and a live one still gets Follow, the new-data jump and Stop at full
+            // width. Keeping them off the row above is also what stops a capture ending from
+            // moving the mode buttons out from under a thumb (finding 26).
+            var captureActions = _mobileCaptureActions = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+                ColumnSpacing = 6,
+                Margin = new Thickness(6, 0, 6, 3),
+                IsVisible = false,
+            };
+            _follow.HorizontalAlignment = HorizontalAlignment.Stretch;
+            _follow.MinHeight = 48;
+            _newData.MinHeight = 48;
+            _stopCapture.MinHeight = 48;
+            captureActions.Children.Add(_follow);
+            Grid.SetColumn(_newData, 1);
+            captureActions.Children.Add(_newData);
+            Grid.SetColumn(_stopCapture, 2);
+            captureActions.Children.Add(_stopCapture);
+            AutomationProperties.SetName(captureActions, "Live capture controls");
 
             var filterShell = _mobileFilterShell = new Grid
             {
-                RowDefinitions = new RowDefinitions("Auto,Auto"),
+                RowDefinitions = new RowDefinitions("Auto,Auto,Auto"),
                 ColumnDefinitions = new ColumnDefinitions("*"),
             };
             filterShell.Children.Add(quickActions);
+            Grid.SetRow(captureActions, 1);
+            filterShell.Children.Add(captureActions);
             filters = filterShell;
         }
         else
@@ -1016,7 +1134,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         var chipEmptyLabel = _chipEmptyLabel = new TextBlock
         {
             Text = "No filters · showing everything in view",
-            FontSize = 11,
+            FontSize = TextScale.Of(11),
             Opacity = 0.62,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -1072,15 +1190,18 @@ public sealed partial class SessionWorkspaceView : UserControl
             root.Children.Add(rowSplitter);
         }
 
+        // A pane that overruns its cell paints over the band below it, which on a short
+        // viewport put entry rows through the status line (audit 2, D9).
         var analysis = _analysisGrid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions(_mobile ? "*" : "3*,6,2*"),
             Margin = new Thickness(10, 5),
+            ClipToBounds = _mobile,
         };
         ConfigureEntryList();
         var entryPanel = new Grid
         {
-            RowDefinitions = new RowDefinitions(_mobile ? "Auto,*" : "Auto,Auto,*,Auto"),
+            RowDefinitions = new RowDefinitions(_mobile ? "Auto,*,Auto" : "Auto,Auto,*,Auto"),
         };
         var entryHeader = _entryHeader = new Grid
         {
@@ -1155,7 +1276,10 @@ public sealed partial class SessionWorkspaceView : UserControl
             primaryActions.Children.Add(openInspector);
 
             // Contextual actions get their own row below, so what they push is the table
-            // rather than the controls above them.
+            // rather than the controls above them. Load next 500 is not one of them: it
+            // means "extend the list you have reached the end of", and it sat above the
+            // list, in the band that was already costing the list every row it had
+            // (audit 2, A2). It is a footer now; see BuildMobileEntryFooter.
             var contextActions = _entryContextActions = new WrapPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -1163,7 +1287,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 LineSpacing = 6,
                 Margin = new Thickness(0, 6, 0, 0),
                 IsVisible = false,
-                Children = { _loadMore, _fitMatches, _clearScope },
+                Children = { _fitMatches, _clearScope },
             };
             AutomationProperties.SetName(contextActions, "Actions for the current view");
 
@@ -1217,6 +1341,13 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         Grid.SetRow(_entries, _mobile ? 1 : 2);
         entryPanel.Children.Add(_entries);
+        if (_mobile)
+        {
+            var footer = BuildMobileEntryFooter();
+            Grid.SetRow(footer, 2);
+            entryPanel.Children.Add(footer);
+        }
+
         var templatePane = BuildTemplatePane();
         var rawPane = BuildEntryInspectorPane();
         if (_mobile)
@@ -1235,7 +1366,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             // come for. It is the selected entry's inspector: message first, bytes below.
             _mobileAnalysisTabs = new TabControl
             {
-                FontSize = 14,
+                FontSize = TextScale.Of(14),
                 Items =
                 {
                     MobileDetailTab("Entries", entryPanel),
@@ -1300,6 +1431,20 @@ public sealed partial class SessionWorkspaceView : UserControl
             // says what went wrong — "Failed · No supported logcat format could be detected
             // i…" had no continuation anywhere in the product (finding 21.7). Tapping the row
             // gives the whole sentence; tapping again gives the row back.
+            //
+            // And the row says so. It was tappable and looked exactly like every other line
+            // of text in the product: only the accessible help text mentioned it, so a
+            // sighted reader had no way to discover the one route to the end of a clipped
+            // failure message (audit 2, E7).
+            var statusChevron = _statusChevron = new TextBlock
+            {
+                Text = "⌄",
+                FontSize = TextScale.Of(13),
+                Margin = new Thickness(6, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            DockPanel.SetDock(statusChevron, Dock.Right);
+            statusBar.Children.Insert(0, statusChevron);
             statusBar.Tapped += (_, _) => SetStatusExpanded(!_statusExpanded);
             AutomationProperties.SetName(statusBar, "Session status");
             AutomationProperties.SetHelpText(statusBar, "Tap to show the whole status line.");
@@ -1308,6 +1453,34 @@ public sealed partial class SessionWorkspaceView : UserControl
         Grid.SetRow(statusBar, 6);
         root.Children.Add(statusBar);
         return root;
+    }
+
+    /// <summary>
+    /// The one action that belongs under a list rather than over it.
+    /// </summary>
+    /// <remarks>
+    /// A reader reaches Load next 500 by running out of rows, and the row it was in cost a
+    /// full 144 px touch band above the table for the whole time the table had more to give
+    /// — on a screen where the table itself was getting 173 px (audit 2, A2). Below the list
+    /// it is where the gesture ends, it is full width so a thumb cannot miss it, and it is
+    /// out of the layout entirely whenever there is nothing further to load.
+    /// </remarks>
+    private Border BuildMobileEntryFooter()
+    {
+        _loadMore.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _loadMore.HorizontalContentAlignment = HorizontalAlignment.Center;
+        _loadMore.Margin = new Thickness(0);
+        _loadMore.MinHeight = 48;
+        var footer = _entryFooter = new Border
+        {
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(0, 6, 0, 0),
+            Margin = new Thickness(0, 2, 0, 0),
+            Child = _loadMore,
+            IsVisible = false,
+        };
+        AutomationProperties.SetName(footer, "End of the loaded rows");
+        return footer;
     }
 
     private void ToggleInsights()

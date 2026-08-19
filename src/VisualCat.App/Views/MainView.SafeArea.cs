@@ -91,7 +91,12 @@ public sealed partial class MainView
             });
     }
 
-    /// <summary>Paints system-owned bars with the same dark shell surface as the command bar.</summary>
+    /// <summary>Paints system-owned bars with the shell surface of the variant in force.</summary>
+    /// <remarks>
+    /// Avalonia's Android insets manager reads this color's luminance to decide whether the
+    /// status-bar glyphs are drawn light or dark, so passing the light-theme value is also
+    /// what keeps the clock and the battery icon readable above a white page.
+    /// </remarks>
     private void ApplySystemBarSurface()
     {
         if (!OperatingSystem.IsAndroid())
@@ -99,6 +104,9 @@ public sealed partial class MainView
             return;
         }
 
-        TopLevel.SetSystemBarColor(this, new SolidColorBrush(Color.Parse("#11151C")));
+        var dark = ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
+        TopLevel.SetSystemBarColor(
+            this,
+            new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.SystemBar(dark)));
     }
 }

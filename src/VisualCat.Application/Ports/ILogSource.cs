@@ -25,6 +25,25 @@ public sealed record SourceMetadata(
     /// </summary>
     public const string LogTimeZoneProperty = "logTimeZone";
 
+    /// <summary>
+    /// A capture's name, made to tell it apart from the last one.
+    /// </summary>
+    /// <remarks>
+    /// Every on-device capture was called "On-device logcat" — in the tab strip, in Recent
+    /// sessions, in the empty state, in Session cache and in the suggested export filename.
+    /// Two tabs open at once were two identical chips with nothing whatever to choose
+    /// between them (audit 2, C2). The start time is the discriminator, because it is the
+    /// one thing that differs and the one the reader already remembers.
+    ///
+    /// Local time, because it is read by a person standing next to the device. Hyphens
+    /// rather than colons because this becomes a folder name and a suggested filename, and a
+    /// sanitised name in one list beside an unsanitised one in another is the inconsistency
+    /// that started all this; a period would be worse, since
+    /// <see cref="System.IO.Path.GetFileNameWithoutExtension(string)"/> would eat the seconds.
+    /// </remarks>
+    public static string NameCaptureStartedNow(string sourceName) =>
+        $"{sourceName} {DateTimeOffset.Now:HH-mm-ss}";
+
     /// <summary>The declared timestamp zone, or the local zone when the source is silent.</summary>
     public string ResolveLogTimeZoneId() =>
         Properties?.TryGetValue(LogTimeZoneProperty, out var zone) == true && !string.IsNullOrWhiteSpace(zone)
@@ -49,6 +68,45 @@ public interface ILogSource : IAsyncDisposable
         CancellationToken cancellationToken);
 
     Task StopAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// What a source turned out to be able to see, once it started seeing it.
+/// </summary>
+/// <param name="FullDevice">Whether records from other processes are reaching the reader.</param>
+/// <param name="Description">The source description to show from now on.</param>
+/// <param name="Summary">A few words for the status line, or null when nothing is wrong.</param>
+/// <param name="Remedy">The whole explanation and the route out, or null when nothing is wrong.</param>
+public sealed record SourceScopeReport(
+    bool FullDevice,
+    string Description,
+    string? Summary,
+    string? Remedy);
+
+/// <summary>
+/// A source whose real reach cannot be known before it starts producing data.
+/// </summary>
+/// <remarks>
+/// Android 13 and later put a consent dialog in front of the device log even for an app that
+/// holds <c>READ_LOGS</c>, and its only affirmative answer grants one-time access — so the
+/// dialog appears on every capture, and declining it does not fail. <c>logcat</c> starts, the
+/// app receives its own process's records and nothing else, and every permission check the app
+/// can make still says the permission is held. A capture that had been declined therefore went
+/// on describing itself as full-device while delivering 24 lines in 40 seconds
+/// (audit 2, C1).
+///
+/// A separate probe process would answer the question, but on this platform running
+/// <c>logcat</c> is what raises the consent dialog, so probing would ask the reader twice. The
+/// source reports what it can see from the stream it already has.
+/// </remarks>
+public interface ISourceScopeReporter
+{
+    /// <summary>
+    /// Raised at most once per capture, on a background thread, when the source can say what
+    /// it is actually seeing. A source that never resolves is reporting nothing, not
+    /// reporting success.
+    /// </summary>
+    event Action<SourceScopeReport>? ScopeResolved;
 }
 
 public interface IProcessNameSource

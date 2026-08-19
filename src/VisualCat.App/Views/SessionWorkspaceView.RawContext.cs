@@ -46,9 +46,9 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Control BuildEntryInspectorPane()
     {
         _rawContext.FontFamily = MonoFont;
-        _rawContext.FontSize = 12;
+        _rawContext.FontSize = TextScale.Of(12);
         _inspectMessage.FontFamily = MonoFont;
-        _inspectMessage.FontSize = _mobile ? 13 : 12.5;
+        _inspectMessage.FontSize = TextScale.Of(_mobile ? 13 : 12.5);
         var scroller = _rawScroller = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -61,7 +61,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         _rawPlaceholder = new TextBlock
         {
             Text = "Select a row to read its whole message, then the exact source bytes behind it.",
-            FontSize = 11,
+            FontSize = TextScale.Of(11),
             FontStyle = FontStyle.Italic,
             TextWrapping = TextWrapping.Wrap,
         };
@@ -114,7 +114,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             _rawEmptyTitle = new TextBlock
             {
                 Text = "No entry selected",
-                FontSize = 16,
+                FontSize = TextScale.Of(16),
                 FontWeight = FontWeight.SemiBold,
                 HorizontalAlignment = HorizontalAlignment.Center,
             };
@@ -128,7 +128,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                     {
                         Text = "{  }",
                         FontFamily = MonoFont,
-                        FontSize = 24,
+                        FontSize = TextScale.Of(24),
                         FontWeight = FontWeight.Bold,
                         HorizontalAlignment = HorizontalAlignment.Center,
                     },
@@ -137,6 +137,12 @@ public sealed partial class SessionWorkspaceView : UserControl
                     chooseEntry,
                 },
             };
+            // The card is as tall as the pane rather than as tall as its content, and the
+            // content is centred inside it and scrolls when it cannot fit. Centring the card
+            // itself let a panel taller than the pane be arranged at its full desired height
+            // anyway, and a Border does not clip: "Choose an entry" was drawn half inside and
+            // half outside, cutting through the rounded border (audit 2, D5).
+            emptyPanel.VerticalAlignment = VerticalAlignment.Center;
             _rawEmptyCard = new Border
             {
                 BorderThickness = new Thickness(1),
@@ -145,8 +151,13 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Margin = new Thickness(14),
                 MaxWidth = 390,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = emptyPanel,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Child = new ScrollViewer
+                {
+                    Content = emptyPanel,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                },
             };
             _rawEmptyState = _rawEmptyCard;
             AutomationProperties.SetName(_rawEmptyCard, "No entry selected");
@@ -180,14 +191,14 @@ public sealed partial class SessionWorkspaceView : UserControl
         _rawHeaderLabel = new TextBlock
         {
             Text = "SELECTED ENTRY",
-            FontSize = 10,
+            FontSize = TextScale.Of(10),
             FontWeight = FontWeight.Bold,
             VerticalAlignment = VerticalAlignment.Center,
         };
         _rawHeaderHint = new TextBlock
         {
             Text = "full message and the source bytes behind it",
-            FontSize = 10,
+            FontSize = TextScale.Of(10),
             Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -225,7 +236,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     {
         _rawSelectionHint = new TextBlock
         {
-            FontSize = 10,
+            FontSize = TextScale.Of(10),
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 6),
         };
@@ -234,7 +245,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         _inspectPillText = new TextBlock
         {
             FontFamily = MonoFont,
-            FontSize = 11,
+            FontSize = TextScale.Of(11),
             FontWeight = FontWeight.Bold,
             Foreground = new SolidColorBrush(Color.Parse("#0A0F18")),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -250,14 +261,14 @@ public sealed partial class SessionWorkspaceView : UserControl
         _inspectTag = new TextBlock
         {
             FontWeight = FontWeight.Bold,
-            FontSize = _mobile ? 13 : 12.5,
+            FontSize = TextScale.Of(_mobile ? 13 : 12.5),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(7, 0, 0, 0),
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
         _inspectMeta = new TextBlock
         {
-            FontSize = 10.5,
+            FontSize = TextScale.Of(10.5),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(7, 0, 0, 0),
             TextWrapping = TextWrapping.Wrap,
@@ -295,7 +306,7 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         _inspectTruncated = new TextBlock
         {
-            FontSize = 10,
+            FontSize = TextScale.Of(10),
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 5, 0, 0),
             IsVisible = false,
@@ -351,7 +362,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         var label = new TextBlock
         {
             Text = "SOURCE CONTEXT",
-            FontSize = 10,
+            FontSize = TextScale.Of(10),
             FontWeight = FontWeight.Bold,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -363,7 +374,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             Text = _mobile
                 ? "exact bytes, after the │"
                 : "exact bytes after the │, with the lines around them",
-            FontSize = 10,
+            FontSize = TextScale.Of(10),
             Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -390,7 +401,7 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         _sourceStatus = new TextBlock
         {
-            FontSize = 11,
+            FontSize = TextScale.Of(11),
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 2, 0, 4),
             IsVisible = false,
@@ -439,7 +450,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             // block of source text instead of scrolling it (finding 15).
             var panState = _rawPanState = new TextBlock
             {
-                FontSize = 10.5,
+                FontSize = TextScale.Of(10.5),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(1, 0, 0, 4),
             };
@@ -748,6 +759,7 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         await clipboard.SetTextAsync(entry.Message);
         _status.Text = $"Copied {entry.Message.Length:N0} characters";
+        Notify($"Copied {entry.Message.Length:N0} characters of this entry.");
     }
 
     /// <summary>

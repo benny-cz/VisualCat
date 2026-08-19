@@ -20,7 +20,12 @@ public sealed class MobileWorkspaceLayoutTests
         var layout = MobileWorkspaceLayout.ForSize(900, 400);
 
         Assert.Equal(MobileWorkspaceDisplayMode.Split, layout.DefaultDisplayMode);
-        Assert.Equal(0, layout.MinimapHeight);
+
+        // The minimap survives a short viewport now, in a slimmer band: it is the aid that
+        // says where the viewport sits in the whole session, and a short viewport is exactly
+        // where the plot is most zoomed (audit 2, D9). It costs the plot column, not the
+        // analysis column beside it.
+        Assert.InRange(layout.MinimapHeight, 20, 32);
         Assert.True(layout.AnalysisWeight > layout.TimelineWeight);
         Assert.InRange(layout.TimelineWeight / (layout.TimelineWeight + layout.AnalysisWeight), 0.4, 0.44);
         Assert.True(layout.FilterMaximumHeight >= 200);
@@ -81,11 +86,10 @@ public sealed class MobileWorkspaceLayoutTests
     [InlineData(2_500_000, "2.5M")]
     public void TemplateCountsUseCompactReadableMetrics(long count, string expected)
     {
-        var localized = expected.Replace(
-            ".",
-            System.Globalization.CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator,
-            StringComparison.Ordinal);
-        Assert.Equal(localized, SessionWorkspaceView.FormatTemplateCount(count));
+        // No longer translated into the machine's own separator: the product formats every
+        // number it prints in one display culture now, because the interface those numbers
+        // appear inside is written in one language (audit 2, E1).
+        Assert.Equal(expected, SessionWorkspaceView.FormatTemplateCount(count));
     }
 
     [Theory]

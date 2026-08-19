@@ -59,7 +59,7 @@ public sealed class AdbLogSource : ILogSource, IProcessNameSource, ISourceDefect
 
         Metadata = new SourceMetadata(
             SourceKind.Adb,
-            $"ADB {_serial}",
+            SourceMetadata.NameCaptureStartedNow($"ADB {_serial}"),
             $"ADB device {_serial}",
             null,
             null,

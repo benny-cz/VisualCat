@@ -4,6 +4,12 @@ namespace VisualCat.App.Platform;
 
 public static class PlatformSourceRegistry
 {
+    /// <summary>
+    /// The device's own text-size setting, as a multiplier, or null where the platform has
+    /// none. Published before the first view is built; see <see cref="VisualCat.App.TextScale"/>.
+    /// </summary>
+    public static double? PlatformFontScale { get; set; }
+
     public static Func<ILogSource?>? CreateOnDeviceSource { get; set; }
     public static Func<string, CancellationToken, Task>? ShareFileAsync { get; set; }
     public static Func<CancellationToken, Task<IReadOnlyList<string>>>? ConsumeLaunchFilesAsync { get; set; }

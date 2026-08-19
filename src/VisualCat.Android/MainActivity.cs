@@ -37,6 +37,12 @@ public sealed class MainActivity : AvaloniaMainActivity
     protected override void OnCreate(global::Android.OS.Bundle? savedInstanceState)
     {
         s_current = new WeakReference<MainActivity>(this);
+
+        // Read before Avalonia builds anything: every font size in the product is resolved
+        // against this while its view is being constructed (audit 2, B5). Android recreates
+        // the activity when the reader changes the device's text size, so this is read
+        // again, with the new value, for the build that replaces this one.
+        PlatformSourceRegistry.PlatformFontScale = Resources?.Configuration?.FontScale;
         PlatformSourceRegistry.CreateOnDeviceSource = static () => new OnDeviceLogSource();
         PlatformSourceRegistry.ShareFileAsync = ShareCurrentAsync;
         PlatformSourceRegistry.ConsumeLaunchFilesAsync = ConsumeCurrentLaunchFilesAsync;

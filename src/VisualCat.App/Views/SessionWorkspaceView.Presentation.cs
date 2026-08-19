@@ -41,17 +41,44 @@ public sealed partial class SessionWorkspaceView : UserControl
             AutomationProperties.SetHelpText(
                 statusBar,
                 expanded ? "Tap to shorten the status line." : "Tap to show the whole status line.");
+            if (_statusChevron is { } chevron)
+            {
+                chevron.Text = expanded ? "⌃" : "⌄";
+            }
         }
+    }
+
+    /// <summary>
+    /// Writes the status line and everything a screen reader is told about it.
+    /// </summary>
+    /// <remarks>
+    /// The status changes several times a second and only its <em>text</em> was being
+    /// rewritten: the accessible name and description were set once, by the full presentation
+    /// refresh, and Android's node then kept the first description it read forever. A
+    /// finished session went on being announced as "Starting capture", and a session of
+    /// 59 640 entries as "Importing…" (audit 2, B2). Every route that changes the status now
+    /// comes through here, and an explicitly set HelpText is a property change the platform
+    /// follows — which is why the containing row's own help text had always been correct.
+    /// </remarks>
+    private void ApplyStatusText()
+    {
+        var status = _viewModel.Status ?? string.Empty;
+        _status.Text = status;
+
+        // The visible line may be clipped; what a screen reader is handed never is.
+        AutomationProperties.SetName(_status, status);
+        AutomationProperties.SetHelpText(_status, status);
+        ToolTip.SetTip(_status, status.Length > 0 ? status : null);
+
+        // A report on work in progress, so a reader who is not looking at it is told when it
+        // changes — politely, because a failure raises the notice lane, which is assertive.
+        AutomationProperties.SetLiveSetting(_status, AutomationLiveSetting.Polite);
     }
 
     private void RefreshPresentation()
     {
-        _status.Text = _viewModel.Status;
+        ApplyStatusText();
         _searchStatus.Text = _viewModel.SearchStatus;
-
-        // The visible line may be clipped; what a screen reader is handed never is.
-        AutomationProperties.SetName(_status, _viewModel.Status);
-        ToolTip.SetTip(_status, _viewModel.Status is { Length: > 0 } status ? status : null);
         UpdateFollowButton();
         _search.Text = _viewModel.SearchText;
         _order.SelectedIndex = _viewModel.EntryOrder == EntryOrder.SourceSequence ? 1 : 0;
@@ -144,6 +171,13 @@ public sealed partial class SessionWorkspaceView : UserControl
         _stopCapture.IsEnabled = !stopping;
         _stopCapture.Content = stopping ? "Stopping…" : "Stop capture";
         _newData.IsVisible = live && _viewModel.HasNewData;
+
+        // The band exists only while there is a capture to control, so a session being read
+        // back does not pay a touch row for three hidden buttons (audit 2, A2).
+        if (_mobileCaptureActions is { } captureActions)
+        {
+            captureActions.IsVisible = live;
+        }
 
         var (title, detail) = DescribeEmptyPlot(activity);
         _timeline.SetEmptyState(title, detail);

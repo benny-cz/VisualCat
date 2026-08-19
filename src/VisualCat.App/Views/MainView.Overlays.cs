@@ -112,7 +112,7 @@ public sealed partial class MainView : IDialogHost
     private static TextBlock SheetSectionLabel(string text, bool dark) => new()
     {
         Text = text,
-        FontSize = 10,
+        FontSize = TextScale.Of(10),
         FontWeight = FontWeight.Bold,
         Foreground = new SolidColorBrush(WorkspacePalette.TextMuted(dark)),
         Margin = new Thickness(4, 10, 0, 4),
@@ -124,7 +124,7 @@ public sealed partial class MainView : IDialogHost
         var label = new TextBlock
         {
             Text = command.Label,
-            FontSize = 14.5,
+            FontSize = TextScale.Of(14.5),
             Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark)),
         };
 
@@ -140,7 +140,7 @@ public sealed partial class MainView : IDialogHost
             content.Children.Add(new TextBlock
             {
                 Text = description,
-                FontSize = 11,
+                FontSize = TextScale.Of(11),
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = new SolidColorBrush(WorkspacePalette.TextMuted(dark)),
             });
@@ -206,7 +206,7 @@ public sealed partial class MainView : IDialogHost
         var heading = new TextBlock
         {
             Text = title,
-            FontSize = 15,
+            FontSize = TextScale.Of(15),
             FontWeight = FontWeight.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark)),
@@ -269,11 +269,15 @@ public sealed partial class MainView : IDialogHost
         return host;
     }
 
+    /// <summary>States the workspace band's accessibility view before any sheet exists.</summary>
+    private void InitializeOverlayModality() => ApplyOverlayModality();
+
     private void PushOverlay(Control root, Action dismiss)
     {
         _overlays.Add(new OverlayEntry(root, dismiss));
         _overlayHost.Children.Add(root);
         _overlayHost.IsVisible = true;
+        ApplyOverlayModality();
     }
 
     private void RemoveOverlay(Control root)
@@ -281,6 +285,38 @@ public sealed partial class MainView : IDialogHost
         _overlays.RemoveAll(entry => ReferenceEquals(entry.Root, root));
         _overlayHost.Children.Remove(root);
         _overlayHost.IsVisible = _overlayHost.Children.Count > 0;
+        ApplyOverlayModality();
+    }
+
+    /// <summary>
+    /// Takes the workspace out of the accessibility tree for as long as a sheet is over it.
+    /// </summary>
+    /// <remarks>
+    /// The scrim catches pointer input, so touch was already safe — but nothing marked the
+    /// sheet as modal, so with a sheet open every control underneath it was still reported
+    /// clickable and enabled: Open log, Live, More, the mode buttons, Load next 500 and
+    /// every entry row. Assistive technology walks past a scrim it cannot see and can
+    /// activate what it finds there (audit 2, B4). Raw takes the whole band out of the
+    /// tree, which is the accessibility equivalent of the scrim.
+    ///
+    /// Two flags, because they say two true things and the platform bridge reads both: the
+    /// band is not part of the control view, and it is not on screen for the reader. Neither
+    /// has any visual effect — disabling the band would have, and a workspace greyed out
+    /// behind a bottom sheet would be a worse lie than the one being fixed.
+    ///
+    /// The overlay host itself is never made inert, so the sheet on top stays reachable, and
+    /// the state is recomputed rather than toggled, so two stacked sheets closing in any
+    /// order still restore the workspace exactly once.
+    /// </remarks>
+    private void ApplyOverlayModality()
+    {
+        var covered = _overlays.Count > 0;
+        AutomationProperties.SetAccessibilityView(
+            _rootPanel,
+            covered ? AccessibilityView.Raw : AccessibilityView.Content);
+        AutomationProperties.SetIsOffscreenBehavior(
+            _rootPanel,
+            covered ? IsOffscreenBehavior.Offscreen : IsOffscreenBehavior.Default);
     }
 
     /// <summary>Dismisses the topmost overlay, if there is one.</summary>

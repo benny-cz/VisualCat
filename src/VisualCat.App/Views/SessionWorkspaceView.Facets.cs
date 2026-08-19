@@ -297,7 +297,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             var clear = new Button
             {
                 Content = "Clear",
-                FontSize = 10,
+                FontSize = TextScale.Of(10),
                 Padding = new Thickness(6, 0),
                 Background = Brushes.Transparent,
             };
@@ -332,7 +332,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         });
         var countText = new TextBlock
         {
-            Text = count.ToString("N0", System.Globalization.CultureInfo.CurrentCulture),
+            Text = count.ToString("N0", DisplayCulture.Current),
             FontFamily = MonoFont,
             TextAlignment = TextAlignment.Right,
             MinWidth = 52,
@@ -431,7 +431,8 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         _chips.Children.Add(new Border
         {
-            Background = new SolidColorBrush(Color.Parse("#304DA3FF")),
+            Background = new SolidColorBrush(
+                WorkspacePalette.ChipFill(ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light)),
             CornerRadius = new CornerRadius(3),
             Margin = new Thickness(3, 1),
             Padding = new Thickness(7, 2),

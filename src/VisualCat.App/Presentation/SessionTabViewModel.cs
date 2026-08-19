@@ -74,6 +74,27 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 {
     private const long InitialFollowViewportUs = 30_000_000;
 
+    /// <summary>
+    /// The narrowest window a live tail is ever given, in microseconds.
+    /// </summary>
+    /// <remarks>
+    /// A session holding one entry has a one-microsecond span, and the plot drew it: the
+    /// header read <c>DENSITY · 1 µs · 1,34 ns/px</c> and both axis labels printed the same
+    /// instant to the microsecond. That is a statement of precision the data cannot support,
+    /// and Follow did not widen it as more lines arrived — the window stayed as narrow as
+    /// the session that produced it (audit 2, C6). Two seconds is a span a reader can read
+    /// honestly and a live capture grows out of within its first breath.
+    /// </remarks>
+    private const long MinimumViewportUs = 2_000_000;
+
+    /// <remarks>
+    /// Only the follow window takes this floor. A reader who deliberately zooms into a
+    /// 300 µs burst has asked for exactly that and the plot's own pixel-resolution limit
+    /// already governs them; a session whose whole span is 300 ms is honestly drawn at
+    /// 300 ms. What is not honest is a <em>live tail</em> that inherits the span of the one
+    /// entry it has so far and then never widens (audit 2, C6).
+    /// </remarks>
+
     /// <summary>Silence after which a capture stops looking quiet and starts looking broken.</summary>
     private const int StarvedCaptureSeconds = 20;
     public const int EntryPageSize = 500;
@@ -139,6 +160,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private long _captureWindowMs;
     private double _captureRate;
     private string? _captureHealthWarning;
+    private string? _captureScopeSummary;
+    private string? _captureScopeRemedy;
     private string? _lastCaptureWarning;
     private string? _captureFailure;
     private string? _refreshFailure;
@@ -154,10 +177,24 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     /// and can only carry a marker, while the empty plot and the session pane both wrap and
     /// can carry the command that actually fixes it.
     /// </summary>
-    public string? CaptureScopeSummary { get; set; }
+    public string? CaptureScopeSummary
+    {
+        get => _captureScopeSummary;
+        set => Set(ref _captureScopeSummary, value);
+    }
 
     /// <summary>The full explanation, including the one route out of a restricted scope.</summary>
-    public string? CaptureScopeRemedy { get; set; }
+    /// <remarks>
+    /// Observable, because on Android the answer arrives several seconds into the capture
+    /// rather than before it: the platform only tells the app what it can see by showing it
+    /// (audit 2, C1). The empty plot and the session pane both carry this sentence, and both
+    /// have to be able to acquire it late.
+    /// </remarks>
+    public string? CaptureScopeRemedy
+    {
+        get => _captureScopeRemedy;
+        set => Set(ref _captureScopeRemedy, value);
+    }
 
     /// <summary>
     /// Trouble the capture is currently working through without losing data, in the
@@ -416,7 +453,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                         {
                             if (FollowLatest)
                             {
-                                var span = Math.Min(InitialFollowViewportUs, sessionRange.DurationUs);
+                                var span = Math.Clamp(sessionRange.DurationUs, MinimumViewportUs, InitialFollowViewportUs);
                                 Viewport = new TimeRange(
                                     new InstantUs(sessionRange.EndExclusive.Value - span),
                                     sessionRange.EndExclusive);
@@ -441,9 +478,13 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                         }
                         else if (FollowLatest)
                         {
+                            // Clamped rather than minimised: a session of a handful of
+                            // microseconds must not drag the window down with it, which is
+                            // what left Follow drawing a one-microsecond span that never
+                            // widened as lines arrived (audit 2, C6).
                             var span = _growInitialFollowViewport
-                                ? Math.Min(InitialFollowViewportUs, sessionRange.DurationUs)
-                                : Math.Min(Viewport.Value.DurationUs, sessionRange.DurationUs);
+                                ? Math.Clamp(sessionRange.DurationUs, MinimumViewportUs, InitialFollowViewportUs)
+                                : Math.Max(MinimumViewportUs, Math.Min(Viewport.Value.DurationUs, sessionRange.DurationUs));
                             Viewport = new TimeRange(
                                 new InstantUs(sessionRange.EndExclusive.Value - span),
                                 sessionRange.EndExclusive);
@@ -1395,8 +1436,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         // fitted to, and an exact test would never fire on the live captures this is for.
         var coversWholeSession = viewport.DurationUs >= session.DurationUs * 0.9;
         var span = coversWholeSession
-            ? Math.Min(InitialFollowViewportUs, session.DurationUs)
-            : Math.Min(viewport.DurationUs, session.DurationUs);
+            ? Math.Clamp(session.DurationUs, MinimumViewportUs, InitialFollowViewportUs)
+            : Math.Max(MinimumViewportUs, Math.Min(viewport.DurationUs, session.DurationUs));
         return SetViewportAsync(
             new TimeRange(new InstantUs(session.EndExclusive.Value - span), session.EndExclusive),
             manual: false);

@@ -53,7 +53,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         // A log table earns its keep by rows on screen: monospace for scanability and
         // compact item containers instead of Fluent's touch-sized defaults.
         _entries.FontFamily = MonoFont;
-        _entries.FontSize = _mobile ? 12 : 12.5;
+        _entries.FontSize = TextScale.Of(_mobile ? 12 : 12.5);
         if (!_mobile)
         {
             // The column header is a separate grid drawn flush to the list's left edge, so
@@ -170,9 +170,8 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// which restores the metadata line's contrast on its own — but the selected row is also
     /// the one row being read rather than scanned, and muted is the wrong weight for it.
     /// </remarks>
-    private Avalonia.Styling.Style MetadataLineStyle(bool onSelectedRow)
+    private static Avalonia.Styling.Style MetadataLineStyle(bool onSelectedRow)
     {
-        var dark = ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
         var style = new Avalonia.Styling.Style(selector =>
         {
             var item = Avalonia.Styling.Selectors.OfType<ListBoxItem>(selector);
@@ -181,11 +180,18 @@ public sealed partial class SessionWorkspaceView : UserControl
                 .OfType<TextBlock>()
                 .Name(MetadataBlockName);
         });
+
+        // Named rather than captured. A style is built once per list and never rebuilt, so
+        // the brush it closes over is the brush it keeps: these two setters were resolved
+        // against whatever variant was in force when the workspace was constructed, which on
+        // a cold start in light mode was the dark one, and the row went on printing #8FA5C4
+        // on #E9EFF7 at 2.17:1 for the life of the process (audit 2, A1c). A dynamic
+        // resource is re-resolved by the framework whenever the variant changes.
         style.Setters.Add(new Avalonia.Styling.Setter(
             TextBlock.ForegroundProperty,
-            new SolidColorBrush(onSelectedRow
-                ? WorkspacePalette.TextPrimary(dark)
-                : WorkspacePalette.TextMuted(dark))));
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(onSelectedRow
+                ? VisualCat.App.Theme.ProductTheme.TextPrimaryKey
+                : VisualCat.App.Theme.ProductTheme.TextMutedKey)));
         return style;
     }
 
@@ -323,7 +329,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                     {
                         Name = MetadataBlockName,
                         Text = $"{FormatInstant(entry.Timestamp)}  ·  {ProcessLabel(entry)}:{entry.Tid}  ·  {entry.Buffer}",
-                        FontSize = 10,
+                        FontSize = TextScale.Of(10),
                         TextTrimming = TextTrimming.CharacterEllipsis,
                     },
                 },
@@ -336,7 +342,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             {
                 Name = ExpandGlyphName,
                 Text = "⤢",
-                FontSize = 15,
+                FontSize = TextScale.Of(15),
                 Foreground = new SolidColorBrush(WorkspacePalette.Accent(dark)),
                 Margin = new Thickness(2, 0, 8, 0),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -524,7 +530,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             var label = new TextBlock
             {
                 Text = text,
-                FontSize = 9,
+                FontSize = TextScale.Of(9),
                 FontWeight = FontWeight.Bold,
                 Foreground = new SolidColorBrush(Color.Parse("#8FA5C4")),
                 Margin = new Thickness(4, 5),
@@ -797,12 +803,20 @@ public sealed partial class SessionWorkspaceView : UserControl
                     _timeline.SetSearchResult(_viewModel.SearchResult);
                     break;
                 case nameof(SessionTabViewModel.Status):
-                    _status.Text = _viewModel.Status;
+                    ApplyStatusText();
                     UpdateCaptureActions();
                     break;
                 case nameof(SessionTabViewModel.Activity):
                 case nameof(SessionTabViewModel.FailureReason):
                     UpdateCaptureActions();
+                    break;
+                case nameof(SessionTabViewModel.CaptureScopeRemedy):
+                case nameof(SessionTabViewModel.CaptureScopeSummary):
+                    // What the capture can see is settled several seconds in, so the empty
+                    // plot's explanation and the session pane both have to be able to
+                    // acquire it after the fact (audit 2, C1).
+                    UpdateCaptureActions();
+                    UpdateSessionInfo();
                     break;
                 case nameof(SessionTabViewModel.CaptureHealthWarning):
                     // The status bar can only carry a marker pointing here, so the pane
@@ -1037,6 +1051,22 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         _loadMore.IsEnabled = _viewModel.CanLoadMore && !loading && _loadAllEntriesCancellation is null;
         _loadMore.IsVisible = !_mobile || _viewModel.CanLoadMore;
+        if (_entryFooter is { } footer)
+        {
+            footer.IsVisible = _loadMore.IsVisible;
+
+            // The footer sits at the end of what is loaded, so it says how far the end is:
+            // "Load next 500" beside 59 640 unread rows answers a question nobody asked.
+            var label = loading
+                ? "Loading…"
+                : remaining > 0
+                    ? $"Load {Math.Min(remaining, SessionTabViewModel.EntryPageSize):N0} more · {remaining:N0} left"
+                    : $"Load next {SessionTabViewModel.EntryPageSize:N0}";
+            _loadMore.Content = label;
+            AutomationProperties.SetName(_loadMore, label);
+            ToolTip.SetTip(_loadMore, label);
+        }
+
         UpdateEntryActionRows();
         if (!_mobile)
         {
@@ -1177,13 +1207,23 @@ public sealed partial class SessionWorkspaceView : UserControl
             selected = [entry];
         }
 
-        if (selected.Length == 0 || TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard)
+        if (selected.Length == 0)
         {
+            Notify("Select an entry first, then Copy raw.", failure: true);
+            return;
+        }
+
+        if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard)
+        {
+            Notify("This device did not offer a clipboard.", failure: true);
             return;
         }
 
         var text = await _viewModel.ReadRawEntriesAsync(selected);
         await clipboard.SetTextAsync(text);
+        Notify(selected.Length == 1
+            ? "Copied the raw text of 1 entry."
+            : $"Copied the raw text of {selected.Length:N0} entries.");
     }
 
 }

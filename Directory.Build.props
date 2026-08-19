@@ -4,7 +4,19 @@
     <LangVersion>14.0</LangVersion>
     <Authors>Marek Strihavka</Authors>
     <Product>VisualCat</Product>
-    <VersionPrefix>2.0.3</VersionPrefix>
+    <VersionPrefix>2.1.0</VersionPrefix>
+
+    <!-- The empty state prints the assembly's informational version, which is exactly what
+         it should do — but the number it printed was 2.0.3 on a build made long after 2.0.3
+         shipped, because nothing here had moved since (audit 2, E5). A build that is not a
+         release says so in the version itself now, so "which build is this?" has an answer
+         a screenshot can carry.
+
+         Negated rather than tested for Debug: $(Configuration) may still be empty this
+         early in the evaluation, and the SDK fixes $(Version) before Directory.Build.targets
+         is imported, so this is the last place a suffix can be added. A Release build passes
+         the configuration as a global property, which is set before anything here runs. -->
+    <VersionSuffix Condition="'$(Configuration)' != 'Release' And '$(VersionSuffix)' == ''">dev</VersionSuffix>
     <Description>Interactive, local-first Android logcat analysis with a severity-by-time heat map.</Description>
     <RepositoryUrl>https://github.com/benny-cz/VisualCat</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

@@ -41,19 +41,19 @@ public sealed partial class SessionWorkspaceView : UserControl
         _failureTitle = new TextBlock
         {
             Text = "This log could not be read",
-            FontSize = _mobile ? 17 : 19,
+            FontSize = TextScale.Of(_mobile ? 17 : 19),
             FontWeight = FontWeight.SemiBold,
             TextWrapping = TextWrapping.Wrap,
         };
         _failureReason = new SelectableTextBlock
         {
             TextWrapping = TextWrapping.Wrap,
-            FontSize = _mobile ? 13 : 13.5,
+            FontSize = TextScale.Of(_mobile ? 13 : 13.5),
         };
         _failureRemedy = new TextBlock
         {
             TextWrapping = TextWrapping.Wrap,
-            FontSize = _mobile ? 12.5 : 13,
+            FontSize = TextScale.Of(_mobile ? 12.5 : 13),
             IsVisible = false,
         };
 
@@ -68,7 +68,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             Child = new TextBlock
             {
                 Text = "IMPORT FAILED",
-                FontSize = 10,
+                FontSize = TextScale.Of(10),
                 FontWeight = FontWeight.Bold,
                 Foreground = LevelPalette.BrushOf(LogLevel.Error),
             },

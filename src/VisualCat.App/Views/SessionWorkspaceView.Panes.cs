@@ -23,12 +23,43 @@ namespace VisualCat.App.Views;
 
 public sealed partial class SessionWorkspaceView : UserControl
 {
+    /// <summary>Characters of a template a screen reader is given for one row.</summary>
+    private const int TemplateSpokenTextLength = 240;
+
+    /// <summary>What a screen reader should hear for one row of the Insights list.</summary>
+    private string TemplateAutomationName(TemplateSummary template)
+    {
+        var text = template.CanonicalText.Length > TemplateSpokenTextLength
+            ? template.CanonicalText[..TemplateSpokenTextLength] + "…"
+            : template.CanonicalText;
+        var count = template.Count.ToString("N0", DisplayCulture.Current);
+        return $"{count} entries: {text.ReplaceLineEndings(" ")}, " +
+               $"from {FormatInstant(template.First)} to {FormatInstant(template.Last)}";
+    }
+
     private Control BuildTemplatePane()
     {
         // Without this the list inherits Fluent's touch-sized rows and only three or four
         // templates fit the pane; the same compact container the entry table uses shows a
         // useful ranking instead.
         _templates.Styles.Add(CompactItemStyle(_mobile ? 64 : 22));
+
+        // The entries list got a spoken name per row and this one did not, so Insights read
+        // out the TemplateSummary record's generated ToString() — template id, canonical
+        // text, count, two round-trip timestamps and
+        // "System.Collections.Generic.List`1[System.Int64]" (audit 2, B1). Set on the
+        // container so it survives virtualisation, in the order the questions arrive: how
+        // often, what it says, and over what span.
+        _templates.ContainerPrepared += (_, eventArgs) =>
+        {
+            if (eventArgs.Container.DataContext is TemplateSummary prepared)
+            {
+                AutomationProperties.SetName(eventArgs.Container, TemplateAutomationName(prepared));
+            }
+        };
+        _templates.ContainerClearing += (_, eventArgs) =>
+            AutomationProperties.SetName(eventArgs.Container, string.Empty);
+        AutomationProperties.SetName(_templates, "Repeated message templates");
         _templates.ItemTemplate = new FuncDataTemplate<TemplateSummary>((template, _) =>
         {
             if (template is null)
@@ -49,13 +80,13 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ColumnDefinitions = new ColumnDefinitions($"{metricTrackWidth},*"),
                 RowDefinitions = new RowDefinitions("Auto,Auto"),
             };
-            var exactCount = template.Count.ToString("N0", System.Globalization.CultureInfo.CurrentCulture);
+            var exactCount = template.Count.ToString("N0", DisplayCulture.Current);
             var count = new TextBlock
             {
                 Text = FormatTemplateCount(template.Count),
                 FontFamily = MonoFont,
                 FontWeight = FontWeight.SemiBold,
-                FontSize = 11,
+                FontSize = TextScale.Of(11),
                 Width = metricWidth,
                 TextAlignment = TextAlignment.Right,
                 Margin = new Thickness(0, 0, metricGap, 0),
@@ -108,7 +139,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             {
                 Text = $"{FormatInstant(template.First)} — {FormatInstant(template.Last)}",
                 FontFamily = MonoFont,
-                FontSize = 10,
+                FontSize = TextScale.Of(10),
                 Opacity = 0.6,
             };
             Grid.SetColumn(span, 1);
@@ -141,6 +172,11 @@ public sealed partial class SessionWorkspaceView : UserControl
             if (_templates.SelectedItem is TemplateSummary template)
             {
                 _ = _viewModel.IncludeTemplateAsync(template.TemplateId);
+
+                // The chip that records this lives on a bar the phone may not be showing —
+                // in Details mode it is off screen entirely — so the action says what it did
+                // where the reader is looking (audit 2, C4).
+                Notify("Filtered to this template. Clear it from the filter chips.");
             }
         };
         actions.Children.Add(include);
@@ -156,6 +192,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             if (_templates.SelectedItem is TemplateSummary template)
             {
                 _ = _viewModel.ExcludeTemplateAsync(template.TemplateId);
+                Notify("Muted this template. Clear it from the filter chips.");
             }
         };
         actions.Children.Add(exclude);
@@ -172,6 +209,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
             {
                 await clipboard.SetTextAsync(template.CanonicalText);
+                Notify("Copied the template text.");
             }
         };
         actions.Children.Add(copy);
@@ -274,7 +312,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     {
         if (count < 1_000)
         {
-            return count.ToString("N0", System.Globalization.CultureInfo.CurrentCulture);
+            return count.ToString("N0", DisplayCulture.Current);
         }
 
         var scaled = (double)count;
@@ -292,7 +330,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             >= 10 => "0.#",
             _ => "0.##",
         };
-        return scaled.ToString(format, System.Globalization.CultureInfo.CurrentCulture) + units[unitIndex];
+        return scaled.ToString(format, DisplayCulture.Current) + units[unitIndex];
     }
 
     /// <summary>
@@ -355,6 +393,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
             {
                 await clipboard.SetTextAsync(_sessionInfoText);
+                Notify("Copied the session details.");
             }
         };
         pane.Children.Add(copyDetails);
@@ -418,7 +457,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                         : "+ includes (OR within a group); − excludes; tap an active action again to remove it.",
                     TextWrapping = _mobile ? TextWrapping.NoWrap : TextWrapping.Wrap,
                     TextTrimming = TextTrimming.CharacterEllipsis,
-                    FontSize = 10,
+                    FontSize = TextScale.Of(10),
                     Opacity = 0.72,
                 },
             },
@@ -436,7 +475,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         var label = new TextBlock
         {
             Text = text,
-            FontSize = 10,
+            FontSize = TextScale.Of(10),
             FontWeight = FontWeight.Bold,
             Opacity = 0.82,
             VerticalAlignment = VerticalAlignment.Center,
@@ -490,7 +529,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             {
                 Text = title.ToUpperInvariant(),
                 FontWeight = FontWeight.Bold,
-                FontSize = 10,
+                FontSize = TextScale.Of(10),
                 Foreground = headBrush,
                 Margin = new Thickness(0, _sessionInfo.Children.Count == 0 ? 0 : 11, 0, 3),
             });
@@ -504,13 +543,13 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ColumnDefinitions = new ColumnDefinitions("148,*"),
                 Margin = new Thickness(0, 1),
             };
-            row.Children.Add(new TextBlock { Text = label, Foreground = labelBrush, FontSize = 11.5 });
+            row.Children.Add(new TextBlock { Text = label, Foreground = labelBrush, FontSize = TextScale.Of(11.5) });
             var valueText = new TextBlock
             {
                 Text = value,
                 Foreground = warn ? warnBrush : valueBrush,
                 FontWeight = warn ? FontWeight.SemiBold : FontWeight.Normal,
-                FontSize = 11.5,
+                FontSize = TextScale.Of(11.5),
                 TextWrapping = TextWrapping.Wrap,
             };
             Grid.SetColumn(valueText, 1);
@@ -518,7 +557,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             _sessionInfo.Children.Add(row);
         }
 
-        static string N(long value) => value.ToString("N0", System.Globalization.CultureInfo.CurrentCulture);
+        static string N(long value) => value.ToString("N0", DisplayCulture.Current);
 
         Section("Session");
 

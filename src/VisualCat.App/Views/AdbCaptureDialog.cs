@@ -60,7 +60,7 @@ public sealed class AdbCaptureDialog : Window
         root.Children.Add(new TextBlock
         {
             Text = "Select an authorized Android device and logcat buffers.",
-            FontSize = 16,
+            FontSize = TextScale.Of(16),
         });
         _devices.SelectionChanged += (_, _) =>
         {

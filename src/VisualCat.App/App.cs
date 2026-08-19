@@ -12,6 +12,10 @@ public sealed class App : Avalonia.Application
 
     public override void Initialize()
     {
+        // Before any view exists, because a view formats its first numbers while it is being
+        // built (audit 2, E1).
+        DisplayCulture.Install();
+
         Styles.Add(Theme.ProductTheme.CreateFluentTheme());
 
         // The product's own brushes come first: the styles below resolve them by key, and a

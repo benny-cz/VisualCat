@@ -74,7 +74,7 @@ internal sealed class ExportScopeDialog : DialogBody<ExportScope>
                            + "the filter comes from this session's workspace.",
                     TextWrapping = TextWrapping.Wrap,
                     Opacity = 0.75,
-                    FontSize = 12,
+                    FontSize = TextScale.Of(12),
                 },
                 options,
                 buttons,
@@ -100,7 +100,7 @@ internal sealed class ExportScopeDialog : DialogBody<ExportScope>
                     new TextBlock
                     {
                         Text = detail,
-                        FontSize = 11.5,
+                        FontSize = TextScale.Of(11.5),
                         Opacity = 0.72,
                         TextWrapping = TextWrapping.Wrap,
                     },

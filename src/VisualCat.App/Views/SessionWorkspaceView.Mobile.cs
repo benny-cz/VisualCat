@@ -35,7 +35,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         new()
         {
             Text = text,
-            FontSize = 10,
+            FontSize = TextScale.Of(10),
             FontWeight = FontWeight.Bold,
             Opacity = 0.62,
             Margin = new Thickness(1, 4, 0, 0),
@@ -97,6 +97,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         ApplyMobileLayout(Bounds.Size);
+        DisplayModeChanged?.Invoke(_mobileWorkspaceState.Persisted);
     }
 
     private void SetMobileFiltersOpen(bool open)
@@ -206,7 +207,9 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             _root.RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
             _root.RowDefinitions[3].Height = new GridLength(0);
-            _root.RowDefinitions[5].Height = new GridLength(0);
+            _root.RowDefinitions[5].Height = timelineVisible && hasOverview && layout.MinimapHeight > 0
+                ? new GridLength(layout.MinimapHeight, GridUnitType.Pixel)
+                : new GridLength(0);
         }
         else
         {
@@ -225,7 +228,18 @@ public sealed partial class SessionWorkspaceView : UserControl
                 : new GridLength(0);
         }
 
-        ConfigureWideMobileComposition(wideComposition, timelineVisible, analysisVisible, settled.Width);
+        var minimapVisible = timelineVisible && hasOverview && layout.MinimapHeight > 0;
+        if (_minimapFrame is { } minimapFrame)
+        {
+            minimapFrame.IsVisible = minimapVisible;
+        }
+
+        ConfigureWideMobileComposition(
+            wideComposition,
+            timelineVisible,
+            analysisVisible,
+            minimapVisible,
+            settled.Width);
         UpdateSummaryText();
         _analysisGrid!.IsVisible = analysisVisible;
         UpdateChipBarVisibility();
@@ -239,11 +253,6 @@ public sealed partial class SessionWorkspaceView : UserControl
         // grid. The plot's bands give way instead (finding 18); the row weights above are what
         // keep it a useful size.
         _timeline.MinHeight = 0;
-
-        if (_minimapFrame is { } minimap)
-        {
-            minimap.IsVisible = timelineVisible && hasOverview && layout.MinimapHeight > 0;
-        }
 
         if (_mobileFilterPanel is { } filterPanel)
         {
@@ -274,6 +283,107 @@ public sealed partial class SessionWorkspaceView : UserControl
             ApplyMobileChoiceAppearance(filterButton, filtersOpen);
             AutomationProperties.SetName(filterButton, filtersOpen ? "Close filters" : "Open search and timeline filters");
         }
+
+        // Fit acts on the plot, so it goes where the plot goes. In Details it was still
+        // present, still enabled, still costing a share of the one row it shares with the
+        // mode selector, and still moving a surface nobody could see (audit 2, C7).
+        if (_mobileFit is { } fit)
+        {
+            fit.IsVisible = timelineVisible;
+        }
+
+        EnforceEntriesFloor();
+    }
+
+    /// <summary>
+    /// How many entry rows the analysis pane must be able to show before the plot above it
+    /// is entitled to any height at all.
+    /// </summary>
+    /// <remarks>
+    /// The entries list is what the product is for and it was the smallest thing on screen:
+    /// 173 px of a 2340 px display in Split, less than one 192 px row, and 60 px with a
+    /// notice showing. The row weights alone cannot prevent that, because the chrome above
+    /// the list — tab headers, the count line, the sort row — is fixed and comes out of the
+    /// same band. So the floor is stated in rows, the pane's own chrome is measured rather
+    /// than assumed, and the plot gives way (audit 2, A2).
+    /// </remarks>
+    private const int SplitEntryRowFloor = 4;
+
+    /// <summary>The floor in Details, where the plot is hidden and the list is the pane.</summary>
+    private const int DetailsEntryRowFloor = 6;
+
+    /// <summary>The floor in a short viewport, which has about a third of the height.</summary>
+    private const int CompactEntryRowFloor = 3;
+
+    private double _entriesFloorApplied;
+
+    /// <summary>
+    /// Reserves the entries list its floor out of the workspace band, taking the difference
+    /// from the plot.
+    /// </summary>
+    /// <remarks>
+    /// The pane's chrome is read from the arranged tree rather than restated here: the tab
+    /// strip, the count line and the action rows all size themselves, and a constant copied
+    /// from them would be wrong the first time one of them changed. One measured pass is
+    /// enough because the chrome does not depend on the height it is given, so the second
+    /// pass computes the same number and the row stops moving.
+    /// </remarks>
+    private void EnforceEntriesFloor()
+    {
+        if (!_mobile || _root.RowDefinitions.Count < 7 || _analysisGrid is not { } analysis)
+        {
+            return;
+        }
+
+        if (_mobileFiltersOpen ||
+            _mobileWorkspaceState.DisplayMode == MobileWorkspaceDisplayMode.Plot ||
+            !analysis.IsVisible ||
+
+            // In the wide composition the analysis pane is a column beside the plot rather
+            // than a band under it: it already has the whole height, and forcing a minimum
+            // on a row it merely spans would push the status line off the bottom.
+            _mobileLayoutMode == MobileWorkspaceMode.CompactHeight)
+        {
+            SetEntriesFloor(0);
+            return;
+        }
+
+        var chrome = analysis.Bounds.Height - _entries.Bounds.Height;
+        if (!double.IsFinite(chrome) || chrome <= 0 || analysis.Bounds.Height <= 0)
+        {
+            // Nothing has been arranged yet, so there is nothing to measure. The layout pass
+            // that arranges it calls back here.
+            return;
+        }
+
+        var rows = _mobileLayoutMode == MobileWorkspaceMode.CompactHeight
+            ? CompactEntryRowFloor
+            : _mobileWorkspaceState.DisplayMode == MobileWorkspaceDisplayMode.Details
+                ? DetailsEntryRowFloor
+                : SplitEntryRowFloor;
+        var wanted = chrome + (rows * _entryRowMinimumHeight);
+
+        // The plot keeps a band it can still be read in; below that the reader is better
+        // served by switching to Details than by a two-row heat map.
+        var band = Bounds.Height - _root.RowDefinitions[0].ActualHeight
+                   - _root.RowDefinitions[1].ActualHeight
+                   - _root.RowDefinitions[6].ActualHeight;
+        var ceiling = band > 0 ? Math.Max(0, band - MinimumReadablePlotHeight) : wanted;
+        SetEntriesFloor(Math.Min(wanted, ceiling));
+    }
+
+    /// <summary>Below this the plot states a shape it cannot draw, so it yields entirely.</summary>
+    private const double MinimumReadablePlotHeight = 132;
+
+    private void SetEntriesFloor(double floor)
+    {
+        if (Math.Abs(_entriesFloorApplied - floor) < 0.5)
+        {
+            return;
+        }
+
+        _entriesFloorApplied = floor;
+        _root.RowDefinitions[5].MinHeight = floor;
     }
 
     /// <summary>Whether the reader is currently working inside the filter drawer.</summary>
@@ -289,6 +399,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         bool enabled,
         bool timelineVisible,
         bool analysisVisible,
+        bool minimapVisible,
         double availableWidth)
     {
         var splitTimeline = enabled && timelineVisible && analysisVisible;
@@ -314,10 +425,23 @@ public sealed partial class SessionWorkspaceView : UserControl
             Grid.SetColumnSpan(workspaceStatus, splitTimeline ? 2 : 1);
         }
 
+        // In the wide composition the plot and the analysis pane are columns, so the plot
+        // gives the minimap the last band of its own column and the analysis keeps all four
+        // rows beside it.
+        var wideMinimap = enabled && timelineVisible && minimapVisible;
         Grid.SetRow(_timeline, 2);
-        Grid.SetRowSpan(_timeline, enabled ? 4 : 1);
+        Grid.SetRowSpan(_timeline, enabled ? wideMinimap ? 3 : 4 : 1);
         Grid.SetColumn(_timeline, 0);
         Grid.SetColumnSpan(_timeline, 1);
+
+        if (_minimapFrame is { } wideMinimapFrame)
+        {
+            Grid.SetRow(wideMinimapFrame, enabled ? 5 : 3);
+            Grid.SetColumn(wideMinimapFrame, 0);
+            wideMinimapFrame.Margin = enabled
+                ? new Thickness(6, 0, 3, 3)
+                : new Thickness(76, 4, 12, 4);
+        }
 
         if (_analysisGrid is { } analysis)
         {
@@ -330,12 +454,23 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_mobileFilterShell is { } filterShell &&
             _mobileQuickActions is { } quickActions)
         {
-            filterShell.RowDefinitions = new RowDefinitions("Auto,Auto");
-            filterShell.ColumnDefinitions = new ColumnDefinitions("*");
+            // A short viewport has width to spare and no height at all, so the capture
+            // controls move up beside the mode selector instead of taking a band of their
+            // own; a portrait phone keeps them on their own full-width row.
+            filterShell.RowDefinitions = new RowDefinitions("Auto,Auto,Auto");
+            filterShell.ColumnDefinitions = new ColumnDefinitions(enabled ? "Auto,*" : "*");
             Grid.SetRow(quickActions, 0);
             Grid.SetColumn(quickActions, 0);
-            quickActions.Margin = new Thickness(6, 3);
+            quickActions.Margin = enabled ? new Thickness(6, 3, 3, 3) : new Thickness(6, 3);
             quickActions.HorizontalAlignment = HorizontalAlignment.Stretch;
+            if (_mobileCaptureActions is { } captureActions)
+            {
+                Grid.SetRow(captureActions, enabled ? 0 : 1);
+                Grid.SetColumn(captureActions, enabled ? 1 : 0);
+                captureActions.Margin = enabled
+                    ? new Thickness(0, 3, 6, 3)
+                    : new Thickness(6, 0, 6, 3);
+            }
         }
 
         if (_mobileFilterBody is { } filterBody &&
@@ -369,7 +504,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             {
                 item.MinWidth = enabled ? 78 : 92;
                 item.Width = double.NaN;
-                item.FontSize = enabled ? 12.5 : 14;
+                item.FontSize = TextScale.Of(enabled ? 12.5 : 14);
                 item.Padding = enabled ? new Thickness(7, 0) : new Thickness(10, 0);
 
                 // A short viewport pays for every dp of chrome twice: once here and once in
@@ -383,11 +518,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             var analysisWidth = splitTimeline ? availableWidth * 0.58 - 78 : availableWidth - (enabled ? 78 : 0);
 
-            // 540 px never happened in a split landscape workspace — a 2 340 px screen at
-            // 2.75× leaves the analysis pane about 490 px — so the summary always took a
-            // second full touch row, and tab headers + summary + sort + actions came to more
-            // than the pane's whole height, leaving the entry list nothing (finding 2).
-            var sideBySide = enabled && analysisWidth >= 400;
+            // 400 was still above what a split landscape phone actually offers: a 1080 px
+            // portrait device turned sideways leaves this pane about 374 px, so the summary
+            // went on taking a second full touch row and the entries list was left 106 px of
+            // a 415 px pane (audit 2, A2/D9). At 330 the count line keeps an ellipsised line
+            // of its own beside the actions, which is what it is for.
+            var sideBySide = enabled && analysisWidth >= 330;
             entryHeader.RowDefinitions = new RowDefinitions(sideBySide ? "Auto" : "Auto,Auto");
             entryHeader.ColumnDefinitions = new ColumnDefinitions(sideBySide ? "*,Auto" : "*");
             Grid.SetRow(_summary, 0);
@@ -402,7 +538,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 : double.PositiveInfinity;
             _summary.TextWrapping = sideBySide ? TextWrapping.NoWrap : TextWrapping.Wrap;
             _summary.TextTrimming = sideBySide ? TextTrimming.CharacterEllipsis : TextTrimming.None;
-            _summary.FontSize = enabled ? 11 : 12;
+            _summary.FontSize = TextScale.Of(enabled ? 11 : 12);
             _summary.Margin = sideBySide ? new Thickness(0, 0, 8, 0) : new Thickness(0, 0, 0, 4);
         }
 
@@ -428,7 +564,6 @@ public sealed partial class SessionWorkspaceView : UserControl
         // Spacing is the panels' own (column and item spacing), so the labels change with
         // the available width and nothing else moves.
         _order.Width = enabled ? 112 : 126;
-        _loadMore.Content = splitTimeline ? "More" : enabled ? "Load +500" : "Load next 500";
         if (_copyRaw is { } copyRaw)
         {
             copyRaw.Content = enabled ? "Copy" : "Copy raw";
@@ -436,7 +571,10 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         if (_openInspector is { } openInspector)
         {
-            openInspector.Content = enabled ? "⤢" : "Entry ⤢";
+            // Always the word. "⤢" on its own is not identifiable on a touch device — there
+            // is no pointer to hover for the tooltip — and the label was collapsing to the
+            // bare glyph while about 200 px of the row sat unused beside it (audit 2, D10).
+            openInspector.Content = "Entry ⤢";
         }
 
         _timeline.Margin = splitTimeline ? new Thickness(6, 2, 3, 2) : new Thickness(0);

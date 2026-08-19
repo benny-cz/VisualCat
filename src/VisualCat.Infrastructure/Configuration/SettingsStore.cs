@@ -39,7 +39,16 @@ public sealed record ApplicationSettings(
     // themselves are durable on disk and each session's view is already persisted; only the
     // list of what was open was not.
     string[]? OpenSessionPaths = null,
-    int OpenSessionIndex = 0);
+    int OpenSessionIndex = 0,
+
+    // Which of Plot / Split / Details the phone workspace was showing. Rotation keeps it,
+    // because the activity handles that configuration change in place — but a text-size or
+    // display-size change is not in the manifest's list and never should be, since every
+    // font size has to be re-measured. Android therefore recreates the activity, and the
+    // reader's choice used to go with the view that owned it: a workspace left in Plot came
+    // back in Split (audit 2, C5). It is the reader's choice, so it belongs beside the other
+    // things about the workspace that survive being put down and picked up again.
+    string? WorkspaceDisplayMode = null);
 
 public sealed class SettingsStore(string path)
 {

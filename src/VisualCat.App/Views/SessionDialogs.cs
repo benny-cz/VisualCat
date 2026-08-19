@@ -1,3 +1,4 @@
+using System.Globalization;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
@@ -31,6 +32,194 @@ internal sealed record SettingChoice(string Value, string Label)
         ?? choices[0];
 }
 
+/// <summary>
+/// The parts a settings sheet needs in order to stop half-drawing its last control.
+/// </summary>
+internal static class SheetForm
+{
+    /// <summary>
+    /// What "complete" and "still being written" mean, for the one place a reader can ask.
+    /// </summary>
+    internal const string SessionStateHelp =
+        "A complete capture was stopped or finished normally and holds everything it recorded. " +
+        "One still being written was interrupted — the app was killed, or the device restarted — " +
+        "and opens with whatever reached the disk; nothing after that point was kept.";
+
+    /// <summary>
+    /// The second line of a stored session: when, how large, and whether it is finished.
+    /// </summary>
+    /// <remarks>
+    /// Two lists showed the same three sessions in two vocabularies. The empty state printed
+    /// "· partial" for an unfinished one and said nothing at all for a finished one; Recent
+    /// sessions printed "· ready" for the very same finished one (audit 2, E2). Neither word
+    /// was explained anywhere in the product (audit 2, E3), and neither is a word a reader
+    /// brings with them — "ready" in particular says nothing about what it is ready for. One
+    /// sentence, in one place, used by every list.
+    /// </remarks>
+    internal static string DescribeSessionState(TemporarySessionInfo session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return $"{session.UpdatedUtc.ToLocalTime():g} · " +
+               $"{RecentSessionsDialog.FormatBytes(session.SizeBytes)} · " +
+               (session.Finalized ? "complete" : "still being written");
+    }
+
+    /// <summary>
+    /// What a screen reader should hear for one stored session.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="ListBoxItem"/> with no name of its own falls back to its content's
+    /// <c>ToString()</c>, and the content here is a record whose generated one reads out the
+    /// private storage path and the 32-hex materialisation guid — the two things the first
+    /// audit worked to keep out of every user-visible name — followed by a raw byte count
+    /// and <c>Finalized = True</c> (audit 2, B1). Sighted readers see a clean two-line row;
+    /// this is the same two lines, spoken.
+    /// </remarks>
+    internal static string DescribeSessionRow(TemporarySessionInfo session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return $"{SessionCacheName.Describe(session.Path)}, {DescribeSessionState(session).Replace(" · ", ", ", StringComparison.Ordinal)}";
+    }
+
+    /// <summary>
+    /// Gives every realised row of <paramref name="list"/> a spoken name of its own.
+    /// </summary>
+    /// <remarks>
+    /// <c>ContainerPrepared</c> rather than the item template, because the name belongs on
+    /// the container and a recycled container is prepared again for its new item — which is
+    /// what makes this survive virtualisation.
+    /// </remarks>
+    internal static void SpeakRows<T>(ListBox list, Func<T, string> describe)
+    {
+        list.ContainerPrepared += (_, eventArgs) =>
+        {
+            if (eventArgs.Container.DataContext is T item)
+            {
+                AutomationProperties.SetName(eventArgs.Container, describe(item));
+            }
+        };
+        list.ContainerClearing += (_, eventArgs) =>
+            AutomationProperties.SetName(eventArgs.Container, string.Empty);
+    }
+
+    /// <summary>
+    /// Puts a scrolling body over a decision row that stays put, with an edge between them.
+    /// </summary>
+    /// <remarks>
+    /// Both sheets pinned their Cancel/Apply row and then let the form run underneath it,
+    /// so <em>Maximum zoom precision</em> and the third cached session were each cut in
+    /// half against the buttons with nothing between them — which reads as a rendering
+    /// fault rather than as "there is more below" (audit 2, D2). The rule is a rule of the
+    /// sheet, not of each form: one hairline, one gap the last control can finish inside,
+    /// and the scrollbar's own lane kept clear of the content (audit 2, A3).
+    /// </remarks>
+    internal static Grid Build(Control body, Control decision, Thickness margin)
+    {
+        var scroller = new ScrollViewer
+        {
+            Content = body,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+
+            // Bottom padding is what lets the last field finish above the divider instead
+            // of ending against it; the top matches so the first field is not flush either.
+            Padding = new Thickness(0, 2, 0, 10),
+        };
+        var divider = new Border
+        {
+            Height = 1,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        divider[!TemplatedControl.BorderBrushProperty] =
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(
+                VisualCat.App.Theme.ProductTheme.BorderLineKey);
+
+        var root = new Grid
+        {
+            RowDefinitions = new RowDefinitions("*,Auto,Auto"),
+            Margin = margin,
+        };
+        root.Children.Add(scroller);
+        Grid.SetRow(divider, 1);
+        root.Children.Add(divider);
+        Grid.SetRow(decision, 2);
+        root.Children.Add(decision);
+        return root;
+    }
+
+    /// <summary>
+    /// A decision row that keeps its confirm action on the same line as its cancel.
+    /// </summary>
+    /// <remarks>
+    /// Session cache laid Delete eligible sessions… / Cancel / Save policy into a wrap panel
+    /// on a 380 px sheet: the destructive action was the widest and came first, and the
+    /// confirm was orphaned on a second line below the cancel (audit 2, D3). A destructive
+    /// action is not a peer of the decision, so it moves to the far side of the row where
+    /// convention puts it, and the pair that decides the sheet stays together on the right.
+    /// </remarks>
+    internal static Grid Decision(Control? destructive, Control cancel, Control confirm)
+    {
+        var row = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+            ColumnSpacing = 8,
+        };
+        if (destructive is not null)
+        {
+            destructive.HorizontalAlignment = HorizontalAlignment.Left;
+            row.Children.Add(destructive);
+        }
+
+        Grid.SetColumn(cancel, 1);
+        row.Children.Add(cancel);
+        Grid.SetColumn(confirm, 2);
+        row.Children.Add(confirm);
+        return row;
+    }
+
+    /// <summary>
+    /// Names a numeric field's own spin buttons.
+    /// </summary>
+    /// <remarks>
+    /// Every increment and decrement button in the product announced itself as
+    /// <c>Avalonia.Controls.PathIcon</c> — eight of them across two sheets — because a
+    /// templated button with an icon and no text has nothing else to fall back on
+    /// (audit 2, B3). The names are attached once the template exists, which is the first
+    /// moment the buttons do.
+    /// </remarks>
+    internal static void NameSpinButtons(NumericUpDown field, string label)
+    {
+        // Not on TemplateApplied. The spin buttons are three templates deep — the field's own,
+        // a validation content presenter's, and the ButtonSpinner's — and a content presenter
+        // realises its child during measure, so when the outer template is applied there is
+        // nothing yet to name. The first layout pass that produces them is the one that gets
+        // them named, and the handler retires itself.
+        void OnLayoutUpdated(object? sender, EventArgs eventArgs)
+        {
+            if (Name(field, label))
+            {
+                field.LayoutUpdated -= OnLayoutUpdated;
+            }
+        }
+
+        field.LayoutUpdated += OnLayoutUpdated;
+    }
+
+    private static bool Name(NumericUpDown field, string label)
+    {
+        var named = 0;
+        foreach (var button in field.GetVisualDescendants().OfType<Button>())
+        {
+            var increases = button.Name is { } name && name.Contains("Increase", StringComparison.OrdinalIgnoreCase);
+            AutomationProperties.SetName(button, increases ? $"Increase {label}" : $"Decrease {label}");
+            named++;
+        }
+
+        return named >= 2;
+    }
+}
+
 public sealed class RecentSessionsDialog : DialogBody<string>
 {
     private readonly ListBox _sessions = new();
@@ -59,14 +248,15 @@ public sealed class RecentSessionsDialog : DialogBody<string>
                         },
                         new TextBlock
                         {
-                            Text = $"{session.UpdatedUtc.ToLocalTime():g} · {FormatBytes(session.SizeBytes)} · " +
-                                   (session.Finalized ? "ready" : "partial"),
+                            Text = SheetForm.DescribeSessionState(session),
                             Opacity = 0.75,
                             TextTrimming = TextTrimming.CharacterEllipsis,
                         },
                     },
                 });
         _sessions.DoubleTapped += (_, _) => OpenSelected();
+        SheetForm.SpeakRows<TemporarySessionInfo>(_sessions, SheetForm.DescribeSessionRow);
+        AutomationProperties.SetName(_sessions, "Stored sessions");
 
         // On a touch device a tap on a row opens that session, which is what the same list of
         // captures already does on the welcome screen; having one gesture mean "select" here
@@ -87,8 +277,19 @@ public sealed class RecentSessionsDialog : DialogBody<string>
         var cancel = new Button { Content = "Cancel", MinHeight = mobile ? 48 : 0 };
         cancel.Click += (_, _) => Complete(null);
         buttons.Children.Add(cancel);
-        var open = new Button { Content = "Open", IsDefault = true, MinHeight = mobile ? 48 : 0 };
+
+        // The dialog opens with nothing selected, and Open was enabled anyway: tapping it
+        // was accepted and produced no result, no message and no state change (audit 2, C3).
+        // It is now exactly as available as the session it would open.
+        var open = new Button
+        {
+            Content = "Open",
+            IsDefault = true,
+            MinHeight = mobile ? 48 : 0,
+            IsEnabled = false,
+        };
         open.Click += (_, _) => OpenSelected();
+        _sessions.SelectionChanged += (_, _) => open.IsEnabled = _sessions.SelectedItem is TemporarySessionInfo;
         buttons.Children.Add(open);
 
         var root = new Grid
@@ -114,6 +315,8 @@ public sealed class RecentSessionsDialog : DialogBody<string>
         Grid.SetRow(buttons, 2);
         root.Children.Add(buttons);
         Content = root;
+        ToolTip.SetTip(_sessions, SheetForm.SessionStateHelp);
+        AutomationProperties.SetHelpText(_sessions, SheetForm.SessionStateHelp);
     }
 
     internal static string FormatBytes(long bytes)
@@ -174,6 +377,11 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
 
     private static readonly bool Mobile = OperatingSystem.IsAndroid();
 
+    private readonly ChoiceSelector? _themeChoice;
+    private readonly ChoiceSelector? _intensityChoice;
+    private readonly ChoiceSelector? _normalizationChoice;
+    private readonly ChoiceSelector? _exportOrderChoice;
+    private readonly ChoiceSelector? _exportEncodingChoice;
     private readonly ComboBox _theme = Choices(ThemeChoices);
     private readonly CheckBox _highContrast = new() { Content = "Prefer high-contrast presentation" };
     private readonly NumericUpDown _textScale = new()
@@ -239,10 +447,18 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
 
         var form = new StackPanel { Spacing = 8 };
         form.Children.Add(new TextBlock { Text = "Theme" });
-        form.Children.Add(_theme);
+        form.Children.Add(Pick("Theme", _theme, ThemeChoices, settings.Theme, out _themeChoice));
         form.Children.Add(_highContrast);
         form.Children.Add(new TextBlock { Text = "Text scale" });
         form.Children.Add(_textScale);
+        form.Children.Add(new TextBlock
+        {
+            // The one control the OS setting does not already cover, now that it is
+            // honoured: this multiplies it rather than replacing it (audit 2, B5).
+            Text = "Multiplies the device's own text size setting.",
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.72,
+        });
 
         // The Android companion reads this device's log directly: there is no adb binary to
         // point at, no adb capture to pre-roll, and no filesystem path outside the sandbox a
@@ -263,9 +479,9 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         form.Children.Add(new TextBlock { Text = "Live UI refresh limit (Hz)" });
         form.Children.Add(_uiRefresh);
         form.Children.Add(new TextBlock { Text = "Timeline intensity scale" });
-        form.Children.Add(_intensity);
+        form.Children.Add(Pick("Timeline intensity scale", _intensity, IntensityChoices, settings.IntensityScale, out _intensityChoice));
         form.Children.Add(new TextBlock { Text = "Timeline normalization" });
-        form.Children.Add(_normalization);
+        form.Children.Add(Pick("Timeline normalization", _normalization, NormalizationChoices, settings.TimelineNormalization, out _normalizationChoice));
         form.Children.Add(new TextBlock { Text = "Maximum zoom precision" });
         form.Children.Add(_minimumUsPerPixel);
         form.Children.Add(new TextBlock
@@ -285,9 +501,9 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
             Opacity = 0.72,
         });
         form.Children.Add(new TextBlock { Text = "Default export order" });
-        form.Children.Add(_exportOrder);
+        form.Children.Add(Pick("Default export order", _exportOrder, ExportOrderChoices, settings.ExportOrder, out _exportOrderChoice));
         form.Children.Add(new TextBlock { Text = "Normalized CSV encoding" });
-        form.Children.Add(_exportEncoding);
+        form.Children.Add(Pick("Normalized CSV encoding", _exportEncoding, ExportEncodingChoices, settings.ExportEncoding, out _exportEncodingChoice));
         form.Children.Add(_diagnostics);
         form.Children.Add(new TextBlock
         {
@@ -303,6 +519,12 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
             StretchForTouch(control);
         }
 
+        SheetForm.NameSpinButtons(_textScale, "text scale");
+        SheetForm.NameSpinButtons(_preRollSeconds, "default ADB pre-roll in seconds");
+        SheetForm.NameSpinButtons(_uiRefresh, "live UI refresh limit in hertz");
+        SheetForm.NameSpinButtons(_minimumUsPerPixel, "maximum zoom precision");
+        SheetForm.NameSpinButtons(_minimumBarWidth, "minimum bar width");
+
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -316,7 +538,7 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         var save = new Button { Content = "Apply", IsDefault = true, MinHeight = Mobile ? 48 : 0 };
         save.Click += (_, _) => Complete(_settings with
         {
-            Theme = Value(_theme, ThemeChoices),
+            Theme = _themeChoice?.Value ?? Value(_theme, ThemeChoices),
             HighContrast = _highContrast.IsChecked == true,
             TextScale = (double)(_textScale.Value ?? 1m),
             AdbPath = NullIfWhiteSpace(_adbPath.Text),
@@ -325,29 +547,46 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             DefaultCapturePreRollSeconds = (int)(_preRollSeconds.Value ?? 0),
             UiRefreshLimit = (int)(_uiRefresh.Value ?? 30),
-            IntensityScale = Value(_intensity, IntensityChoices),
-            TimelineNormalization = Value(_normalization, NormalizationChoices),
+            IntensityScale = _intensityChoice?.Value ?? Value(_intensity, IntensityChoices),
+            TimelineNormalization = _normalizationChoice?.Value ?? Value(_normalization, NormalizationChoices),
             TimelineMinimumUsPerPixel = (double)(_minimumUsPerPixel.Value ?? 1m),
             TimelinePixelSnap = _pixelSnap.IsChecked == true,
             TimelineMinimumBarWidth = (double)(_minimumBarWidth.Value ?? 3m),
-            ExportOrder = Value(_exportOrder, ExportOrderChoices),
-            ExportEncoding = Value(_exportEncoding, ExportEncodingChoices),
+            ExportOrder = _exportOrderChoice?.Value ?? Value(_exportOrder, ExportOrderChoices),
+            ExportEncoding = _exportEncodingChoice?.Value ?? Value(_exportEncoding, ExportEncodingChoices),
             DiagnosticsEnabled = _diagnostics.IsChecked == true,
         });
         buttons.Children.Add(save);
 
         // The form scrolls; the decision does not. Apply and Cancel used to scroll away with
         // the twenty controls above them (finding 16 / 21.4).
-        var root = new Grid { RowDefinitions = new RowDefinitions("*,Auto"), Margin = new Thickness(16) };
-        root.Children.Add(new ScrollViewer
+        Content = SheetForm.Build(form, buttons, new Thickness(16));
+    }
+
+    /// <summary>
+    /// Presents a settings choice the way the platform can actually show it.
+    /// </summary>
+    /// <remarks>
+    /// The desktop keeps its combo box: it has a pointer, a window, and no in-page sheet for
+    /// a popup to go wrong inside. A phone gets segments; see <see cref="ChoiceSelector"/>
+    /// for why (audit 2, A4).
+    /// </remarks>
+    private static Control Pick(
+        string name,
+        ComboBox desktop,
+        SettingChoice[] choices,
+        string? value,
+        out ChoiceSelector? selector)
+    {
+        if (!Mobile)
         {
-            Content = form,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        });
-        Grid.SetRow(buttons, 1);
-        root.Children.Add(buttons);
-        Content = root;
+            selector = null;
+            AutomationProperties.SetName(desktop, name);
+            return desktop;
+        }
+
+        selector = new ChoiceSelector(name, choices, value);
+        return selector;
     }
 
     private static ComboBox Choices(SettingChoice[] choices) => new()
@@ -400,6 +639,7 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
     private readonly NumericUpDown _maximumGiB = new() { Minimum = 0, Maximum = 1024, Increment = 1, Width = 140 };
     private readonly TextBlock _summary = new() { TextWrapping = TextWrapping.Wrap };
     private readonly ListBox _sessions = new();
+    private readonly List<Control> _policyFields = [];
 
     public SessionCacheDialog(string cacheRoot, ApplicationSettings settings)
         : base("Temporary session cache")
@@ -433,57 +673,88 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
                         },
                         new TextBlock
                         {
-                            Text = $"{session.UpdatedUtc.ToLocalTime():g} · " +
-                                   RecentSessionsDialog.FormatBytes(session.SizeBytes),
+                            Text = SheetForm.DescribeSessionState(session),
                             Opacity = 0.75,
-                            FontSize = 11.5,
+                            FontSize = TextScale.Of(11.5),
                             TextTrimming = TextTrimming.CharacterEllipsis,
                         },
                     },
                 });
 
+        SheetForm.SpeakRows<TemporarySessionInfo>(_sessions, SheetForm.DescribeSessionRow);
+        AutomationProperties.SetName(_sessions, "Cached sessions");
+
         var policy = BuildPolicyForm();
 
-        var buttons = new WrapPanel
+        // "Delete eligible sessions…" is destructive, so it is not a peer of Cancel/Save
+        // and does not sit between them. On a phone it also carries the shorter label the
+        // row can actually hold.
+        var clean = new Button
         {
-            Orientation = Orientation.Horizontal,
-            ItemSpacing = 8,
-            LineSpacing = 8,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 8, 0, 0),
+            Content = Mobile ? "Delete eligible…" : "Delete eligible sessions…",
+            MinHeight = Mobile ? 48 : 0,
         };
-        var clean = new Button { Content = "Delete eligible sessions…", MinHeight = Mobile ? 48 : 0 };
+        AutomationProperties.SetName(clean, "Delete eligible temporary sessions");
         clean.Click += async (_, _) => await CleanAsync();
-        buttons.Children.Add(clean);
         var cancel = new Button { Content = "Cancel", MinHeight = Mobile ? 48 : 0 };
         cancel.Click += (_, _) => Complete(null);
-        buttons.Children.Add(cancel);
         var save = new Button { Content = "Save policy", IsDefault = true, MinHeight = Mobile ? 48 : 0 };
         save.Click += (_, _) => Complete(CurrentSettings());
-        buttons.Children.Add(save);
+        var buttons = SheetForm.Decision(clean, cancel, save);
 
-        var root = new Grid
-        {
-            RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*,Auto"),
-            Margin = new Thickness(14),
-        };
-        root.Children.Add(new TextBlock
+        // The list is the only part of this sheet that can grow, so it is the only part
+        // that scrolls; the cache location, the policy and the summary stay above it.
+        var body = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*") };
+        body.Children.Add(new TextBlock
         {
             Text = $"Cache location: {_cacheRoot}",
             TextWrapping = TextWrapping.Wrap,
-            FontSize = Mobile ? 11.5 : 12,
+            FontSize = TextScale.Of(Mobile ? 11.5 : 12),
             Opacity = 0.8,
         });
         Grid.SetRow(policy, 1);
         policy.Margin = new Thickness(0, 10);
-        root.Children.Add(policy);
+        body.Children.Add(policy);
         Grid.SetRow(_summary, 2);
-        root.Children.Add(_summary);
+        body.Children.Add(_summary);
         Grid.SetRow(_sessions, 3);
-        root.Children.Add(_sessions);
-        Grid.SetRow(buttons, 4);
+        _sessions.Margin = new Thickness(0, 8, 0, 0);
+        body.Children.Add(_sessions);
+
+        var root = new Grid
+        {
+            RowDefinitions = new RowDefinitions("*,Auto,Auto"),
+            Margin = new Thickness(14),
+        };
+        root.Children.Add(body);
+        var divider = new Border
+        {
+            Height = 1,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Margin = new Thickness(0, 10, 0, 8),
+        };
+        divider[!TemplatedControl.BorderBrushProperty] =
+            new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension(
+                VisualCat.App.Theme.ProductTheme.BorderLineKey);
+        Grid.SetRow(divider, 1);
+        root.Children.Add(divider);
+        Grid.SetRow(buttons, 2);
         root.Children.Add(buttons);
         Content = root;
+
+        // A policy field that cannot take effect says so by receding, instead of sitting
+        // fully interactive under an unchecked switch that governs it (audit 2, D7).
+        _enabled.IsCheckedChanged += (_, _) => ApplyPolicyAvailability();
+        ApplyPolicyAvailability();
+    }
+
+    private void ApplyPolicyAvailability()
+    {
+        var enabled = _enabled.IsChecked == true;
+        foreach (var field in _policyFields)
+        {
+            field.IsEnabled = enabled;
+        }
     }
 
     /// <summary>
@@ -516,7 +787,7 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
         return policy;
     }
 
-    private static void AddPolicyRow(Grid policy, string text, NumericUpDown field, int firstRow)
+    private void AddPolicyRow(Grid policy, string text, NumericUpDown field, int firstRow)
     {
         var label = new TextBlock
         {
@@ -524,6 +795,9 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
             VerticalAlignment = VerticalAlignment.Center,
             TextWrapping = Mobile ? TextWrapping.Wrap : TextWrapping.NoWrap,
         };
+        _policyFields.Add(label);
+        _policyFields.Add(field);
+        SheetForm.NameSpinButtons(field, text);
         Grid.SetRow(label, firstRow);
         policy.Children.Add(label);
         Grid.SetRow(field, Mobile ? firstRow + 1 : firstRow);

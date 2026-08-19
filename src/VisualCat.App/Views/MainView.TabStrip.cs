@@ -65,6 +65,12 @@ public sealed partial class MainView
             Content = _tabChips,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+
+            // Inset to the same gutter every other band uses. The strip spanned the whole
+            // 1080 px while everything above and below it stopped at 36, so the first tab's
+            // rounded corner sat squarely on the screen edge and the row read as a different
+            // surface from the workspace it belongs to (audit 2, D8).
+            Padding = new Thickness(OperatingSystem.IsAndroid() ? 10 : 12, 0),
             Margin = new Thickness(0, 0, 0, 4),
             IsVisible = false,
         };
@@ -79,7 +85,7 @@ public sealed partial class MainView
         {
             Text = TabTitle.Shorten(viewModel.Title, mobile ? 24 : 34),
             VerticalAlignment = VerticalAlignment.Center,
-            FontSize = mobile ? 12.5 : 12,
+            FontSize = TextScale.Of(mobile ? 12.5 : 12),
         };
         var select = new Button
         {
