@@ -26,6 +26,14 @@ public sealed class App : Avalonia.Application
             Styles.Add(style);
         }
 
+        // Control themes rather than styles, because they replace a control's whole
+        // appearance rather than adjusting one: the touch scroll indicator has no arrows and
+        // no paging regions to adjust (audit 3, B5).
+        foreach (var (key, controlTheme) in Theme.ProductTheme.BuildControlThemes())
+        {
+            Resources.Add(key, controlTheme);
+        }
+
         RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Default;
     }
 

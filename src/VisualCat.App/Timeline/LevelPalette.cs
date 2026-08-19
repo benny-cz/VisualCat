@@ -16,8 +16,10 @@ namespace VisualCat.App.Timeline;
 public static class LevelPalette
 {
     private static readonly Color[] Colors = BuildColors();
+    private static readonly Color[] LightInkColors = BuildLightInkColors();
     private static readonly ImmutableSolidColorBrush?[][] FillCache = BuildFillCache();
     private static readonly ImmutableSolidColorBrush[] SolidBrushes = BuildSolidBrushes();
+    private static readonly ImmutableSolidColorBrush[] LightInkBrushes = BuildLightInkBrushes();
     private static readonly ImmutablePen[] BaselinePens = BuildBaselinePens();
     private static readonly ImmutablePen[] AccentPens = BuildAccentPens();
     private static readonly ImmutablePen[] CaretPens = BuildCaretPens();
@@ -26,6 +28,31 @@ public static class LevelPalette
 
     /// <summary>Fully opaque cached brush for the level.</summary>
     public static ImmutableSolidColorBrush BrushOf(LogLevel level) => SolidBrushes[IndexOf(level)];
+
+    /// <summary>
+    /// The severity color as <em>ink</em>: the level letter, the tag, a heading — anything a
+    /// reader reads rather than looks at.
+    /// </summary>
+    /// <remarks>
+    /// The saturated palette was chosen against a midnight ground and every value clears AA on
+    /// it. On the light surfaces it clears nothing: Warn measured 1.33:1, Debug 1.44:1 and the
+    /// best of the seven, Fatal, 3.12:1 — and this is the ink of the first line of every entry
+    /// row, the level letter and the tag, which is precisely what a log is scanned with
+    /// (audit 3, B1). The light variant keeps each hue and darkens it until it clears 4.5:1 on
+    /// all three light surfaces, so a row still reads Warn as amber and Fatal as magenta while
+    /// being legible.
+    ///
+    /// Fills are a separate question and keep the saturated values: <see cref="BrushOf"/>,
+    /// <see cref="Fill"/> and the pens below paint the plot, the minimap, the row ribbon and
+    /// the legend chips, which are areas of color rather than text, and which the light theme
+    /// already renders well.
+    /// </remarks>
+    public static Color InkOf(LogLevel level, bool dark) =>
+        dark ? Colors[IndexOf(level)] : LightInkColors[IndexOf(level)];
+
+    /// <summary>Cached opaque brush for <see cref="InkOf"/>.</summary>
+    public static ImmutableSolidColorBrush InkBrushOf(LogLevel level, bool dark) =>
+        dark ? SolidBrushes[IndexOf(level)] : LightInkBrushes[IndexOf(level)];
 
     /// <summary>Cached translucent fill; one brush per (level, alpha) pair ever exists.</summary>
     public static ImmutableSolidColorBrush Fill(LogLevel level, byte alpha)
@@ -70,6 +97,27 @@ public static class LevelPalette
         Color.Parse("#B8C4D6"), // Unknown — desaturated steel
     ];
 
+    /// <summary>
+    /// The same seven hues, darkened for use as text on the light theme's surfaces.
+    /// </summary>
+    /// <remarks>
+    /// Measured against the three grounds severity text lands on — <c>#F4F7FC</c>,
+    /// <c>#E9EFF7</c> and <c>#E1E9F4</c> — the worst case of each of these is between 4.76:1
+    /// and 5.81:1, so all seven clear AA for normal text on every one of them. Error and Fatal
+    /// are further apart here (ΔE 34) than in the dark palette (ΔE 19), which is the one place
+    /// the light variant is easier to tell apart than the original.
+    /// </remarks>
+    private static Color[] BuildLightInkColors() =>
+    [
+        Color.Parse("#6D28D9"), // Verbose — violet
+        Color.Parse("#0B6E5B"), // Debug — deep mint
+        Color.Parse("#0A66B8"), // Info — signal blue
+        Color.Parse("#8A5A00"), // Warn — amber
+        Color.Parse("#C42026"), // Error — coral red
+        Color.Parse("#B00050"), // Fatal — magenta-red
+        Color.Parse("#4A5C74"), // Unknown — steel
+    ];
+
     private static ImmutableSolidColorBrush?[][] BuildFillCache()
     {
         var cache = new ImmutableSolidColorBrush?[Colors.Length][];
@@ -87,6 +135,17 @@ public static class LevelPalette
         for (var i = 0; i < brushes.Length; i++)
         {
             brushes[i] = new ImmutableSolidColorBrush(Colors[i]);
+        }
+
+        return brushes;
+    }
+
+    private static ImmutableSolidColorBrush[] BuildLightInkBrushes()
+    {
+        var brushes = new ImmutableSolidColorBrush[LightInkColors.Length];
+        for (var i = 0; i < brushes.Length; i++)
+        {
+            brushes[i] = new ImmutableSolidColorBrush(LightInkColors[i]);
         }
 
         return brushes;
@@ -194,6 +253,25 @@ public static class WorkspacePalette
 
     /// <summary>The outline of a secondary shell action.</summary>
     public static Color SecondaryActionEdge(bool dark) => dark ? Color.Parse("#2A3B55") : Color.Parse("#BFCFE2");
+
+    /// <summary>
+    /// The search channel: what a match is marked with, wherever a match is marked.
+    /// </summary>
+    /// <remarks>
+    /// One colour for the plot's search ticks and for the highlighted run inside a message, so
+    /// a hit in the plot and a hit in the text read as one channel rather than as two
+    /// unrelated marks. It is deliberately not on the severity ramp — a match is orthogonal to
+    /// how bad a line is — and it is measurably far from all seven (ΔE 51 at the nearest,
+    /// Verbose) and from the accent, so it cannot be misread as either.
+    ///
+    /// It lived as a literal in two files, which is the whole of what made it look like an
+    /// accident rather than a decision (audit 3, D5). Same value in both variants: it is a
+    /// filled mark carrying its own foreground, so it does not depend on what it sits on.
+    /// </remarks>
+    public static Color SearchMatch => Color.Parse("#FF3FE0");
+
+    /// <summary>The ink on a search mark — 6.7:1 on it, in either theme.</summary>
+    public static Color SearchMatchText => Color.Parse("#150411");
 
     /// <summary>An alpha variant of <paramref name="color"/>, for tints and scrims.</summary>
     public static Color Tint(Color color, byte alpha) => Color.FromArgb(alpha, color.R, color.G, color.B);

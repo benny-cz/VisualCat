@@ -152,6 +152,33 @@ public sealed partial class MainView
         }
     }
 
+    /// <summary>
+    /// Takes down a notice this caller raised, and only if it is still the one showing.
+    /// </summary>
+    /// <remarks>
+    /// A notice that turns out to have been wrong has to be able to retract itself, and the
+    /// scope of an on-device capture is exactly that case: it is reported from an absence of
+    /// evidence and revised when the evidence arrives (audit 3, A1). The revision check is
+    /// what stops a retraction from clearing an unrelated message the reader has not read yet
+    /// — a failed export raised in the meantime keeps the lane.
+    /// </remarks>
+    internal void RetractNotice(long revision)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => RetractNotice(revision));
+            return;
+        }
+
+        if (_noticeRevision == revision)
+        {
+            ShowNotice(string.Empty);
+        }
+    }
+
+    /// <summary>Which message the lane is currently carrying.</summary>
+    internal long NoticeRevision => _noticeRevision;
+
     private void ApplyNoticeTheme()
     {
         if (_noticeHost is not { } host || _noticeText is not { } text || _noticeDismiss is not { } dismiss)

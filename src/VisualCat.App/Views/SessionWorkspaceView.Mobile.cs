@@ -85,8 +85,70 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void OnInputPaneStateChanged(object? sender, InputPaneStateEventArgs eventArgs)
     {
         _inputPaneOpen = eventArgs.NewState == InputPaneState.Open;
+        _inputPaneRect = _inputPaneOpen ? eventArgs.EndRect : default;
         ApplyMobileLayout(Bounds.Size);
     }
+
+    /// <summary>
+    /// Keeps the drawer's decision row above the keyboard rather than behind it.
+    /// </summary>
+    /// <remarks>
+    /// The activity is declared <c>AdjustResize</c>, but the platform reports the keyboard as
+    /// an occluding rectangle rather than by resizing the window, so the drawer went on being
+    /// laid out against the whole screen: Reset and Done sat 723 px below the top of the
+    /// keyboard, and the drawer <em>grew</em> when the IME opened, because the status row
+    /// yields its band to the drawer at that moment — pushing the footer further under, not
+    /// less far (audit 3, C5). The field's action key applied the filter and closed the panel,
+    /// so the reader was never trapped; the visible route out was simply hidden at the moment
+    /// they were most likely to want it.
+    ///
+    /// The occluded rectangle is in top-level coordinates, so the panel's own top is
+    /// translated into them and the difference is what the panel may occupy. Nothing is
+    /// applied while the panel has not been arranged yet, or where the answer would be too
+    /// small to be a drawer — a keyboard covering nearly everything is better answered by the
+    /// panel scrolling than by a 40 px card.
+    /// </remarks>
+    private void ApplyInputPaneRoom()
+    {
+        if (_mobileFilterPanel is not { } panel)
+        {
+            return;
+        }
+
+        var room = double.PositiveInfinity;
+        if (_inputPaneOpen &&
+            _mobileFiltersOpen &&
+            _inputPaneRect.Height > 0 &&
+            TopLevel.GetTopLevel(this) is { } topLevel &&
+            panel.Bounds.Height > 0 &&
+            panel.TranslatePoint(default, topLevel) is { } origin)
+        {
+            var available = _inputPaneRect.Y - origin.Y - panel.Margin.Bottom;
+            if (available >= MinimumDrawerHeightOverKeyboard)
+            {
+                room = available;
+            }
+        }
+
+        // Guarded: this runs from a layout pass, and an unguarded write would invalidate the
+        // layout it was just told about.
+        if (Math.Abs(panel.MaxHeight - room) > 0.5)
+        {
+            panel.MaxHeight = room;
+        }
+
+        // A stretched control smaller than its slot is centred, which would open a gap above
+        // the drawer and put the footer back where it started. Constrained, it hangs from the
+        // top of the band it was given.
+        var wanted = double.IsInfinity(room) ? VerticalAlignment.Stretch : VerticalAlignment.Top;
+        if (panel.VerticalAlignment != wanted)
+        {
+            panel.VerticalAlignment = wanted;
+        }
+    }
+
+    /// <summary>Below this the drawer is not a card any more, so it keeps its band and scrolls.</summary>
+    private const double MinimumDrawerHeightOverKeyboard = 190;
 
     private void SetMobileDisplayMode(MobileWorkspaceDisplayMode mode)
     {
@@ -287,12 +349,20 @@ public sealed partial class SessionWorkspaceView : UserControl
         // Fit acts on the plot, so it goes where the plot goes. In Details it was still
         // present, still enabled, still costing a share of the one row it shares with the
         // mode selector, and still moving a surface nobody could see (audit 2, C7).
+        //
+        // It keeps its slot, though. Taking the control out of the layout let the three mode
+        // segments spread into the space it left: Details' right edge travelled 158 px on the
+        // single tap that hid Fit, so a second tap at the place Details had just been hit
+        // Split and undid the switch (audit 3, C4). Opening the drawer did the same. Held
+        // rather than removed, the row's geometry is the same in every state, and the slot
+        // sizes itself from the button, so it stays right at any text scale.
         if (_mobileFit is { } fit)
         {
-            fit.IsVisible = timelineVisible;
+            ControlSlot.Hold(fit, timelineVisible);
         }
 
         EnforceEntriesFloor();
+        ApplyInputPaneRoom();
     }
 
     /// <summary>
@@ -340,8 +410,16 @@ public sealed partial class SessionWorkspaceView : UserControl
             !analysis.IsVisible ||
 
             // In the wide composition the analysis pane is a column beside the plot rather
-            // than a band under it: it already has the whole height, and forcing a minimum
-            // on a row it merely spans would push the status line off the bottom.
+            // than a band under it: it already spans every row there is, so a minimum on one
+            // of them adds to the grid's height instead of taking from a neighbour, and the
+            // status line goes off the bottom.
+            //
+            // Which is why the short viewport's answer is not here. Measured in landscape
+            // with the pane holding the whole band: analysis tab strip 42 dp, count-and-sort
+            // row 42 dp, Load-more footer 42 dp, and 75 dp — 1.3 rows — of actual log
+            // (audit 3, D2). There is no row above to take from; what the list is short of is
+            // the chrome in its own column, so that is where it is taken from. See
+            // ConfigureWideMobileComposition, which gives the footer's band back to the list.
             _mobileLayoutMode == MobileWorkspaceMode.CompactHeight)
         {
             SetEntriesFloor(0);
@@ -370,6 +448,53 @@ public sealed partial class SessionWorkspaceView : UserControl
                    - _root.RowDefinitions[6].ActualHeight;
         var ceiling = band > 0 ? Math.Max(0, band - MinimumReadablePlotHeight) : wanted;
         SetEntriesFloor(Math.Min(wanted, ceiling));
+    }
+
+    /// <summary>Where the load-more control currently lives, so it is only ever moved once.</summary>
+    private bool? _loadMoreInHeader;
+
+    /// <summary>
+    /// Puts the load-more control in the header row, or back in its own footer under the list.
+    /// </summary>
+    /// <remarks>
+    /// Both placements are right for the viewport they belong to. Under the list is where the
+    /// gesture ends and where a reader who has run out of rows is already looking, and that is
+    /// worth a band on a tall screen. On a short one the band is the thing the list is short
+    /// of, and the row above has width going spare — so the control moves rather than the list
+    /// giving up a third of what it has (audit 3, D2).
+    /// </remarks>
+    private void MoveLoadMore(bool intoHeader)
+    {
+        if (_loadMoreInHeader == intoHeader ||
+            _entryFooter is not { } footer ||
+            _entryPrimaryActions is not { } header)
+        {
+            return;
+        }
+
+        _loadMoreInHeader = intoHeader;
+        if (intoHeader)
+        {
+            footer.Child = null;
+            _loadMore.Margin = new Thickness(6, 0, 0, 0);
+
+            // In the footer it stretched across the pane; here it sizes to its own label, so
+            // the count line beside it keeps the rest of the row.
+            _loadMore.HorizontalAlignment = HorizontalAlignment.Right;
+            Grid.SetColumn(_loadMore, 4);
+            header.ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto,Auto");
+            header.Children.Add(_loadMore);
+        }
+        else
+        {
+            header.Children.Remove(_loadMore);
+            header.ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto");
+            _loadMore.Margin = new Thickness(0);
+            _loadMore.HorizontalAlignment = HorizontalAlignment.Stretch;
+            footer.Child = _loadMore;
+        }
+
+        UpdateEntryLoadControls();
     }
 
     /// <summary>Below this the plot states a shape it cannot draw, so it yields entirely.</summary>
@@ -478,17 +603,55 @@ public sealed partial class SessionWorkspaceView : UserControl
             _mobileSeveritySection is { } severity &&
             _mobileTimeSection is { } time)
         {
+            // Two short groups in one column and the tall one beside them, rather than one
+            // short group in a column of its own and the other two stacked. QUERY spanning
+            // both rows left its column empty below a single 48 dp field while SEVERITY and
+            // TIME LENS shared the other and ran 37 px past the bottom of the viewport, with
+            // roughly 100 × 1000 px of unused space next to the buttons being cut
+            // (audit 3, D2). SEVERITY is the group that grows — its chips wrap — so it is the
+            // one given a column to grow in.
             filterBody.ColumnDefinitions = new ColumnDefinitions(enabled ? "*,*" : "*");
             filterBody.RowDefinitions = new RowDefinitions(enabled ? "Auto,Auto" : "Auto,Auto,Auto");
             Grid.SetColumn(query, 0);
             Grid.SetRow(query, 0);
-            Grid.SetRowSpan(query, enabled ? 2 : 1);
-            Grid.SetColumn(severity, enabled ? 1 : 0);
-            Grid.SetRow(severity, enabled ? 0 : 1);
-            Grid.SetRowSpan(severity, 1);
-            Grid.SetColumn(time, enabled ? 1 : 0);
+            Grid.SetRowSpan(query, 1);
+            Grid.SetColumn(time, 0);
             Grid.SetRow(time, enabled ? 1 : 2);
             Grid.SetRowSpan(time, 1);
+            Grid.SetColumn(severity, enabled ? 1 : 0);
+            Grid.SetRow(severity, enabled ? 0 : 1);
+
+            // Not spanned. A row-spanning element's height is shared out across the rows it
+            // covers, so the severity group — the tallest of the three — pushed the first row
+            // to nearly twice its own content and drove TIME LENS off the bottom of the
+            // scroller again. One group per cell keeps each row the height of what is in it:
+            // measured, the whole body then fits the landscape viewport with room to spare
+            // instead of overflowing it by 139 px (audit 3, D2).
+            Grid.SetRowSpan(severity, 1);
+            severity.VerticalAlignment = VerticalAlignment.Top;
+
+            // Regex and Case-sensitive move up beside the field they qualify. They are a full
+            // 48 dp row of their own, and in landscape that row is what makes the drawer's
+            // body taller than the drawer: with it stacked, the whole TIME LENS group sat
+            // below the scroller's fold. Beside the field the body fits, and the field still
+            // has 600 px to type into (audit 3, D2).
+            if (_mobileQueryRow is { } queryRow &&
+                _mobileQuerySection is StackPanel querySection &&
+                _mobileQueryOptions is { } queryOptions)
+            {
+                var beside = enabled;
+                if (beside && queryOptions.Parent != queryRow)
+                {
+                    querySection.Children.Remove(queryOptions);
+                    Grid.SetColumn(queryOptions, 2);
+                    queryRow.Children.Add(queryOptions);
+                }
+                else if (!beside && queryOptions.Parent != querySection)
+                {
+                    queryRow.Children.Remove(queryOptions);
+                    querySection.Children.Add(queryOptions);
+                }
+            }
         }
 
         if (_mobileAnalysisTabs is { } tabs)
@@ -514,9 +677,9 @@ public sealed partial class SessionWorkspaceView : UserControl
             }
         }
 
+        var analysisWidth = splitTimeline ? (availableWidth * 0.58) - 78 : availableWidth - (enabled ? 78 : 0);
         if (_entryHeader is { } entryHeader && _entryActions is { } entryActions)
         {
-            var analysisWidth = splitTimeline ? availableWidth * 0.58 - 78 : availableWidth - (enabled ? 78 : 0);
 
             // 400 was still above what a split landscape phone actually offers: a 1080 px
             // portrait device turned sideways leaves this pane about 374 px, so the summary
@@ -533,14 +696,33 @@ public sealed partial class SessionWorkspaceView : UserControl
             entryActions.HorizontalAlignment = sideBySide
                 ? HorizontalAlignment.Right
                 : HorizontalAlignment.Stretch;
+            // The cap keeps the actions from eating the count line beside them. It has to know
+            // how many controls are in the row: with the load-more control moved up here, a
+            // cap sized for three left the fourth to be laid out past the right edge of the
+            // pane, and in Split it landed off the screen entirely (audit 3, D2).
             entryActions.MaxWidth = sideBySide
-                ? Math.Clamp(analysisWidth * 0.62, 240, 430)
+                ? Math.Clamp(analysisWidth * (enabled ? 0.78 : 0.62), 240, 560)
                 : double.PositiveInfinity;
             _summary.TextWrapping = sideBySide ? TextWrapping.NoWrap : TextWrapping.Wrap;
             _summary.TextTrimming = sideBySide ? TextTrimming.CharacterEllipsis : TextTrimming.None;
             _summary.FontSize = TextScale.Of(enabled ? 11 : 12);
             _summary.Margin = sideBySide ? new Thickness(0, 0, 8, 0) : new Thickness(0, 0, 0, 4);
         }
+
+        // The load-more control stops taking a band of its own where there is no band to
+        // spare. Measured in landscape, the pane spent three 42 dp bands on chrome — the tab
+        // strip, the count-and-sort row and this — over 75 dp of actual log, which is 1.3 rows
+        // (audit 3, D2). A short viewport is short and wide by definition, and the row above
+        // has 810 dp to lay four controls out in, so this joins it and the band goes back to
+        // the list. It is a footer again the moment the viewport is tall enough to hold one,
+        // which is where the argument for putting it under the list still applies.
+        // Only where the pane is wide enough to hold it beside the count line and the three
+        // controls already there: in Split the analysis column is 458 dp, and a fourth control
+        // laid out past its right edge is worse than the band it was saving.
+        MoveLoadMore(intoHeader: enabled && analysisWidth >= 560);
+
+        // Two lines to a row rather than three, in a viewport that has no height to give one.
+        SetCompactEntryRows(enabled);
 
         // A row of entries is the point of the pane, so it is the last thing that gives way.
         // A short viewport still has to clear the 48 dp touch floor, which it does; the

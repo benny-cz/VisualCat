@@ -26,7 +26,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private readonly TabControl _tabs = new();
     private readonly TextBlock _message = new();
     private readonly Border _emptyState = new();
-    private readonly DockPanel _rootPanel = new();
+    private readonly ModalWorkspaceBand _rootPanel = new();
     private readonly Dictionary<SessionTabViewModel, TabItem> _tabItems = [];
     private readonly string[] _startupPaths;
     private readonly SettingsStore _settingsStore;
@@ -38,6 +38,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private readonly Action<IReadOnlyList<string>> _launchFilesHandler;
     private readonly Action _appResumedHandler;
     private readonly Action _appPausedHandler;
+    private readonly Action _displayConfigurationHandler;
 
     // Responsive command bar: primary actions are always inline, flexible actions render as
     // buttons while they fit and fold into "More" when they do not, and settings live in
@@ -116,15 +117,23 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             _viewModel.SuspendLiveViews();
             PersistOpenWorkspaceOnPause();
         };
+        _displayConfigurationHandler = () =>
+            Dispatcher.UIThread.Post(ApplyDisplayConfigurationChange);
         PlatformSourceRegistry.LaunchFilesReceived += _launchFilesHandler;
         PlatformSourceRegistry.AppResumed += _appResumedHandler;
         PlatformSourceRegistry.AppPaused += _appPausedHandler;
+        PlatformSourceRegistry.DisplayConfigurationChanged += _displayConfigurationHandler;
         Content = Build();
         SizeChanged += (_, eventArgs) => UpdateMobileChrome(eventArgs.NewSize);
         ActualThemeVariantChanged += (_, _) => ApplyThemeSurfaces();
         ApplyThemeSurfaces();
         _viewModel.TabAdded += (_, tab) => Dispatcher.UIThread.Post(() => AddTab(tab));
         _viewModel.TabRemoved += (_, tab) => Dispatcher.UIThread.Post(() => RemoveTab(tab));
+
+        // A recording that stops without being asked to is the one capture outcome the reader
+        // cannot see for themselves, so it goes in the lane that stays until dismissed.
+        _viewModel.CaptureEndedUnprompted += (_, message) =>
+            Dispatcher.UIThread.Post(() => ShowNotice(message, NoticeKind.Failure));
         _tabs.SelectionChanged += (_, _) =>
         {
             if (_tabs.SelectedItem is TabItem { Tag: SessionTabViewModel tab })
@@ -162,6 +171,63 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             StopObservingSafeArea();
         };
         AddHandler(KeyDownEvent, OnKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+    }
+
+    /// <summary>
+    /// The device changed how the app is displayed, and this process is still the one running.
+    /// </summary>
+    /// <remarks>
+    /// Android used to answer a text-size change by destroying the activity. That took the
+    /// live capture with it without a word, and left a large session showing an empty list
+    /// under the word "Ready" for ten seconds while it was reopened from disk (audit 3, A2 and
+    /// C3). The activity now handles the change, and this is the whole of what the recreation
+    /// was actually achieving: the shell re-states its own sizes, and each workspace is built
+    /// again at the new scale over the session it was already showing.
+    ///
+    /// Only a scale change rebuilds. Density, locale and layout direction are handled in place
+    /// as well but nothing in the product reads them, and rebuilding four panes over a
+    /// million-entry session for a change that cannot alter a single pixel would be its own
+    /// small version of the defect.
+    /// </remarks>
+    private void ApplyDisplayConfigurationChange()
+    {
+        var before = TextScale.Effective;
+        ApplyAppearance();
+        if (Math.Abs(TextScale.Effective - before) > 0.001)
+        {
+            RebuildWorkspaceViews();
+        }
+
+        UpdateMobileChrome(Bounds.Size);
+    }
+
+    /// <summary>
+    /// Replaces every open session's view, keeping the session itself — and its capture.
+    /// </summary>
+    /// <remarks>
+    /// A workspace resolves every font size in it while it is being constructed, so a scale
+    /// the reader has just changed reaches the screen by building the view again and no other
+    /// way. What must <em>not</em> be rebuilt is the session: the tab view model owns the
+    /// store, the snapshot and the running capture, and it is the same object before and
+    /// after. That is the difference between this and the activity recreation it replaces —
+    /// the reader keeps their recording, their million rows stay in memory, and the workspace
+    /// mode they chose comes across with them.
+    /// </remarks>
+    private void RebuildWorkspaceViews()
+    {
+        foreach (var (viewModel, item) in _tabItems.ToArray())
+        {
+            if (item.Content is not SessionWorkspaceView previous)
+            {
+                continue;
+            }
+
+            var mode = previous.CurrentDisplayMode;
+            previous.DetachViewModel();
+            item.Content = CreateWorkspaceView(viewModel, mode);
+        }
+
+        UpdateSessionActionAvailability();
     }
 
     private void RestoreAndroidLayoutAfterResume()
@@ -618,7 +684,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
         // The same sentence Recent sessions and Session cache use. Three lists describing the
         // same three captures in three vocabularies was the whole of E2.
-        var detail = SheetForm.DescribeSessionState(session);
+        var detail = SheetForm.DescribeSessionState(session, CapturingSessionPaths().Contains(session.Path));
         var button = new Button
         {
             MinHeight = OperatingSystem.IsAndroid() ? 56 : 0,
@@ -1407,11 +1473,18 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // The one thing the platform will not tell the app up front is whether this capture
         // was actually allowed: declining Android's prompt does not fail, it silently
         // narrows the capture to VisualCat's own records while every permission check still
-        // reports success. The source works that out from what arrives and says so here,
-        // once, as a failure — because from the reader's point of view it is one
-        // (audit 2, C1).
+        // reports success. The source works that out from what arrives and says so here, as a
+        // failure — because from the reader's point of view it is one (audit 2, C1).
+        //
+        // And takes it back if it turns out to have been wrong. A restricted scope is inferred
+        // from an absence of foreign records, so a foreign record arriving later disproves it;
+        // leaving a red notice reading "only VisualCat's own log lines are being captured"
+        // pinned over a capture that is plainly recording the whole device was the most
+        // visible half of audit 3's A1. Only this lane's own message is retracted, and only
+        // while it is still the one showing.
         if (source is ISourceScopeReporter reporter)
         {
+            var scopeNotice = 0L;
             reporter.ScopeResolved += report =>
             {
                 if (!report.FullDevice && report.Summary is { Length: > 0 })
@@ -1420,6 +1493,15 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                         "Only VisualCat's own log lines are being captured — " +
                         $"{report.Summary}. See the session details for how to widen it.",
                         NoticeKind.Failure);
+                    scopeNotice = NoticeRevision;
+                }
+                else if (report.FullDevice && scopeNotice != 0)
+                {
+                    RetractNotice(scopeNotice);
+                    scopeNotice = 0;
+                    ShowNotice(
+                        "Log access was allowed after all — this capture is seeing the whole device.",
+                        NoticeKind.Information);
                 }
             };
         }
@@ -1464,14 +1546,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         viewModel.SnapshotChanged += OnSessionSnapshotChanged;
-        var mobile = OperatingSystem.IsAndroid();
-        var workspace = new SessionWorkspaceView(viewModel);
-        workspace.ApplyDisplaySettings(
-            _settings.IntensityScale,
-            _settings.TimelineNormalization,
-            _settings.TimelineMinimumUsPerPixel,
-            _settings.TimelinePixelSnap,
-            _settings.TimelineMinimumBarWidth);
+        var workspace = CreateWorkspaceView(viewModel, _settings.WorkspaceDisplayMode);
 
         // The header is the session's name for automation only: the strip above draws the
         // chips, and this TabControl's own strip is out of the layout (see BuildSessionStrip).
@@ -1481,16 +1556,6 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             Content = workspace,
             Tag = viewModel,
         };
-        workspace.NoticeRaised += (message, failure) =>
-            ShowNotice(message, failure ? NoticeKind.Failure : NoticeKind.Information);
-        workspace.RestoreDisplayMode(_settings.WorkspaceDisplayMode);
-        workspace.DisplayModeChanged += PersistWorkspaceDisplayMode;
-        workspace.ExportRequested += range => _ = ExportAsync(range);
-        workspace.StopRequested += () => _viewModel.StopAsync(viewModel);
-
-        // A session that failed with no data offers the only two useful actions there are.
-        workspace.CloseRequested += () => _ = _viewModel.CloseAsync(viewModel);
-        workspace.OpenLogRequested += OpenLogAsync;
         _tabItems.Add(viewModel, item);
         _emptyState.IsVisible = false;
         _tabs.Items.Add(item);
@@ -1500,6 +1565,36 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         UpdateSessionActionAvailability();
         UpdateMobileChrome(Bounds.Size);
         PersistOpenWorkspace();
+    }
+
+    /// <summary>
+    /// Builds one session's workspace and connects it to the shell.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the first build and by <see cref="RebuildWorkspaceViews"/>, so a replaced
+    /// view arrives wired exactly as the original was rather than as whatever the second call
+    /// site remembered to repeat.
+    /// </remarks>
+    private SessionWorkspaceView CreateWorkspaceView(SessionTabViewModel viewModel, string? displayMode)
+    {
+        var workspace = new SessionWorkspaceView(viewModel);
+        workspace.ApplyDisplaySettings(
+            _settings.IntensityScale,
+            _settings.TimelineNormalization,
+            _settings.TimelineMinimumUsPerPixel,
+            _settings.TimelinePixelSnap,
+            _settings.TimelineMinimumBarWidth);
+        workspace.NoticeRaised += (message, failure) =>
+            ShowNotice(message, failure ? NoticeKind.Failure : NoticeKind.Information);
+        workspace.RestoreDisplayMode(displayMode);
+        workspace.DisplayModeChanged += PersistWorkspaceDisplayMode;
+        workspace.ExportRequested += range => _ = ExportAsync(range);
+        workspace.StopRequested += () => _viewModel.StopAsync(viewModel);
+
+        // A session that failed with no data offers the only two useful actions there are.
+        workspace.CloseRequested += () => _ = _viewModel.CloseAsync(viewModel);
+        workspace.OpenLogRequested += OpenLogAsync;
+        return workspace;
     }
 
     private void OnSessionSnapshotChanged(object? sender, EventArgs eventArgs) =>
@@ -1667,10 +1762,34 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// The sessions this app is recording into at this moment.
+    /// </summary>
+    /// <remarks>
+    /// A stored session that is not finalized may be a capture that was interrupted months ago
+    /// or one that is running right now, and on disk the two are identical — the only thing
+    /// that can tell them apart is the app that is doing the recording (audit 3, E1). Path
+    /// comparison is case-insensitive because these are Android and Windows file paths, and
+    /// the same session can be named either way by the two sides of this comparison.
+    /// </remarks>
+    private HashSet<string> CapturingSessionPaths()
+    {
+        var capturing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tab in _viewModel.Tabs)
+        {
+            if (tab.IsLiveCaptureActive)
+            {
+                capturing.Add(Path.GetFullPath(tab.SessionPath));
+            }
+        }
+
+        return capturing;
+    }
+
     private async Task OpenRecentAsync()
     {
         var sessions = await TemporarySessionRetentionService.ScanAsync(WorkspaceViewModel.TemporarySessionRoot);
-        var path = await ShowDialogAsync(new RecentSessionsDialog(sessions));
+        var path = await ShowDialogAsync(new RecentSessionsDialog(sessions, CapturingSessionPaths()));
         if (path is not null)
         {
             await RunAsync(() => _viewModel.OpenSessionAsync(path));
@@ -1704,7 +1823,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     {
         var updated = await ShowDialogAsync(new SessionCacheDialog(
             WorkspaceViewModel.TemporarySessionRoot,
-            _settings));
+            _settings,
+            CapturingSessionPaths()));
         if (updated is null)
         {
             return;
@@ -1878,10 +1998,18 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        if ((_tabs.SelectedItem as TabItem)?.Content is SessionWorkspaceView workspace &&
-            workspace.TryHandleShortcut(eventArgs))
+        if (ActiveWorkspace is { } workspace && workspace.TryHandleShortcut(eventArgs))
         {
             eventArgs.Handled = true;
+
+            // Android turns one Back press into a Key.Escape key-down and a back-request, in
+            // that order. This is the key-down; the back-request is about to arrive and must
+            // not treat the drawer this just closed as a second thing to answer (audit 3, C1).
+            if (eventArgs.Key == Key.Escape)
+            {
+                NoteDismissedByEscape();
+            }
+
             return;
         }
 
@@ -1947,6 +2075,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         PlatformSourceRegistry.LaunchFilesReceived -= _launchFilesHandler;
         PlatformSourceRegistry.AppResumed -= _appResumedHandler;
         PlatformSourceRegistry.AppPaused -= _appPausedHandler;
+        PlatformSourceRegistry.DisplayConfigurationChanged -= _displayConfigurationHandler;
         StopNoticeTimer();
         StopObservingSafeArea();
 

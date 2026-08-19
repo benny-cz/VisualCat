@@ -229,13 +229,20 @@ public sealed partial class MainView : IDialogHost
 
         var content = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
         content.Children.Add(header);
+
+        // A sheet ends in a pinned decision row, so its last control is the one that gets cut
+        // when the body is taller than the sheet — Appearance & timeline lost the bottom third
+        // of a checkbox and Session cache the whole second line of its last session, both
+        // against a hard edge with nothing saying anything was below it (audit 3, D2).
         Control inner = scrolls
-            ? new ScrollViewer
-            {
-                Content = body,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            }
+            ? new FadingScrollHost(
+                new ScrollViewer
+                {
+                    Content = body,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                },
+                dark)
             : body;
         Grid.SetRow(inner, 1);
         content.Children.Add(inner);
@@ -296,13 +303,15 @@ public sealed partial class MainView : IDialogHost
     /// sheet as modal, so with a sheet open every control underneath it was still reported
     /// clickable and enabled: Open log, Live, More, the mode buttons, Load next 500 and
     /// every entry row. Assistive technology walks past a scrim it cannot see and can
-    /// activate what it finds there (audit 2, B4). Raw takes the whole band out of the
-    /// tree, which is the accessibility equivalent of the scrim.
+    /// activate what it finds there (audit 2, B4).
     ///
-    /// Two flags, because they say two true things and the platform bridge reads both: the
-    /// band is not part of the control view, and it is not on screen for the reader. Neither
-    /// has any visual effect — disabling the band would have, and a workspace greyed out
-    /// behind a bottom sheet would be a worse lie than the one being fixed.
+    /// The two attached properties were the wrong instrument for it and had no measurable
+    /// effect: both describe a single peer and neither is inherited, so the band left the
+    /// control view while its twenty descendants were promoted in its place and stayed
+    /// clickable (audit 3, B3). <see cref="ModalWorkspaceBand"/> answers it where every
+    /// platform bridge actually asks — the band reports no children while it is sealed. The
+    /// attached properties are still set, because they are true, cost nothing, and are what a
+    /// UIA client reads first.
     ///
     /// The overlay host itself is never made inert, so the sheet on top stays reachable, and
     /// the state is recomputed rather than toggled, so two stacked sheets closing in any
@@ -311,6 +320,7 @@ public sealed partial class MainView : IDialogHost
     private void ApplyOverlayModality()
     {
         var covered = _overlays.Count > 0;
+        _rootPanel.IsSealedForModal = covered;
         AutomationProperties.SetAccessibilityView(
             _rootPanel,
             covered ? AccessibilityView.Raw : AccessibilityView.Content);
@@ -399,16 +409,89 @@ public sealed partial class MainView : IDialogHost
     /// </remarks>
     private void OnBackRequested(object? sender, RoutedEventArgs eventArgs)
     {
+        // The same press, already answered. Android delivers one Back as two events — a
+        // Key.Escape key-down and, about ten milliseconds later, this — and the key-down runs
+        // first. So the workspace gave up its filter drawer to the key-down, and this arrived
+        // to find nothing left to dismiss and let the platform background the task: Back both
+        // closed the drawer and left the app, with a half-typed query going with it
+        // (audit 3, C1). One press, one decision.
+        if (TakeDismissedByEscape())
+        {
+            eventArgs.Handled = true;
+            return;
+        }
+
         if (DismissTopOverlay())
         {
             eventArgs.Handled = true;
             return;
         }
 
-        if ((_tabs.SelectedItem as TabItem)?.Content is SessionWorkspaceView workspace &&
-            workspace.TryDismissTransientState())
+        if (ActiveWorkspace is { } workspace && workspace.TryDismissTransientState())
         {
             eventArgs.Handled = true;
+        }
+    }
+
+    /// <summary>
+    /// When the workspace last dismissed something for an <see cref="Key.Escape"/> press.
+    /// </summary>
+    /// <remarks>
+    /// Only ever written by the key-down path and only ever read once, by the back-request
+    /// that follows the same press, so a second Back press cannot inherit the first one's
+    /// answer. The window is generous against the ~10 ms the platform actually takes and far
+    /// short of any interval a person could press Back twice in.
+    /// </remarks>
+    private long _escapeDismissedAt = long.MinValue;
+
+    private const long EscapeEchoWindowMs = 400;
+
+    /// <summary>Records that an Escape key-down did the work a Back press was asking for.</summary>
+    internal void NoteDismissedByEscape() => _escapeDismissedAt = Environment.TickCount64;
+
+    /// <summary>Consumes that record, if it is recent enough to belong to this press.</summary>
+    private bool TakeDismissedByEscape()
+    {
+        var when = _escapeDismissedAt;
+        _escapeDismissedAt = long.MinValue;
+        return when != long.MinValue && Environment.TickCount64 - when < EscapeEchoWindowMs;
+    }
+
+    /// <summary>
+    /// The workspace the reader is looking at.
+    /// </summary>
+    /// <remarks>
+    /// Back dismissed a modal sheet correctly and left the app entirely from the open filter
+    /// drawer — the surface a reader is in most often, with a half-typed query in it. Both
+    /// paths run in the same handler and the sheet's does not need a workspace, which puts the
+    /// fault in the one step the drawer's path adds: reading the workspace back out of the tab
+    /// control (audit 3, C1).
+    ///
+    /// So it is not read out of the tab control any more, or not only. The selection the shell
+    /// itself keeps is asked first, the tab control second, and a lone open session answers
+    /// for itself — with one session open there is no ambiguity for a lookup to get wrong. A
+    /// silent <c>as</c> cast deciding whether the system Back gesture works is not a thing to
+    /// leave one step deep.
+    /// </remarks>
+    private SessionWorkspaceView? ActiveWorkspace
+    {
+        get
+        {
+            if (_viewModel.Selected is { } selected &&
+                _tabItems.TryGetValue(selected, out var item) &&
+                item.Content is SessionWorkspaceView selectedWorkspace)
+            {
+                return selectedWorkspace;
+            }
+
+            if ((_tabs.SelectedItem as TabItem)?.Content is SessionWorkspaceView tabWorkspace)
+            {
+                return tabWorkspace;
+            }
+
+            return _tabItems.Count == 1
+                ? _tabItems.Values.First().Content as SessionWorkspaceView
+                : null;
         }
     }
 }

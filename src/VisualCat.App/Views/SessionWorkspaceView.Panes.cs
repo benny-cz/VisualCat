@@ -513,8 +513,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         var labelBrush = new SolidColorBrush(WorkspacePalette.TextMuted(dark));
         var valueBrush = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
         var headBrush = new SolidColorBrush(WorkspacePalette.Accent(dark));
-        var warnColor = LevelPalette.ColorOf(LogLevel.Warn);
-        var warnBrush = new SolidColorBrush(dark ? warnColor : Darken(warnColor));
+        var warnBrush = new SolidColorBrush(LevelPalette.InkOf(LogLevel.Warn, dark));
 
         var descriptor = snapshot.Descriptor;
         var counters = descriptor.Counters;
@@ -557,6 +556,34 @@ public sealed partial class SessionWorkspaceView : UserControl
             _sessionInfo.Children.Add(row);
         }
 
+        // A row whose value is one long unbreakable token, on a line of its own. A
+        // 36-character session id in the 190 px value column of a phone wrapped to three
+        // lines, the last of which held a single character (audit 3, E4). An identifier is
+        // read by comparing it, not by reading it, so it gets the full width and a
+        // fixed-pitch face — which is also what makes two of them comparable at a glance.
+        void IdentifierRow(string label, string value)
+        {
+            text.Append(label).Append(": ").Append(value).Append('\n');
+            var stack = new StackPanel { Margin = new Thickness(0, 1) };
+            stack.Children.Add(new TextBlock
+            {
+                Text = label,
+                Foreground = labelBrush,
+                FontSize = TextScale.Of(11.5),
+            });
+            var valueText = new SelectableTextBlock
+            {
+                Text = value,
+                Foreground = valueBrush,
+                FontFamily = MonoFont,
+                FontSize = TextScale.Of(11),
+                TextWrapping = TextWrapping.Wrap,
+            };
+            AutomationProperties.SetName(valueText, $"{label}: {value}");
+            stack.Children.Add(valueText);
+            _sessionInfo.Children.Add(stack);
+        }
+
         static string N(long value) => value.ToString("N0", DisplayCulture.Current);
 
         Section("Session");
@@ -590,7 +617,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ? displayZone
                 : $"{displayZone} · captured as {parseZone}");
         Row("State", $"{descriptor.State}{(descriptor.Degraded ? " · degraded/index-only" : string.Empty)}", descriptor.Degraded);
-        Row("Session id", descriptor.SessionId.ToString());
+        IdentifierRow("Session id", descriptor.SessionId.ToString());
 
         Section("Entries");
         Row("Timed", N(counters.TimedEntries));

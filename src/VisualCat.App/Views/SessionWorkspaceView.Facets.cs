@@ -310,11 +310,17 @@ public sealed partial class SessionWorkspaceView : UserControl
         _facets.Children.Add(header);
         foreach (var row in rows)
         {
-            _facets.Children.Add(FacetRow(dimension, row.Key, row.Text, row.Count, row.State));
+            _facets.Children.Add(FacetRow(heading, dimension, row.Key, row.Text, row.Count, row.State));
         }
     }
 
-    private Grid FacetRow(FacetDimension dimension, FacetKey key, string text, long count, FacetState state)
+    private Grid FacetRow(
+        string heading,
+        FacetDimension dimension,
+        FacetKey key,
+        string text,
+        long count,
+        FacetState state)
     {
         var row = new Grid
         {
@@ -342,21 +348,52 @@ public sealed partial class SessionWorkspaceView : UserControl
         };
         Grid.SetColumn(countText, 1);
         row.Children.Add(countText);
-        var include = FacetButton("+", state == FacetState.Included, IncludeActive, dimension, key, exclude: false);
+        var subject = $"{Singular(heading)} {text}, {count:N0} entries";
+        var include = FacetButton("+", state == FacetState.Included, IncludeActive, dimension, key, subject, exclude: false);
         Grid.SetColumn(include, 2);
         row.Children.Add(include);
-        var exclude = FacetButton("−", state == FacetState.Excluded, ExcludeActive, dimension, key, exclude: true);
+        var exclude = FacetButton("−", state == FacetState.Excluded, ExcludeActive, dimension, key, subject, exclude: true);
         Grid.SetColumn(exclude, 3);
         row.Children.Add(exclude);
+
+        // The row's own name is what a reader hears before its two buttons, so the value and
+        // its count are said once rather than twice per row.
+        AutomationProperties.SetName(row, subject);
         return row;
     }
 
+    /// <summary>The group heading as it reads inside one row's name: TAGS becomes "Tag".</summary>
+    private static string Singular(string heading)
+    {
+        var trimmed = heading.Trim();
+        if (trimmed.EndsWith('s') && trimmed.Length > 1)
+        {
+            trimmed = trimmed[..^1];
+        }
+
+        return trimmed.Length == 0
+            ? trimmed
+            : string.Concat(char.ToUpperInvariant(trimmed[0]), trimmed[1..].ToLowerInvariant());
+    }
+
+    /// <summary>
+    /// One of a facet row's two decisions.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="subject"/> is what the button acts on, and it belongs in the name: every
+    /// include button in the pane was called "Include facet value", so a screen-reader user
+    /// heard the same four words once per tag, pid and thread the session has, with nothing to
+    /// tell them apart — the value and the count are in sibling text blocks that the button's
+    /// own name does not carry (audit 3, B4). The group is named too, because <c>1247</c> is
+    /// ambiguous between a pid and a thread until something says which.
+    /// </remarks>
     private Button FacetButton(
         string glyph,
         bool active,
         IBrush activeBrush,
         FacetDimension dimension,
         FacetKey key,
+        string subject,
         bool exclude)
     {
         var button = new Button
@@ -385,7 +422,11 @@ public sealed partial class SessionWorkspaceView : UserControl
                 : exclude
                     ? "Exclude: hide these entries"
                     : "Include: keep only entries matching a value from this group");
-        AutomationProperties.SetName(button, exclude ? "Exclude facet value" : "Include facet value");
+        AutomationProperties.SetName(
+            button,
+            active
+                ? $"Stop {(exclude ? "excluding" : "including")} {subject}"
+                : $"{(exclude ? "Exclude" : "Include")} {subject}");
         button.Click += (_, _) => _ = _viewModel.ToggleFacetAsync(dimension, key, exclude);
         return button;
     }
@@ -470,9 +511,16 @@ public sealed partial class SessionWorkspaceView : UserControl
         var color = LevelPalette.ColorOf(level);
         if (toggle.IsChecked == true)
         {
-            toggle.Background = new SolidColorBrush(Color.FromArgb(dark ? (byte)56 : (byte)40, color.R, color.G, color.B));
+            // The plate is a tint of the level and the letter is the level's ink, so the two
+            // move together and the pair has to be measured together. The alphas differ
+            // because the letter sits on opposite sides of its plate in the two variants: on
+            // dark the ink is lighter than the tint and more tint costs contrast, on light it
+            // is darker and more tint costs contrast the other way. 32 and 26 are where every
+            // one of the seven clears 4.5:1, Fatal included (audit 3, B1).
+            toggle.Background = new SolidColorBrush(
+                Color.FromArgb(dark ? (byte)32 : (byte)26, color.R, color.G, color.B));
             toggle.BorderBrush = new SolidColorBrush(Color.FromArgb(220, color.R, color.G, color.B));
-            toggle.Foreground = new SolidColorBrush(dark ? color : Darken(color));
+            toggle.Foreground = new SolidColorBrush(LevelPalette.InkOf(level, dark));
             toggle.BorderThickness = new Thickness(1);
             toggle.Opacity = 1;
         }
@@ -485,10 +533,6 @@ public sealed partial class SessionWorkspaceView : UserControl
             toggle.Opacity = 0.55;
         }
     }
-
-    /// <summary>Keeps a level color legible as text on a light surface.</summary>
-    private static Color Darken(Color color) =>
-        Color.FromRgb((byte)(color.R * 0.62), (byte)(color.G * 0.62), (byte)(color.B * 0.62));
 
     /// <summary>
     /// Minimal toggle template that honours the control's own brushes. Fluent's default

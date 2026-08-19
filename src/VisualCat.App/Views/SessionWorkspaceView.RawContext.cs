@@ -79,12 +79,25 @@ public sealed partial class SessionWorkspaceView : UserControl
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 Content = inspector,
             };
+            // Which entry this is stays on screen while the column scrolls. Expanding SOURCE
+            // CONTEXT scrolls the column 1,628 px to land on the selected source line —
+            // which is right — and that took the entry's severity, tag, timestamp and
+            // message off the top with it, leaving a dump with nothing saying what it was a
+            // dump of (audit 3, D5).
+            var pinned = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
+            if (_inspectIdentity is { } identityLine)
+            {
+                pinned.Children.Add(identityLine);
+            }
+
+            Grid.SetRow(_inspectScroll, 1);
+            pinned.Children.Add(_inspectScroll);
             _rawCodeSurface = new Border
             {
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(10, 8),
-                Child = _inspectScroll,
+                Child = pinned,
                 IsVisible = false,
             };
             _rawDataSurface = _rawCodeSurface;
@@ -282,6 +295,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             Children = { _inspectPill, _inspectTag, _inspectMeta },
         };
         AutomationProperties.SetName(identity, "Selected entry");
+        _inspectIdentity = identity;
 
         // A phone pane cannot give two scrolling surfaces a fair share of one screen: in
         // Split mode the fixed controls between them consumed everything and the dump was
@@ -338,8 +352,14 @@ public sealed partial class SessionWorkspaceView : UserControl
             RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto"),
         };
         body.Children.Add(_rawSelectionHint);
-        Grid.SetRow(identity, 1);
-        body.Children.Add(identity);
+        if (!_mobile)
+        {
+            // On a phone this line is pinned above the scroller instead; see the mobile
+            // branch of BuildEntryInspectorPane.
+            Grid.SetRow(identity, 1);
+            body.Children.Add(identity);
+        }
+
         Grid.SetRow(messageSurface, 2);
         body.Children.Add(messageSurface);
         Grid.SetRow(_inspectTruncated, 3);
@@ -369,11 +389,16 @@ public sealed partial class SessionWorkspaceView : UserControl
         // The claim has to match what is drawn. Each line carries a sequence number and a
         // parse tag before the file's own text, so "exact bytes" was wrong about the line and
         // right only about the part after the divider (finding 15a).
+        //
+        // The glyph is named rather than shown. While the section is collapsed the divider is
+        // not on screen, so the caption ended on a bare vertical bar and read as a sentence
+        // that had been cut off — a rendering fault, on the one control whose whole job is to
+        // look trustworthy about raw bytes (audit 3, E3).
         var hint = new TextBlock
         {
             Text = _mobile
-                ? "exact bytes, after the │"
-                : "exact bytes after the │, with the lines around them",
+                ? "exact bytes, after the │ divider"
+                : "exact bytes after the │ divider, with the lines around them",
             FontSize = TextScale.Of(10),
             Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
@@ -660,7 +685,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_inspectTag is { } tag)
         {
             tag.Text = entry.Tag;
-            tag.Foreground = LevelPalette.BrushOf(entry.Level);
+            tag.Foreground = LevelPalette.InkBrushOf(entry.Level, ActualThemeVariant != ThemeVariant.Light);
         }
 
         if (_inspectMeta is { } meta)
@@ -1074,7 +1099,7 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         inlines.Add(new Run(raw.Substring(mark.Offset, mark.Length))
         {
-            Foreground = LevelPalette.BrushOf(_inspectedEntry?.Level ?? LogLevel.Unknown),
+            Foreground = LevelPalette.InkBrushOf(_inspectedEntry?.Level ?? LogLevel.Unknown, dark),
             FontWeight = FontWeight.Bold,
         });
         var end = mark.Offset + mark.Length;

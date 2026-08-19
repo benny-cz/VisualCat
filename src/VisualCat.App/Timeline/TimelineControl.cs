@@ -41,7 +41,7 @@ public sealed class TimelineControl : Control
     private static readonly Avalonia.Media.Immutable.ImmutablePen LightMinorGridPen = new(new Avalonia.Media.Immutable.ImmutableSolidColorBrush(Color.Parse("#E8EEF6")), 1);
     private static readonly Avalonia.Media.Immutable.ImmutablePen DarkCrosshairPen = new(new Avalonia.Media.Immutable.ImmutableSolidColorBrush(Color.Parse("#E8FFFFFF")), 1);
     private static readonly Avalonia.Media.Immutable.ImmutablePen LightCrosshairPen = new(new Avalonia.Media.Immutable.ImmutableSolidColorBrush(Color.Parse("#D8172033")), 1);
-    private static readonly Avalonia.Media.Immutable.ImmutablePen SearchMarkerPen = new(new Avalonia.Media.Immutable.ImmutableSolidColorBrush(Color.Parse("#FF3FE0")), 1);
+    private static readonly Avalonia.Media.Immutable.ImmutablePen SearchMarkerPen = new(new Avalonia.Media.Immutable.ImmutableSolidColorBrush(WorkspacePalette.SearchMatch), 1);
     private static readonly Avalonia.Media.Immutable.ImmutableSolidColorBrush RangeFill = new(Color.Parse("#304DA3FF"));
     private static readonly Avalonia.Media.Immutable.ImmutablePen RangePen = new(new Avalonia.Media.Immutable.ImmutableSolidColorBrush(Color.Parse("#B84DA3FF")), 1);
     private static readonly Avalonia.Media.Immutable.ImmutablePen SelectionPen = new(Brushes.White, 2);

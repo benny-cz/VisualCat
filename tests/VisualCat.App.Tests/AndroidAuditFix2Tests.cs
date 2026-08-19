@@ -364,9 +364,21 @@ public sealed class AndroidAuditFix2Tests
         var partial = finalized with { Finalized = false };
 
         Assert.EndsWith("complete", SheetForm.DescribeSessionState(finalized), StringComparison.Ordinal);
-        Assert.EndsWith("still being written", SheetForm.DescribeSessionState(partial), StringComparison.Ordinal);
         Assert.DoesNotContain("ready", SheetForm.DescribeSessionState(finalized), StringComparison.Ordinal);
         Assert.DoesNotContain("partial", SheetForm.DescribeSessionState(partial), StringComparison.Ordinal);
+
+        // Audit 3's E1: "still being written" said a process was writing to the file at that
+        // moment, and every capture that ends other than through Stop capture wore it
+        // permanently — a session from the previous day, untouched for 26 hours, described
+        // itself as one being recorded. A past state gets a past tense.
+        Assert.EndsWith("interrupted", SheetForm.DescribeSessionState(partial), StringComparison.Ordinal);
+        Assert.DoesNotContain("still being written", SheetForm.DescribeSessionState(partial), StringComparison.Ordinal);
+
+        // And the present tense is kept for the one session that is actually present tense.
+        Assert.EndsWith(
+            "capture in progress",
+            SheetForm.DescribeSessionState(partial, capturingNow: true),
+            StringComparison.Ordinal);
 
         // And the vocabulary is explained where a reader meets it.
         Assert.Contains("interrupted", SheetForm.SessionStateHelp, StringComparison.Ordinal);
@@ -394,18 +406,27 @@ public sealed class AndroidAuditFix2Tests
             Assert.Equal(row, Top(split), 1);
             Assert.Equal(row, Top(details), 1);
             Assert.Equal(row, Top(fit), 1);
-            Assert.True(fit.IsVisible);
+            Assert.True(fit.IsEnabled);
+            Assert.Equal(1, fit.Opacity);
 
+            var detailsEdges = (details.Bounds.Left, details.Bounds.Right);
             details.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
             window.UpdateLayout();
 
             // Details hides the plot, so the control that moves the plot goes with it rather
             // than staying enabled over a surface nobody can see.
-            Assert.False(fit.IsVisible);
+            Assert.False(fit.IsEnabled);
+            Assert.Equal(0, fit.Opacity);
+
+            // But it keeps its slot: audit 3's C4 found the three mode segments spreading into
+            // the space Fit left, so a second tap where Details had just been hit Split.
+            Assert.Equal(detailsEdges.Left, details.Bounds.Left, 1);
+            Assert.Equal(detailsEdges.Right, details.Bounds.Right, 1);
 
             plot.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
             window.UpdateLayout();
-            Assert.True(fit.IsVisible);
+            Assert.True(fit.IsEnabled);
+            Assert.Equal(1, fit.Opacity);
             return Task.CompletedTask;
         });
     }

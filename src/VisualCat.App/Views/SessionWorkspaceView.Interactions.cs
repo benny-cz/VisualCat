@@ -29,9 +29,9 @@ public sealed partial class SessionWorkspaceView : UserControl
     // Its own foreground is set with it: a mark that inherited the theme foreground would
     // be unreadable in one of the two themes.
     private static readonly Avalonia.Media.Immutable.ImmutableSolidColorBrush SearchHighlightFill =
-        new(Color.Parse("#FF3FE0"));
+        new(WorkspacePalette.SearchMatch);
     private static readonly Avalonia.Media.Immutable.ImmutableSolidColorBrush SearchHighlightText =
-        new(Color.Parse("#150411"));
+        new(WorkspacePalette.SearchMatchText);
 
     /// <summary>Name given to the message block of every row, so the two styles below can
     /// address it without the row template knowing anything about selection.</summary>
@@ -109,7 +109,16 @@ public sealed partial class SessionWorkspaceView : UserControl
     }
 
     /// <summary>Characters of a message a screen reader is given for one row.</summary>
-    private const int RowSpokenMessageLength = 320;
+    /// <remarks>
+    /// 320 was still a paragraph per row. A row draws one ellipsised line, and what it is for
+    /// is deciding whether to open the entry — so what it should say is enough to make that
+    /// decision and no more. A binary payload made the cost plain: rows carrying a
+    /// 1,000-character hex <c>DUMP=…</c> handed a reader 300 characters of hex to sit through
+    /// before the next row (audit 3, B6). At 120 an ordinary logcat message still arrives
+    /// whole, a dump announces itself and stops, and the sentence that follows says where the
+    /// rest is.
+    /// </remarks>
+    private const int RowSpokenMessageLength = 120;
 
     /// <summary>
     /// What a screen reader should hear for one row: which severity, which tag, when, and
@@ -117,13 +126,17 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// order the questions arrive. The message is capped because a row is a table cell, not
     /// the record: the inspector reads the rest.
     /// </summary>
-    private string EntryAutomationName(NormalizedEntry entry)
+    private string EntryAutomationName(NormalizedEntry entry) =>
+        $"{entry.Level} {entry.Tag} at {FormatInstant(entry.Timestamp)}: " +
+        SpokenEntryMessage(entry.Message).ReplaceLineEndings(" ");
+
+    /// <summary>As much of a message as a row is worth spending a reader's time on.</summary>
+    internal static string SpokenEntryMessage(string message)
     {
-        var message = entry.Message.Length > RowSpokenMessageLength
-            ? entry.Message[..RowSpokenMessageLength] + "…"
-            : entry.Message;
-        return $"{entry.Level} {entry.Tag} at {FormatInstant(entry.Timestamp)}: " +
-               message.ReplaceLineEndings(" ");
+        ArgumentNullException.ThrowIfNull(message);
+        return message.Length > RowSpokenMessageLength
+            ? message[..RowSpokenMessageLength] + "… (open the entry for the rest)"
+            : message;
     }
 
     /// <summary>
@@ -277,7 +290,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                     // under its column header.
                     SeverityEdge(entry.Level),
                     Cell(FormatInstant(entry.Timestamp), 0),
-                    Cell(entry.Level.ToLetter().ToString(), 1, LevelPalette.BrushOf(entry.Level)),
+                    Cell(entry.Level.ToLetter().ToString(), 1, LevelPalette.InkBrushOf(entry.Level, dark)),
                     Cell(ProcessLabel(entry), 2),
                     Cell(entry.Tid.ToString(System.Globalization.CultureInfo.InvariantCulture), 3),
                     Cell(entry.Buffer, 4),
@@ -290,11 +303,38 @@ public sealed partial class SessionWorkspaceView : UserControl
         });
     }
 
+    /// <summary>
+    /// Whether entry rows are drawn in two lines rather than three.
+    /// </summary>
+    /// <remarks>
+    /// A three-line row is 58 dp, and in a 434 dp landscape viewport that is most of what the
+    /// list has: the pane measured 1.3 rows of log under three 42 dp bands of chrome
+    /// (audit 3, D2). The lines are the same three; two of them share a line, because the tag
+    /// and the timestamp are both identity and read together anyway. The message keeps a line
+    /// of its own, which is the one that matters.
+    /// </remarks>
+    private bool _compactEntryRows;
+
+    /// <summary>Chooses the row density for the viewport, and rebuilds the rows if it changed.</summary>
+    private void SetCompactEntryRows(bool compact)
+    {
+        if (_compactEntryRows == compact)
+        {
+            return;
+        }
+
+        _compactEntryRows = compact;
+        if (_entries.ItemTemplate is not null)
+        {
+            ApplyEntryTemplate();
+        }
+    }
+
     private FuncDataTemplate<NormalizedEntry> BuildMobileEntryTemplate()
     {
         var dark = ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
         var separator = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
-        var muted = new SolidColorBrush(WorkspacePalette.TextMuted(dark));
+        var compact = _compactEntryRows;
         return new FuncDataTemplate<NormalizedEntry>((entry, _) =>
         {
             if (entry is null)
@@ -302,39 +342,73 @@ public sealed partial class SessionWorkspaceView : UserControl
                 return new Border();
             }
 
+            // The row's identity, and the one place the severity palette is read rather than
+            // looked at (audit 3, B1).
+            var identity = new TextBlock
+            {
+                Text = $"{entry.Level.ToLetter()}  {entry.Tag}",
+                FontWeight = FontWeight.Bold,
+                Foreground = LevelPalette.InkBrushOf(entry.Level, dark),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+
+            // No local Foreground: the two MetadataLineStyle rules own it, so the selected row
+            // can lift it out of muted (finding 7).
+            var metadata = new TextBlock
+            {
+                Name = MetadataBlockName,
+                Text = compact
+                    ? $"{FormatInstant(entry.Timestamp)}  ·  {ProcessLabel(entry)}:{entry.Tid}"
+                    : $"{FormatInstant(entry.Timestamp)}  ·  {ProcessLabel(entry)}:{entry.Tid}  ·  {entry.Buffer}",
+                FontSize = TextScale.Of(10),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = compact ? new Thickness(8, 0, 0, 1) : default,
+            };
+
+            var message = HighlightedText(
+                RowPreview(entry.Message),
+                _viewModel.Filter.Search,
+                static text => new TextBlock
+                {
+                    Name = MessageBlockName,
+                    Text = text,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                });
+
+            Control head = identity;
+            if (compact)
+            {
+                var heads = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+                heads.Children.Add(identity);
+                Grid.SetColumn(metadata, 1);
+                heads.Children.Add(metadata);
+                head = heads;
+            }
+
             var body = new StackPanel
             {
-                Margin = new Thickness(7, 5),
-                Spacing = 2,
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = $"{entry.Level.ToLetter()}  {entry.Tag}",
-                        FontWeight = FontWeight.Bold,
-                        Foreground = LevelPalette.BrushOf(entry.Level),
-                    },
-                    HighlightedText(
-                        RowPreview(entry.Message),
-                        _viewModel.Filter.Search,
-                        static text => new TextBlock
-                        {
-                            Name = MessageBlockName,
-                            Text = text,
-                            TextTrimming = TextTrimming.CharacterEllipsis,
-                        }),
-                    // No local Foreground: the two MetadataLineStyle rules own it, so the
-                    // selected row can lift it out of muted (finding 7).
-                    new TextBlock
-                    {
-                        Name = MetadataBlockName,
-                        Text = $"{FormatInstant(entry.Timestamp)}  ·  {ProcessLabel(entry)}:{entry.Tid}  ·  {entry.Buffer}",
-                        FontSize = TextScale.Of(10),
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                    },
-                },
+                Margin = compact ? new Thickness(7, 3) : new Thickness(7, 5),
+                Spacing = compact ? 1 : 2,
+                Children = { head, message },
             };
+            if (!compact)
+            {
+                body.Children.Add(metadata);
+            }
             Grid.SetColumn(body, 1);
+
+            // The row's own name already says the severity, the tag, the time, and as much of
+            // the message as is worth hearing. Left in the tree, the three lines said all of it
+            // a second time — and the message line said the whole <em>uncapped</em> string,
+            // which is where a kilobyte of hex was arriving from (audit 3, B6). What is drawn
+            // and what is spoken are the same content presented for two different senses; only
+            // one of them should say it.
+            foreach (var line in new[] { identity, metadata, message })
+            {
+                AutomationProperties.SetAccessibilityView(line, AccessibilityView.Raw);
+                AutomationProperties.SetIsControlElementOverride(line, false);
+            }
 
             // Costs no row height and appears only on the row the reader picked, so the
             // route to the rest of the message sits where the finger already is.
@@ -347,6 +421,11 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Margin = new Thickness(2, 0, 8, 0),
                 VerticalAlignment = VerticalAlignment.Center,
             };
+
+            // A decoration on the selected row, not a control: tapping the row is what opens
+            // the entry, and a lone "⤢" is not a thing to announce.
+            AutomationProperties.SetAccessibilityView(expand, AccessibilityView.Raw);
+            AutomationProperties.SetIsControlElementOverride(expand, false);
             Grid.SetColumn(expand, 2);
 
             var edge = SeverityEdge(entry.Level);
@@ -767,19 +846,43 @@ public sealed partial class SessionWorkspaceView : UserControl
             _entries.DoubleTapped += (_, _) => ShowInspector();
         }
 
-        _viewModel.EntriesReloading += (_, _) => _reloadingEntries = true;
-        _viewModel.EntriesReloaded += (_, _) =>
-        {
-            _reloadingEntries = false;
-            ObserveTimestampPrecision();
-            RestoreEntrySelection();
-        };
+        // Named handlers rather than lambdas, so DetachViewModel can take them off again. A
+        // workspace view is replaced rather than mutated when the reader changes the device's
+        // text size — every font size in it was resolved while it was being built — and a view
+        // left subscribed to a session it no longer draws would answer every change that
+        // session makes for as long as the tab is open (audit 3, A2).
+        _viewModel.EntriesReloading += OnEntriesReloading;
+        _viewModel.EntriesReloaded += OnEntriesReloaded;
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        _viewModel.SnapshotChanged += OnViewModelSnapshotChanged;
+    }
 
-        // Both view-model notifications are answered through the dispatcher, so a change
-        // raised while the tab was alive can arrive after it has been closed — and a redraw
-        // then reads a session that is being torn down. A closed session does not drive a
-        // view: the work is dropped rather than performed against a corpse.
-        _viewModel.PropertyChanged += (_, eventArgs) => Dispatcher.UIThread.Post(() =>
+    /// <summary>
+    /// Stops this view from answering its session. Called when the view is replaced.
+    /// </summary>
+    internal void DetachViewModel()
+    {
+        _viewModel.EntriesReloading -= OnEntriesReloading;
+        _viewModel.EntriesReloaded -= OnEntriesReloaded;
+        _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        _viewModel.SnapshotChanged -= OnViewModelSnapshotChanged;
+    }
+
+    private void OnEntriesReloading(object? sender, EventArgs eventArgs) => _reloadingEntries = true;
+
+    private void OnEntriesReloaded(object? sender, EventArgs eventArgs)
+    {
+        _reloadingEntries = false;
+        ObserveTimestampPrecision();
+        RestoreEntrySelection();
+    }
+
+    // Both view-model notifications are answered through the dispatcher, so a change raised
+    // while the tab was alive can arrive after it has been closed — and a redraw then reads a
+    // session that is being torn down. A closed session does not drive a view: the work is
+    // dropped rather than performed against a corpse.
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs eventArgs) =>
+        Dispatcher.UIThread.Post(() =>
         {
             if (_viewModel.IsDisposed)
             {
@@ -823,6 +926,9 @@ public sealed partial class SessionWorkspaceView : UserControl
                     // has to rebuild the moment the warning appears or clears rather than
                     // waiting for whatever refresh happens to come next.
                     UpdateSessionInfo();
+                    break;
+                case nameof(SessionTabViewModel.QueuedBehind):
+                    UpdateStatistics();
                     break;
                 case nameof(SessionTabViewModel.SearchStatus):
                     _searchStatus.Text = _viewModel.SearchStatus;
@@ -889,7 +995,8 @@ public sealed partial class SessionWorkspaceView : UserControl
                     break;
             }
         });
-        _viewModel.SnapshotChanged += (_, _) => Dispatcher.UIThread.Post(() =>
+    private void OnViewModelSnapshotChanged(object? sender, EventArgs eventArgs) =>
+        Dispatcher.UIThread.Post(() =>
         {
             if (_viewModel.IsDisposed)
             {
@@ -898,7 +1005,6 @@ public sealed partial class SessionWorkspaceView : UserControl
 
             UpdateTimelines();
         });
-    }
 
     private async Task SelectTimelineCellAsync(TimelineCellSelection cell)
     {
@@ -1053,15 +1159,25 @@ public sealed partial class SessionWorkspaceView : UserControl
         _loadMore.IsVisible = !_mobile || _viewModel.CanLoadMore;
         if (_entryFooter is { } footer)
         {
-            footer.IsVisible = _loadMore.IsVisible;
+            // The footer's frame is only worth a band while it is holding the control; in the
+            // short composition the control has moved into the header row (see MoveLoadMore).
+            footer.IsVisible = _loadMore.IsVisible && footer.Child is not null;
 
             // The footer sits at the end of what is loaded, so it says how far the end is:
             // "Load next 500" beside 59 640 unread rows answers a question nobody asked.
+            // Two lengths, because it has two homes. Under the list it is a full-width band
+            // and can say the whole sentence; in the short composition it shares one row with
+            // the count line and three other controls, and a 170 dp label there is what pushes
+            // the row past the edge of a Split-mode column (audit 3, D2).
             var label = loading
                 ? "Loading…"
-                : remaining > 0
-                    ? $"Load {Math.Min(remaining, SessionTabViewModel.EntryPageSize):N0} more · {remaining:N0} left"
-                    : $"Load next {SessionTabViewModel.EntryPageSize:N0}";
+                : _loadMoreInHeader == true
+                    ? remaining > 0
+                        ? $"+{Math.Min(remaining, SessionTabViewModel.EntryPageSize):N0} · {remaining:N0} left"
+                        : $"+{SessionTabViewModel.EntryPageSize:N0}"
+                    : remaining > 0
+                        ? $"Load {Math.Min(remaining, SessionTabViewModel.EntryPageSize):N0} more · {remaining:N0} left"
+                        : $"Load next {SessionTabViewModel.EntryPageSize:N0}";
             _loadMore.Content = label;
             AutomationProperties.SetName(_loadMore, label);
             ToolTip.SetTip(_loadMore, label);

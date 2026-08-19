@@ -102,10 +102,17 @@ public sealed record SourceScopeReport(
 public interface ISourceScopeReporter
 {
     /// <summary>
-    /// Raised at most once per capture, on a background thread, when the source can say what
-    /// it is actually seeing. A source that never resolves is reporting nothing, not
-    /// reporting success.
+    /// Raised on a background thread when the source can say what it is actually seeing. A
+    /// source that never resolves is reporting nothing, not reporting success.
     /// </summary>
+    /// <remarks>
+    /// It may be raised more than once, and a later report replaces an earlier one entirely —
+    /// description, summary and remedy alike. A restricted scope is inferred from an absence
+    /// (no record from another process has arrived yet) and an absence can be disproved, so a
+    /// source that later sees the device says so rather than living with the first answer it
+    /// gave. A handler that treats the first report as final will therefore go on describing a
+    /// full-device capture as own-app-only, which is the defect this replaces (audit 3, A1).
+    /// </remarks>
     event Action<SourceScopeReport>? ScopeResolved;
 }
 

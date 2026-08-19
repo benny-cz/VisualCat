@@ -18,6 +18,20 @@ public static class PlatformSourceRegistry
     public static event Action? AppResumed;
 
     /// <summary>
+    /// The device changed something about how the app is displayed — text size, display
+    /// density, locale, layout direction — without the app being torn down for it.
+    /// </summary>
+    /// <remarks>
+    /// Android's default is to destroy and recreate the activity for each of these, which on
+    /// this product costs the reader a running capture and about ten seconds of blank
+    /// workspace while every session is reopened from disk (audit 3, A2 and C3). The activity
+    /// declares that it handles them instead, and this is how it says so to the part of the
+    /// app that has to answer: the capture keeps running and the views are rebuilt at the new
+    /// scale, which is all the recreation was achieving.
+    /// </remarks>
+    public static event Action? DisplayConfigurationChanged;
+
+    /// <summary>
     /// Raised when the app leaves the foreground — backgrounded, or the screen turned
     /// off. A live capture keeps running; the workspace uses this to stop doing work
     /// whose only product is a picture nobody can see.
@@ -33,6 +47,8 @@ public static class PlatformSourceRegistry
     }
 
     public static void PublishAppResumed() => AppResumed?.Invoke();
+
+    public static void PublishDisplayConfigurationChanged() => DisplayConfigurationChanged?.Invoke();
 
     public static void PublishAppPaused() => AppPaused?.Invoke();
 

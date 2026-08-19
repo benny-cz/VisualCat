@@ -183,6 +183,20 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         set => Set(ref _captureScopeSummary, value);
     }
 
+    /// <summary>
+    /// The session this one is waiting on for a reading slot, or null when it is not queued.
+    /// </summary>
+    /// <remarks>
+    /// Observable because the empty plot carries it: a queued session used to say only that
+    /// "another log is being read first", which named nothing and showed no progress, so with
+    /// two imports on screen the reader could not tell which one was moving (audit 3, E4).
+    /// </remarks>
+    public string? QueuedBehind
+    {
+        get => _queuedBehind;
+        set => Set(ref _queuedBehind, value);
+    }
+
     /// <summary>The full explanation, including the one route out of a restricted scope.</summary>
     /// <remarks>
     /// Observable, because on Android the answer arrives several seconds into the capture
@@ -195,6 +209,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         get => _captureScopeRemedy;
         set => Set(ref _captureScopeRemedy, value);
     }
+
+    private string? _queuedBehind;
 
     /// <summary>
     /// Trouble the capture is currently working through without losing data, in the

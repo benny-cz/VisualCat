@@ -65,6 +65,11 @@ internal sealed class ChoiceSelector : ContentControl
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 VerticalContentAlignment = VerticalAlignment.Center,
             };
+
+            // Fluent paints the checked state onto the template's own content presenter,
+            // which outranks anything ApplyAppearance sets on the control. The class is what
+            // lets ProductTheme reach that part (audit 3, B2).
+            button.Classes.Add(ProductTheme.SegmentClass);
             AutomationProperties.SetName(button, $"{name}: {choice.Label}");
             var segment = new Segment(choice, button);
             button.IsCheckedChanged += (_, _) =>

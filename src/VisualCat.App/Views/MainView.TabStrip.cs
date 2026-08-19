@@ -40,6 +40,7 @@ public sealed partial class MainView
 
     private readonly Dictionary<SessionTabViewModel, TabChip> _chips = [];
     private ScrollViewer? _tabStrip;
+    private FadingScrollHost? _tabStripFade;
 
     /// <summary>One session's chip: its title, its close button, and the parts to restyle.</summary>
     private sealed record TabChip(Border Root, Button Select, Button Close, TextBlock Title);
@@ -47,7 +48,7 @@ public sealed partial class MainView
     /// <summary>
     /// Builds the strip and takes the built-in one out of the layout.
     /// </summary>
-    private ScrollViewer BuildSessionStrip()
+    private FadingScrollHost BuildSessionStrip()
     {
         // Only this TabControl's strip is hidden. The class is what keeps the selector off the
         // analysis TabControl inside a session workspace, which is a descendant of this one.
@@ -60,22 +61,66 @@ public sealed partial class MainView
         hideBuiltInStrip.Setters.Add(new Setter(Visual.IsVisibleProperty, false));
         _tabs.Styles.Add(hideBuiltInStrip);
 
+        var mobile = OperatingSystem.IsAndroid();
         _tabStrip = new ScrollViewer
         {
             Content = _tabChips,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+
+            // A phone gets an edge fade instead of a bar. Fluent's horizontal one arrived as a
+            // full-width 16 dp band under the tabs carrying Column-left, Page-left, Page-right
+            // and Column-right — a whole row of a phone screen and four more accessibility
+            // stops, for a strip a thumb scrolls by dragging it (audit 3, D4/B5).
+            HorizontalScrollBarVisibility = mobile
+                ? ScrollBarVisibility.Hidden
+                : ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
 
             // Inset to the same gutter every other band uses. The strip spanned the whole
             // 1080 px while everything above and below it stopped at 36, so the first tab's
             // rounded corner sat squarely on the screen edge and the row read as a different
             // surface from the workspace it belongs to (audit 2, D8).
-            Padding = new Thickness(OperatingSystem.IsAndroid() ? 10 : 12, 0),
-            Margin = new Thickness(0, 0, 0, 4),
-            IsVisible = false,
+            Padding = new Thickness(mobile ? 10 : 12, 0),
         };
         AutomationProperties.SetName(_tabStrip, "Open sessions");
-        return _tabStrip;
+        _tabStrip.ScrollChanged += (_, _) => UpdateChipEdges();
+        _tabStrip.LayoutUpdated += (_, _) => UpdateChipEdges();
+        _tabStripFade = new FadingScrollHost(
+            _tabStrip,
+            ActualThemeVariant != ThemeVariant.Light,
+            horizontal: true);
+        _tabStripFade.Margin = new Thickness(0, 0, 0, 4);
+        _tabStripFade.IsVisible = false;
+        return _tabStripFade;
+    }
+
+    /// <summary>
+    /// Offers a session's close button only while the reader can see which session it closes.
+    /// </summary>
+    /// <remarks>
+    /// With three sessions open the strip overflows, and the first chip's name scrolled away
+    /// while its close glyph did not: the leftmost thing on the screen was a 115 px unlabelled
+    /// destructive control belonging to a session the reader could no longer identify. At the
+    /// other end the selected chip's own close button was clipped to 15 dp against the screen
+    /// edge (audit 3, D4). A chip that is not fully on screen is a name, and nothing else.
+    ///
+    /// The button is held rather than removed, so a chip scrolling into view does not resize
+    /// under the finger that is scrolling it.
+    /// </remarks>
+    private void UpdateChipEdges()
+    {
+        if (_tabStrip is not { } strip || strip.Viewport.Width <= 0)
+        {
+            return;
+        }
+
+        var left = strip.Offset.X;
+        var right = left + strip.Viewport.Width;
+        foreach (var chip in _chips.Values)
+        {
+            var bounds = chip.Root.Bounds;
+            var whole = bounds.Width > 0 && bounds.Left >= left - 0.5 && bounds.Right <= right + 0.5;
+            ControlSlot.Hold(chip.Close, whole);
+        }
     }
 
     private void AddSessionChip(SessionTabViewModel viewModel)
@@ -181,11 +226,14 @@ public sealed partial class MainView
             }
         }
 
-        if (_tabStrip is { } strip)
+        if (_tabStripFade is { } strip)
         {
             strip.IsVisible = _chips.Count > 1 ||
                               (_chips.Count == 1 && !(OperatingSystem.IsAndroid() && _mobileCompactHeight));
+            strip.ApplyTheme(dark);
         }
+
+        UpdateChipEdges();
     }
 
     /// <summary>
@@ -200,6 +248,14 @@ public sealed partial class MainView
     /// <see cref="DispatcherPriority.Loaded"/>, the request runs after the arrange it depends
     /// on.
     /// </remarks>
+    /// <remarks>
+    /// A gutter is asked for on both sides, because the chip's own bounds end exactly at its
+    /// close button: brought in flush, the selected session's close measured 15 dp against the
+    /// screen edge (audit 3, D4), and the button that closes what you are looking at is the
+    /// one that must not be a sliver.
+    /// </remarks>
     private static void BringChipIntoView(Control chip) =>
-        Dispatcher.UIThread.Post(chip.BringIntoView, DispatcherPriority.Loaded);
+        Dispatcher.UIThread.Post(
+            () => chip.BringIntoView(new Rect(-10, 0, chip.Bounds.Width + 20, chip.Bounds.Height)),
+            DispatcherPriority.Loaded);
 }

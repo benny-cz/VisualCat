@@ -13,6 +13,8 @@ namespace VisualCat.App.Views;
 public sealed partial class SessionWorkspaceView : UserControl
 {
     private Border? _failureCard;
+    private Border? _failureBadge;
+    private TextBlock? _failureBadgeText;
     private TextBlock? _failureTitle;
     private SelectableTextBlock? _failureReason;
     private TextBlock? _failureRemedy;
@@ -57,22 +59,21 @@ public sealed partial class SessionWorkspaceView : UserControl
             IsVisible = false,
         };
 
-        var badge = new Border
+        _failureBadgeText = new TextBlock
         {
-            Background = LevelPalette.Fill(LogLevel.Error, 40),
-            BorderBrush = LevelPalette.BrushOf(LogLevel.Error),
+            Text = "IMPORT FAILED",
+            FontSize = TextScale.Of(10),
+            FontWeight = FontWeight.Bold,
+        };
+        var badge = _failureBadge = new Border
+        {
             BorderThickness = new Thickness(0, 0, 0, 2),
             CornerRadius = new CornerRadius(5),
             Padding = new Thickness(9, 4),
             HorizontalAlignment = HorizontalAlignment.Left,
-            Child = new TextBlock
-            {
-                Text = "IMPORT FAILED",
-                FontSize = TextScale.Of(10),
-                FontWeight = FontWeight.Bold,
-                Foreground = LevelPalette.BrushOf(LogLevel.Error),
-            },
+            Child = _failureBadgeText,
         };
+        ApplyFailureBadgeTheme(ActualThemeVariant != ThemeVariant.Light);
 
         var actions = new WrapPanel
         {
@@ -177,6 +178,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void ApplyFailureTheme()
     {
         var dark = ActualThemeVariant != ThemeVariant.Light;
+        ApplyFailureBadgeTheme(dark);
         if (_failureCard is { } card)
         {
             card.Background = new SolidColorBrush(WorkspacePalette.SurfaceRaised(dark));
@@ -196,6 +198,29 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_failureRemedy is { } remedy)
         {
             remedy.Foreground = new SolidColorBrush(WorkspacePalette.TextMuted(dark));
+        }
+    }
+
+    /// <summary>
+    /// Paints the IMPORT FAILED plate and its caption for the variant in force.
+    /// </summary>
+    /// <remarks>
+    /// The caption is severity text on a tint of its own colour, which is the pattern audit 3
+    /// found failing everywhere in the light theme (B1): the saturated coral read 2.6:1 on the
+    /// light card. Ink and tint both follow the theme now, and the lighter plate on light is
+    /// what keeps a dark caption clear of it — 4.6:1 on light, 4.9:1 on dark.
+    /// </remarks>
+    private void ApplyFailureBadgeTheme(bool dark)
+    {
+        if (_failureBadge is { } badge)
+        {
+            badge.Background = LevelPalette.Fill(LogLevel.Error, dark ? (byte)40 : (byte)24);
+            badge.BorderBrush = LevelPalette.InkBrushOf(LogLevel.Error, dark);
+        }
+
+        if (_failureBadgeText is { } text)
+        {
+            text.Foreground = LevelPalette.InkBrushOf(LogLevel.Error, dark);
         }
     }
 }

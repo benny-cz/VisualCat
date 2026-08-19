@@ -38,12 +38,20 @@ internal sealed record SettingChoice(string Value, string Label)
 internal static class SheetForm
 {
     /// <summary>
-    /// What "complete" and "still being written" mean, for the one place a reader can ask.
+    /// What the three words a stored session can be described with mean.
     /// </summary>
+    /// <remarks>
+    /// This is a good sentence that nobody could read. It was attached as a tooltip and as
+    /// accessibility help text, and Android has no pointer — so the tooltip could never appear,
+    /// and a sighted touch user had no route to the explanation at all (audit 3, E2). It is on
+    /// the sheet now, under the list it explains, which is the same treatment the status row's
+    /// chevron got for the same defect.
+    /// </remarks>
     internal const string SessionStateHelp =
         "A complete capture was stopped or finished normally and holds everything it recorded. " +
-        "One still being written was interrupted — the app was killed, or the device restarted — " +
-        "and opens with whatever reached the disk; nothing after that point was kept.";
+        "An interrupted one stopped without being told to — the app was killed, or the device " +
+        "restarted — and opens with whatever reached the disk; nothing after that point was " +
+        "kept. A capture in progress is one this app is recording into right now.";
 
     /// <summary>
     /// The second line of a stored session: when, how large, and whether it is finished.
@@ -56,12 +64,38 @@ internal static class SheetForm
     /// brings with them — "ready" in particular says nothing about what it is ready for. One
     /// sentence, in one place, used by every list.
     /// </remarks>
-    internal static string DescribeSessionState(TemporarySessionInfo session)
+    internal static string DescribeSessionState(TemporarySessionInfo session, bool capturingNow = false)
     {
         ArgumentNullException.ThrowIfNull(session);
         return $"{session.UpdatedUtc.ToLocalTime():g} · " +
                $"{RecentSessionsDialog.FormatBytes(session.SizeBytes)} · " +
-               (session.Finalized ? "complete" : "still being written");
+               DescribeSessionOutcome(session, capturingNow);
+    }
+
+    /// <summary>
+    /// The last word of a stored session's line: what happened to it, in the right tense.
+    /// </summary>
+    /// <remarks>
+    /// "Still being written" is a faithful rendering of <c>finalized == false</c> and the wrong
+    /// tense for it: it says a process is writing to the file at this moment. Any capture that
+    /// ends other than through Stop capture gets that state permanently, so a session from the
+    /// previous day, whose files nothing had touched for 26 hours, was described as one
+    /// currently being recorded — and a reader had no way to tell it from a capture that
+    /// genuinely was (audit 3, E1). A past state gets a past tense, and the present tense is
+    /// kept for the one case that is actually present, which the app knows because it is the
+    /// one doing the recording.
+    ///
+    /// One word rather than two. "incomplete · interrupted" says the same thing twice and was
+    /// one character too wide for the longest of these lines on a phone, so the row that most
+    /// needed the word ended on "interrupt…". What the state means is on the sheet now
+    /// (see <see cref="SessionStateHelp"/>), which is where it belongs.
+    /// </remarks>
+    internal static string DescribeSessionOutcome(TemporarySessionInfo session, bool capturingNow)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return capturingNow
+            ? "capture in progress"
+            : session.Finalized ? "complete" : "interrupted";
     }
 
     /// <summary>
@@ -75,11 +109,28 @@ internal static class SheetForm
     /// and <c>Finalized = True</c> (audit 2, B1). Sighted readers see a clean two-line row;
     /// this is the same two lines, spoken.
     /// </remarks>
-    internal static string DescribeSessionRow(TemporarySessionInfo session)
+    internal static string DescribeSessionRow(TemporarySessionInfo session, bool capturingNow = false)
     {
         ArgumentNullException.ThrowIfNull(session);
-        return $"{SessionCacheName.Describe(session.Path)}, {DescribeSessionState(session).Replace(" · ", ", ", StringComparison.Ordinal)}";
+        return $"{SessionCacheName.Describe(session.Path)}, " +
+               DescribeSessionState(session, capturingNow).Replace(" · ", ", ", StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// The explanation of the state vocabulary, as a line of the sheet rather than as metadata.
+    /// </summary>
+    /// <remarks>
+    /// See <see cref="SessionStateHelp"/>: on a platform with no pointer, a tooltip is a string
+    /// that exists and can never be shown.
+    /// </remarks>
+    internal static TextBlock SessionStateLegend() => new()
+    {
+        Text = SessionStateHelp,
+        TextWrapping = TextWrapping.Wrap,
+        FontSize = TextScale.Of(11),
+        Opacity = 0.75,
+        Margin = new Thickness(0, 8, 0, 0),
+    };
 
     /// <summary>
     /// Gives every realised row of <paramref name="list"/> a spoken name of its own.
@@ -223,10 +274,17 @@ internal static class SheetForm
 public sealed class RecentSessionsDialog : DialogBody<string>
 {
     private readonly ListBox _sessions = new();
+    private readonly IReadOnlySet<string> _capturing;
 
-    public RecentSessionsDialog(IReadOnlyList<TemporarySessionInfo> sessions)
+    /// <param name="sessions">Every stored session, newest first.</param>
+    /// <param name="capturing">
+    /// The paths this app is recording into at this moment, so the one state that is actually
+    /// present tense can be said in it (audit 3, E1).
+    /// </param>
+    public RecentSessionsDialog(IReadOnlyList<TemporarySessionInfo> sessions, IReadOnlySet<string>? capturing = null)
         : base("Recent VisualCat sessions")
     {
+        _capturing = capturing ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         PreferredSize = new Size(760, 480);
         MinimumSize = new Size(560, 320);
         ScrollsInternally = true;
@@ -248,14 +306,16 @@ public sealed class RecentSessionsDialog : DialogBody<string>
                         },
                         new TextBlock
                         {
-                            Text = SheetForm.DescribeSessionState(session),
+                            Text = SheetForm.DescribeSessionState(session, IsCapturing(session)),
                             Opacity = 0.75,
                             TextTrimming = TextTrimming.CharacterEllipsis,
                         },
                     },
                 });
         _sessions.DoubleTapped += (_, _) => OpenSelected();
-        SheetForm.SpeakRows<TemporarySessionInfo>(_sessions, SheetForm.DescribeSessionRow);
+        SheetForm.SpeakRows<TemporarySessionInfo>(
+            _sessions,
+            session => SheetForm.DescribeSessionRow(session, IsCapturing(session)));
         AutomationProperties.SetName(_sessions, "Stored sessions");
 
         // On a touch device a tap on a row opens that session, which is what the same list of
@@ -294,7 +354,7 @@ public sealed class RecentSessionsDialog : DialogBody<string>
 
         var root = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,*,Auto"),
+            RowDefinitions = new RowDefinitions("Auto,*,Auto,Auto"),
             Margin = new Thickness(12),
         };
         root.Children.Add(new TextBlock
@@ -312,12 +372,19 @@ public sealed class RecentSessionsDialog : DialogBody<string>
         });
         Grid.SetRow(_sessions, 1);
         root.Children.Add(_sessions);
-        Grid.SetRow(buttons, 2);
+
+        // Under the list, where a reader meets the words. It had existed only as a tooltip and
+        // as help text, neither of which a sighted touch user can reach (audit 3, E2).
+        var legend = SheetForm.SessionStateLegend();
+        Grid.SetRow(legend, 2);
+        root.Children.Add(legend);
+        Grid.SetRow(buttons, 3);
         root.Children.Add(buttons);
         Content = root;
-        ToolTip.SetTip(_sessions, SheetForm.SessionStateHelp);
         AutomationProperties.SetHelpText(_sessions, SheetForm.SessionStateHelp);
     }
+
+    private bool IsCapturing(TemporarySessionInfo session) => _capturing.Contains(session.Path);
 
     internal static string FormatBytes(long bytes)
     {
@@ -640,10 +707,20 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
     private readonly TextBlock _summary = new() { TextWrapping = TextWrapping.Wrap };
     private readonly ListBox _sessions = new();
     private readonly List<Control> _policyFields = [];
+    private readonly IReadOnlySet<string> _capturing;
 
-    public SessionCacheDialog(string cacheRoot, ApplicationSettings settings)
+    /// <param name="cacheRoot">Where the app keeps temporary sessions.</param>
+    /// <param name="settings">The retention policy to edit.</param>
+    /// <param name="capturing">
+    /// The paths this app is recording into at this moment (see <see cref="RecentSessionsDialog"/>).
+    /// </param>
+    public SessionCacheDialog(
+        string cacheRoot,
+        ApplicationSettings settings,
+        IReadOnlySet<string>? capturing = null)
         : base("Temporary session cache")
     {
+        _capturing = capturing ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _cacheRoot = Path.GetFullPath(cacheRoot);
         _settings = settings;
         PreferredSize = new Size(780, 590);
@@ -673,7 +750,7 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
                         },
                         new TextBlock
                         {
-                            Text = SheetForm.DescribeSessionState(session),
+                            Text = SheetForm.DescribeSessionState(session, IsCapturing(session)),
                             Opacity = 0.75,
                             FontSize = TextScale.Of(11.5),
                             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -681,8 +758,11 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
                     },
                 });
 
-        SheetForm.SpeakRows<TemporarySessionInfo>(_sessions, SheetForm.DescribeSessionRow);
+        SheetForm.SpeakRows<TemporarySessionInfo>(
+            _sessions,
+            session => SheetForm.DescribeSessionRow(session, IsCapturing(session)));
         AutomationProperties.SetName(_sessions, "Cached sessions");
+        AutomationProperties.SetHelpText(_sessions, SheetForm.SessionStateHelp);
 
         var policy = BuildPolicyForm();
 
@@ -704,7 +784,7 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
 
         // The list is the only part of this sheet that can grow, so it is the only part
         // that scrolls; the cache location, the policy and the summary stay above it.
-        var body = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*") };
+        var body = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*,Auto") };
         body.Children.Add(new TextBlock
         {
             Text = $"Cache location: {_cacheRoot}",
@@ -720,6 +800,11 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
         Grid.SetRow(_sessions, 3);
         _sessions.Margin = new Thickness(0, 8, 0, 0);
         body.Children.Add(_sessions);
+
+        // The vocabulary, where the vocabulary is used (audit 3, E2).
+        var legend = SheetForm.SessionStateLegend();
+        Grid.SetRow(legend, 4);
+        body.Children.Add(legend);
 
         var root = new Grid
         {
@@ -766,6 +851,8 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
     /// row rendered as <c>…unlimite(0)</c>, with the spinner's chevron cut off by the sheet's
     /// own edge (finding 12.1 and 12.2).
     /// </remarks>
+    private bool IsCapturing(TemporarySessionInfo session) => _capturing.Contains(session.Path);
+
     private Grid BuildPolicyForm()
     {
         var policy = new Grid

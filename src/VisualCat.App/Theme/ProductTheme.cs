@@ -1,7 +1,10 @@
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
@@ -67,6 +70,21 @@ internal static class ProductTheme
     /// <summary>The workspace accent for the variant in force.</summary>
     internal const string AccentKey = "VisualCatAccent";
 
+    /// <summary>The touch scroll indicator's bar.</summary>
+    internal const string ScrollIndicatorKey = "VisualCatScrollIndicator";
+
+    /// <summary>
+    /// Marks a <see cref="ToggleButton"/> that is one segment of a segmented choice.
+    /// </summary>
+    /// <remarks>
+    /// The class is what keeps <see cref="SelectedSegmentFill"/> off the two other kinds of
+    /// <see cref="ToggleButton"/> in the product, both of which own their checked appearance
+    /// already: the severity chips, whose checked plate is a tint of the level rather than of
+    /// the accent, and every <see cref="CheckBox"/>, which derives from ToggleButton and whose
+    /// checked state is a tick rather than a filled slab.
+    /// </remarks>
+    internal const string SegmentClass = "segment";
+
     /// <summary>
     /// Builds the themed Fluent instance the application installs. The palette is keyed by
     /// variant because both are first-class (§14.1): the accent is the workspace accent for
@@ -130,6 +148,7 @@ internal static class ProductTheme
             // metadata on #E9EFF7 at 1.11:1 (audit 2, A1b/A1c).
             [TextPrimaryKey] = new SolidColorBrush(WorkspacePalette.TextPrimary(dark)),
             [TextMutedKey] = new SolidColorBrush(muted),
+            [ScrollIndicatorKey] = Tint(muted, dark ? (byte)150 : (byte)130),
             [SurfaceKey] = new SolidColorBrush(WorkspacePalette.Surface(dark)),
             [SurfaceRaisedKey] = new SolidColorBrush(WorkspacePalette.SurfaceRaised(dark)),
             [SurfaceHeaderKey] = new SolidColorBrush(WorkspacePalette.SurfaceHeader(dark)),
@@ -168,16 +187,132 @@ internal static class ProductTheme
         // cache's Maximum total size sits at its minimum and its greyed-out decrement was
         // the brightest thing in the row (audit 2, D4).
         yield return RecessiveDisabledFill<RepeatButton>();
+
+        // And a text field is not a ContentControl at all, so neither of the two styles above
+        // could reach it: on Session cache the two disabled policy spinners measured 1.66:1
+        // against the sheet while the fields that worked measured 1.07:1 — the controls that
+        // could not be used were the most prominent objects on the sheet (audit 3, D3).
+        yield return RecessiveDisabledField<TextBox>();
+        yield return RecessiveDisabledField<ButtonSpinner>();
+        yield return FieldKeepsThePalette<TextBox>();
+        yield return FieldKeepsThePalette<ButtonSpinner>();
         yield return SelectedRowFill();
         yield return SelectedRowFill(pointerOver: true);
         yield return SelectedChoiceFill();
         yield return SelectedChoiceFill(pointerOver: true);
+        yield return SelectedSegmentFill();
+        yield return SelectedSegmentFill(":pointerover");
+        yield return SelectedSegmentFill(":pressed");
         yield return ScrollBarKeepsOffTheContent(ScrollBarVisibility.Auto);
         yield return ScrollBarKeepsOffTheContent(ScrollBarVisibility.Visible);
         if (OperatingSystem.IsAndroid())
         {
             yield return ScrollBarStaysVisible();
         }
+    }
+
+    /// <summary>
+    /// Control themes the application installs, keyed by the type each one dresses.
+    /// </summary>
+    internal static IEnumerable<KeyValuePair<object, ControlTheme>> BuildControlThemes()
+    {
+        if (OperatingSystem.IsAndroid())
+        {
+            yield return new KeyValuePair<object, ControlTheme>(typeof(ScrollBar), TouchScrollBar());
+        }
+    }
+
+    /// <summary>
+    /// A scroll <em>indicator</em> for a device that has no pointer: no arrows, no paging
+    /// regions, no drag target, and nothing for a screen reader to stop on.
+    /// </summary>
+    /// <remarks>
+    /// Every scrolling surface in the product was rendering Fluent's full desktop bar, and its
+    /// repeat buttons took touch. A 563 px <em>Page down</em> region sat 16 dp from the right
+    /// edge of every list, so a thumb landing there jumped a page instead of scrolling; the
+    /// facets pane went from Tags to PIDs on a stray tap. <em>Line up</em>, <em>Page down</em>,
+    /// <em>Line down</em> and <em>Position</em> were four extra accessibility stops in every
+    /// pane, none of which means anything without a pointer. And the 16 dp lane reserved for
+    /// the bar was being spent on a thumb 2 dp wide, which is not a drag target on a phone
+    /// (audit 3, B5).
+    ///
+    /// What a touch surface actually needs from a scrollbar is the one thing the desktop one
+    /// was worst at: saying where you are and that there is more. So the template is a
+    /// <see cref="Track"/> and a thumb, the control is not hit-testable, and the parts are out
+    /// of the control view. Scrolling itself is the drag on the content, which is what a finger
+    /// was doing anyway.
+    ///
+    /// The thumb keeps a floor of 28 px along the scrolling axis. Without one a million-entry
+    /// session draws a 2 px mark, which reports a position but cannot show movement.
+    /// </remarks>
+    private static ControlTheme TouchScrollBar()
+    {
+        var thumbTheme = new ControlTheme(typeof(Thumb));
+        thumbTheme.Setters.Add(new Setter(
+            TemplatedControl.TemplateProperty,
+            new FuncControlTemplate<Thumb>(static (_, _) =>
+            {
+                var bar = new Border { CornerRadius = new CornerRadius(TouchScrollBarThickness / 2) };
+                bar[!Border.BackgroundProperty] = Resource(ScrollIndicatorKey);
+                return bar;
+            })));
+
+        var theme = new ControlTheme(typeof(ScrollBar));
+        theme.Setters.Add(new Setter(InputElement.IsHitTestVisibleProperty, false));
+        theme.Setters.Add(new Setter(TemplatedControl.BackgroundProperty, Brushes.Transparent));
+        theme.Setters.Add(new Setter(TemplatedControl.BorderThicknessProperty, new Thickness(0)));
+        theme.Setters.Add(new Setter(Layoutable.MarginProperty, new Thickness(1)));
+
+        // The bar is decoration for a reader who cannot see it, so it leaves the control view
+        // and takes its two parts with it: an automation client that promotes the children of
+        // a non-control element finds two more of the same.
+        theme.Setters.Add(new Setter(AutomationProperties.AccessibilityViewProperty, AccessibilityView.Raw));
+        theme.Setters.Add(new Setter(
+            TemplatedControl.TemplateProperty,
+            new FuncControlTemplate<ScrollBar>(static (control, scope) =>
+            {
+                var thumb = new Thumb();
+                thumb.SetValue(AutomationProperties.IsControlElementOverrideProperty, false);
+                thumb.SetValue(AutomationProperties.AccessibilityViewProperty, AccessibilityView.Raw);
+                var track = new Track
+                {
+                    Name = "PART_Track",
+                    Thumb = thumb,
+                };
+                track.SetValue(AutomationProperties.IsControlElementOverrideProperty, false);
+                track.SetValue(AutomationProperties.AccessibilityViewProperty, AccessibilityView.Raw);
+                track[!Track.MinimumProperty] = control[!RangeBase.MinimumProperty];
+                track[!Track.MaximumProperty] = control[!RangeBase.MaximumProperty];
+                track[!Track.ValueProperty] = control[!RangeBase.ValueProperty];
+                track[!Track.ViewportSizeProperty] = control[!ScrollBar.ViewportSizeProperty];
+                track[!Track.OrientationProperty] = control[!ScrollBar.OrientationProperty];
+                track.RegisterInNameScope(scope);
+                return track;
+            })));
+
+        var vertical = new Style(static selector => selector.Nesting().Class(":vertical"));
+        vertical.Setters.Add(new Setter(Layoutable.WidthProperty, TouchScrollBarThickness));
+        vertical.Setters.Add(new Setter(Layoutable.HorizontalAlignmentProperty, HorizontalAlignment.Right));
+        theme.Children.Add(vertical);
+
+        var verticalThumb = new Style(static selector => selector
+            .Nesting().Class(":vertical").Template().OfType<Thumb>());
+        verticalThumb.Setters.Add(new Setter(StyledElement.ThemeProperty, thumbTheme));
+        verticalThumb.Setters.Add(new Setter(Layoutable.MinHeightProperty, 28d));
+        theme.Children.Add(verticalThumb);
+
+        var horizontal = new Style(static selector => selector.Nesting().Class(":horizontal"));
+        horizontal.Setters.Add(new Setter(Layoutable.HeightProperty, TouchScrollBarThickness));
+        horizontal.Setters.Add(new Setter(Layoutable.VerticalAlignmentProperty, VerticalAlignment.Bottom));
+        theme.Children.Add(horizontal);
+
+        var horizontalThumb = new Style(static selector => selector
+            .Nesting().Class(":horizontal").Template().OfType<Thumb>());
+        horizontalThumb.Setters.Add(new Setter(StyledElement.ThemeProperty, thumbTheme));
+        horizontalThumb.Setters.Add(new Setter(Layoutable.MinWidthProperty, 28d));
+        theme.Children.Add(horizontalThumb);
+
+        return theme;
     }
 
     private static Style CenterContentVertically<T>()
@@ -234,6 +369,55 @@ internal static class ProductTheme
     }
 
     /// <summary>
+    /// The same "cannot be used recedes" treatment for a text field.
+    /// </summary>
+    /// <remarks>
+    /// Fluent paints a disabled field's ground onto <c>PART_BorderElement</c> at 20% white,
+    /// which over a dark sheet is a raised grey slab — the same defect
+    /// <see cref="RecessiveDisabledFill"/> exists for, on a control type whose template has no
+    /// <see cref="ContentPresenter"/> to catch it. The field keeps its outline so it is still
+    /// a field, and loses the plate so it stops advertising itself.
+    /// </remarks>
+    private static Style RecessiveDisabledField<T>()
+        where T : TemplatedControl
+    {
+        var style = new Style(static selector => Selectors
+            .OfType<T>(selector)
+            .Class(":disabled")
+            .Template()
+            .OfType<Border>()
+            .Name("PART_BorderElement"));
+        style.Setters.Add(new Setter(Border.BackgroundProperty, Brushes.Transparent));
+        style.Setters.Add(new Setter(Border.BorderBrushProperty, Resource(ControlEdgeDisabledKey)));
+        return style;
+    }
+
+    /// <summary>
+    /// Keeps a focused field on the product's palette.
+    /// </summary>
+    /// <remarks>
+    /// Fluent's focused text field is pure <c>#000000</c>, which against the <c>#0D1625</c>
+    /// card is the one colour in the product that belongs to no part of the palette — and it
+    /// appears on the query field, the combo boxes and the numeric fields, so it is the colour
+    /// the reader sees whenever they are actually typing (audit 3, D5). The workspace ground is
+    /// what a field rests on in every other state; focus is said by the accent underline
+    /// Fluent already draws, which is a statement about the field rather than a hole in the
+    /// page.
+    /// </remarks>
+    private static Style FieldKeepsThePalette<T>()
+        where T : TemplatedControl
+    {
+        var style = new Style(static selector => Selectors
+            .OfType<T>(selector)
+            .Class(":focus")
+            .Template()
+            .OfType<Border>()
+            .Name("PART_BorderElement"));
+        style.Setters.Add(new Setter(Border.BackgroundProperty, Resource(SurfaceKey)));
+        return style;
+    }
+
+    /// <summary>
     /// Selection as a tint plus an outline rather than a solid accent slab.
     /// </summary>
     /// <remarks>
@@ -286,16 +470,62 @@ internal static class ProductTheme
     }
 
     /// <summary>
-    /// Width a vertical scrollbar is given, and kept clear of, in every scrolling surface.
+    /// The same tint-and-outline for the chosen segment of a segmented control.
     /// </summary>
     /// <remarks>
-    /// Measured from the device: the bar's own regions occupied 48 device pixels at 3.0x,
-    /// so 16 logical pixels is the whole track including its margins. A style cannot read a
-    /// control's arranged width, so this is a constant — and
-    /// <c>ScrollBarLaneIsWideEnoughForTheBar</c> in the test suite fails if a theme update
-    /// ever makes the real bar wider than the lane reserved for it.
+    /// <c>ChoiceSelector</c> binds <see cref="TemplatedControl.BackgroundProperty"/> to
+    /// <see cref="SelectionFillKey"/>, and that is not what renders: Fluent paints the
+    /// <em>template's</em> content presenter with the solid accent for <c>:checked</c>, and a
+    /// local Background on the control does not outrank a template-part setter. So every
+    /// settings choice in the product — Theme, Timeline intensity scale, normalization, and
+    /// the rest — drew white on a solid <c>#43B4FF</c> slab at 2.28:1, which is the exact
+    /// appearance <see cref="SelectedRowFill"/> and <see cref="SelectedChoiceFill"/> were
+    /// written to replace for lists and dropdowns (audit 3, B2). This is the third of the same
+    /// style, for the one control type that was still missing it.
+    ///
+    /// The interaction states are included because Fluent gives <c>:checked:pointerover</c>
+    /// and <c>:checked:pressed</c> their own accent shades, and without a matching override a
+    /// segment would go back to the unreadable slab under the finger.
     /// </remarks>
-    internal const double ScrollBarLane = 16;
+    private static Style SelectedSegmentFill(string? state = null)
+    {
+        var style = new Style(selector =>
+        {
+            var segment = Selectors
+                .OfType<ToggleButton>(selector)
+                .Class(SegmentClass)
+                .Class(":checked");
+            return (state is null ? segment : segment.Class(state))
+                .Template()
+                .OfType<ContentPresenter>();
+        });
+        style.Setters.Add(new Setter(ContentPresenter.BackgroundProperty, Resource(SelectionFillKey)));
+        style.Setters.Add(new Setter(ContentPresenter.BorderBrushProperty, Resource(SelectionEdgeKey)));
+        style.Setters.Add(new Setter(ContentPresenter.BorderThicknessProperty, new Thickness(1)));
+        style.Setters.Add(new Setter(ContentPresenter.ForegroundProperty, Resource(TextPrimaryKey)));
+        return style;
+    }
+
+    /// <summary>
+    /// Width a scrollbar is given, and kept clear of, in every scrolling surface.
+    /// </summary>
+    /// <remarks>
+    /// Measured from the device: Fluent's desktop bar occupied 48 device pixels at 3.0x, so 16
+    /// logical pixels is the whole track including its margins. A style cannot read a control's
+    /// arranged width, so this is a constant — and <c>ScrollBarLaneIsWideEnoughForTheBar</c> in
+    /// the test suite fails if a theme update ever makes the real bar wider than the lane
+    /// reserved for it.
+    ///
+    /// A phone runs <see cref="TouchScrollBar"/> instead, which is an indicator rather than a
+    /// control, so it needs the width of the indicator and its margin and nothing else. The 10
+    /// logical pixels that buys back are per row, on a 434 dp screen, in every scrolling
+    /// surface in the product (audit 3, B5).
+    /// </remarks>
+    internal static double ScrollBarLane { get; } =
+        OperatingSystem.IsAndroid() ? TouchScrollBarThickness + 2 : 16;
+
+    /// <summary>How wide the touch scroll indicator's bar is drawn.</summary>
+    private const double TouchScrollBarThickness = 4;
 
     /// <summary>
     /// Keeps a vertical scrollbar out of the content it scrolls.

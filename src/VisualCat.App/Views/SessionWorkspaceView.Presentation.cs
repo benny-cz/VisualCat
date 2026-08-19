@@ -25,6 +25,9 @@ public sealed partial class SessionWorkspaceView : UserControl
 {
     private bool _statusExpanded;
 
+    /// <summary>What the status affordance was last decided against.</summary>
+    private (string? Text, double Width, bool Expanded) _statusShape = (null, double.NaN, false);
+
     /// <summary>
     /// Switches the status row between one clipped line and the whole sentence.
     /// </summary>
@@ -38,14 +41,96 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_statusBar is { } statusBar)
         {
             statusBar.ClipToBounds = !expanded;
-            AutomationProperties.SetHelpText(
-                statusBar,
-                expanded ? "Tap to shorten the status line." : "Tap to show the whole status line.");
             if (_statusChevron is { } chevron)
             {
                 chevron.Text = expanded ? "⌃" : "⌄";
             }
         }
+
+        UpdateStatusAffordance();
+    }
+
+    /// <summary>
+    /// Shows the disclosure only while the status line has something behind it, and says so.
+    /// </summary>
+    /// <remarks>
+    /// Whether the line is clipped is a fact about the arranged layout, not about the string:
+    /// the same sentence fits in landscape and does not in portrait, and the drawer opening
+    /// changes the answer again. So it is read off the text layout after each pass, and the
+    /// row is only tappable, and only carries the promise, while the answer is yes
+    /// (audit 3, C2). Every write is guarded, because this runs from
+    /// <see cref="Layoutable.LayoutUpdated"/> and an unguarded one would invalidate the layout
+    /// it was just told about.
+    /// </remarks>
+    private void UpdateStatusAffordance()
+    {
+        if (!_mobile || _statusChevron is not { } chevron || _statusBar is not { } statusBar)
+        {
+            return;
+        }
+
+        // This runs from every layout pass, and the answer can only change when the sentence
+        // or the width it is being laid out in changes. Both are cheap to compare and the
+        // text layout behind StatusOverflows is not cheap to walk.
+        var shape = (_status.Text, _status.Bounds.Width, _statusExpanded);
+        if (shape == _statusShape)
+        {
+            return;
+        }
+
+        _statusShape = shape;
+        var revealable = StatusOverflows();
+        if (chevron.IsVisible != revealable)
+        {
+            chevron.IsVisible = revealable;
+        }
+
+        // A touch target is 48 dp while it is a touch target, and a label the rest of the time.
+        // The row measured 17.8 dp, which is not a target — but making it 48 unconditionally
+        // would spend a band of a phone screen on a line of text that has nothing behind it,
+        // and on a 560 px viewport that band comes straight out of the entries list.
+        var wanted = revealable ? 48d : 0d;
+        if (Math.Abs(statusBar.MinHeight - wanted) > 0.5)
+        {
+            statusBar.MinHeight = wanted;
+        }
+
+        var help = revealable
+            ? _statusExpanded ? "Tap to shorten the status line." : "Tap to show the whole status line."
+            : null;
+        if (!string.Equals(AutomationProperties.GetHelpText(statusBar), help, StringComparison.Ordinal))
+        {
+            AutomationProperties.SetHelpText(statusBar, help);
+        }
+    }
+
+    /// <summary>Whether the status line is showing less than it holds.</summary>
+    /// <remarks>
+    /// Collapsed, the question is whether trimming actually took anything. Expanded, trimming
+    /// is off and wrapping is on, so the same question is whether it took more than one line —
+    /// which is what it would have been trimmed to.
+    /// </remarks>
+    private bool StatusOverflows()
+    {
+        if (_status.TextLayout is not { } layout || layout.TextLines.Count == 0)
+        {
+            return false;
+        }
+
+        if (_statusExpanded)
+        {
+            return layout.TextLines.Count > 1;
+        }
+
+        foreach (var line in layout.TextLines)
+        {
+            if (line.HasCollapsed)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -196,7 +281,11 @@ public sealed partial class SessionWorkspaceView : UserControl
             case SessionActivity.Queued when _viewModel.IsLiveCaptureActive:
                 return ("Preparing live capture…", "Waiting for an available capture slot.");
             case SessionActivity.Queued:
-                return ("Waiting to read this log…", "Another log is being read first.");
+                return (
+                    "Waiting to read this log…",
+                    _viewModel.QueuedBehind is { Length: > 0 } ahead
+                        ? $"{ahead} is being read first — its own tab shows how far it has got."
+                        : "Another log is being read first.");
             case SessionActivity.Importing:
                 return ("Reading the log…", "The severity × time signal fills in as entries become readable.");
             case SessionActivity.Connecting:

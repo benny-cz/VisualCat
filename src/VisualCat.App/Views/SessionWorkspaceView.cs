@@ -88,6 +88,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private TextBlock? _inspectMeta;
     private TextBlock? _inspectTruncated;
     private ScrollViewer? _inspectScroll;
+    private Control? _inspectIdentity;
     private Button? _sourceHeader;
     private TextBlock? _sourceChevron;
     private bool _sourceExpanded;
@@ -180,6 +181,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Button? _mobileFilterButton;
     private Border? _mobileFilterPanel;
     private ScrollViewer? _mobileFilterScroll;
+    private FadingScrollHost? _mobileFilterFade;
     private Grid? _mobileFilterShell;
     private Grid? _mobileFilterBody;
     private Control? _filterHost;
@@ -193,6 +195,8 @@ public sealed partial class SessionWorkspaceView : UserControl
     private TextBlock? _chipEmptyLabel;
     private Button? _clearFilters;
     private Control? _mobileQuerySection;
+    private Grid? _mobileQueryRow;
+    private WrapPanel? _mobileQueryOptions;
     private Control? _mobileSeveritySection;
     private Control? _mobileTimeSection;
     private TextBlock? _mobileFilterCount;
@@ -212,6 +216,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private MobileWorkspaceMode? _mobileLayoutMode;
     private readonly MobileWorkspaceState _mobileWorkspaceState = new();
     private bool _mobileFiltersOpen;
+    private Rect _inputPaneRect;
     private bool _rawWrapPreferenceSet;
     private bool _rawPanMode;
     private bool _rawWrapEnabled;
@@ -349,6 +354,9 @@ public sealed partial class SessionWorkspaceView : UserControl
             filterPanel.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
         }
 
+        // A fade is made of the surface it fades into, so it changes with the surface.
+        _mobileFilterFade?.ApplyTheme(dark);
+
         if (_minimapFrame is { } minimapFrame)
         {
             minimapFrame.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
@@ -372,6 +380,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_inspectMeta is { } inspectMeta)
         {
             inspectMeta.Foreground = muted;
+        }
+
+        // The entry pane's tag is severity ink, so it follows the theme with the rest of it.
+        if (_inspectTag is { } inspectTag && _inspectedEntry is { } inspected)
+        {
+            inspectTag.Foreground = LevelPalette.InkBrushOf(inspected.Level, dark);
         }
 
         if (_inspectTruncated is { } inspectTruncated)
@@ -435,6 +449,15 @@ public sealed partial class SessionWorkspaceView : UserControl
             severityLegend.Foreground = muted;
         }
 
+        // The severity chips paint from the level palette's ink, which is theme-dependent, so
+        // they are repainted with the theme. Without this the drawer kept the dark palette's
+        // saturated letters on a light plate — the whole of audit 3's B1 in one row of
+        // controls, and the only place the light theme's repaint had missed.
+        foreach (var (level, toggle) in _levelChecks)
+        {
+            ApplyLevelToggleColors(toggle, level);
+        }
+
         ApplyFailureTheme();
 
         // The chip bar caches what it last drew against the filter that produced it, so a
@@ -475,6 +498,9 @@ public sealed partial class SessionWorkspaceView : UserControl
     internal string DisplayMode => _mobileWorkspaceState.Persisted;
 
     /// <summary>Re-adopts the mode the reader had before this process started.</summary>
+    /// <summary>The workspace mode currently in force, in its stored form.</summary>
+    internal string CurrentDisplayMode => _mobileWorkspaceState.Persisted;
+
     internal void RestoreDisplayMode(string? persisted)
     {
         if (_mobile && _mobileWorkspaceState.Restore(persisted))
@@ -753,17 +779,25 @@ public sealed partial class SessionWorkspaceView : UserControl
             levelGroup.Children.Add(toggle);
         }
 
+        // A control's name is what it does; the glyph on it is not one. These read as "−" and
+        // "+" with the useful string filed under the description, which is the wrong way round
+        // — a name has to identify the control on its own (audit 3, B6).
         var zoomOut = new Button { Content = "−", Padding = new Thickness(9, 3) };
         ToolTip.SetTip(zoomOut, "Zoom out");
+        AutomationProperties.SetName(zoomOut, "Zoom out");
         zoomOut.Click += (_, _) => _timeline.ZoomAtCenter(1.8);
         var fit = new Button { Content = "Fit", Padding = new Thickness(9, 3), IsVisible = !_mobile };
 
         // "(0)" is a keyboard shortcut, and a touch device has no keyboard to read it
-        // against — a screen reader announced it as a bare zero (finding 14).
-        ToolTip.SetTip(fit, _mobile ? "Fit the complete session" : "Fit the complete session (0)");
+        // against — a screen reader announced it as a bare zero (finding 14). The name and the
+        // description were also near-duplicates of each other, so a reader heard the same
+        // sentence twice (audit 3, E4); the description now says what the name cannot.
+        AutomationProperties.SetName(fit, "Fit the complete session");
+        ToolTip.SetTip(fit, _mobile ? "Show the whole session in the plot" : "Show the whole session in the plot (0)");
         fit.Click += (_, _) => _timeline.FitSession();
         var zoomIn = new Button { Content = "+", Padding = new Thickness(9, 3) };
         ToolTip.SetTip(zoomIn, "Zoom in");
+        AutomationProperties.SetName(zoomIn, "Zoom in");
         zoomIn.Click += (_, _) => _timeline.ZoomAtCenter(0.5);
         _follow.Click += (_, _) => _ = _viewModel.ToggleFollowAsync();
         _newData.Click += (_, _) => _ = _viewModel.ToggleFollowAsync();
@@ -799,16 +833,21 @@ public sealed partial class SessionWorkspaceView : UserControl
             fit.MinWidth = 56;
             zoomIn.MinWidth = 48;
 
-            var queryRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+            var queryRow = _mobileQueryRow = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+                ColumnSpacing = 8,
+            };
             queryRow.Children.Add(_search);
             Grid.SetColumn(searchAction, 1);
             queryRow.Children.Add(searchAction);
 
-            var queryOptions = new WrapPanel
+            var queryOptions = _mobileQueryOptions = new WrapPanel
             {
                 Orientation = Orientation.Horizontal,
                 ItemSpacing = 8,
                 LineSpacing = 4,
+                VerticalAlignment = VerticalAlignment.Center,
             };
             queryOptions.Children.Add(_regex);
             queryOptions.Children.Add(_caseSensitive);
@@ -938,10 +977,13 @@ public sealed partial class SessionWorkspaceView : UserControl
             };
             Grid.SetColumn(resetFilters, 1);
             Grid.SetColumn(doneFilters, 2);
+            _mobileFilterFade = new FadingScrollHost(
+                _mobileFilterScroll,
+                ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light);
             var filterPanelGrid = new Grid
             {
                 RowDefinitions = new RowDefinitions("*,Auto"),
-                Children = { _mobileFilterScroll, filterFooter },
+                Children = { _mobileFilterFade, filterFooter },
             };
             Grid.SetRow(filterFooter, 1);
 
@@ -962,6 +1004,10 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ZIndex = 5,
             };
             AutomationProperties.SetName(_mobileFilterPanel, "Search and timeline filters");
+
+            // The drawer's room depends on where it has been arranged relative to the
+            // keyboard, which only a completed layout pass knows (see ApplyInputPaneRoom).
+            _mobileFilterPanel.LayoutUpdated += (_, _) => ApplyInputPaneRoom();
 
             _mobileFilterButton = new Button
             {
@@ -1027,7 +1073,10 @@ public sealed partial class SessionWorkspaceView : UserControl
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 VerticalContentAlignment = VerticalAlignment.Center,
             };
-            ToolTip.SetTip(mobileFit, "Fit the complete session in the plot");
+            // Not "Fit the complete session in the plot" — that is the name again with four
+            // words on the end, and a screen reader reads both (audit 3, E4). The description
+            // says the thing the name leaves out: which surface it acts on.
+            ToolTip.SetTip(mobileFit, "Show the whole session in the plot");
             AutomationProperties.SetName(mobileFit, "Fit the complete session");
             mobileFit.Click += (_, _) => _timeline.FitSession();
 
@@ -1420,6 +1469,14 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             Margin = new Thickness(8, 4, 8, _mobile ? 12 : 4),
             ClipToBounds = true,
+
+            // A panel with a null background is not hit-testable in Avalonia, so the row's own
+            // Tapped handler only ever fired where a child had painted a glyph: the chevron
+            // advertising the gesture was dead, the empty space between the label and the
+            // chevron was dead, and only the ~374 px of the label's own letters worked
+            // (audit 3, C2). A transparent background is the whole row.
+            Background = Brushes.Transparent,
+            VerticalAlignment = VerticalAlignment.Stretch,
         };
         DockPanel.SetDock(_searchStatus, Dock.Right);
         statusBar.Children.Add(_searchStatus);
@@ -1436,18 +1493,39 @@ public sealed partial class SessionWorkspaceView : UserControl
             // of text in the product: only the accessible help text mentioned it, so a
             // sighted reader had no way to discover the one route to the end of a clipped
             // failure message (audit 2, E7).
+            //
+            // Shown only while the line is actually being trimmed. `Ready · 12,370 entries`
+            // fits, so a chevron beside it promised more and delivered nothing — and the one
+            // state the affordance exists for, a clipped failure message, looked identical to
+            // the one where it does nothing at all (audit 3, C2). It is a mark rather than a
+            // control: it takes no touch of its own — the row is the target — and it stays out
+            // of the accessibility tree, where it had been reading as a lone "⌄".
             var statusChevron = _statusChevron = new TextBlock
             {
                 Text = "⌄",
                 FontSize = TextScale.Of(13),
                 Margin = new Thickness(6, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false,
+                IsVisible = false,
             };
+            AutomationProperties.SetAccessibilityView(statusChevron, AccessibilityView.Raw);
+            AutomationProperties.SetIsControlElementOverride(statusChevron, false);
             DockPanel.SetDock(statusChevron, Dock.Right);
             statusBar.Children.Insert(0, statusChevron);
-            statusBar.Tapped += (_, _) => SetStatusExpanded(!_statusExpanded);
+            statusBar.Tapped += (_, _) =>
+            {
+                if (_statusChevron?.IsVisible == true)
+                {
+                    SetStatusExpanded(!_statusExpanded);
+                }
+            };
             AutomationProperties.SetName(statusBar, "Session status");
-            AutomationProperties.SetHelpText(statusBar, "Tap to show the whole status line.");
+
+            // The layout pass is what knows whether the line fitted, so the affordance is
+            // settled there rather than guessed when the text was written.
+            _status.LayoutUpdated += (_, _) => UpdateStatusAffordance();
+            UpdateStatusAffordance();
         }
 
         Grid.SetRow(statusBar, 6);

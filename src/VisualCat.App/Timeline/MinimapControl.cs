@@ -45,7 +45,13 @@ public sealed class MinimapControl : Control
     public MinimapControl()
     {
         Focusable = true;
-        MinHeight = 54;
+
+        // Low enough to be a floor rather than a demand. It was 54, which is 152 device pixels
+        // on a 2.8x phone, and the row it is given in the short/landscape composition is 26 dp:
+        // the control took the 54 either way and overflowed its frame by 43 px above and 44 px
+        // below, painting the status line's own text through its bars (audit 3, D1). The frame
+        // decides how much room there is; Render degrades into whatever it gets.
+        MinHeight = 14;
         ClipToBounds = true;
         AutomationProperties.SetName(this, "Full-session minimap and viewport brush");
         AutomationProperties.SetHelpText(this, "Drag the brush to pan; drag either edge to resize the timeline viewport.");
@@ -85,9 +91,16 @@ public sealed class MinimapControl : Control
         var errors = _overview.Counts[LogLevel.Error];
         var fatals = _overview.Counts[LogLevel.Fatal];
         var columnWidth = Bounds.Width / Math.Max(1, _totals.Length);
+
+        // Every fixed inset in this method is a share of the band instead, so a 26 dp row
+        // draws the same picture as a 48 dp one, smaller — rather than the same picture,
+        // overflowing. The pulse tick and the headroom above the bars were the two that could
+        // consume a short band entirely.
+        var pulse = Math.Clamp(Bounds.Height * 0.11, 1, 3);
+        var headroom = Math.Clamp(Bounds.Height * 0.12, 1, 6);
         for (var column = 0; column < _totals.Length; column++)
         {
-            var height = Math.Log2(1 + _totals[column]) / Math.Log2(1 + _maximum) * Math.Max(1, Bounds.Height - 6);
+            var height = Math.Log2(1 + _totals[column]) / Math.Log2(1 + _maximum) * Math.Max(1, Bounds.Height - headroom);
             var dominant = DominantLevel(_overview, column);
             context.FillRectangle(
                 LevelPalette.Fill(dominant, 220),
@@ -95,27 +108,32 @@ public sealed class MinimapControl : Control
 
             // Severity pulse: a lone fatal drowned by thousands of verbose lines would
             // otherwise be invisible because the density bar takes the dominant color.
-            // A fixed tick along the top edge keeps rare severe events findable (§14.8).
+            // A tick along the top edge keeps rare severe events findable (§14.8).
             if (fatals[column] > 0)
             {
                 context.FillRectangle(
                     LevelPalette.BrushOf(LogLevel.Fatal),
-                    new Rect(column * columnWidth, 0, Math.Max(1, columnWidth + 0.25), 3));
+                    new Rect(column * columnWidth, 0, Math.Max(1, columnWidth + 0.25), pulse));
             }
             else if (errors[column] > 0)
             {
                 context.FillRectangle(
                     LevelPalette.BrushOf(LogLevel.Error),
-                    new Rect(column * columnWidth, 0, Math.Max(1, columnWidth + 0.25), 3));
+                    new Rect(column * columnWidth, 0, Math.Max(1, columnWidth + 0.25), pulse));
             }
         }
 
         var clipped = ClipToSession(viewport, session);
         var (left, right) = Transform(session).RangeToXInterval(clipped);
-        context.FillRectangle(BrushFill, new Rect(left, 1, Math.Max(2, right - left), Math.Max(1, Bounds.Height - 2)));
-        context.DrawRectangle(null, BrushBorder, new Rect(left, 1, Math.Max(2, right - left), Math.Max(1, Bounds.Height - 2)));
-        context.DrawLine(BrushBorder, new Point(left + 4, Bounds.Height / 2 - 6), new Point(left + 4, Bounds.Height / 2 + 6));
-        context.DrawLine(BrushBorder, new Point(right - 4, Bounds.Height / 2 - 6), new Point(right - 4, Bounds.Height / 2 + 6));
+        var inset = Math.Min(1, Bounds.Height / 8);
+        context.FillRectangle(BrushFill, new Rect(left, inset, Math.Max(2, right - left), Math.Max(1, Bounds.Height - (inset * 2))));
+        context.DrawRectangle(null, BrushBorder, new Rect(left, inset, Math.Max(2, right - left), Math.Max(1, Bounds.Height - (inset * 2))));
+
+        // The grip marks say the brush edges can be dragged, and a mark taller than the band
+        // it is drawn in says it about a control that is not there.
+        var grip = Math.Min(6, Bounds.Height / 3);
+        context.DrawLine(BrushBorder, new Point(left + 4, (Bounds.Height / 2) - grip), new Point(left + 4, (Bounds.Height / 2) + grip));
+        context.DrawLine(BrushBorder, new Point(right - 4, (Bounds.Height / 2) - grip), new Point(right - 4, (Bounds.Height / 2) + grip));
     }
 
     private void RebuildDensityCache(HeatMapResult? overview)

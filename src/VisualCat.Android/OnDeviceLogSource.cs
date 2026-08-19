@@ -9,16 +9,43 @@ namespace VisualCat.Android;
 public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
 {
     /// <summary>
-    /// How long a capture may run before an unbroken diet of its own records is taken as
-    /// proof that it is not seeing the device.
+    /// How long a <em>streaming</em> capture may go on delivering nothing but its own records
+    /// before that is taken as proof that it is not seeing the device.
     /// </summary>
     /// <remarks>
     /// Long enough that a busy device's first burst has certainly arrived, and short enough
-    /// that the reader is told before they have decided the app is broken. A declined
-    /// capture is silent, so this timer is the whole of what turns that silence into an
-    /// answer; the first foreign record ends it early and it is never started again.
+    /// that the reader is told before they have decided the app is broken.
+    ///
+    /// The clock starts at the first byte, not when the process is spawned, and that is the
+    /// whole of the difference between a right answer and a wrong one. Android holds
+    /// <c>logcat</c>'s output until the reader answers its consent sheet — three paragraphs
+    /// and a <em>Learn more</em> link — so a clock started at spawn is timing how long a human
+    /// takes to read a dialog, not how long a stream takes to prove itself. A tester who took
+    /// 27 seconds over it got a full-device capture that the product called own-app-only for
+    /// the rest of its life, in the status line, in the session name, in a red notice and in
+    /// the session details, while recording 4,559 lines from across the whole device
+    /// (audit 3, A1). The first byte is the moment the platform stopped waiting for the human,
+    /// which is the moment the question becomes about the stream.
     /// </remarks>
     private static readonly TimeSpan ScopeDecisionWindow = TimeSpan.FromSeconds(8);
+
+    /// <summary>Nothing has been decided yet.</summary>
+    private const int ScopePending = 0;
+
+    /// <summary>
+    /// Own-app only — believed, not proven, and revisable.
+    /// </summary>
+    /// <remarks>
+    /// The absence of a foreign record is evidence and never proof: it is what a restricted
+    /// capture looks like and also what a quiet device looks like. So this verdict stays open
+    /// to correction for the life of the capture.
+    /// </remarks>
+    private const int ScopeRestricted = 1;
+
+    /// <summary>
+    /// Full-device, and final: one record from another process cannot be un-seen.
+    /// </summary>
+    private const int ScopeFullDevice = 2;
 
     private const string DeclinedRemedy =
         "Android asks for permission to read the device log on every capture, and this one was " +
@@ -38,7 +65,7 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
     private readonly StringBuilder _scopeLine = new();
     private readonly Lock _scopeSync = new();
     private Timer? _scopeDeadline;
-    private int _scopeResolved;
+    private int _scopeVerdict = ScopePending;
     private Java.Lang.Process? _process;
 
     public OnDeviceLogSource()
@@ -72,7 +99,20 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
             });
     }
 
-    public SourceMetadata Metadata { get; }
+    /// <summary>
+    /// What this source is, in the words the session and its manifest are written with.
+    /// </summary>
+    /// <remarks>
+    /// Settable because the answer changes: the description a capture starts with is the most
+    /// this source can honestly say before the platform has shown it anything, and
+    /// <see cref="ResolveScope"/> replaces it once the stream has. Every descriptor the
+    /// coordinator writes reads this afresh, so a corrected scope reaches the stored manifest
+    /// too rather than only the status line (audit 3, A1). Written from the read loop or the
+    /// deadline timer and read from the ingest thread; a reference assignment is atomic and
+    /// the record it publishes is immutable, so a reader sees one description or the other and
+    /// never half of a new one.
+    /// </remarks>
+    public SourceMetadata Metadata { get; private set; }
 
     /// <inheritdoc/>
     public event Action<SourceScopeReport>? ScopeResolved;
@@ -132,17 +172,13 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
         // never delivered a byte.
         global::Android.Util.Log.Info("VisualCat", "Live capture connected; waiting for app log activity.");
 
-        // A source that already knows it cannot see the device says so at once; one that
-        // still might starts the clock that decides (audit 2, C1). The clock is a timer
-        // rather than a check on each arriving chunk, because the state it exists to catch
-        // is precisely the one where no chunk ever arrives.
+        // A source that already knows it cannot see the device says so at once. One that
+        // still might says nothing yet: the clock that decides is started by the first byte,
+        // further down, because until then the reader is looking at Android's consent sheet
+        // and there is no stream to judge (audit 3, A1).
         if (!_permissionHeld)
         {
             ResolveScope(fullDevice: false, declined: false);
-        }
-        else
-        {
-            StartScopeDeadline();
         }
 
         var buffer = new byte[256 * 1024];
@@ -192,6 +228,14 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
                     break;
                 }
 
+                // The first byte is the platform saying it has finished asking the reader and
+                // started streaming. Everything after this is evidence about the stream, which
+                // is what the deadline is for.
+                if (chunksRead == 0 && _permissionHeld)
+                {
+                    StartScopeDeadline();
+                }
+
                 var chunk = new byte[read];
                 Buffer.BlockCopy(buffer, 0, chunk, 0, read);
                 InspectScope(chunk);
@@ -235,10 +279,16 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
     /// records within its first few chunks, so one foreign pid is decisive and no amount of
     /// our own is. The buffer is bounded because a single logcat record can be long and this
     /// is only ever reading the first three tokens of a line.
+    ///
+    /// This keeps reading after a restricted verdict, and that is deliberate: the restricted
+    /// verdict is the one made from an absence, and a foreign pid arriving later is proof it
+    /// was wrong. Correcting it costs one comparison per line; being wrong costs the reader
+    /// the rest of the session (audit 3, A1). Only the full-device verdict stops the work,
+    /// because nothing can overturn it.
     /// </remarks>
     private void InspectScope(ReadOnlySpan<byte> chunk)
     {
-        if (Volatile.Read(ref _scopeResolved) != 0)
+        if (Volatile.Read(ref _scopeVerdict) == ScopeFullDevice)
         {
             return;
         }
@@ -309,17 +359,30 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
         }
     }
 
+    /// <summary>
+    /// Publishes what the capture can see, and revises it if the stream later says otherwise.
+    /// </summary>
+    /// <remarks>
+    /// Full-device wins from any state and settles the question; restricted is only ever a
+    /// first answer, and never overwrites a full-device one. That asymmetry is the shape of
+    /// the evidence: a foreign record proves reach, while no foreign record proves nothing at
+    /// all, and the old code latched both alike and could not take either back.
+    /// </remarks>
     private void ResolveScope(bool fullDevice, bool declined)
     {
-        if (Interlocked.Exchange(ref _scopeResolved, 1) != 0)
+        var wanted = fullDevice ? ScopeFullDevice : ScopeRestricted;
+        var previous = fullDevice
+            ? Interlocked.Exchange(ref _scopeVerdict, ScopeFullDevice)
+            : Interlocked.CompareExchange(ref _scopeVerdict, ScopeRestricted, ScopePending);
+        if (previous == wanted || previous == ScopeFullDevice)
         {
             return;
         }
 
-        lock (_scopeSync)
+        if (fullDevice)
         {
-            _scopeDeadline?.Dispose();
-            _scopeDeadline = null;
+            // Nothing left to decide, so nothing left to time.
+            CancelScopeDeadline();
         }
 
         var report = fullDevice
@@ -329,10 +392,35 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
                 "On-device own-app logcat",
                 declined ? "log access was not allowed" : "own-app scope only",
                 declined ? DeclinedRemedy : NotGrantedRemedy);
+
+        // The session's own record of what it is, so a scope corrected two seconds into a
+        // capture is what the manifest ends up holding.
+        Metadata = Metadata with
+        {
+            Description = report.Description,
+            Properties = WithScope(Metadata.Properties, fullDevice ? "full-device" : "own-app"),
+        };
         global::Android.Util.Log.Info(
             "VisualCat",
-            $"On-device logcat scope resolved: fullDevice={fullDevice}, declined={declined}.");
+            previous == ScopePending
+                ? $"On-device logcat scope resolved: fullDevice={fullDevice}, declined={declined}."
+                : $"On-device logcat scope corrected to fullDevice={fullDevice}: a record from another process arrived after the deadline.");
         ScopeResolved?.Invoke(report);
+    }
+
+    private static Dictionary<string, string>? WithScope(
+        IReadOnlyDictionary<string, string>? properties,
+        string scope)
+    {
+        if (properties is null)
+        {
+            return null;
+        }
+
+        return new Dictionary<string, string>(properties, StringComparer.Ordinal)
+        {
+            ["scope"] = scope,
+        };
     }
 
     private static async Task DrainErrorStreamAsync(System.IO.Stream error, CancellationToken cancellationToken)

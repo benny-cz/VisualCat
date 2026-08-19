@@ -17,13 +17,26 @@ namespace VisualCat.Android;
     // itself, which is what lets the filter drawer keep its footer reachable while a query is
     // being typed. Screen-layout and smallest-width changes are handled in place for the same
     // reason orientation is: a live capture must survive them.
+    //
+    // FontScale, Density, Locale and LayoutDirection are on the list for exactly that reason
+    // and were missing from it. Changing the system text size — the ordinary accessibility
+    // control, the one somebody who cannot read the log they are recording reaches for —
+    // destroyed the activity and killed the running capture with it, silently: Follow and Stop
+    // capture simply disappeared and the status line changed tense (audit 3, A2). The same
+    // recreation left a million-entry session showing an empty list under the word "Ready" for
+    // ten seconds while it reopened from disk (audit 3, C3). Handling them in place costs a
+    // rebuild of the views at the new scale, which OnConfigurationChanged below does.
     WindowSoftInputMode = global::Android.Views.SoftInput.AdjustResize,
     ConfigurationChanges = ConfigChanges.Orientation |
                            ConfigChanges.ScreenSize |
                            ConfigChanges.ScreenLayout |
                            ConfigChanges.SmallestScreenSize |
                            ConfigChanges.KeyboardHidden |
-                           ConfigChanges.UiMode)]
+                           ConfigChanges.UiMode |
+                           ConfigChanges.FontScale |
+                           ConfigChanges.Density |
+                           ConfigChanges.Locale |
+                           ConfigChanges.LayoutDirection)]
 [IntentFilter(
     [Intent.ActionView],
     Categories = [Intent.CategoryDefault, Intent.CategoryBrowsable],
@@ -53,6 +66,27 @@ public sealed class MainActivity : AvaloniaMainActivity
     {
         base.OnResume();
         PlatformSourceRegistry.PublishAppResumed();
+    }
+
+    /// <summary>
+    /// A display configuration this activity handles itself has changed.
+    /// </summary>
+    /// <remarks>
+    /// The one the app has to act on is the text scale: every font size in the product is
+    /// resolved against it while the view that uses it is being constructed, so a new value
+    /// reaches the screen when the views are rebuilt and not before. The rest — density,
+    /// locale, layout direction — are declared so that they, too, stop killing a running
+    /// capture; nothing in the product reads them (the display culture is fixed, see
+    /// <c>DisplayCulture</c>), so nothing has to answer them.
+    ///
+    /// The scale is republished before the notification, because the handler on the other end
+    /// reads it rather than being passed it.
+    /// </remarks>
+    public override void OnConfigurationChanged(global::Android.Content.Res.Configuration newConfig)
+    {
+        base.OnConfigurationChanged(newConfig);
+        PlatformSourceRegistry.PlatformFontScale = newConfig?.FontScale ?? Resources?.Configuration?.FontScale;
+        PlatformSourceRegistry.PublishDisplayConfigurationChanged();
     }
 
     /// <summary>

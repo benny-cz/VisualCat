@@ -150,9 +150,10 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             operationToken);
         try
         {
-            tab.ReportActivity(SessionActivity.Queued, "Queued · waiting for another log to finish reading");
+            EnterQueue(tab);
             await _resourceGovernor.WaitAsync(operationToken).ConfigureAwait(false);
             acquired = true;
+            tab.QueuedBehind = null;
             var result = await SessionCoordinator.ImportAsync(
                 source,
                 sessionRoot,
@@ -231,6 +232,40 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         }
     }
 
+    /// <summary>
+    /// A live capture ended without the reader stopping it, and with what to tell them.
+    /// </summary>
+    /// <remarks>
+    /// Raised on whatever thread the capture finished on. The shell is the only thing that
+    /// owns a place to say it, so the model says what happened and leaves the presentation to
+    /// the shell — the same division the workspace's own notices follow.
+    /// </remarks>
+    public event Action<SessionTabViewModel, string>? CaptureEndedUnprompted;
+
+    /// <summary>
+    /// Puts a session in the queue and says what it is queued behind.
+    /// </summary>
+    /// <remarks>
+    /// "Waiting for another log to finish reading" is true and useless: with one import running
+    /// and another queued, the reader could not tell which was which, whether the one in front
+    /// was making progress, or how long they were waiting for (audit 3, E4). The session that
+    /// holds the slot has a name and a status line of its own, so this says which one it is
+    /// and where to look at it.
+    /// </remarks>
+    private void EnterQueue(SessionTabViewModel tab)
+    {
+        var ahead = Tabs.FirstOrDefault(candidate =>
+            !ReferenceEquals(candidate, tab) &&
+            candidate.Activity is SessionActivity.Importing or SessionActivity.Capturing
+                or SessionActivity.Connecting or SessionActivity.Starting);
+        tab.QueuedBehind = ahead?.Title;
+        tab.ReportActivity(
+            SessionActivity.Queued,
+            ahead is null
+                ? "Queued · waiting for a free reading slot"
+                : $"Queued · waiting for {ahead.Title} to finish");
+    }
+
     public async Task<SessionTabViewModel> CaptureAsync(
         ILogSource source,
         TimeSpan? duration,
@@ -285,9 +320,10 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         using var gracefulStop = CancellationTokenSource.CreateLinkedTokenSource(timed.Token, operation.GracefulStop.Token);
         try
         {
-            tab.ReportActivity(SessionActivity.Queued, "Queued · waiting for another log to finish reading");
+            EnterQueue(tab);
             await _resourceGovernor.WaitAsync(operationToken).ConfigureAwait(false);
             acquired = true;
+            tab.QueuedBehind = null;
 
             // Capture setup can include device checks and logcat format negotiation.
             // Keep that distinct from confirmed streaming so an empty workspace does
@@ -320,11 +356,36 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             var capturedEntries = result.Snapshot.Descriptor.Counters.ParsedEntries;
             result.Snapshot.Dispose();
             await tab.LoadSnapshotAsync(true, operationToken).ConfigureAwait(false);
+
+            // Who ended it decides what the reader is owed. A capture the reader stopped needs
+            // no announcement — they are looking at the button they just pressed — and one
+            // that ran its stated duration ended as agreed. A capture that ended on its own is
+            // the only case where a recording the reader believes is running has quietly
+            // stopped, and it used to be told by nothing at all: the status line changed tense
+            // and Follow and Stop capture disappeared from the layout (audit 3, A2).
+            var readerStopped = operation.GracefulStop.IsCancellationRequested;
+            var durationElapsed = timed.IsCancellationRequested;
             if (capturedEntries == 0)
             {
                 tab.ReportActivity(
                     SessionActivity.Stopped,
                     "Stopped · no log entries were received; retry Live and generate app activity");
+            }
+            else if (!readerStopped && !durationElapsed)
+            {
+                tab.ReportActivity(
+                    SessionActivity.Stopped,
+                    $"Stopped · the log source ended this capture · {capturedEntries:N0} entries kept");
+            }
+
+            if (!readerStopped && !durationElapsed)
+            {
+                CaptureEndedUnprompted?.Invoke(
+                    tab,
+                    capturedEntries == 0
+                        ? "The live capture stopped on its own before any log line arrived. Nothing was recorded."
+                        : $"The live capture stopped on its own — the log source ended it. " +
+                          $"{capturedEntries:N0} entries were kept; start Live again to carry on.");
             }
 
             return tab;
