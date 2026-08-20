@@ -58,6 +58,29 @@ be published from an unmerged commit or one that would fail a pull request:
 
 ## Release records
 
+### v2.0.4 — 2026-08-20
+
+- The release-signed APK was clean-installed on a Motorola edge 60 pro running
+  Android 16/API 36 and reported application ID `com.barebit.visualcat`, version
+  `2.0.4`, and version code `20004`.
+- The More actions sheet exposed its full command set to Android accessibility,
+  the system Back gesture closed it, and the first live capture showed the
+  privacy and one-time-permission explanation before capture began.
+- Full-device capture reached 1,038 entries. The status reported the resolved
+  scope, current rate, and quiet heartbeat honestly; capture survived an app
+  background/resume cycle, and re-engaging Follow returned to a 30-second live
+  edge.
+- Light-theme repainting, vertically centred touch controls, Details mode's
+  expanded entry list, and the absence of Fit when its plot was hidden were
+  visually reviewed on the device. Stop capture finalized cleanly, removed the
+  live-only controls, and the named completed capture remained on the home
+  screen after a forced process restart. No crash or ANR was logged.
+- The AAB and APK passed the release packager's application ID, API level, ABI,
+  16 KB alignment, version, signature-scheme, and pinned Google Play upload
+  certificate checks. Android left no persistent `READ_LOGS` grant behind.
+- The four-hour ADB soak, accessibility review, macOS hardware validation, and
+  Windows/macOS code signing remain intentionally deferred.
+
 ### v2.0.3 — 2026-08-16
 
 - The release-signed APK was clean-installed on a Motorola edge 60 pro running
