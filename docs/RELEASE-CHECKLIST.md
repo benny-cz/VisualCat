@@ -58,6 +58,24 @@ be published from an unmerged commit or one that would fail a pull request:
 
 ## Release records
 
+### v2.0.5 — 2026-08-21
+
+- The release-signed APK was clean-installed on a Samsung SM-G990B running
+  Android 16/API 36 and reported application ID `com.barebit.visualcat`, version
+  `2.0.5`, and version code `20005`.
+- Without `READ_LOGS`, live capture stayed honestly in own-app scope beyond the
+  eight-second decision window, reported a quiet heartbeat after 19 seconds,
+  and kept the restricted-scope guidance visible instead of falsely switching
+  to full-device.
+- With the adb grant and Android's one-time consent, the same build resolved to
+  full-device, reported 852 lines at 112/s after seven seconds, and finalized
+  cleanly at 1,970 entries. No crash or ANR was logged in either mode.
+- The AAB and APK passed the release packager's application ID, API level, ABI,
+  16 KB alignment, version, signature-scheme, and pinned Google Play upload
+  certificate checks. The temporary `READ_LOGS` grant was revoked after testing.
+- The four-hour ADB soak, accessibility review, macOS hardware validation, and
+  Windows/macOS code signing remain intentionally deferred.
+
 ### v2.0.4 — 2026-08-20
 
 - The release-signed APK was clean-installed on a Motorola edge 60 pro running

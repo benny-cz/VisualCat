@@ -191,7 +191,7 @@ description states before install.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version: `2.0.4` → `20004` |
+| versionCode | Derived from the release version: `2.0.5` → `20005` |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
 | ABIs | `arm64-v8a`, `x86_64` |
@@ -237,4 +237,14 @@ lists, working sheets and dialogs, and recent captures on the home screen. Live
 capture now reports its real scope, rate and quiet state, follows the true live
 edge, uses the device clock correctly, and is more reliable during long
 captures and shutdown.
+```
+
+Release notes for `2.0.5`:
+
+```text
+Live capture now reports its scope correctly when VisualCat can read only its
+own logs. It no longer mistakes UTC timezone offsets for process IDs or claims
+full-device access without READ_LOGS. Full-device captures still detect records
+from other processes, while restricted captures keep the useful permission
+guidance visible.
 ```
