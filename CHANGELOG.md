@@ -13,6 +13,29 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Fixed
+- An on-device capture no longer says it is reading the whole device while it is
+  reading only its own log lines. The Android companion settled that question by
+  reading the pid off each arriving record, and it took the pid to be the third
+  whitespace-separated token — which is where `-v threadtime` puts it, but not
+  where `-v threadtime,UTC` does, because the zone modifier inserts the offset as
+  a token of its own. `+0000` then read back as pid 0, no process on a device has
+  pid 0, and so every record on the phone — the app's own included — looked as
+  though somebody else had written it. A capture restricted to this app's own
+  records announced itself as full-device 0.4 seconds in, latched the verdict
+  where nothing could revise it, and then sat delivering nothing: 84 lines
+  against the 62,909 a real full-device capture would have taken in the same
+  seventeen minutes, while the status line, the session name and the session
+  details all agreed it was seeing everything. Worse than the wrong label, it
+  threw away the only thing that would have helped — the notice saying that
+  `READ_LOGS` has to be granted over adb, and the command that grants it.
+  The pid is now read by a record's shape rather than by counting to three, under
+  the rules the log parser already followed, and no record is read at all unless
+  its whole prefix is present and every part of it is what it should be. A
+  capture that does not hold `READ_LOGS` no longer asks the question at all:
+  logd never hands an app another uid's records, so there is nothing in that
+  stream to find and no way left to find it wrongly.
+
 ## [2.0.4] - 2026-08-20
 
 ### Added

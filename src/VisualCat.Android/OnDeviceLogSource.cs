@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using Android.Content.PM;
 using VisualCat.Application.Ports;
+using VisualCat.Core.Parsing;
 using VisualCat.Domain.Sessions;
 
 namespace VisualCat.Android;
@@ -62,8 +63,9 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
     private readonly CancellationTokenSource _stop = new();
     private readonly bool _permissionHeld;
     private readonly int _ownPid = global::Android.OS.Process.MyPid();
-    private readonly StringBuilder _scopeLine = new();
+    private readonly char[] _scopePrefix = new char[LogcatRecordOrigin.MaximumPrefixLength];
     private readonly Lock _scopeSync = new();
+    private int _scopePrefixLength;
     private Timer? _scopeDeadline;
     private int _scopeVerdict = ScopePending;
     private Java.Lang.Process? _process;
@@ -238,7 +240,16 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
 
                 var chunk = new byte[read];
                 Buffer.BlockCopy(buffer, 0, chunk, 0, read);
-                InspectScope(chunk);
+
+                // Only a capture that could have been allowed the device still has a scope
+                // question open. Without READ_LOGS logd never hands over another uid's
+                // records, so there is nothing in this stream to find — and every line
+                // inspected is one more chance to find it wrongly.
+                if (_permissionHeld)
+                {
+                    InspectScope(chunk);
+                }
+
                 yield return new SourceChunk(offset, chunk);
                 offset += read;
                 chunksRead++;
@@ -285,6 +296,8 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
     /// was wrong. Correcting it costs one comparison per line; being wrong costs the reader
     /// the rest of the session (audit 3, A1). Only the full-device verdict stops the work,
     /// because nothing can overturn it.
+    ///
+    /// Called only while the app holds READ_LOGS, because only then is there anything to find.
     /// </remarks>
     private void InspectScope(ReadOnlySpan<byte> chunk)
     {
@@ -297,41 +310,41 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
         {
             if (value is (byte)'\n' or (byte)'\r')
             {
-                if (_scopeLine.Length > 0)
+                if (_scopePrefixLength > 0)
                 {
-                    if (IsForeignRecord(_scopeLine.ToString()))
+                    var foreign = IsForeignRecord(_scopePrefix.AsSpan(0, _scopePrefixLength));
+                    _scopePrefixLength = 0;
+                    if (foreign)
                     {
                         ResolveScope(fullDevice: true, declined: false);
                         return;
                     }
-
-                    _scopeLine.Clear();
                 }
 
                 continue;
             }
 
-            // Three whitespace-separated tokens in, the threadtime format has already given
-            // up the pid; anything past that is the message and cannot change the answer.
-            if (_scopeLine.Length < 64)
+            // Only the prefix is kept. The pid is settled well before the message begins, and
+            // there is no other reason to hold on to a record — see
+            // LogcatRecordOrigin.MaximumPrefixLength for why the cut falls where it does. Every
+            // byte this early in a record is ASCII, so widening it to a char is exact.
+            if (_scopePrefixLength < _scopePrefix.Length)
             {
-                _scopeLine.Append((char)value);
+                _scopePrefix[_scopePrefixLength++] = (char)value;
             }
         }
     }
 
     /// <summary>Whether a threadtime record was written by some process other than this one.</summary>
     /// <remarks>
-    /// The format is <c>date time pid tid level tag: message</c>, so the pid is the third
-    /// whitespace-separated token. A line that does not parse says nothing either way.
+    /// The reading belongs to <see cref="LogcatRecordOrigin"/> so that this source and the
+    /// parser cannot come to disagree about where in a record a pid is — which is precisely how
+    /// this once read the zone offset that <c>-v UTC</c> inserts as a pid of 0 and called every
+    /// record on the device, its own included, foreign. A record that cannot be read says
+    /// nothing either way.
     /// </remarks>
-    private bool IsForeignRecord(string line)
-    {
-        var fields = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        return fields.Length >= 3 &&
-               int.TryParse(fields[2], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var pid) &&
-               pid != _ownPid;
-    }
+    private bool IsForeignRecord(ReadOnlySpan<char> record) =>
+        LogcatRecordOrigin.TryReadProcessId(record, out var pid) && pid != _ownPid;
 
     /// <summary>
     /// Stops the clock without answering. A capture the reader ended says nothing about what
@@ -370,6 +383,20 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
     /// </remarks>
     private void ResolveScope(bool fullDevice, bool declined)
     {
+        // logd answers a reader according to that reader's own permissions, so an app without
+        // READ_LOGS is never handed another uid's records: full-device is not a thing the
+        // stream can talk this source into believing, whatever it appears to say. The rule sits
+        // here rather than at the one call site so that no later reader of the stream can undo
+        // it, and it is logged rather than passed over because arriving here at all would mean
+        // the record reader had begun seeing things.
+        if (fullDevice && !_permissionHeld)
+        {
+            global::Android.Util.Log.Warn(
+                "VisualCat",
+                "Ignoring a full-device scope claim from a capture that does not hold READ_LOGS.");
+            return;
+        }
+
         var wanted = fullDevice ? ScopeFullDevice : ScopeRestricted;
         var previous = fullDevice
             ? Interlocked.Exchange(ref _scopeVerdict, ScopeFullDevice)
