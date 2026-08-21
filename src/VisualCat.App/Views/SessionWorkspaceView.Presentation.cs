@@ -252,6 +252,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         var live = _viewModel.IsLiveSourceAttached;
         var stopping = activity == SessionActivity.Stopping;
         _follow.IsVisible = live;
+
+        // Both controls stay in place while the capture finishes and neither does anything:
+        // there is no longer a live edge to follow, and the stop is already under way. Kept
+        // visible rather than removed so the row does not reflow under a thumb that is still
+        // on it, and disabled so that a second press is answered by the button itself.
+        _follow.IsEnabled = !stopping;
         _stopCapture.IsVisible = live;
         _stopCapture.IsEnabled = !stopping;
         _stopCapture.Content = stopping ? "Stopping…" : "Stop capture";
@@ -294,6 +300,12 @@ public sealed partial class SessionWorkspaceView : UserControl
                 return ("Starting live capture…", "Waiting for the first log entry.");
             case SessionActivity.Capturing:
                 return ("Live capture is running", "Waiting for the first visible log entry.");
+            case SessionActivity.Stopping:
+                // Reached only by a capture stopped before it committed anything visible.
+                // The plot has no data to keep showing, so it says what the status bar says
+                // rather than falling through to "Open a logcat file or start a live
+                // capture" — an instruction to do the thing that is finishing right now.
+                return ("Finishing this capture…", "Saving what was captured and closing the session.");
             case SessionActivity.Failed:
                 return (
                     "This log could not be read",

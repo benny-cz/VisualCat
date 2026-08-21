@@ -13,6 +13,40 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Fixed
+- Stop capture now answers the press, keeps answering it, and says what became
+  of the recording. On a capture large enough to matter — four hours and 543,767
+  lines, on the phone this was found on — the button appeared to do nothing at
+  all. It sprang back from "Stopping…" to "Stop capture" within a second, and the
+  status line went back to reading "Capturing", because the two things that
+  describe a running capture both kept firing after the source had been told to
+  end: the pipeline's progress reports, which continue for as long as the
+  read-ahead takes to drain, and the one-second heartbeat, which speaks up
+  whenever the source has gone quiet — and a stopped source is quiet by
+  definition. Nothing about the screen distinguished a stop that was working from
+  a press that had not registered, and the only thing left to try was pressing
+  the button again.
+  Worse than the confusion, the state never resolved. A capture the reader
+  stopped fell through every branch that reports an ending, on the reasoning that
+  the reader was looking at the button they had just pressed — but the status
+  line, Follow and Stop capture all read off that state. So a session whose
+  manifest had been written, whose 543,763 entries were complete and reopenable
+  on disk, went on presenting itself as a live capture with a Stop button that by
+  then did nothing at all, and went on doing so for as long as the workspace took
+  to reopen it: over two hours, in the case this was written for.
+  A stop is now sticky — once begun, nothing that describes a running capture can
+  undo it — and it says which part of the ending it is waiting on, counting the
+  seconds as it goes: draining the lines still in the pipeline, compacting,
+  writing the session index, and reopening the finished session. It leads with
+  the elapsed clock, before anything a phone's one-line status bar can clip away,
+  because a number that visibly moves is the answer to "is this stuck?". Once the
+  manifest is written the line says so — "capture saved" — since the question
+  behind a second press is whether the recording is safe. Every capture then
+  lands somewhere final and says what it kept, and the controls for a capture
+  that has ended go away. A capture that reaches its own stated duration is given
+  the same account of itself, and a view query that supersedes the last refresh
+  no longer turns a finished capture into a failed one.
+
 ## [2.0.5] - 2026-08-21
 
 ### Fixed

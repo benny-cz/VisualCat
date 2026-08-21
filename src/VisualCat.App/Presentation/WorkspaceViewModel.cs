@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
+using Avalonia.Threading;
 using VisualCat.Application.Coordination;
 using VisualCat.Application.Ports;
 using VisualCat.Application.UseCases;
@@ -318,6 +319,15 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             PortableRaw: true);
         using var timed = duration is { } value ? new CancellationTokenSource(value) : new CancellationTokenSource();
         using var gracefulStop = CancellationTokenSource.CreateLinkedTokenSource(timed.Token, operation.GracefulStop.Token);
+
+        // Every graceful ending drains the same pipeline, so every one of them gets the same
+        // account of itself. Stop capture already said so from the button; this is what gives
+        // a capture that reached its own duration the same "Stopping · 4s · …" line instead of
+        // a status frozen on "Capturing" for the whole drain. Registered rather than checked
+        // after the fact because the drain begins the moment the token trips, which is tens of
+        // seconds before ImportAsync returns to tell anyone about it.
+        using var stopAnnouncement = gracefulStop.Token.Register(() =>
+            Dispatcher.UIThread.Post(() => tab.BeginStop()));
         try
         {
             EnterQueue(tab);
@@ -355,14 +365,41 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
                 cancellationToken: operationToken).ConfigureAwait(false);
             var capturedEntries = result.Snapshot.Descriptor.Counters.ParsedEntries;
             result.Snapshot.Dispose();
-            await tab.LoadSnapshotAsync(true, operationToken).ConfigureAwait(false);
 
-            // Who ended it decides what the reader is owed. A capture the reader stopped needs
-            // no announcement — they are looking at the button they just pressed — and one
-            // that ran its stated duration ended as agreed. A capture that ended on its own is
-            // the only case where a recording the reader believes is running has quietly
-            // stopped, and it used to be told by nothing at all: the status line changed tense
-            // and Follow and Stop capture disappeared from the layout (audit 3, A2).
+            // The session is complete and reopenable from here on, so nothing may go on
+            // describing a live source. Reopening it and running the first queries over it is
+            // real work — a minute of it, on the four-hour phone capture this was written for
+            // — and it used to happen with the capture flag still set and the heartbeat still
+            // asserting "Capturing · no source lines for 7m", over a Stop capture button that
+            // by then did nothing at all.
+            tab.IsLiveCaptureActive = false;
+
+            // Says the capture is safe before saying what is left to do. By this point the
+            // manifest is written and the session would reopen from disk even if the app died
+            // here, and "will I lose what I recorded?" is the question behind pressing the
+            // button a second time — so it is answered in the line itself rather than left to
+            // be inferred from a phase name.
+            tab.ReportStopPhase("capture saved · opening the session");
+            try
+            {
+                await tab.LoadSnapshotAsync(true, operationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!operationToken.IsCancellationRequested)
+            {
+                // A view query this one was superseded by, not a capture that failed: any
+                // refresh started while this one waits for the snapshot lock cancels it. The
+                // session is complete on disk and the refresh that took over is drawing it,
+                // so this reports the ending it actually had instead of "Failed".
+            }
+
+            // Who ended it decides what the reader is owed. A capture the reader stopped is
+            // told plainly that it stopped and what it kept — leaving the last word to
+            // whatever the snapshot loader happened to say let a stop land back on the
+            // capture's own wording — and one that ran its stated duration ended as agreed.
+            // A capture that ended on its own is the case where a recording the reader
+            // believes is running has quietly stopped, and it used to be told by nothing at
+            // all: the status line changed tense and Follow and Stop capture disappeared from
+            // the layout (audit 3, A2).
             var readerStopped = operation.GracefulStop.IsCancellationRequested;
             var durationElapsed = timed.IsCancellationRequested;
             if (capturedEntries == 0)
@@ -371,7 +408,19 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
                     SessionActivity.Stopped,
                     "Stopped · no log entries were received; retry Live and generate app activity");
             }
-            else if (!readerStopped && !durationElapsed)
+            else if (readerStopped)
+            {
+                tab.ReportActivity(
+                    SessionActivity.Stopped,
+                    $"Stopped · {capturedEntries:N0} entries kept");
+            }
+            else if (durationElapsed)
+            {
+                tab.ReportActivity(
+                    SessionActivity.Stopped,
+                    $"Stopped · this capture ran its full duration · {capturedEntries:N0} entries kept");
+            }
+            else
             {
                 tab.ReportActivity(
                     SessionActivity.Stopped,
@@ -417,8 +466,20 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         }
     }
 
+    /// <summary>
+    /// Ends a running capture and waits for the session to be finished and reopened.
+    /// </summary>
+    /// <remarks>
+    /// The acknowledgement is the first thing that happens and it happens on the caller's
+    /// thread, before the token is even cancelled: everything after this point — draining the
+    /// read-ahead, compacting, writing the index, reopening the session — takes as long as the
+    /// capture was large, and on a phone capture of half a million lines that is tens of
+    /// seconds during which the reader has only the button to go on. Idempotent, because a
+    /// stop that looks like it did nothing is a stop that gets pressed again.
+    /// </remarks>
     public async Task<bool> StopAsync(SessionTabViewModel tab)
     {
+        ArgumentNullException.ThrowIfNull(tab);
         SessionOperation? operation;
         lock (_operationGate)
         {
@@ -430,8 +491,8 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             return false;
         }
 
+        tab.BeginStop();
         operation.GracefulStop.Cancel();
-        tab.ReportActivity(SessionActivity.Stopping, "Stopping · saving the last of the capture…");
         await operation.Completion.Task.ConfigureAwait(false);
         return true;
     }
@@ -528,7 +589,17 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             }
 
             Volatile.Write(ref lastUiProgress, now);
-            tab.ReportActivity(activity, describe(snapshot));
+            if (tab.IsStopping)
+            {
+                // The reports keep coming after the stop — the pipeline still has read-ahead
+                // to commit — and each one is progress the reader is waiting on, so it is
+                // shown as what remains of the stop rather than as a capture still running.
+                tab.ReportStopProgress(snapshot);
+            }
+            else
+            {
+                tab.ReportActivity(activity, describe(snapshot));
+            }
 
             // With the workspace off screen there is nothing to redraw, and re-opening
             // the snapshot only to run four queries against it and throw the answers

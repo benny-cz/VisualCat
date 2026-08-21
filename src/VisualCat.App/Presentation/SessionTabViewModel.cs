@@ -167,6 +167,19 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private string? _refreshFailure;
     private int _liveSegmentCount;
 
+    // A stop is not an instant: the pipeline still has to drain what it has read, compact
+    // the segments, write the index, and reopen the finished session — on a four-hour phone
+    // capture that is tens of seconds of work after the last line arrives. These carry the
+    // stop across that window so the status line can keep describing it. See BeginStop.
+    //
+    // Volatile because the button presses on the UI thread and everything that answers it
+    // runs off one: the pipeline's progress callbacks have no synchronization context to
+    // return to, and the capture completes on a thread-pool thread. A reader that missed the
+    // flag would let exactly the report through that this exists to suppress.
+    private volatile bool _stopping;
+    private long _stopStartedMs;
+    private volatile string _stopPhase = string.Empty;
+
     /// <summary>
     /// Why this capture may look empty, when the reason is the scope it was granted rather
     /// than anything going wrong. Android restricts an unprivileged app to its own log
@@ -343,8 +356,25 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     }
 
     /// <summary>Records the state and the sentence that describes it together.</summary>
+    /// <remarks>
+    /// A stop, once begun, outranks anything that describes a running capture. Two things
+    /// go on describing one after the reader has pressed the button — the pipeline's own
+    /// progress reports, which keep arriving while the read-ahead drains, and the capture
+    /// heartbeat, which fires every second the source is quiet and a stopped source is
+    /// quiet by definition. Both used to win: the button sprang back from "Stopping…" to
+    /// "Stop capture" within a second and the status line went back to "Capturing", so a
+    /// stop that was working looked like a press that had not registered, and the only
+    /// thing left to try was pressing it again. While <see cref="IsStopping"/> holds, only
+    /// the stop's own wording and the states that end the session are accepted.
+    /// </remarks>
     public void ReportActivity(SessionActivity activity, string status)
     {
+        if (_stopping && activity is not (
+                SessionActivity.Stopping or SessionActivity.Stopped or SessionActivity.Failed))
+        {
+            return;
+        }
+
         Activity = activity;
         Status = status;
         if (activity is SessionActivity.Ready or SessionActivity.Stopped or SessionActivity.Failed)
@@ -353,6 +383,114 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             // promise about a source that has closed.
             HasNewData = false;
         }
+
+        if (activity is SessionActivity.Stopped or SessionActivity.Failed)
+        {
+            // The session has landed somewhere final; the stop is over and later reports —
+            // reopening this session from disk, say — describe it freely again.
+            _stopping = false;
+        }
+    }
+
+    /// <summary>
+    /// Whether a stop is under way: the source has been told to end and the session is
+    /// draining, compacting, finalizing, or being reopened.
+    /// </summary>
+    public bool IsStopping => _stopping;
+
+    /// <summary>
+    /// Records that this capture is ending, and starts describing the ending.
+    /// </summary>
+    /// <remarks>
+    /// Called for every graceful ending — the reader pressing Stop and a timed capture
+    /// reaching its duration alike — because both drain the same pipeline and both used to
+    /// spend that drain claiming to be capturing. Idempotent: a second press, or the
+    /// duration elapsing on a capture the reader has already stopped, keeps the elapsed
+    /// clock the first one started rather than restarting it.
+    /// </remarks>
+    public void BeginStop(string? phase = null)
+    {
+        if (!_stopping)
+        {
+            // Published by the volatile write below, which is why it comes last: a thread
+            // that sees the flag is guaranteed to see the clock and the phase it belongs to.
+            _stopStartedMs = Environment.TickCount64;
+            _stopPhase = phase ?? "saving the last of the capture";
+            _stopping = true;
+        }
+        else if (phase is { Length: > 0 })
+        {
+            _stopPhase = phase;
+        }
+
+        ReportStop();
+        StartCaptureHeartbeat();
+    }
+
+    /// <summary>
+    /// Names the part of the ending the session has reached, for the phases the view model
+    /// drives itself — reopening the finished session, which happens after the pipeline has
+    /// reported everything it is going to.
+    /// </summary>
+    public void ReportStopPhase(string phase)
+    {
+        if (!_stopping)
+        {
+            return;
+        }
+
+        _stopPhase = phase;
+        ReportStop();
+    }
+
+    /// <summary>
+    /// Turns one pipeline progress report into what the reader is waiting for, while a stop
+    /// is under way.
+    /// </summary>
+    /// <remarks>
+    /// The stages are the pipeline's own (§5.5) and each one is a different answer to "what
+    /// is it doing?": still writing out lines it had already read, merging the segments those
+    /// lines went into, or writing the index that makes the session reopenable. Reporting a
+    /// line count that is still climbing is what distinguishes a stop that is working from
+    /// one that is stuck, so the backlog is named whenever there is one.
+    /// </remarks>
+    public void ReportStopProgress(VisualCat.Domain.Sessions.ProgressSnapshot progress)
+    {
+        ArgumentNullException.ThrowIfNull(progress);
+        if (!_stopping)
+        {
+            return;
+        }
+
+        LiveSegmentCount = progress.SegmentCount;
+        _captureLines = progress.LinesRead;
+        _captureCommittedLines = progress.LinesCommitted;
+        UpdateCaptureHealth(progress.Warning);
+        var pending = Math.Max(0, progress.LinesRead - progress.LinesCommitted);
+        _stopPhase = progress.Stage switch
+        {
+            VisualCat.Domain.Sessions.IngestStage.Compacting => "compacting the session",
+            VisualCat.Domain.Sessions.IngestStage.Finalizing => "writing the session index",
+            _ when pending > 0 => $"{pending:N0} lines left to save",
+            _ => "saving the last of the capture",
+        };
+
+        ReportStop();
+    }
+
+    /// <summary>
+    /// What a stop says about itself. The elapsed clock comes second, before anything that
+    /// can be clipped, because on a phone the status bar is one truncated line and a number
+    /// that visibly moves every second is the whole answer to "is this stuck?".
+    /// </summary>
+    private void ReportStop()
+    {
+        var elapsed = TimeSpan.FromMilliseconds(
+            Math.Max(0, Environment.TickCount64 - Volatile.Read(ref _stopStartedMs)));
+        var health = CaptureHealthWarning is { Length: > 0 } ? " · ⚠ see session details" : string.Empty;
+        ReportActivity(
+            SessionActivity.Stopping,
+            $"Stopping · {FormatQuiet(elapsed)} · {_stopPhase}{health}");
     }
     public string SearchStatus { get => _searchStatus; private set => Set(ref _searchStatus, value); }
     public string SearchText { get => _searchText; set => Set(ref _searchText, value); }
@@ -1611,6 +1749,14 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     /// Nothing reports progress while a source is silent, so without a tick of its own the
     /// status would simply freeze on whatever was last true.
     /// </summary>
+    /// <remarks>
+    /// A stop is the case that needs this most. Between the last line read and a reopenable
+    /// session there is compaction, a manifest, and an index, and the pipeline can spend
+    /// tens of seconds in any one of them without a single progress report — which is
+    /// exactly the stretch the reader spends wondering whether to press the button again.
+    /// The tick keeps the elapsed clock moving through all of it, so a stop that is working
+    /// never looks like one that has stalled.
+    /// </remarks>
     private void StartCaptureHeartbeat()
     {
         if (_captureHeartbeat is not null || !Dispatcher.UIThread.CheckAccess())
@@ -1623,9 +1769,15 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             DispatcherPriority.Background,
             (_, _) =>
             {
-                if (!IsLiveCaptureActive || Volatile.Read(ref _disposed) != 0)
+                if (Volatile.Read(ref _disposed) != 0 || !(IsLiveCaptureActive || _stopping))
                 {
                     StopCaptureHeartbeat();
+                    return;
+                }
+
+                if (_stopping)
+                {
+                    ReportStop();
                     return;
                 }
 
