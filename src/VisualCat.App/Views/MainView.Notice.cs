@@ -16,9 +16,23 @@ public sealed partial class MainView
     private Border? _noticeHost;
     private TextBlock? _noticeText;
     private Button? _noticeDismiss;
+    private Button? _noticeAction;
     private DispatcherTimer? _noticeTimer;
     private NoticeKind _noticeKind;
     private long _noticeRevision;
+
+    /// <summary>
+    /// One thing the reader can do about the message, offered beside it.
+    /// </summary>
+    /// <remarks>
+    /// A notice that names a command and then leaves the reader to transcribe it from a phone
+    /// screen has told them what to do without helping them do it, which is exactly the shape
+    /// the restricted-capture message had (finding F-13). Optional: most notices are reports,
+    /// and a report does not need a button.
+    /// </remarks>
+    /// <param name="Label">The verb, short enough for a 48 dp button beside Dismiss.</param>
+    /// <param name="Invoke">What the button does.</param>
+    internal sealed record NoticeAction(string Label, Func<Task> Invoke);
 
     /// <summary>What a notice is, which decides how long it stays.</summary>
     internal enum NoticeKind
@@ -61,6 +75,7 @@ public sealed partial class MainView
             FontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 12.5 : 12),
         };
         AutomationProperties.SetName(text, "Application status message");
+        text.MaxLines = 6;
 
         var dismiss = _noticeDismiss = new Button
         {
@@ -71,14 +86,35 @@ public sealed partial class MainView
         };
         AutomationProperties.SetName(dismiss, "Dismiss application status message");
         dismiss.Click += (_, _) => ShowNotice(string.Empty);
+        dismiss.MinHeight = OperatingSystem.IsAndroid() ? 48 : 0;
+
+        // 48 dp, like every other actionable control on this platform. The dismiss target
+        // beside it is one of the below-plan 44 dp constants the touch-target audit named
+        // (finding F-26).
+        var action = _noticeAction = new Button
+        {
+            IsVisible = false,
+            MinHeight = OperatingSystem.IsAndroid() ? 48 : 0,
+            Padding = new Thickness(10, 0),
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+        action.Click += async (_, _) =>
+        {
+            if (_noticeActionHandler is { } handler)
+            {
+                await handler();
+            }
+        };
 
         var content = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
             ColumnSpacing = 8,
         };
         content.Children.Add(text);
-        Grid.SetColumn(dismiss, 1);
+        Grid.SetColumn(action, 1);
+        content.Children.Add(action);
+        Grid.SetColumn(dismiss, 2);
         content.Children.Add(dismiss);
 
         var host = _noticeHost = new Border
@@ -103,12 +139,20 @@ public sealed partial class MainView
     /// additionally receives the always-visible notice lane because the brand row is removed
     /// as soon as a session opens.
     /// </summary>
-    internal void ShowNotice(string text, NoticeKind kind = NoticeKind.Information)
+    internal void ShowNotice(string text, NoticeKind kind = NoticeKind.Information, NoticeAction? action = null)
     {
         if (!Dispatcher.UIThread.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => ShowNotice(text, kind));
+            Dispatcher.UIThread.Post(() => ShowNotice(text, kind, action));
             return;
+        }
+
+        if (_noticeAction is { } actionButton)
+        {
+            actionButton.Content = action?.Label;
+            actionButton.IsVisible = action is not null;
+            AutomationProperties.SetName(actionButton, action?.Label ?? string.Empty);
+            _noticeActionHandler = action?.Invoke;
         }
 
         text ??= string.Empty;
@@ -178,6 +222,8 @@ public sealed partial class MainView
 
     /// <summary>Which message the lane is currently carrying.</summary>
     internal long NoticeRevision => _noticeRevision;
+
+    private Func<Task>? _noticeActionHandler;
 
     private void ApplyNoticeTheme()
     {

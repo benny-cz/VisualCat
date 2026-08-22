@@ -12,11 +12,19 @@
          release says so in the version itself now, so "which build is this?" has an answer
          a screenshot can carry.
 
-         Negated rather than tested for Debug: $(Configuration) may still be empty this
-         early in the evaluation, and the SDK fixes $(Version) before Directory.Build.targets
-         is imported, so this is the last place a suffix can be added. A Release build passes
-         the configuration as a global property, which is set before anything here runs. -->
-    <VersionSuffix Condition="'$(Configuration)' != 'Release' And '$(VersionSuffix)' == ''">dev</VersionSuffix>
+         The suffix used to depend on $(Configuration), which meant the one configuration
+         nobody can test a release candidate in was the only one that admitted to not being
+         a release: every Release build made after the 2.0.5 tag reported versionName=2.0.5
+         and painted "VisualCat 2.0.5" on the empty state, indistinguishable from the shipped
+         release that does not contain any of it (finding F-01). Release-ness is not a
+         configuration. It is an explicit signal that the release pipeline sets and no
+         developer build, CI check, or candidate build does:
+
+             dotnet build -c Release -p:ReleaseChannel=stable
+
+         Anything else is "2.0.5-dev+<commit>", which a screenshot can carry and a tester can
+         read off the device. -->
+    <VersionSuffix Condition="'$(VersionSuffix)' == '' And '$(ReleaseChannel)' != 'stable'">dev</VersionSuffix>
     <Description>Interactive, local-first Android logcat analysis with a severity-by-time heat map.</Description>
     <RepositoryUrl>https://github.com/benny-cz/VisualCat</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

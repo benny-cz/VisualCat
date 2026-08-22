@@ -14,7 +14,22 @@ public sealed class FileLogSource : ILogSource, ISourceDefectSource
     private readonly DateTime _initialWriteTime;
     private int _sourceChanged;
 
-    public FileLogSource(string path, int chunkBytes = 1024 * 1024)
+    /// <param name="path">The log file to read.</param>
+    /// <param name="chunkBytes">How much is read at a time.</param>
+    /// <param name="displayName">
+    /// What to call this log, when the file on disk is not named after it.
+    /// </param>
+    /// <remarks>
+    /// A log another app shared is copied into a private cache file whose name has to be
+    /// unique, so it carries a UTC stamp and a GUID. Publishing <c>FileInfo.Name</c> as the
+    /// source display name put that whole string into the session descriptor, and from there
+    /// into the tab, the share archive, the exported CSV and the accessibility tree — so
+    /// opening <c>tiny.txt</c> produced a session called
+    /// <c>20260821-200744-8fde…-raw:_storage_emulated_0_Download_tiny.txt</c> (finding F-27).
+    /// The bytes are one fact and the name is another; a caller that knows the second one
+    /// passes it, and it is what gets stored.
+    /// </remarks>
+    public FileLogSource(string path, int chunkBytes = 1024 * 1024, string? displayName = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(chunkBytes);
@@ -30,7 +45,7 @@ public sealed class FileLogSource : ILogSource, ISourceDefectSource
         _chunkBytes = chunkBytes;
         Metadata = new SourceMetadata(
             SourceKind.File,
-            info.Name,
+            string.IsNullOrWhiteSpace(displayName) ? info.Name : displayName,
             _path,
             _path,
             info.Length,

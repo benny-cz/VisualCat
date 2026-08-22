@@ -145,6 +145,86 @@ public sealed class SessionPersistenceTests
     }
 
     [Fact]
+    public async Task TemporaryCleanupPreviewSeparatesPolicyReasonsAndProtectsOpenWork()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-retention-preview-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var now = new DateTimeOffset(2026, 7, 19, 12, 0, 0, TimeSpan.Zero);
+        try
+        {
+            var open = CreateFakeSession(root, "open.vcat", now.AddDays(-40), 10);
+            var capturing = CreateFakeSession(root, "capturing.vcat", now.AddDays(-10), 20);
+            var middle = CreateFakeSession(root, "middle.vcat", now.AddDays(-2), 30);
+            var newest = CreateFakeSession(root, "newest.vcat", now.AddHours(-1), 40);
+
+            var none = await TemporarySessionRetentionService.PreviewAsync(
+                root, TimeSpan.FromDays(365), null, now);
+            Assert.Empty(none);
+
+            var ageOnly = await TemporarySessionRetentionService.PreviewAsync(
+                root, TimeSpan.FromDays(30), null, now);
+            Assert.Equal([open], ageOnly.Select(static session => session.Path));
+
+            var scanned = await TemporarySessionRetentionService.ScanAsync(root);
+            var newestSize = Assert.Single(
+                scanned,
+                session => string.Equals(session.Path, newest, StringComparison.OrdinalIgnoreCase)).SizeBytes;
+            var sizeOnly = await TemporarySessionRetentionService.PreviewAsync(
+                root, TimeSpan.FromDays(365), newestSize, now);
+            Assert.Equal(
+                new[] { open, capturing, middle }.OrderBy(static path => path),
+                sizeOnly.Select(static session => session.Path).OrderBy(static path => path));
+
+            var protectedPaths = new HashSet<string>([open, capturing], StringComparer.OrdinalIgnoreCase);
+            var protectedPreview = await TemporarySessionRetentionService.PreviewAsync(
+                root, TimeSpan.FromDays(1), null, now, protectedPaths);
+            Assert.Equal([middle], protectedPreview.Select(static session => session.Path));
+
+            var cleaned = await TemporarySessionRetentionService.CleanupAsync(
+                root,
+                enabled: true,
+                TimeSpan.FromDays(1),
+                maximumTotalBytes: null,
+                now,
+                protectedPaths);
+            Assert.Equal([middle], cleaned.DeletedPaths);
+            Assert.True(Directory.Exists(open));
+            Assert.True(Directory.Exists(capturing));
+            Assert.True(Directory.Exists(newest));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void ExactSessionDeletionCannotEscapeTheCacheRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-exact-delete-{Guid.NewGuid():N}");
+        var outsideRoot = Path.Combine(Path.GetTempPath(), $"visualcat-exact-delete-outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(outsideRoot);
+        try
+        {
+            var session = CreateFakeSession(root, "chosen.vcat", DateTimeOffset.UtcNow, 10);
+            var outside = CreateFakeSession(outsideRoot, "outside.vcat", DateTimeOffset.UtcNow, 10);
+
+            Assert.Throws<IOException>(() =>
+                TemporarySessionRetentionService.DeleteExactSession(root, outside));
+            Assert.True(Directory.Exists(outside));
+
+            TemporarySessionRetentionService.DeleteExactSession(root, session);
+            Assert.False(Directory.Exists(session));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+            Directory.Delete(outsideRoot, true);
+        }
+    }
+
+    [Fact]
     public async Task DiagnosticsRollAndBundleExcludeSensitiveValuesAndRawMessages()
     {
         var root = Path.Combine(Path.GetTempPath(), $"visualcat-diagnostics-{Guid.NewGuid():N}");

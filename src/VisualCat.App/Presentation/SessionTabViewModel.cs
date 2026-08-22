@@ -7,6 +7,7 @@ using Avalonia.Threading;
 using VisualCat.Application.UseCases;
 using VisualCat.Core.Query;
 using VisualCat.Core.Store;
+using VisualCat.Domain;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
@@ -111,6 +112,10 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private SearchResult? _searchResult;
     private string _status = "Importing…";
     private string _searchStatus = string.Empty;
+    private bool _searchInProgress;
+    private SessionCompletion _completion = SessionCompletion.Complete;
+    private string _durableStatus = string.Empty;
+    private long _transientStatusGeneration = -1;
     private string _searchText = string.Empty;
     private FilterSpec _filter = FilterSpec.All;
     private TimeRange? _viewport;
@@ -300,7 +305,85 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public ObservableCollection<NormalizedEntry> Entries { get; } = [];
     public ObservableCollection<TemplateSummary> Templates { get; } = [];
     public ObservableCollection<string> SavedViews { get; } = [];
-    public string Status { get => _status; set => Set(ref _status, value); }
+    public string Status { get => _status; private set => Set(ref _status, value); }
+
+    /// <summary>
+    /// Reports the outcome of something the reader just did — a copy, a cancelled load, a
+    /// query that could not run — on the same line the session describes itself on.
+    /// </summary>
+    /// <remarks>
+    /// Five view routes used to poke the status <see cref="Avalonia.Controls.TextBlock"/>
+    /// directly. Both symptoms followed from that, and both were on screen at once: only the
+    /// visible text was written, so a screen reader kept being told <c>Ready · 49,994 entries</c>
+    /// while the line read <c>Failed · …</c>; and because the view model's own status never
+    /// changed, nothing ever refreshed the line again, so the failure survived a successful
+    /// query, a cleared filter and a mode switch — for the life of the tab (finding F-05).
+    /// A transient message is now a view-model state like any other, so it reaches the
+    /// accessible name by the same route as everything else, and it carries the query
+    /// generation that produced it: when a newer query lands, the message it superseded is
+    /// dropped and the session's own description comes back.
+    /// </remarks>
+    public void ReportTransientStatus(string text)
+    {
+        _transientStatusGeneration = Volatile.Read(ref _queryGeneration);
+        Status = text ?? string.Empty;
+    }
+
+    /// <summary>Drops a transient message and restores what the session says about itself.</summary>
+    public void ClearTransientStatus()
+    {
+        if (_transientStatusGeneration < 0)
+        {
+            return;
+        }
+
+        _transientStatusGeneration = -1;
+        Status = _durableStatus;
+    }
+
+    /// <summary>Whether the status line is currently showing a transient message.</summary>
+    internal bool HasTransientStatus => _transientStatusGeneration >= 0;
+
+    /// <summary>Whether the session's own acquisition finished.</summary>
+    public SessionCompletion Completion { get => _completion; private set => Set(ref _completion, value); }
+
+    /// <summary>
+    /// Reports a session that has just been opened or finished, in the tense its manifest
+    /// earns rather than in the one the open path assumed.
+    /// </summary>
+    /// <remarks>
+    /// Every finished load reported <see cref="SessionActivity.Ready"/>. A capture whose
+    /// process was killed reopens with a manifest that was never finalized, and it reported
+    /// <c>Ready · 1,173 entries</c> — while Recents called the same session <c>interrupted</c>
+    /// and Session info called it <c>Importing</c> (finding F-19). One derived fact, one
+    /// wording, everywhere.
+    /// </remarks>
+    /// <summary>
+    /// Says the session is being brought onto the screen, before it is.
+    /// </summary>
+    /// <remarks>
+    /// The loading tense also keeps the entries pane's own empty-result card from claiming
+    /// that nothing matches during the frame before the first page is bound (finding F-06
+    /// meeting finding F-18).
+    /// </remarks>
+    private void BeginOpening(VisualCat.Domain.Sessions.SessionDescriptor descriptor)
+    {
+        Completion = SessionCompletionText.Of(descriptor.Finalized, IsLiveCaptureActive);
+        ReportActivity(
+            SessionActivity.Opening,
+            $"Opening · {Counted.Entries(descriptor.Counters.TimedEntries)}");
+    }
+
+    private void ReportOpened(VisualCat.Domain.Sessions.SessionDescriptor descriptor)
+    {
+        var completion = SessionCompletionText.Of(descriptor.Finalized, IsLiveCaptureActive);
+        Completion = completion;
+        ReportActivity(
+            completion == SessionCompletion.RecoverablePartial
+                ? SessionActivity.RecoverablePartial
+                : SessionActivity.Ready,
+            SessionCompletionText.OpenedStatus(completion, descriptor.Counters.TimedEntries));
+    }
 
     /// <summary>
     /// What the tab is doing, for views that need to switch on it rather than read it.
@@ -312,6 +395,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     /// <summary>Whether a capture or import is still in flight.</summary>
     public bool IsSessionWorkInFlight => Activity is
         SessionActivity.Queued or
+        SessionActivity.Opening or
         SessionActivity.Importing or
         SessionActivity.Connecting or
         SessionActivity.Starting or
@@ -376,6 +460,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         }
 
         Activity = activity;
+        _durableStatus = status;
+        _transientStatusGeneration = -1;
         Status = status;
         if (activity is SessionActivity.Ready or SessionActivity.Stopped or SessionActivity.Failed)
         {
@@ -493,6 +579,18 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             $"Stopping · {FormatQuiet(elapsed)} · {_stopPhase}{health}");
     }
     public string SearchStatus { get => _searchStatus; private set => Set(ref _searchStatus, value); }
+
+    /// <summary>
+    /// Whether a search is still running, as a state rather than as the wording of a sentence.
+    /// </summary>
+    /// <remarks>
+    /// The marker stepper carries the completed total, so the search status beside it would be
+    /// saying the same number twice on a status row that is one line wide — but only once the
+    /// count is final. While a search runs, the percentage is the useful half and the stepper's
+    /// total is not settled yet. Views switch on this rather than on the prefix of
+    /// <see cref="SearchStatus"/>, for the reason <see cref="SessionActivity"/> exists.
+    /// </remarks>
+    public bool SearchInProgress { get => _searchInProgress; private set => Set(ref _searchInProgress, value); }
     public string SearchText { get => _searchText; set => Set(ref _searchText, value); }
     public FilterSpec Filter { get => _filter; private set => Set(ref _filter, value); }
     public TimeRange? Viewport { get => _viewport; private set => Set(ref _viewport, value); }
@@ -534,6 +632,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public async Task LoadSnapshotAsync(bool final, CancellationToken cancellationToken = default)
     {
         var refreshUnchangedSnapshot = false;
+        var announceOpened = (VisualCat.Domain.Sessions.SessionDescriptor?)null;
         await _loadLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -554,19 +653,36 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                  replacement.Descriptor == _snapshot.Descriptor))
             {
                 replacement.Dispose();
-                if (final && _snapshot is { } current)
-                {
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        ReportActivity(
-                            SessionActivity.Ready,
-                            $"Ready · {current.Descriptor.Counters.TimedEntries:N0} entries");
-                    });
-                }
-
                 refreshUnchangedSnapshot = final &&
                     _snapshot.TimedRange is not null &&
                     (HeatMap is null || Overview is null || Statistics is null);
+                if (final && _snapshot is { } current)
+                {
+                    // Two different endings on this path, and the loading tense belongs to
+                    // only one of them. If a refresh is about to run, the rows are not bound
+                    // yet and the session is Opening until it returns; if this call is about
+                    // to return without refreshing, everything on screen is already the
+                    // answer and saying "Opening" would leave the tense on for the life of
+                    // the tab — which is what it did (finding F-18, first device pass).
+                    var unchanged = current.Descriptor;
+                    var refreshing = refreshUnchangedSnapshot;
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (refreshing)
+                        {
+                            BeginOpening(unchanged);
+                        }
+                        else
+                        {
+                            ReportOpened(unchanged);
+                        }
+                    });
+                    if (refreshing)
+                    {
+                        announceOpened = unchanged;
+                    }
+                }
+
                 if (!refreshUnchangedSnapshot)
                 {
                     return;
@@ -615,7 +731,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                             }
                             else
                             {
-                                Viewport = sessionRange;
+                                Viewport = FitViewport(sessionRange);
                             }
                         }
                         else if (!FollowLatest && _viewportIsAuto)
@@ -627,7 +743,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                             // While the viewport is still the app's own choice it follows
                             // the session; the first zoom or pan makes it the reader's and
                             // it is never moved again (finding 1).
-                            Viewport = sessionRange;
+                            Viewport = FitViewport(sessionRange);
                             HasNewData = false;
                         }
                         else if (FollowLatest)
@@ -664,22 +780,21 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     // carries the storage view for anyone who needs it (finding 24).
                     if (final)
                     {
-                        ReportActivity(
-                            SessionActivity.Ready,
-                            $"Ready · {replacement.Descriptor.Counters.TimedEntries:N0} entries");
+                        BeginOpening(replacement.Descriptor);
+                        announceOpened = replacement.Descriptor;
                     }
                     else if (IsLiveCaptureActive)
                     {
                         ReportActivity(
                             SessionActivity.Capturing,
-                            $"Capturing · {replacement.Descriptor.Counters.TimedEntries:N0} entries · " +
+                            $"Capturing · {Counted.Entries(replacement.Descriptor.Counters.TimedEntries)} · " +
                             replacement.Descriptor.SourceDescription);
                     }
                     else
                     {
                         ReportActivity(
                             SessionActivity.Importing,
-                            $"Reading · {replacement.Descriptor.Counters.TimedEntries:N0} entries ready");
+                            $"Reading · {Counted.Entries(replacement.Descriptor.Counters.TimedEntries)} ready");
                     }
 
                     // Answered once per published snapshot, while this method owns it, rather
@@ -698,7 +813,28 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             _loadLock.Release();
         }
 
-        await RefreshAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await RefreshAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Only after the refresh: RefreshAsync is what binds the first page of rows and
+            // the plot snapshot, and until it returns there is nothing on screen for "Ready"
+            // to be true of (finding F-18).
+            //
+            // In a finally, because the loading tense is this method's to end. Whatever
+            // stops the refresh — a newer refresh superseding it, a torn-down session, an
+            // I/O failure — something else is now responsible for what is on screen, and
+            // none of those outcomes is a reason to leave the tab saying "Opening" for the
+            // rest of its life. That is exactly what the third device pass found, and one
+            // escaping exception was enough to cause it; a guarantee that does not depend on
+            // reaching a particular line is the only kind that holds.
+            if (announceOpened is { } opened)
+            {
+                await Dispatcher.UIThread.InvokeAsync(() => ReportOpened(opened)).GetTask().ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>
@@ -716,7 +852,27 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         previous.Cancel();
         previous.Dispose();
         var token = _queryCancellation.Token;
-        await _loadLock.WaitAsync(token).ConfigureAwait(false);
+
+        // Queueing for the lock is part of this refresh's life, so being superseded while
+        // queued has to mean what it means everywhere else in this method: stop, quietly.
+        // It used to be the one moment where it did not — the body's catch is below the
+        // try, the wait was above it — so a refresh that lost the race before reaching the
+        // lock threw OperationCanceledException out of RefreshAsync, out of
+        // LoadSnapshotAsync before it could report the session opened, and all the way to
+        // the shell's blanket startup catch, which painted the framework's own
+        // "The operation was canceled." in the error banner and left the tab reading
+        // "Opening" for the rest of its life (finding F-18 on the startup-restore route,
+        // third device pass). A caller who cancels is still answered with the cancellation
+        // they asked for; only this method's own supersession is silent.
+        try
+        {
+            await _loadLock.WaitAsync(token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
         try
         {
             var snapshot = _snapshot;
@@ -736,6 +892,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             {
                 if (value.Identity.QueryGeneration == Volatile.Read(ref _queryGeneration))
                 {
+                    SearchInProgress = !value.Completed;
                     SearchStatus = value.Completed
                         ? $"{value.Matches:N0} search matches"
                         : $"Searching · {value.Progress:P0} · {value.Matches:N0} matches";
@@ -778,6 +935,13 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                // A failure reported by a query that has since been superseded is no longer
+                // true of anything on screen (finding F-05, point 3).
+                if (_transientStatusGeneration >= 0 && generation > _transientStatusGeneration)
+                {
+                    ClearTransientStatus();
+                }
+
                 HeatMap = results.heat;
                 if (results.overview is { } overview)
                 {
@@ -795,6 +959,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 if (searchResult is null)
                 {
                     SearchStatus = string.Empty;
+                    SearchInProgress = false;
                 }
 
                 EntriesReloading?.Invoke(this, EventArgs.Empty);
@@ -1175,12 +1340,30 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         return RefreshAsync();
     }
 
-    public async Task ApplySearchAsync(bool regex, bool caseSensitive)
+    /// <summary>
+    /// Applies the query the reader typed, or returns why it cannot be applied.
+    /// </summary>
+    /// <remarks>
+    /// A pattern that does not compile used to be accepted as a filter: the chip bar showed
+    /// <c>regex = (unclosed</c> as active while the list went on showing all 49,994 unfiltered
+    /// rows, so the product claimed a filter it had not applied (finding F-04). Validation
+    /// happens here, before the filter is replaced, so a rejected pattern changes nothing at
+    /// all — the previous result stays on screen and stays true.
+    /// </remarks>
+    public async Task<SearchPatternProblem?> ApplySearchAsync(bool regex, bool caseSensitive)
     {
-        Filter = string.IsNullOrWhiteSpace(SearchText)
-            ? Filter with { Search = null }
-            : Filter with { Search = new TextSearchSpec(SearchText, regex, caseSensitive, TimeSpan.FromMilliseconds(250)) };
+        var search = string.IsNullOrWhiteSpace(SearchText)
+            ? null
+            : new TextSearchSpec(SearchText, regex, caseSensitive, TimeSpan.FromMilliseconds(250));
+        if (search is { IsRegex: true } &&
+            !SearchPattern.TryCompile(search, out _, out var problem))
+        {
+            return problem;
+        }
+
+        Filter = Filter with { Search = search };
         await RefreshAsync().ConfigureAwait(false);
+        return null;
     }
 
     public async Task SetLevelAsync(LogLevel level, bool included)
@@ -1461,7 +1644,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             // — the sequence, then the ParseOutcomeKind enum name in brackets — which pushed
             // each line's text to a different column and put a C# identifier in a panel
             // subtitled "exact bytes" (finding 15a).
-            var sequenceWidth = records.Max(static record => record.Sequence).ToString(
+            var sequenceWidth = SourceLineNumber(records.Max(static record => record.Sequence)).ToString(
                 System.Globalization.CultureInfo.InvariantCulture).Length;
             foreach (var record in records)
             {
@@ -1472,7 +1655,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 var selected = record.Sequence == entry.SourceSequence;
                 var start = builder.Length;
                 builder.Append(selected ? '▶' : ' ')
-                    .Append(record.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture).PadLeft(sequenceWidth))
+                    .Append(SourceLineNumber(record.Sequence).ToString(System.Globalization.CultureInfo.InvariantCulture).PadLeft(sequenceWidth))
                     .Append(' ')
                     .Append(DescribeOutcome(record.Outcome))
                     .Append(" │ ")
@@ -1497,6 +1680,20 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             _loadLock.Release();
         }
     }
+
+    /// <summary>
+    /// The physical line number of a source record, as every other tool counts it.
+    /// </summary>
+    /// <remarks>
+    /// The gutter printed the store's own 0-based sequence, so the pane whose whole purpose is
+    /// letting someone cross-check the app against the file disagreed with the file by exactly
+    /// one: <c>sed -n 19328p</c>, <c>grep -n</c>, an editor's Go to line and <c>awk NR==</c>
+    /// each landed one record early — on a neighbouring line that, in a log, looks plausible
+    /// (finding F-08). Unknown lines consume sequence numbers too, so the mapping is exactly
+    /// +1 and nothing else has to change; the sequence stays 0-based everywhere the store
+    /// needs it.
+    /// </remarks>
+    internal static long SourceLineNumber(long sequence) => sequence + 1;
 
     /// <summary>
     /// A two-letter tag for what the parser made of a source line, for the source-context
@@ -1878,6 +2075,27 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         _viewportIsAuto = view.Viewport is null;
     }
 
+    /// <summary>
+    /// The whole session, never narrower than a window the plot can actually draw.
+    /// </summary>
+    /// <remarks>
+    /// Follow has clamped its window to <see cref="MinimumViewportUs"/> since audit 2 (C6);
+    /// the fitted, non-following viewport did not, so a one-entry import opened at the raw
+    /// session span — the header read <c>DENSITY · 1 µs · 1.1 ns/px</c> with the same instant
+    /// printed at both ends of the axis, and a single double-tap in that state crashed the app
+    /// (finding F-20). The crash itself is fixed at the zoom boundary in
+    /// <c>TimelineControl.ZoomBounds</c>; this stops the app from opening in the degenerate
+    /// state at all. Widening never hides a record — the session range stays inside the
+    /// returned window — and the newest instant is the anchor because that is the edge a live
+    /// capture grows from.
+    /// </remarks>
+    private static TimeRange FitViewport(TimeRange sessionRange) =>
+        sessionRange.DurationUs >= MinimumViewportUs
+            ? sessionRange
+            : new TimeRange(
+                new InstantUs(checked(sessionRange.EndExclusive.Value - MinimumViewportUs)),
+                sessionRange.EndExclusive);
+
     private static TimeRange? ClampViewport(TimeRange? saved, TimeRange? session)
     {
         if (session is null)
@@ -1887,11 +2105,11 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
         if (saved is null || !saved.Value.Overlaps(session.Value))
         {
-            return session;
+            return FitViewport(session.Value);
         }
 
         var clamped = saved.Value.Intersect(session.Value);
-        return clamped.IsEmpty ? session : clamped;
+        return clamped.IsEmpty ? FitViewport(session.Value) : FitViewport(clamped);
     }
 
     private void Set<T>(ref T field, T value, [CallerMemberName] string? name = null)

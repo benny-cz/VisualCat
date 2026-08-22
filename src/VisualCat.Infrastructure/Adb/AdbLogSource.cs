@@ -168,7 +168,13 @@ public sealed class AdbLogSource : ILogSource, IProcessNameSource, ISourceDefect
         var reconnectAttempt = 0;
         while (!linked.IsCancellationRequested)
         {
-            var arguments = new List<string> { "-s", _serial, "logcat", "-b", string.Join(',', _buffers), "-v", format };
+            // -D prints a divider on every buffer crossing, so a multi-buffer capture can
+            // attribute each record to the buffer it actually came from rather than to
+            // whichever one was announced last (finding F-12).
+            var arguments = new List<string>
+            {
+                "-s", _serial, "logcat", "-b", string.Join(',', _buffers), "-D", "-v", format,
+            };
             if (reconnectAttempt > 0 && _resumeTimestamp is { } resumeTimestamp)
             {
                 arguments.Add("-T");

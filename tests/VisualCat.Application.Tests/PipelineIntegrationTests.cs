@@ -28,6 +28,51 @@ public sealed class PipelineIntegrationTests
         "05-15 14:13:37.497  1074  1153 Q TagA: gamma 3000\n" +
         "malformed evidence retained\n";
 
+    /// <summary>
+    /// Every record is attributed to the buffer the stream last said it was crossing into,
+    /// not to the last buffer that was announced at the start.
+    /// </summary>
+    /// <remarks>
+    /// A merged four-minute device capture reported 9,376 of its 11,646 records as
+    /// <c>radio</c> and six as <c>main</c>, while a per-buffer probe on the same device
+    /// proved the traffic in question existed only in <c>main</c> (finding F-12). Two
+    /// dividers followed by interleaved records is the exact shape that produced it.
+    /// </remarks>
+    [Fact]
+    public async Task InterleavedBuffersAreAttributedPerRecord()
+    {
+        const string Interleaved =
+            "--------- beginning of main\n" +
+            "05-15 14:13:37.400  1073  1151 I MainTag: one\n" +
+            "--------- beginning of events\n" +
+            "05-15 14:13:37.410  1073  1151 I EventTag: two\n" +
+            "--------- switch to main\n" +
+            "05-15 14:13:37.420  1073  1151 I MainTag: three\n" +
+            "--------- switch to radio\n" +
+            "05-15 14:13:37.430  1073  1151 I RadioTag: four\n" +
+            "--------- switch to main\n" +
+            "05-15 14:13:37.440  1073  1151 I MainTag: five\n";
+
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-test-{Guid.NewGuid():N}.vcat");
+        await using var source = new MemoryLogSource(Encoding.UTF8.GetBytes(Interleaved), [17, 64, 4096]);
+        var result = await SessionCoordinator.ImportAsync(source, root, Settings(2));
+        await using var imported = new ImportedSession(root, result.Snapshot);
+
+        var entries = SessionQueryEngine.GetEntries(
+            imported.Snapshot,
+            imported.Snapshot.TimedRange!.Value,
+            FilterSpec.All,
+            EntryOrder.SourceSequence,
+            null,
+            100,
+            1).Entries;
+
+        Assert.Equal(5, entries.Count);
+        Assert.Equal(
+            ["main", "events", "main", "radio", "main"],
+            entries.Select(static entry => entry.Buffer).ToArray());
+    }
+
     [Fact]
     public async Task PipelineIsDeterministicAcrossChunkingAndVerifiesCoverage()
     {

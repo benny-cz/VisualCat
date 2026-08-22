@@ -314,7 +314,7 @@ public sealed class WorkspaceReviewFixHeadlessTests
             Assert.Throws<ObjectDisposedException>(() => _ = snapshot.Segments[0].SeverityBitmaps);
 
             // And a notification that arrives after the close redraws nothing.
-            tab.Status = "Ready · 2 entries";
+            tab.ReportActivity(SessionActivity.Ready, "Ready · 2 entries");
             tab.FollowLatest = true;
             tab.IsLiveCaptureActive = false;
             Dispatcher.UIThread.RunJobs();

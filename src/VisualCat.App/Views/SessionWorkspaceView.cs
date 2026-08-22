@@ -11,6 +11,7 @@ using Avalonia.LogicalTree;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 using VisualCat.Domain.Entries;
@@ -39,11 +40,47 @@ public sealed partial class SessionWorkspaceView : UserControl
     private readonly bool _mobile = PhoneCompositionOverride ?? OperatingSystem.IsAndroid();
     private readonly TimelineControl _timeline = new();
     private readonly MinimapControl _minimap = new();
-    private readonly TextBlock _status = new();
+    private readonly StatusLine _status;
     private readonly TextBlock _searchStatus = new();
+
+    /// <summary>
+    /// The touch route to the next and previous search match.
+    /// </summary>
+    /// <remarks>
+    /// Marker navigation was <c>F3</c>/<c>N</c> and nothing else: no control in the command
+    /// band, the chip bar, the filter drawer or the More sheet, no tappable marker lane, and no
+    /// node in the accessibility tree — so on a phone the product reported "7,181 search
+    /// matches" and offered no way to visit one (finding F-07). B-06 is a basic scenario and
+    /// U-10 wants every action reachable without a keyboard as well as without touch.
+    ///
+    /// It goes where the match count already was, because that is the one place on the screen
+    /// a reader is already looking when they want the next match.
+    /// </remarks>
+    private Panel? _markerNav;
+    private TextBlock? _markerPosition;
+    private Button? _markerPrevious;
+    private Button? _markerNext;
     private readonly TextBox _search = new() { PlaceholderText = "Search message text or regex…" };
+    private TextBlock? _mobileSearchPlaceholder;
     private readonly CheckBox _regex = new() { Content = "Regex" };
     private readonly CheckBox _caseSensitive = new() { Content = "Case-sensitive" };
+
+    /// <summary>
+    /// Why the pattern in the query field cannot be used, beside the field it is about.
+    /// </summary>
+    /// <remarks>
+    /// An uncompilable pattern used to be accepted as a filter and reported as a failure on
+    /// the status line — one clipped line at the far end of the workspace, in framework
+    /// language, describing a filter the chip bar was simultaneously claiming was active
+    /// (finding F-04). It belongs next to the thing the reader can fix, it stays out of the
+    /// way until there is something to say, and it is announced when it appears.
+    /// </remarks>
+    private readonly TextBlock _searchProblem = new()
+    {
+        IsVisible = false,
+        TextWrapping = TextWrapping.Wrap,
+        FontSize = TextScale.Of(11),
+    };
     private readonly ListBox _entries = new();
     private readonly ListBox _templates = new();
     private readonly ComboBox _order = new()
@@ -79,6 +116,25 @@ public sealed partial class SessionWorkspaceView : UserControl
     private const int InspectorMessageLimit = 64 * 1024;
     private NormalizedEntry? _inspectedEntry;
     private long? _selectedEntryId;
+
+    /// <summary>
+    /// The filter the inspected entry was chosen under, and where it sits in time.
+    /// </summary>
+    /// <remarks>
+    /// "Not in this viewport" is not a deselection. With Follow on, the moving 30-second
+    /// window ages an entry out of the loaded page after a few seconds of reading it, and the
+    /// workspace answered by clearing the selection, disabling Copy raw and Entry, removing
+    /// the plot caret and changing an already-open inspector to "No entry selected" — losing
+    /// the message and its source bytes for someone whose only mistake was reading
+    /// (finding F-25). Clearing is right for the reasons the reader caused: an explicit
+    /// deselection, a filter that now excludes the record, or the session closing. The filter
+    /// fingerprint is what tells those apart from the window simply having moved.
+    /// </remarks>
+    private string? _selectionFilterFingerprint;
+    private InstantUs? _selectedEntryInstant;
+    private bool _selectedEntryOffPage;
+    private Border? _entryOffPageBanner;
+    private TextBlock? _entryOffPageText;
     private bool _reloadingEntries;
     private bool _pressedSelectedEntry;
     private string _presentedRawText = string.Empty;
@@ -136,6 +192,11 @@ public sealed partial class SessionWorkspaceView : UserControl
     private readonly StackPanel _facets = new() { Spacing = 2, Margin = new Thickness(6) };
     private ScrollViewer? _facetScroll;
     private readonly Button _fitMatches = new() { Content = "Fit to matches", Margin = new Thickness(0, 0, 6, 0), IsVisible = false };
+    private Border? _emptyResultsCard;
+    private TextBlock? _emptyResultsTitle;
+    private TextBlock? _emptyResultsDetail;
+    private Button? _emptyResultsWiden;
+    private Button? _emptyResultsClear;
     private readonly Button _clearScope = new() { Content = "Clear cell", Margin = new Thickness(0, 0, 6, 0), IsVisible = false };
     private readonly WrapPanel _chips = new() { VerticalAlignment = VerticalAlignment.Center };
     private readonly StackPanel _rangeActions = new() { Orientation = Orientation.Horizontal, Spacing = 6, IsVisible = false };
@@ -196,6 +257,13 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Button? _clearFilters;
     private Control? _mobileQuerySection;
     private Grid? _mobileQueryRow;
+
+    /// <summary>The QUERY caption, which a very short drawer gives up to keep its field.</summary>
+    private Control? _mobileQueryCaption;
+
+    /// <summary>The drawer's decision row, whose margins a very short drawer also gives up.</summary>
+    private Grid? _mobileFilterFooter;
+
     private WrapPanel? _mobileQueryOptions;
     private Control? _mobileSeveritySection;
     private Control? _mobileTimeSection;
@@ -205,6 +273,8 @@ public sealed partial class SessionWorkspaceView : UserControl
     private readonly Dictionary<MobileWorkspaceDisplayMode, Button> _mobileModeButtons = [];
     private Border? _minimapFrame;
     private TabControl? _mobileAnalysisTabs;
+    private Grid? _mobileSummaryHost;
+    private bool _summaryInTabStrip;
     private Grid? _entryHeader;
     private Grid? _entryActions;
     private Button? _copyRaw;
@@ -216,6 +286,8 @@ public sealed partial class SessionWorkspaceView : UserControl
     private MobileWorkspaceMode? _mobileLayoutMode;
     private readonly MobileWorkspaceState _mobileWorkspaceState = new();
     private bool _mobileFiltersOpen;
+    private bool _compactEditorActive;
+    private bool _compactCommandsExternallyHosted;
     private Rect _inputPaneRect;
     private bool _rawWrapPreferenceSet;
     private bool _rawPanMode;
@@ -236,6 +308,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     public SessionWorkspaceView(SessionTabViewModel viewModel)
     {
         _viewModel = viewModel;
+        _status = new StatusLine(viewModel);
         Content = Build();
         _entries.ItemsSource = viewModel.Entries;
         _templates.ItemsSource = viewModel.Templates;
@@ -254,9 +327,16 @@ public sealed partial class SessionWorkspaceView : UserControl
         AutomationProperties.SetHelpText(
             _search,
             _mobile
-                ? "Filters the entries as you type. The keyboard's action key applies it and closes this panel."
+                ? "Search message text or regular expression. Filters the entries as you type. The keyboard's action key applies it and closes this panel."
                 : "Ctrl+F focuses search; Enter applies it; F3 or N moves between matches.");
         SizeChanged += (_, eventArgs) => ApplyMobileLayout(eventArgs.NewSize);
+
+        // The two controls whose main gesture is a horizontal drag, and the only two that
+        // reach far enough across the screen to collide with a platform edge gesture. On
+        // gesture navigation a pan started in the plot's outer 49 px used to go Back and
+        // leave the app (finding F-28); this claims those touches for the plot.
+        Platform.EdgeGestureGuard.Track(_timeline);
+        Platform.EdgeGestureGuard.Track(_minimap);
 
         // The entries floor is computed from the pane's own arranged chrome, so it is
         // re-checked after every arrange rather than guessed before the first one. The
@@ -346,6 +426,21 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             emptyCard.Background = new SolidColorBrush(WorkspacePalette.SurfaceRaised(dark));
             emptyCard.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
+        }
+
+        if (_entryOffPageBanner is { } offPageBanner)
+        {
+            // Accent rather than warning ink: nothing has gone wrong, the reader has simply
+            // been overtaken by the live edge (finding F-25).
+            var accent = WorkspacePalette.Accent(dark);
+            offPageBanner.Background = new SolidColorBrush(
+                Color.FromArgb(dark ? (byte)40 : (byte)26, accent.R, accent.G, accent.B));
+            offPageBanner.BorderBrush = new SolidColorBrush(
+                Color.FromArgb(150, accent.R, accent.G, accent.B));
+            if (_entryOffPageText is { } offPageText)
+            {
+                offPageText.Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
+            }
         }
 
         if (_mobileFilterPanel is { } filterPanel)
@@ -479,6 +574,56 @@ public sealed partial class SessionWorkspaceView : UserControl
     internal event Action<string>? DisplayModeChanged;
 
     /// <summary>
+    /// Raised while a compact-height query is being edited, so the shell can yield its shared
+    /// command row to the drawer and the IME instead of leaving Reset and Done underneath it.
+    /// </summary>
+    internal event Action<bool>? CompactEditorChanged;
+
+    internal bool CompactEditorActive => _compactEditorActive;
+
+    /// <summary>
+    /// Moves the compact workspace command strip into the shell's landscape command row, or
+    /// restores it to row zero of this workspace. A control has one visual parent, so the move
+    /// is explicit and symmetric rather than duplicated UI with drifting enabled states.
+    /// </summary>
+    internal void HostCompactCommands(Panel? externalHost)
+    {
+        if (!_mobile || _mobileFilterShell is not { } strip)
+        {
+            return;
+        }
+
+        var external = externalHost is not null;
+        if (_compactCommandsExternallyHosted == external &&
+            (!external || ReferenceEquals(strip.Parent, externalHost)))
+        {
+            return;
+        }
+
+        if (strip.Parent is Panel current)
+        {
+            current.Children.Remove(strip);
+        }
+
+        if (externalHost is not null)
+        {
+            externalHost.Children.Add(strip);
+        }
+        else
+        {
+            Grid.SetRow(strip, 0);
+            Grid.SetColumn(strip, 0);
+            Grid.SetColumnSpan(strip, 1);
+            _root.Children.Insert(0, strip);
+        }
+
+        _compactCommandsExternallyHosted = external;
+        ApplyMobileLayout(Bounds.Size);
+        _root.InvalidateMeasure();
+        _root.InvalidateArrange();
+    }
+
+    /// <summary>
     /// Something the reader should be told about, for the application's notice lane.
     /// </summary>
     /// <remarks>
@@ -489,6 +634,13 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// it says what happened and the shell decides where that is shown.
     /// </remarks>
     internal event Action<string, bool>? NoticeRaised;
+
+    /// <summary>
+    /// A recovered partial needs durable choices, not only a dismissible warning. The shell
+    /// owns export pickers, modal confirmation, tab closure, and cache deletion, so the
+    /// workspace raises the message and lets the shell present those actions (F-19).
+    /// </summary>
+    internal event Action<string>? PartialRecoveryRaised;
 
     /// <summary>Reports the result of an action whose only other evidence is off screen.</summary>
     private void Notify(string message, bool failure = false) =>
@@ -584,6 +736,43 @@ public sealed partial class SessionWorkspaceView : UserControl
         return false;
     }
 
+    /// <summary>
+    /// Centres the view on the search match nearest a tapped instant.
+    /// </summary>
+    /// <remarks>
+    /// The second affordance for finding F-07: the marker lane draws where the matches are, so
+    /// aiming at one is the most direct thing a reader can do with it. The nearest match wins
+    /// rather than the next one, because the reader pointed at a place rather than at a
+    /// direction.
+    /// </remarks>
+    private async Task GoToNearestMatchAsync(InstantUs instant)
+    {
+        if (_viewModel.SearchResult?.Markers is not { Count: > 0 } markers ||
+            _viewModel.Viewport is not { } viewport ||
+            _viewModel.Snapshot?.TimedRange is not { } session)
+        {
+            return;
+        }
+
+        var nearest = markers[0];
+        var bestDistance = long.MaxValue;
+        foreach (var marker in markers)
+        {
+            var distance = Math.Abs(marker.Value - instant.Value);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                nearest = marker;
+            }
+        }
+
+        var span = Math.Min(viewport.DurationUs, session.DurationUs);
+        var maximumStart = session.EndExclusive.Value - span;
+        var start = Math.Clamp(nearest.Value - span / 2, session.StartInclusive.Value, maximumStart);
+        await _viewModel.SetViewportAsync(
+            new TimeRange(new InstantUs(start), new InstantUs(start + span))).ConfigureAwait(false);
+    }
+
     internal async Task NavigateSearchMatchAsync(int direction)
     {
         if (_viewModel.SearchResult?.Markers is not { Count: > 0 } markers ||
@@ -665,6 +854,184 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
     }
 
+    /// <summary>
+    /// What the entries pane says when the filters match nothing.
+    /// </summary>
+    /// <remarks>
+    /// The plot handles this state well — every severity row is labelled 0, the counts read
+    /// <c>0 in view · 0 match · 49,994 in session</c> — and the entries list, the largest
+    /// region on the screen, became an empty rectangle about 700 px tall with no text, no
+    /// explanation and no action. Its accessibility node was an empty <c>ListBox</c> named
+    /// "Filtered log entries", so a screen-reader user was told nothing at all
+    /// (finding F-06).
+    ///
+    /// Two states, because they have different answers. Nothing in the session matches, so
+    /// the filter is what has to change; or something matches but not here, so the viewport
+    /// is what has to change — and that second case already had an action, hidden in a row
+    /// of buttons above the empty pane rather than in the empty pane itself.
+    /// </remarks>
+    /// <summary>Builds the previous/position/next cluster shown beside the match count.</summary>
+    private Panel BuildMarkerNavigation()
+    {
+        Button Step(string glyph, string name, int direction)
+        {
+            var button = new Button
+            {
+                Content = glyph,
+                MinHeight = TouchTarget.For(_mobile),
+                MinWidth = TouchTarget.For(_mobile, 26),
+                Padding = new Thickness(_mobile ? 6 : 8, 0),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                IsEnabled = false,
+            };
+            AutomationProperties.SetName(button, name);
+            ToolTip.SetTip(button, _mobile ? name : $"{name} (F3 / Shift+F3)");
+            button.Click += async (_, _) => await RunUiActionAsync(() => NavigateSearchMatchAsync(direction));
+            return button;
+        }
+
+        _markerPrevious = Step("◀", "Previous search match", -1);
+        _markerNext = Step("▶", "Next search match", 1);
+        _markerPosition = new TextBlock
+        {
+            FontSize = TextScale.Of(11),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(2, 0),
+        };
+
+        var nav = _markerNav = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsVisible = false,
+            Children = { _markerPrevious, _markerPosition, _markerNext },
+        };
+        AutomationProperties.SetName(nav, "Search match navigation");
+        return nav;
+    }
+
+    /// <summary>
+    /// The line that appears when the entry being read is no longer among the rows on screen.
+    /// </summary>
+    /// <remarks>
+    /// It is a marker and a way back, not a warning: nothing has gone wrong, the live window
+    /// has simply moved past the record (finding F-25). It sits above the list, where the
+    /// reader is looking for the row they lost, and the action puts Follow down first —
+    /// following the live edge and holding a place in the past are opposite requests.
+    /// </remarks>
+    private Border BuildEntryOffPageBanner()
+    {
+        var text = _entryOffPageText = new TextBlock
+        {
+            FontSize = TextScale.Of(11),
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var show = new Button
+        {
+            Content = "Show it",
+            MinHeight = TouchTarget.For(_mobile),
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+        AutomationProperties.SetName(show, "Move the plot back to the entry being read");
+        show.Click += async (_, _) => await RunUiActionAsync(ShowInspectedEntryAgainAsync);
+
+        var row = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            Children = { text, show },
+        };
+        Grid.SetColumn(show, 1);
+
+        var banner = _entryOffPageBanner = new Border
+        {
+            IsVisible = false,
+            Padding = new Thickness(10, 4),
+            Margin = new Thickness(0, 2),
+            CornerRadius = new CornerRadius(6),
+            BorderThickness = new Thickness(1),
+            Child = row,
+        };
+        AutomationProperties.SetLiveSetting(banner, AutomationLiveSetting.Polite);
+        return banner;
+    }
+
+    private Border BuildEmptyResultsCard()
+    {
+        var title = _emptyResultsTitle = new TextBlock
+        {
+            FontSize = TextScale.Of(14),
+            FontWeight = FontWeight.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+        };
+        var detail = _emptyResultsDetail = new TextBlock
+        {
+            FontSize = TextScale.Of(12),
+            TextWrapping = TextWrapping.Wrap,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+            Opacity = 0.78,
+        };
+
+        var widen = _emptyResultsWiden = new Button
+        {
+            Content = "Show the matching range",
+            MinHeight = TouchTarget.For(_mobile),
+            IsVisible = false,
+        };
+        AutomationProperties.SetName(widen, "Move the timeline to the range that contains the matching entries");
+        widen.Click += (_, _) => FitToMatches();
+
+        var clear = _emptyResultsClear = new Button
+        {
+            Content = "Clear all filters",
+            MinHeight = TouchTarget.For(_mobile),
+        };
+        AutomationProperties.SetName(clear, "Clear every active filter");
+        clear.Click += async (_, _) =>
+        {
+            _search.Text = string.Empty;
+            _selectedRange = null;
+            _rangeActions.IsVisible = false;
+            await RunUiActionAsync(_viewModel.ClearFiltersAsync);
+            UpdateLevelChecks();
+        };
+
+        var actions = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal,
+            ItemSpacing = 8,
+            LineSpacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Children = { widen, clear },
+        };
+
+        var card = _emptyResultsCard = new Border
+        {
+            IsVisible = false,
+            Padding = new Thickness(16),
+            Margin = new Thickness(10),
+            CornerRadius = new CornerRadius(10),
+            BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = new StackPanel
+            {
+                Spacing = 10,
+                Children = { title, detail, actions },
+            },
+        };
+        AutomationProperties.SetName(card, "No matching entries");
+        AutomationProperties.SetLiveSetting(card, AutomationLiveSetting.Polite);
+        return card;
+    }
+
     private Grid Build()
     {
         var root = _root;
@@ -688,6 +1055,13 @@ public sealed partial class SessionWorkspaceView : UserControl
         var searchAction = new Button
         {
             Content = _mobile ? "✕" : "Search",
+
+            // 48 dp on the phone, like every other touch target. The glyph is one character
+            // wide, so the button had measured to it: 30.5 dp on the third device, the one
+            // control in the product still under the floor F-03 and F-26 set — because those
+            // audits measured the empty state, the workspace and the tab strip, and nobody
+            // had opened the filter drawer while measuring.
+            MinWidth = _mobile ? 48 : 0,
         };
         AutomationProperties.SetName(searchAction, _mobile ? "Clear the query" : "Apply the query");
         ToolTip.SetTip(
@@ -708,11 +1082,13 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             if (eventArgs.Key == Avalonia.Input.Key.Enter)
             {
-                await RunUiActionAsync(ApplySearchAsync);
+                var applied = await ApplySearchGuardedAsync();
 
                 // On a phone the IME's action key is how a query is committed, and the drawer
-                // it was typed into is covering the results.
-                if (_mobile)
+                // it was typed into is covering the results. A query that was refused has not
+                // been committed, so the drawer stays open on the field that needs fixing
+                // (finding F-04).
+                if (_mobile && applied)
                 {
                     SetMobileFiltersOpen(false);
                 }
@@ -720,7 +1096,24 @@ public sealed partial class SessionWorkspaceView : UserControl
                 eventArgs.Handled = true;
             }
         };
-        _search.TextChanged += (_, _) => QueueDebouncedSearch();
+        _search.TextChanged += (_, _) =>
+        {
+            if (_mobileSearchPlaceholder is { } placeholder)
+            {
+                placeholder.IsVisible = string.IsNullOrEmpty(_search.Text);
+            }
+
+            QueueDebouncedSearch();
+        };
+        _search.GotFocus += (_, _) =>
+        {
+            if (_mobile &&
+                _mobileFiltersOpen &&
+                _mobileLayoutMode == MobileWorkspaceMode.CompactHeight)
+            {
+                SetCompactEditorActive(true);
+            }
+        };
 
         // Severity toggles carry their row's color, so the filter bar doubles as the
         // legend for the plot above it. A row of identical grey checkboxes labelled
@@ -838,7 +1231,30 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
                 ColumnSpacing = 8,
             };
-            queryRow.Children.Add(_search);
+            // Avalonia's built-in placeholder is measured at its natural text width and its
+            // Android automation node keeps that width after the TextBox clips the pixels. On
+            // a narrow landscape column the node therefore ran through the clear button even
+            // though the glyphs did not (F-11). The visual hint is a stretched, clipped child
+            // of the field's exact grid cell; accessibility gets one stable name on the field
+            // instead of a second, geometrically false text node.
+            _search.PlaceholderText = string.Empty;
+            AutomationProperties.SetName(_search, "Search message text or regular expression");
+            var queryField = new Grid { ClipToBounds = true };
+            queryField.Children.Add(_search);
+            var searchPlaceholder = _mobileSearchPlaceholder = new TextBlock
+            {
+                Text = "Search message text or regex…",
+                Margin = new Thickness(11, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                IsHitTestVisible = false,
+                IsVisible = string.IsNullOrEmpty(_search.Text),
+            };
+            AutomationProperties.SetAccessibilityView(searchPlaceholder, AccessibilityView.Raw);
+            AutomationProperties.SetIsControlElementOverride(searchPlaceholder, false);
+            queryField.Children.Add(searchPlaceholder);
+            queryRow.Children.Add(queryField);
             Grid.SetColumn(searchAction, 1);
             queryRow.Children.Add(searchAction);
 
@@ -864,14 +1280,16 @@ public sealed partial class SessionWorkspaceView : UserControl
             zoomControls.Children.Add(zoomIn);
             zoomControls.Children.Add(_zoomReadout);
 
+            var queryCaption = _mobileQueryCaption = MobileSectionLabel("QUERY");
             var querySection = _mobileQuerySection = new StackPanel
             {
                 Spacing = 6,
                 Margin = new Thickness(8),
                 Children =
                 {
-                    MobileSectionLabel("QUERY"),
+                    queryCaption,
                     queryRow,
+                    _searchProblem,
                     queryOptions,
                 },
             };
@@ -918,14 +1336,15 @@ public sealed partial class SessionWorkspaceView : UserControl
                     zoomControls,
                 },
             };
+            // The query section is not in here. It is the drawer's own first band, above the
+            // scroller — see the panel grid below.
             var filterBody = _mobileFilterBody = new Grid
             {
-                RowDefinitions = new RowDefinitions("Auto,Auto,Auto"),
+                RowDefinitions = new RowDefinitions("Auto,Auto"),
                 ColumnDefinitions = new ColumnDefinitions("*"),
-                Children = { querySection, severitySection, timeSection },
+                Children = { severitySection, timeSection },
             };
-            Grid.SetRow(severitySection, 1);
-            Grid.SetRow(timeSection, 2);
+            Grid.SetRow(timeSection, 1);
             _mobileFilterScroll = new ScrollViewer
             {
                 Content = filterBody,
@@ -967,8 +1386,18 @@ public sealed partial class SessionWorkspaceView : UserControl
                 MinHeight = 48,
                 MinWidth = 64,
             };
-            doneFilters.Click += (_, _) => SetMobileFiltersOpen(false);
-            var filterFooter = new Grid
+            doneFilters.Click += async (_, _) =>
+            {
+                // Done and the keyboard action are two presentations of the same commit.
+                // Closing after a refused regex hides the explanation and leaves the reader
+                // looking at unchanged results with no visible way to repair the input.
+                // Keep the drawer on the invalid field; a valid or empty query closes it.
+                if (await ApplySearchGuardedAsync())
+                {
+                    SetMobileFiltersOpen(false);
+                }
+            };
+            var filterFooter = _mobileFilterFooter = new Grid
             {
                 ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
                 Margin = new Thickness(8, 2, 8, 8),
@@ -980,12 +1409,31 @@ public sealed partial class SessionWorkspaceView : UserControl
             _mobileFilterFade = new FadingScrollHost(
                 _mobileFilterScroll,
                 ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light);
+            // Three bands, not two. The middle one scrolls; the outer two are the query row
+            // and the decision row, and neither may ever be the thing that scrolls away.
+            //
+            // The query row used to be the scroller's first child, which is fine until the
+            // scroller is shorter than it. A landscape keyboard on the third device leaves the
+            // whole drawer 93 dp; the pinned footer took 52 of them and the query row — the
+            // one control the keyboard was raised for — was left 32 dp of its 48, sliced
+            // across the middle at both ends with Regex and Case-sensitive cut beside it
+            // (finding F-30). Scrolling cannot answer that: the row is taller than the
+            // viewport it would scroll in.
+            //
+            // Structural, not conditional. Moving the section into this band only while the
+            // keyboard was up meant reparenting a focused TextBox, which unmounts it, which
+            // drops focus, which makes Avalonia withdraw the IME it had just asked for —
+            // `showSoftInput` followed by `HIDE_SOFT_INPUT_BY_INSETS_API` in the same breath,
+            // and a field that could not be typed into at all. That is the same trap
+            // <see cref="ObserveInputPane"/> records from finding 1, one layer down. The band
+            // exists in every state, so nothing ever moves.
             var filterPanelGrid = new Grid
             {
-                RowDefinitions = new RowDefinitions("*,Auto"),
-                Children = { _mobileFilterFade, filterFooter },
+                RowDefinitions = new RowDefinitions("Auto,*,Auto"),
+                Children = { querySection, _mobileFilterFade, filterFooter },
             };
-            Grid.SetRow(filterFooter, 1);
+            Grid.SetRow(_mobileFilterFade, 1);
+            Grid.SetRow(filterFooter, 2);
 
             // The drawer is a full card in the workspace band, not a flap hanging under the
             // toolbar. Capped at 520 px it ended a fifth of the screen above the bottom in
@@ -1002,6 +1450,10 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Child = filterPanelGrid,
                 IsVisible = false,
                 ZIndex = 5,
+
+                // A card that cannot hold everything it was asked to hold must cut it off at
+                // its own edge, not paint it over the workspace underneath.
+                ClipToBounds = true,
             };
             AutomationProperties.SetName(_mobileFilterPanel, "Search and timeline filters");
 
@@ -1140,6 +1592,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Margin = new Thickness(10, 7),
             };
             desktopFilters.Children.Add(_search);
+            desktopFilters.Children.Add(_searchProblem);
             desktopFilters.Children.Add(_regex);
             desktopFilters.Children.Add(_caseSensitive);
             desktopFilters.Children.Add(searchAction);
@@ -1251,10 +1704,11 @@ public sealed partial class SessionWorkspaceView : UserControl
         var entryPanel = new Grid
         {
             RowDefinitions = new RowDefinitions(_mobile ? "Auto,*,Auto" : "Auto,Auto,*,Auto"),
+            ClipToBounds = _mobile,
         };
         var entryHeader = _entryHeader = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,Auto"),
+            RowDefinitions = new RowDefinitions("Auto,Auto,Auto"),
         };
         _order.SelectionChanged += (_, _) => _ = _viewModel.SetEntryOrderAsync(
             _order.SelectedIndex == 1 ? EntryOrder.SourceSequence : EntryOrder.Chronological);
@@ -1379,6 +1833,9 @@ public sealed partial class SessionWorkspaceView : UserControl
         entryHeader.Children.Add(_summary);
         Grid.SetRow(entryActions, 1);
         entryHeader.Children.Add(entryActions);
+        var offPage = BuildEntryOffPageBanner();
+        Grid.SetRow(offPage, 2);
+        entryHeader.Children.Add(offPage);
         Grid.SetRow(entryHeader, 0);
         entryPanel.Children.Add(entryHeader);
         if (!_mobile)
@@ -1390,6 +1847,11 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         Grid.SetRow(_entries, _mobile ? 1 : 2);
         entryPanel.Children.Add(_entries);
+
+        // Same cell as the list, so it occupies exactly the region that was blank.
+        var emptyResults = BuildEmptyResultsCard();
+        Grid.SetRow(emptyResults, _mobile ? 1 : 2);
+        entryPanel.Children.Add(emptyResults);
         if (_mobile)
         {
             var footer = BuildMobileEntryFooter();
@@ -1425,6 +1887,17 @@ public sealed partial class SessionWorkspaceView : UserControl
             };
             AutomationProperties.SetName(_mobileAnalysisTabs, "Session detail views");
             analysis.Children.Add(_mobileAnalysisTabs);
+            var summaryHost = _mobileSummaryHost = new Grid
+            {
+                Height = 42,
+                Margin = new Thickness(0, 0, 8, 0),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                IsHitTestVisible = false,
+                IsVisible = false,
+                ZIndex = 2,
+            };
+            analysis.Children.Add(summaryHost);
         }
         else
         {
@@ -1463,7 +1936,6 @@ public sealed partial class SessionWorkspaceView : UserControl
         Grid.SetRowSpan(failureCard, 6);
         root.Children.Add(failureCard);
 
-        _status.TextTrimming = TextTrimming.CharacterEllipsis;
         _searchStatus.TextTrimming = TextTrimming.CharacterEllipsis;
         var statusBar = _statusBar = new DockPanel
         {
@@ -1478,9 +1950,12 @@ public sealed partial class SessionWorkspaceView : UserControl
             Background = Brushes.Transparent,
             VerticalAlignment = VerticalAlignment.Stretch,
         };
+        var markerNav = BuildMarkerNavigation();
+        DockPanel.SetDock(markerNav, Dock.Right);
+        statusBar.Children.Add(markerNav);
         DockPanel.SetDock(_searchStatus, Dock.Right);
         statusBar.Children.Add(_searchStatus);
-        statusBar.Children.Add(_status);
+        statusBar.Children.Add(_status.Control);
         if (_mobile)
         {
             // One clipped line is the right density for a status that rewrites itself several
@@ -1513,8 +1988,17 @@ public sealed partial class SessionWorkspaceView : UserControl
             AutomationProperties.SetIsControlElementOverride(statusChevron, false);
             DockPanel.SetDock(statusChevron, Dock.Right);
             statusBar.Children.Insert(0, statusChevron);
-            statusBar.Tapped += (_, _) =>
+            statusBar.Tapped += (_, eventArgs) =>
             {
+                // The row is a disclosure gesture and now also carries two buttons. A tap that
+                // began on one of them is that button's, not the row's.
+                if (eventArgs.Source is Visual source &&
+                    _markerNav is { } nav &&
+                    (ReferenceEquals(source, nav) || source.GetVisualAncestors().Contains(nav)))
+                {
+                    return;
+                }
+
                 if (_statusChevron?.IsVisible == true)
                 {
                     SetStatusExpanded(!_statusExpanded);

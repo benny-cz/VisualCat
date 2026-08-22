@@ -9,6 +9,7 @@ using VisualCat.Application.Coordination;
 using VisualCat.Application.Ports;
 using VisualCat.Application.UseCases;
 using VisualCat.Core.Store;
+using VisualCat.Domain;
 using VisualCat.Domain.Sessions;
 using VisualCat.Infrastructure.Files;
 
@@ -20,7 +21,34 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     private readonly Dictionary<SessionTabViewModel, SessionOperation> _operations = [];
     private readonly SemaphoreSlim _resourceGovernor = new(2, 2);
     private IDiagnosticSink? _diagnostics;
-    private int _uiRefreshLimit = 30;
+    private static IDiagnosticSink? s_diagnostics;
+    /// <summary>
+    /// How often, at most, a running capture is allowed to rewrite the workspace.
+    /// </summary>
+    /// <remarks>
+    /// It was 30 per second on every platform. On a phone that is a ceiling nothing below it
+    /// can use: the device's own logcat reported this app's SurfaceView at about 4 fps during
+    /// a capture, with <c>Surface::disconnect</c> about five times a second, and an untouched
+    /// P0 capture of roughly five lines a second sampled 17.8–25.0 % CPU against a 0.0 %
+    /// idle control (finding F-15). Each tick rewrites the status line — a layout pass — and,
+    /// whenever the committer has advanced, reopens the snapshot and re-runs the heat map, the
+    /// overview, statistics and the entry page.
+    ///
+    /// Four per second is above the rate this renderer actually presents at and well above
+    /// what a person reads a moving number at; the elapsed-time heartbeat only needs one. The
+    /// desktop keeps 30, where the frames are cheap and real.
+    /// </remarks>
+    private int _uiRefreshLimit = OperatingSystem.IsAndroid() ? 6 : 30;
+
+    /// <summary>Whether a snapshot refresh raised by progress is already in flight.</summary>
+    /// <remarks>
+    /// Reports arrive faster than a refresh completes on a busy capture, and each one used to
+    /// start another: they then queued on the session's load lock, so the work outlived the
+    /// arrivals that asked for it and the queue only ever grew. A refresh reads the newest
+    /// generation on disk, so one that is already running will pick up whatever arrived while
+    /// it ran — dropping the request is not dropping the data.
+    /// </remarks>
+    private readonly HashSet<SessionTabViewModel> _refreshing = [];
     private SessionTabViewModel? _selected;
     private static string? s_temporarySessionRoot;
 
@@ -58,7 +86,51 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         s_temporarySessionRoot = root;
     }
 
-    public void ConfigureDiagnostics(IDiagnosticSink? diagnostics) => _diagnostics = diagnostics;
+    public void ConfigureDiagnostics(IDiagnosticSink? diagnostics)
+    {
+        _diagnostics = diagnostics;
+        s_diagnostics = diagnostics;
+    }
+
+    /// <summary>
+    /// Keeps the raw text of a failure a user was shown a product sentence for.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="FriendlyMessage"/> stopped putting framework exception text in front of a
+    /// reader (finding F-04), which would otherwise throw the only detailed record of the
+    /// failure away. The composition root configures exactly one sink per process, so a static
+    /// handle is honest here; it is only ever read to write a diagnostic line, and a null sink
+    /// means diagnostics are switched off rather than that something went wrong.
+    /// </remarks>
+    internal static void RecordFailure(string context, Exception exception)
+    {
+        if (s_diagnostics is not { } sink)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await sink.WriteAsync(new DiagnosticEvent(
+                    DateTimeOffset.UtcNow,
+                    "warning",
+                    "workspace",
+                    context,
+                    Guid.Empty,
+                    0,
+                    new Dictionary<string, string>
+                    {
+                        ["exceptionType"] = exception.GetType().FullName ?? exception.GetType().Name,
+                        ["message"] = exception.Message,
+                    })).ConfigureAwait(false);
+            }
+            catch (Exception writeFailure) when (writeFailure is IOException or UnauthorizedAccessException or ObjectDisposedException)
+            {
+            }
+        });
+    }
 
     /// <summary>
     /// Reports that the workspace has left the screen — the window was hidden, or on a
@@ -88,12 +160,25 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         _presence.IsWatching = true;
         foreach (var tab in Tabs.ToArray())
         {
-            _ = LoadProgressSnapshotAsync(tab, CancellationToken.None);
+            _ = RefreshProgressSnapshotAsync(tab, CancellationToken.None);
         }
     }
 
+    /// <summary>
+    /// Applies the configured refresh ceiling, never above what this platform can present.
+    /// </summary>
+    /// <remarks>
+    /// The stored setting defaults to 30 and is shared by both platforms, so configuring it
+    /// used to put the phone straight back to 30 whatever the field above says. A rate above
+    /// what the renderer presents at buys the reader nothing and costs a phone battery and
+    /// heat for hours (finding F-15), so the platform ceiling wins; a reader who lowers the
+    /// setting is still obeyed.
+    /// </remarks>
     public void ConfigureUiRefreshLimit(int refreshesPerSecond) =>
-        _uiRefreshLimit = Math.Clamp(refreshesPerSecond, 1, 60);
+        _uiRefreshLimit = Math.Min(Math.Clamp(refreshesPerSecond, 1, 60), PlatformRefreshCeiling);
+
+    /// <summary>The most useful refreshes per second this platform can actually show.</summary>
+    private static int PlatformRefreshCeiling => OperatingSystem.IsAndroid() ? 6 : 60;
 
     public SessionTabViewModel? Selected
     {
@@ -133,7 +218,10 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         var operation = RegisterOperation(tab, cancellationToken);
         var operationToken = operation.Cancellation.Token;
         var acquired = false;
-        await using var source = new FileLogSource(path);
+        // The title travels into the session, not only onto the tab: a session reopened from
+        // the cache reads its name from the stored descriptor, and without this it read the
+        // private cache filename back out again (finding F-27).
+        await using var source = new FileLogSource(path, displayName: title);
         var settings = ingestSettings ?? new IngestSettings(
             null,
             "utf-8",
@@ -267,6 +355,29 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
                 : $"Queued · waiting for {ahead.Title} to finish");
     }
 
+    /// <summary>
+    /// The session a live capture is running in, if one is.
+    /// </summary>
+    /// <remarks>
+    /// The shell used to have no way to ask. The global Live action was registered with no
+    /// availability logic at all, so tapping it during a capture silently created a second
+    /// session and a second <c>logcat</c> child; stopping the newly selected one left the
+    /// first recording with no global indicator anywhere, and only closing its tab ended it
+    /// (finding F-22). A capture that goes on recording after the reader believes they stopped
+    /// it costs battery, storage, and — since it is a device log — their trust.
+    /// </remarks>
+    public SessionTabViewModel? ActiveLiveCapture =>
+        Tabs.FirstOrDefault(static tab =>
+            tab.IsLiveCaptureActive ||
+            tab.Activity is SessionActivity.Connecting or SessionActivity.Starting
+                or SessionActivity.Capturing or SessionActivity.Stopping);
+
+    /// <summary>Raised whenever a live capture starts or ends, so the shell can re-ask.</summary>
+    public event EventHandler? LiveCaptureChanged;
+
+    private void RaiseLiveCaptureChanged() =>
+        LiveCaptureChanged?.Invoke(this, EventArgs.Empty);
+
     public async Task<SessionTabViewModel> CaptureAsync(
         ILogSource source,
         TimeSpan? duration,
@@ -277,6 +388,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         tab.FollowLatest = true;
         tab.IsLiveCaptureActive = true;
         Add(tab);
+        RaiseLiveCaptureChanged();
         var operation = RegisterOperation(tab, cancellationToken);
         var operationToken = operation.Cancellation.Token;
         var acquired = false;
@@ -373,6 +485,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             // asserting "Capturing · no source lines for 7m", over a Stop capture button that
             // by then did nothing at all.
             tab.IsLiveCaptureActive = false;
+            RaiseLiveCaptureChanged();
 
             // Says the capture is safe before saying what is left to do. By this point the
             // manifest is written and the session would reopen from disk even if the app died
@@ -412,19 +525,19 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             {
                 tab.ReportActivity(
                     SessionActivity.Stopped,
-                    $"Stopped · {capturedEntries:N0} entries kept");
+                    $"Stopped · {Counted.Entries(capturedEntries)} kept");
             }
             else if (durationElapsed)
             {
                 tab.ReportActivity(
                     SessionActivity.Stopped,
-                    $"Stopped · this capture ran its full duration · {capturedEntries:N0} entries kept");
+                    $"Stopped · this capture ran its full duration · {Counted.Entries(capturedEntries)} kept");
             }
             else
             {
                 tab.ReportActivity(
                     SessionActivity.Stopped,
-                    $"Stopped · the log source ended this capture · {capturedEntries:N0} entries kept");
+                    $"Stopped · the log source ended this capture · {Counted.Entries(capturedEntries)} kept");
             }
 
             if (!readerStopped && !durationElapsed)
@@ -434,7 +547,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
                     capturedEntries == 0
                         ? "The live capture stopped on its own before any log line arrived. Nothing was recorded."
                         : $"The live capture stopped on its own — the log source ended it. " +
-                          $"{capturedEntries:N0} entries were kept; start Live again to carry on.");
+                          $"{Counted.Entries(capturedEntries)} {(capturedEntries == 1 ? "was" : "were")} kept; start Live again to carry on.");
             }
 
             return tab;
@@ -452,6 +565,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         finally
         {
             tab.IsLiveCaptureActive = false;
+            RaiseLiveCaptureChanged();
             if (source is ISourceScopeReporter finished)
             {
                 finished.ScopeResolved -= OnScopeResolved;
@@ -607,7 +721,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             // ResumeLiveViews brings the tab straight up to date when it returns.
             if (snapshot.SnapshotGeneration > (tab.Snapshot?.Generation ?? 0) && _presence.IsWatching)
             {
-                _ = LoadProgressSnapshotAsync(tab, cancellationToken);
+                _ = RefreshProgressSnapshotAsync(tab, cancellationToken);
             }
         });
     }
@@ -624,6 +738,30 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     /// capture genuinely is unaffected, so this is reported as a view-freshness problem
     /// and clears itself as soon as a refresh succeeds.
     /// </remarks>
+    /// <summary>Runs one progress refresh per tab at a time, dropping the overlap.</summary>
+    private async Task RefreshProgressSnapshotAsync(SessionTabViewModel tab, CancellationToken cancellationToken)
+    {
+        lock (_refreshing)
+        {
+            if (!_refreshing.Add(tab))
+            {
+                return;
+            }
+        }
+
+        try
+        {
+            await LoadProgressSnapshotAsync(tab, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_refreshing)
+            {
+                _refreshing.Remove(tab);
+            }
+        }
+    }
+
     private async Task LoadProgressSnapshotAsync(SessionTabViewModel tab, CancellationToken cancellationToken)
     {
         try
@@ -701,14 +839,70 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             // Already phrased for a person, including what survived.
             SegmentWriteRefusedException => cause.Message,
             UnauthorizedAccessException =>
-                $"VisualCat is not allowed to read or write part of this session: {Shorten(cause.Message)}",
+                $"VisualCat is not allowed to read or write part of this session: {Detail(cause)}",
             FileNotFoundException or DirectoryNotFoundException =>
                 "Part of the session is missing. It may have been moved or deleted while it was open.",
             IOException =>
-                $"VisualCat could not read or write the session: {Shorten(cause.Message)}",
-            _ => Shorten(cause.Message),
+                $"VisualCat could not read or write the session: {Detail(cause)}",
+            _ => Presentable(cause),
         };
     }
+
+    /// <summary>
+    /// The cause's own message, but only while it is still a sentence a person can act on.
+    /// </summary>
+    /// <remarks>
+    /// A Release Android build sets <c>System.Resources.UseSystemResourceKeys=true</c> — the
+    /// .NET Android SDK's default, which trims framework resource strings — and every framework
+    /// message then arrives as <c>ResourceKey, arg0, arg1</c> instead of a sentence. That is
+    /// how <c>Failed · MakeException, (unclosed, 9, InsufficientClosingParentheses</c> reached
+    /// a status line (finding F-04), and it degrades that way only in Release, which is why no
+    /// test saw it. The property is also turned off for the Android build as a safety net, but
+    /// this is the fix: a message that still looks like a key is replaced by a product sentence
+    /// and a stable code, and the raw text goes to the diagnostic bundle.
+    /// </remarks>
+    private static string Presentable(Exception cause)
+    {
+        var message = Shorten(cause.Message);
+        if (!IsPresentable(message))
+        {
+            RecordFailure("message.not.presentable", cause);
+            return $"VisualCat could not finish that ({ErrorCode(cause)}). The details are in the diagnostic bundle.";
+        }
+
+        return message;
+    }
+
+    /// <summary>The trailing half of a sentence that already names what failed.</summary>
+    private static string Detail(Exception cause)
+    {
+        var message = Shorten(cause.Message);
+        if (!IsPresentable(message))
+        {
+            RecordFailure("message.not.presentable", cause);
+            return $"error {ErrorCode(cause)}";
+        }
+
+        return message;
+    }
+
+    private static bool IsPresentable(string message) =>
+        message.Length > 0 && !ResourceKeyLeak().IsMatch(message);
+
+    /// <summary>A short, stable, greppable name for an exception type.</summary>
+    private static string ErrorCode(Exception cause)
+    {
+        var name = cause.GetType().Name;
+        return name.EndsWith("Exception", StringComparison.Ordinal) && name.Length > 9
+            ? name[..^9]
+            : name;
+    }
+
+    /// <summary>
+    /// The signature of a trimmed framework resource string: an identifier, a comma, a space.
+    /// </summary>
+    [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*,(\s|$)")]
+    private static partial Regex ResourceKeyLeak();
 
     /// <summary>
     /// The next step for a failed import, when this platform has one to offer.

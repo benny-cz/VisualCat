@@ -7,6 +7,8 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.VisualTree;
+using VisualCat.App.Presentation;
+using VisualCat.Domain;
 using VisualCat.Infrastructure.Configuration;
 
 namespace VisualCat.App.Views;
@@ -93,9 +95,8 @@ internal static class SheetForm
     internal static string DescribeSessionOutcome(TemporarySessionInfo session, bool capturingNow)
     {
         ArgumentNullException.ThrowIfNull(session);
-        return capturingNow
-            ? "capture in progress"
-            : session.Finalized ? "complete" : "interrupted";
+        return SessionCompletionText.Outcome(
+            SessionCompletionText.Of(session.Finalized, capturingNow));
     }
 
     /// <summary>
@@ -708,19 +709,26 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
     private readonly ListBox _sessions = new();
     private readonly List<Control> _policyFields = [];
     private readonly IReadOnlySet<string> _capturing;
+    private readonly IReadOnlySet<string> _protectedPaths;
 
     /// <param name="cacheRoot">Where the app keeps temporary sessions.</param>
     /// <param name="settings">The retention policy to edit.</param>
     /// <param name="capturing">
     /// The paths this app is recording into at this moment (see <see cref="RecentSessionsDialog"/>).
     /// </param>
+    /// <param name="protectedPaths">
+    /// Every session open in the workspace. Cleanup must not remove one underneath a tab,
+    /// whether it is complete, interrupted, or actively capturing.
+    /// </param>
     public SessionCacheDialog(
         string cacheRoot,
         ApplicationSettings settings,
-        IReadOnlySet<string>? capturing = null)
+        IReadOnlySet<string>? capturing = null,
+        IReadOnlySet<string>? protectedPaths = null)
         : base("Temporary session cache")
     {
         _capturing = capturing ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _protectedPaths = protectedPaths ?? _capturing;
         _cacheRoot = Path.GetFullPath(cacheRoot);
         _settings = settings;
         PreferredSize = new Size(780, 590);
@@ -924,6 +932,20 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
                         "Cleanup deletes whole session folders; it does not claim forensic erasure.";
     }
 
+    /// <summary>
+    /// Deletes what the policy makes eligible, after saying exactly what that is.
+    /// </summary>
+    /// <remarks>
+    /// The confirmation used to describe the <em>rule</em> and leave the reader to apply it
+    /// mentally to a long cache list; A-15 requires an irreversible action to name what it will
+    /// remove before removing it (finding F-23). It now names the count, the bytes, the
+    /// effective thresholds, and the first few sessions by name — and when nothing is eligible
+    /// it does not raise a destructive prompt at all, because there is nothing to confirm.
+    ///
+    /// The eligibility is then recomputed immediately before deleting. A capture that finished
+    /// while the confirmation was on screen changes the answer, and applying a stale preview is
+    /// how a delete removes something the reader was never shown.
+    /// </remarks>
     private async Task CleanAsync()
     {
         if (_enabled.IsChecked != true)
@@ -932,25 +954,161 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
             return;
         }
 
+        var settings = CurrentSettings();
+        var age = TimeSpan.FromDays(settings.TemporaryRetentionDays);
+        var cap = settings.TemporaryRetentionMaximumBytes;
+        var eligible = await TemporarySessionRetentionService.PreviewAsync(
+            _cacheRoot,
+            age,
+            cap,
+            DateTimeOffset.UtcNow,
+            _protectedPaths);
+
+        if (eligible.Count == 0)
+        {
+            _summary.Text =
+                $"Nothing is eligible under this policy: {DescribePolicy(settings)}. No session was deleted.";
+            return;
+        }
+
         var confirmed = await ShowNestedAsync(new ConfirmationDialog(
-            "Delete eligible temporary sessions?",
-            "Sessions older than the configured age, and oldest sessions above the size cap, will be permanently removed."));
+            $"Delete {Counted.Sessions(eligible.Count)}?",
+            DescribeEligible(eligible, settings)));
         if (confirmed != true)
         {
             return;
         }
 
-        var settings = CurrentSettings();
         var result = await TemporarySessionRetentionService.CleanupAsync(
             _cacheRoot,
             enabled: true,
-            TimeSpan.FromDays(settings.TemporaryRetentionDays),
-            settings.TemporaryRetentionMaximumBytes,
-            DateTimeOffset.UtcNow);
+            age,
+            cap,
+            DateTimeOffset.UtcNow,
+            _protectedPaths);
         await RefreshAsync();
         _summary.Text = result.Errors.Count == 0
-            ? $"Deleted {result.DeletedPaths.Count:N0} eligible sessions."
-            : $"Deleted {result.DeletedPaths.Count:N0}; {result.Errors.Count:N0} could not be removed.";
+            ? $"Deleted {Counted.Sessions(result.DeletedPaths.Count)}."
+            : $"Deleted {Counted.Sessions(result.DeletedPaths.Count)}; " +
+              $"{Counted.Sessions(result.Errors.Count)} could not be removed.";
+    }
+
+    /// <summary>The policy in the words its own fields use.</summary>
+    private static string DescribePolicy(ApplicationSettings settings) =>
+        settings.TemporaryRetentionMaximumBytes is { } bytes
+            ? $"older than {Counted.Of(settings.TemporaryRetentionDays, "day", "days")}, " +
+              $"or oldest above {RecentSessionsDialog.FormatBytes(bytes)}"
+            : $"older than {Counted.Of(settings.TemporaryRetentionDays, "day", "days")}, with no size cap";
+
+    /// <summary>What exactly is about to be removed, named rather than described.</summary>
+    private static string DescribeEligible(
+        IReadOnlyList<TemporarySessionInfo> eligible,
+        ApplicationSettings settings)
+    {
+        const int Listed = 5;
+        var bytes = eligible.Sum(static session => session.SizeBytes);
+        var text = new System.Text.StringBuilder();
+        text.Append(Counted.Sessions(eligible.Count))
+            .Append(" · ")
+            .Append(RecentSessionsDialog.FormatBytes(bytes))
+            .Append(" will be permanently removed (")
+            .Append(DescribePolicy(settings))
+            .Append(").")
+            .AppendLine()
+            .AppendLine();
+
+        foreach (var session in eligible.Take(Listed))
+        {
+            text.Append("· ")
+                .Append(SessionCacheName.Describe(session.Path))
+                .Append(" — ")
+                .Append(RecentSessionsDialog.FormatBytes(session.SizeBytes))
+                .AppendLine();
+        }
+
+        if (eligible.Count > Listed)
+        {
+            text.Append("· and ").Append(Counted.Sessions(eligible.Count - Listed)).Append(" more.");
+        }
+
+        return text.ToString().TrimEnd();
+    }
+}
+
+internal enum RecoveredSessionAction
+{
+    Keep,
+    Export,
+    Delete,
+}
+
+/// <summary>
+/// The explicit disposition of a capture recovered after process death. Keeping is a real
+/// choice even though it writes nothing: it acknowledges the warning while deliberately
+/// retaining the durable partial state, so the session never gets relabelled as complete.
+/// </summary>
+internal sealed class RecoveredSessionDialog : DialogBody<RecoveredSessionAction>
+{
+    internal RecoveredSessionDialog(string title, long entries, bool canDelete)
+        : base("Recovered capture")
+    {
+        PreferredSize = new Size(560, 300);
+        MinimumSize = new Size(360, 240);
+        var mobile = OperatingSystem.IsAndroid();
+        var delete = new Button
+        {
+            Content = "Delete…",
+            IsEnabled = canDelete,
+            MinHeight = mobile ? 48 : 0,
+        };
+        AutomationProperties.SetName(delete, "Delete this recovered capture");
+        AutomationProperties.SetHelpText(
+            delete,
+            canDelete
+                ? "Closes this tab and asks for confirmation before permanently deleting its cached session."
+                : "This session is outside VisualCat's temporary cache and cannot be deleted here.");
+        delete.Click += (_, _) => Complete(RecoveredSessionAction.Delete);
+
+        var keep = new Button { Content = "Keep", MinHeight = mobile ? 48 : 0 };
+        AutomationProperties.SetName(keep, "Keep this recovered capture");
+        keep.Click += (_, _) => Complete(RecoveredSessionAction.Keep);
+
+        var export = new Button
+        {
+            Content = mobile ? "Export…" : "Export recovered data…",
+            IsDefault = true,
+            MinHeight = mobile ? 48 : 0,
+        };
+        AutomationProperties.SetName(export, "Export recovered data");
+        export.Click += (_, _) => Complete(RecoveredSessionAction.Export);
+
+        var body = new StackPanel
+        {
+            Spacing = 10,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = title,
+                    FontWeight = FontWeight.SemiBold,
+                    TextWrapping = TextWrapping.Wrap,
+                },
+                new TextBlock
+                {
+                    Text = $"{Counted.Entries(entries)} reached disk and are exact. The capture ended before " +
+                           "it was finalized, so data produced after the last save is not present.",
+                    TextWrapping = TextWrapping.Wrap,
+                },
+                new TextBlock
+                {
+                    Text = "Keep preserves the recovered session as interrupted. Export writes the data " +
+                           "that survived. Delete is permanent and asks again before removing anything.",
+                    TextWrapping = TextWrapping.Wrap,
+                    Opacity = 0.78,
+                },
+            },
+        };
+        Content = SheetForm.Build(body, SheetForm.Decision(delete, keep, export), new Thickness(14));
     }
 }
 

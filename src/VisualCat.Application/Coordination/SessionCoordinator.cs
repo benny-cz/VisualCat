@@ -37,7 +37,12 @@ public sealed class SessionCoordinator
         var state = new SessionStateMachine();
         var createdUtc = DateTimeOffset.UtcNow;
         state.TransitionTo(SessionState.SelectingSource);
-        state.TransitionTo(source.Metadata.Kind == SourceKind.Adb ? SessionState.Connecting : SessionState.Importing);
+        // Liveness, not which live kind it is. An Android on-device capture is
+        // SourceKind.Android, so it took the finite branch and every running capture stamped
+        // its published manifests SessionState.Importing — Session info said "State: Importing"
+        // beside a status line correctly saying "Capturing" (finding F-14). A source that is
+        // not finite is a stream, whichever platform it comes from.
+        state.TransitionTo(source.Metadata.IsFinite ? SessionState.Importing : SessionState.Connecting);
         var stopwatch = Stopwatch.StartNew();
 
         var samples = await source.ProbeAsync(200, cancellationToken).ConfigureAwait(false);

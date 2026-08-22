@@ -15,6 +15,7 @@ using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 using VisualCat.App.Views;
 using VisualCat.Application.Ports;
+using VisualCat.Domain;
 using VisualCat.Infrastructure.Configuration;
 using VisualCat.Infrastructure.Files;
 
@@ -256,7 +257,10 @@ public sealed class AndroidAuditFix2Tests
         var name = SourceMetadata.NameCaptureStartedNow("On-device logcat");
 
         Assert.StartsWith("On-device logcat ", name, StringComparison.Ordinal);
-        Assert.Matches(@"^On-device logcat \d{2}-\d{2}-\d{2}$", name);
+
+        // h/m rather than hyphens: "20-09-12" is what a date looks like, and the first thing
+        // that name said was "12 September 2020" (finding F-16).
+        Assert.Matches(@"^On-device logcat \d{2}h\d{2}m\d{2}$", name);
 
         // It survives being used as a filename stem, which is where it ends up.
         Assert.Equal(name, Path.GetFileNameWithoutExtension(name));
@@ -462,6 +466,133 @@ public sealed class AndroidAuditFix2Tests
     }
 
     /// <summary>
+    /// F-09 — even below the preferred row floor, a realized row belongs to the list and can
+    /// never paint into the status band beneath it.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task TheEntryListOwnsItsCompactHeightClipBoundary()
+    {
+        await UsingPhoneWorkspace(800, 360, static (view, window) =>
+        {
+            var entries = Named<ListBox>(view, "Filtered log entries");
+            Assert.True(entries.ClipToBounds);
+            Assert.IsType<Grid>(entries.Parent);
+            Assert.True(((Grid)entries.Parent!).ClipToBounds);
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// F-09 — the real workspace strip can share the shell row and returns to this workspace
+    /// symmetrically; there is no duplicate set of controls whose states can drift.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task CompactCommandsHaveOneOwnerWhenMovedIntoTheShell()
+    {
+        await UsingPhoneWorkspace(800, 360, static (view, window) =>
+        {
+            var host = new Grid();
+            view.HostCompactCommands(host);
+            Assert.Single(host.Children);
+            Assert.Same(host, host.Children[0].Parent);
+
+            view.HostCompactCommands(null);
+            Assert.Empty(host.Children);
+            Assert.NotNull(Named<Button>(view, "Open search and timeline filters"));
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// F-11 — the visible hint is constrained by the field's grid cell and removed from the
+    /// automation tree; the TextBox itself owns the stable, complete accessible name.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task TheCompactSearchHintCannotOverflowItsFieldInAutomation()
+    {
+        await UsingPhoneWorkspace(800, 360, static (view, window) =>
+        {
+            var filters = Named<Button>(view, "Open search and timeline filters");
+            filters.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            window.UpdateLayout();
+
+            var field = Named<TextBox>(view, "Search message text or regular expression");
+            Assert.Equal(string.Empty, field.PlaceholderText);
+            Assert.StartsWith(
+                "Search message text or regular expression.",
+                AutomationProperties.GetHelpText(field),
+                StringComparison.Ordinal);
+            var hint = view.GetVisualDescendants()
+                .OfType<TextBlock>()
+                .Single(block => block.Text is "Search or regex…");
+            Assert.Equal(AccessibilityView.Raw, AutomationProperties.GetAccessibilityView(hint));
+            Assert.False(AutomationProperties.GetIsControlElementOverride(hint));
+            var parent = (Visual)hint.Parent!;
+            Assert.IsType<Grid>(parent);
+            Assert.True(((Grid)parent).ClipToBounds);
+            Assert.Equal(HorizontalAlignment.Stretch, hint.HorizontalAlignment);
+            Assert.Equal(TextTrimming.CharacterEllipsis, hint.TextTrimming);
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// F-11 follow-up — a short portrait viewport still needs a real editor. A notice,
+    /// split-screen, or an IME transition can make height select the compact composition
+    /// without making the phone wide; option controls must not consume the field's column.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AShortPortraitCompactDrawerKeepsAUsableQueryField()
+    {
+        await UsingPhoneWorkspace(360, 480, static (view, window) =>
+        {
+            var filters = Named<Button>(view, "Open search and timeline filters");
+            filters.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            window.UpdateLayout();
+
+            var field = Named<TextBox>(view, "Search message text or regular expression");
+            Assert.True(
+                field.Bounds.Width >= 96,
+                $"the short-portrait query field is only {field.Bounds.Width:0.#} dp wide");
+            Assert.True(field.IsVisible);
+            Assert.True(field.IsEffectivelyEnabled);
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>F-04 — Done must not hide the field whose regex it just refused.</summary>
+    [AvaloniaFact]
+    public async Task DoneKeepsAnInvalidRegexVisibleForRepair()
+    {
+        await UsingPhoneWorkspace(360, 480, static async (view, window) =>
+        {
+            var filters = Named<Button>(view, "Open search and timeline filters");
+            filters.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            window.UpdateLayout();
+
+            Named<TextBox>(view, "Search message text or regular expression").Text = "(unclosed";
+            view.GetVisualDescendants()
+                .OfType<CheckBox>()
+                .Single(box => Equals(box.Content, "Regex"))
+                .IsChecked = true;
+
+            var done = view.GetVisualDescendants()
+                .OfType<Button>()
+                .Single(button => Equals(button.Content, "Done"));
+            done.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            await Task.Delay(50);
+            Dispatcher.UIThread.RunJobs();
+            window.UpdateLayout();
+
+            Assert.Equal("Close filters", AutomationProperties.GetName(filters));
+            Assert.Contains(
+                view.GetVisualDescendants().OfType<TextBlock>(),
+                block => block.IsVisible &&
+                         block.Text?.StartsWith("Not a valid regular expression:", StringComparison.Ordinal) == true);
+        });
+    }
+
+    /// <summary>
     /// A2 — Load next 500 is under the list it extends, and is out of the layout entirely
     /// while there is nothing further to load.
     /// </summary>
@@ -496,7 +627,7 @@ public sealed class AndroidAuditFix2Tests
     {
         await UsingPhoneWorkspace(360, 780, static (view, window, tab) =>
         {
-            tab.Status = "Capturing · 23 lines received · 1/s · On-device logcat";
+            tab.ReportActivity(SessionActivity.Capturing, "Capturing · 23 lines received · 1/s · On-device logcat");
             Dispatcher.UIThread.RunJobs();
 
             var status = view.GetVisualDescendants()
@@ -506,7 +637,7 @@ public sealed class AndroidAuditFix2Tests
 
             // The platform node kept whatever description it read first, so a finished
             // session went on being announced as "Starting capture" (audit 2, B2).
-            tab.Status = "Ready · 59 640 entries";
+            tab.ReportActivity(SessionActivity.Ready, "Ready · 59 640 entries");
             Dispatcher.UIThread.RunJobs();
 
             Assert.Equal(tab.Status, AutomationProperties.GetName(status));
@@ -633,6 +764,65 @@ public sealed class AndroidAuditFix2Tests
         enabled.IsChecked = true;
         Assert.True(days.IsEnabled);
         Assert.True(size.IsEnabled);
+    }
+
+    /// <summary>F-19 — recovery offers all three explicit dispositions with safe copy.</summary>
+    [AvaloniaFact]
+    public void ARecoveredCaptureOffersKeepExportAndConfirmedDelete()
+    {
+        var dialog = new RecoveredSessionDialog("On-device logcat 01h29m04", 947, canDelete: true);
+        var window = new Window { Content = dialog, Width = 380, Height = 620 };
+        window.Show();
+        window.UpdateLayout();
+        try
+        {
+            var buttons = dialog.GetVisualDescendants().OfType<Button>().ToArray();
+            var keep = Assert.Single(buttons, button => AutomationProperties.GetName(button) == "Keep this recovered capture");
+            var export = Assert.Single(buttons, button => AutomationProperties.GetName(button) == "Export recovered data");
+            var delete = Assert.Single(buttons, button => AutomationProperties.GetName(button) == "Delete this recovered capture");
+            Assert.True(keep.IsEnabled);
+            Assert.True(export.IsEnabled);
+            Assert.True(delete.IsEnabled);
+            Assert.Contains("asks for confirmation", AutomationProperties.GetHelpText(delete), StringComparison.Ordinal);
+            Assert.Contains(
+                dialog.GetVisualDescendants().OfType<TextBlock>(),
+                block => block.Text?.Contains(Counted.Entries(947), StringComparison.Ordinal) == true);
+
+            var external = new RecoveredSessionDialog("External", 3, canDelete: false);
+            var externalWindow = new Window { Content = external, Width = 380, Height = 620 };
+            externalWindow.Show();
+            externalWindow.UpdateLayout();
+            try
+            {
+                Assert.False(external.GetVisualDescendants().OfType<Button>()
+                    .Single(button => AutomationProperties.GetName(button) == "Delete this recovered capture")
+                    .IsEnabled);
+            }
+            finally
+            {
+                externalWindow.Close();
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [Fact]
+    public async Task AnInterruptedOpenSessionNamesItsStateOnTheTab()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await using var tab = new SessionTabViewModel("Recovered", root);
+        tab.ReportActivity(SessionActivity.RecoverablePartial, "Interrupted");
+        var button = new Button();
+
+        MainView.ApplySessionChipSemantics(tab, button);
+
+        Assert.Equal("Show interrupted session Recovered", AutomationProperties.GetName(button));
+        Assert.Contains("ended before", AutomationProperties.GetHelpText(button), StringComparison.Ordinal);
+        Directory.Delete(root, recursive: true);
     }
 
     /// <summary>B3 — a numeric field's spin buttons say which is which.</summary>

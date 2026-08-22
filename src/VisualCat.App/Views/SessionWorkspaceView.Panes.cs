@@ -13,6 +13,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
+using VisualCat.Domain;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
@@ -32,8 +33,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         var text = template.CanonicalText.Length > TemplateSpokenTextLength
             ? template.CanonicalText[..TemplateSpokenTextLength] + "…"
             : template.CanonicalText;
-        var count = template.Count.ToString("N0", DisplayCulture.Current);
-        return $"{count} entries: {text.ReplaceLineEndings(" ")}, " +
+        return $"{Counted.Entries(template.Count)}: {text.ReplaceLineEndings(" ")}, " +
                $"from {FormatInstant(template.First)} to {FormatInstant(template.Last)}";
     }
 
@@ -92,8 +92,9 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Margin = new Thickness(0, 0, metricGap, 0),
                 VerticalAlignment = VerticalAlignment.Top,
             };
-            ToolTip.SetTip(count, $"{exactCount} matching entries");
-            AutomationProperties.SetName(count, $"{exactCount} matching entries");
+            var matching = $"{Counted.Entries(template.Count)} matching";
+            ToolTip.SetTip(count, matching);
+            AutomationProperties.SetName(count, matching);
             row.Children.Add(count);
             var totalMatching = Math.Max(template.Count, _viewModel.Statistics?.TotalMatching ?? template.Count);
 
@@ -119,7 +120,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             };
             ToolTip.SetTip(
                 prevalence,
-                $"{exactCount} entries · {template.Count / (double)Math.Max(1, totalMatching):P1} of current matches · " +
+                $"{Counted.Entries(template.Count)} · {template.Count / (double)Math.Max(1, totalMatching):P1} of current matches · " +
                 $"bar is relative to the largest template listed");
             AutomationProperties.SetName(
                 prevalence,
@@ -537,12 +538,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         void Row(string label, string value, bool warn = false)
         {
             text.Append(label).Append(": ").Append(value).Append('\n');
-            var row = new Grid
+            var labelText = new TextBlock
             {
-                ColumnDefinitions = new ColumnDefinitions("148,*"),
-                Margin = new Thickness(0, 1),
+                Text = label,
+                Foreground = labelBrush,
+                FontSize = TextScale.Of(_mobile ? 10.5 : 11.5),
             };
-            row.Children.Add(new TextBlock { Text = label, Foreground = labelBrush, FontSize = TextScale.Of(11.5) });
             var valueText = new TextBlock
             {
                 Text = value,
@@ -551,6 +552,29 @@ public sealed partial class SessionWorkspaceView : UserControl
                 FontSize = TextScale.Of(11.5),
                 TextWrapping = TextWrapping.Wrap,
             };
+
+            if (_mobile)
+            {
+                // Split mode gives this pane roughly half of a 360 dp phone. The desktop
+                // 148 dp label column consumed that entire width and arranged every value
+                // outside the viewport, including the recovery State a reader came here to
+                // inspect (F-19). A label-over-value pair uses the narrow column honestly;
+                // the containing ScrollViewer absorbs the extra height.
+                _sessionInfo.Children.Add(new StackPanel
+                {
+                    Margin = new Thickness(0, 2, 0, 4),
+                    Spacing = 1,
+                    Children = { labelText, valueText },
+                });
+                return;
+            }
+
+            var row = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("148,*"),
+                Margin = new Thickness(0, 1),
+            };
+            row.Children.Add(labelText);
             Grid.SetColumn(valueText, 1);
             row.Children.Add(valueText);
             _sessionInfo.Children.Add(row);
@@ -616,7 +640,15 @@ public sealed partial class SessionWorkspaceView : UserControl
             string.Equals(displayZone, parseZone, StringComparison.Ordinal)
                 ? displayZone
                 : $"{displayZone} · captured as {parseZone}");
-        Row("State", $"{descriptor.State}{(descriptor.Degraded ? " · degraded/index-only" : string.Empty)}", descriptor.Degraded);
+        // Never the raw enum: "Importing" is the domain's word for reading a finite file and
+        // it was shown beside a live capture (finding F-14), and an unfinalized manifest has to
+        // say so here as well as in Recents (finding F-19).
+        var completion = SessionCompletionText.Of(descriptor.Finalized, _viewModel.IsSessionWorkInFlight);
+        Row(
+            "State",
+            SessionCompletionText.State(descriptor.State, completion) +
+                (descriptor.Degraded ? " · degraded/index-only" : string.Empty),
+            descriptor.Degraded || completion == SessionCompletion.RecoverablePartial);
         IdentifierRow("Session id", descriptor.SessionId.ToString());
 
         Section("Entries");

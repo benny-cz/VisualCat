@@ -9,6 +9,16 @@
     <ApplicationTitle>VisualCat</ApplicationTitle>
     <SupportedOSPlatformVersion>31</SupportedOSPlatformVersion>
     <AndroidPackageFormat>apk</AndroidPackageFormat>
+
+    <!-- The .NET Android SDK turns this on for Release, which trims the framework's resource
+         strings: every BCL exception message then arrives as "ResourceKey, arg0, arg1"
+         instead of a sentence. A status line on a device read
+         "Failed · MakeException, (unclosed, 9, InsufficientClosingParentheses" while every
+         test — Debug, and `dotnet test` — showed the ordinary sentence, which is exactly why
+         it survived (finding F-04). The product no longer puts framework text in front of a
+         reader (WorkspaceViewModel.Presentable), so this is a safety net rather than the fix:
+         it keeps a diagnostic bundle and a stack trace legible when one is needed. -->
+    <UseSystemResourceKeys>false</UseSystemResourceKeys>
   </PropertyGroup>
   <PropertyGroup>
     <!-- Google Play orders uploads by versionCode alone and refuses to accept the

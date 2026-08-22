@@ -147,10 +147,19 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
         // (events/radio and, where available, other buffers), producing another false "quiet"
         // state. Android still applies the caller's permissions to `all`; this does not bypass
         // READ_LOGS restrictions.
+        //
+        // -D is what makes the merged stream self-describing. Ordinary threadtime records carry
+        // no buffer field, and without it logcat announces each buffer once, at the start; the
+        // ingest latched the last announcement and stamped it on everything after, so a capture
+        // attributed about 80% of its records to a buffer they had never been in
+        // (finding F-12). With -D, logcat prints "--------- switch to <buffer>" on every
+        // crossing, so each record's buffer is the last divider before it — which is exactly
+        // what the ingest already assumes.
         var arguments = new[]
         {
             "logcat",
             "-b", "all",
+            "-D",
             "-T", "1",
             "-v", "threadtime,year,UTC,usec",
         };

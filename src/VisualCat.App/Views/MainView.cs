@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -35,7 +36,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private bool _startupOpened;
     private bool _settingsLoaded;
     private Window? _hostWindow;
-    private readonly Action<IReadOnlyList<string>> _launchFilesHandler;
+    private readonly Action<IReadOnlyList<IncomingFile>> _launchFilesHandler;
     private readonly Action _appResumedHandler;
     private readonly Action _appPausedHandler;
     private readonly Action _displayConfigurationHandler;
@@ -58,6 +59,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         ClipToBounds = !OperatingSystem.IsAndroid(),
     };
     private readonly List<Button> _toolbarPrimary = [];
+    private Button? _liveButton;
     private readonly List<ToolbarCommand> _toolbarFlexible = [];
     private readonly List<MenuItem> _toolbarSettings = [];
     private readonly MenuItem _moreItem = new()
@@ -65,7 +67,12 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         Header = "More  ▾",
         MinHeight = OperatingSystem.IsAndroid() ? 48 : 0,
     };
-    private readonly StackPanel _commandContent = new() { Spacing = OperatingSystem.IsAndroid() ? 8 : 4 };
+    private readonly Grid _commandContent = new()
+    {
+        RowDefinitions = new RowDefinitions("Auto,Auto"),
+        RowSpacing = OperatingSystem.IsAndroid() ? 8 : 4,
+    };
+    private readonly Grid _compactWorkspaceCommands = new() { IsVisible = false };
     private readonly Dictionary<Control, double> _toolbarWidths = [];
     private Menu? _moreMenu;
     private Grid? _brandRow;
@@ -100,7 +107,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "VisualCat",
             "settings.json"));
-        _launchFilesHandler = paths => Dispatcher.UIThread.Post(() => _ = OpenPathsAsync(paths));
+        _launchFilesHandler = files => Dispatcher.UIThread.Post(() => _ = OpenIncomingAsync(files));
         _appResumedHandler = () => Dispatcher.UIThread.Post(() =>
         {
             RestoreAndroidLayoutAfterResume();
@@ -134,6 +141,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // cannot see for themselves, so it goes in the lane that stays until dismissed.
         _viewModel.CaptureEndedUnprompted += (_, message) =>
             Dispatcher.UIThread.Post(() => ShowNotice(message, NoticeKind.Failure));
+        _viewModel.LiveCaptureChanged += (_, _) =>
+            Dispatcher.UIThread.Post(UpdateLiveCaptureIndicator);
         _tabs.SelectionChanged += (_, _) =>
         {
             if (_tabs.SelectedItem is TabItem { Tag: SessionTabViewModel tab })
@@ -142,6 +151,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             }
 
             UpdateSessionStrip();
+            UpdateCompactCommandComposition();
             UpdateSessionActionAvailability();
             PersistOpenWorkspace();
         };
@@ -419,7 +429,11 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         brandRow.Children.Add(_message);
         commandContent.Children.Add(brandRow);
 
-        commandContent.Children.Add(BuildActionToolbar());
+        var toolbar = BuildActionToolbar();
+        Grid.SetRow(toolbar, 1);
+        commandContent.Children.Add(toolbar);
+        Grid.SetRow(_compactWorkspaceCommands, 1);
+        commandContent.Children.Add(_compactWorkspaceCommands);
 
         // Both brushes are supplied by ApplyCommandBarTheme, which runs before the first
         // frame and again on every variant change.
@@ -488,18 +502,78 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // decorative brand row recovers a full touch row in portrait without hiding any
         // command; the empty/home state still carries the complete VisualCat masthead.
         _brandRow.IsVisible = !compactHeight && !sessionOpen;
-        _commandContent.Spacing = compactHeight || sessionOpen ? 0 : 8;
+        _commandContent.RowSpacing = compactHeight || sessionOpen ? 0 : 8;
         _commandBar.Padding = CommandBarPadding(compact: compactHeight || sessionOpen);
         // Session tabs remain a compact top row. A side rail looks efficient on paper, but
         // wastes a large column when a phone has the common one-session workspace.
         _tabs.TabStripPlacement = Dock.Top;
         UpdateSessionStrip();
+        UpdateCompactCommandComposition();
 
         if (compositionChanged)
         {
             _lastToolbarWidth = -1;
             Dispatcher.UIThread.Post(() => ReflowToolbar(_toolbar.Bounds.Width));
         }
+    }
+
+    /// <summary>
+    /// Uses landscape width instead of spending a second 48 dp band on workspace commands.
+    /// The selected workspace's real strip is reparented beside Open/Live/More, so labels,
+    /// enabled states and screen-reader metadata have one owner. While the query has focus the
+    /// whole shared row yields to the drawer; Reset and Done then remain above even an IME that
+    /// overlays rather than resizes the activity (F-09/F-10).
+    /// </summary>
+    private void UpdateCompactCommandComposition()
+    {
+        if (!OperatingSystem.IsAndroid() || _commandBar is null)
+        {
+            return;
+        }
+
+        var active = _tabs.SelectedItem is TabItem { Content: SessionWorkspaceView workspace }
+            ? workspace
+            : null;
+        var combine = _mobileCompactHeight && active is not null;
+
+        foreach (var item in _tabItems.Values)
+        {
+            if (item.Content is not SessionWorkspaceView candidate)
+            {
+                continue;
+            }
+
+            candidate.HostCompactCommands(combine && ReferenceEquals(candidate, active)
+                ? _compactWorkspaceCommands
+                : null);
+        }
+
+        _compactWorkspaceCommands.IsVisible = combine;
+        _commandBar.IsVisible = !(combine && active?.CompactEditorActive == true);
+
+        if (combine)
+        {
+            _commandContent.RowDefinitions = new RowDefinitions("Auto");
+            _commandContent.ColumnDefinitions = new ColumnDefinitions("Auto,*");
+            _commandContent.ColumnSpacing = 8;
+            Grid.SetRow(_toolbar, 0);
+            Grid.SetColumn(_toolbar, 0);
+            Grid.SetRow(_compactWorkspaceCommands, 0);
+            Grid.SetColumn(_compactWorkspaceCommands, 1);
+        }
+        else
+        {
+            _commandContent.RowDefinitions = new RowDefinitions("Auto,Auto");
+            _commandContent.ColumnDefinitions = new ColumnDefinitions("*");
+            _commandContent.ColumnSpacing = 0;
+            Grid.SetRow(_toolbar, 1);
+            Grid.SetColumn(_toolbar, 0);
+            Grid.SetRow(_compactWorkspaceCommands, 1);
+            Grid.SetColumn(_compactWorkspaceCommands, 0);
+        }
+
+        _commandContent.InvalidateMeasure();
+        _commandBar.InvalidateMeasure();
     }
 
     private StackPanel BuildEmptyState(bool dark)
@@ -565,7 +639,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 BuildRecentSection(dark),
                 new TextBlock
                 {
-                    Text = $"VisualCat {ProductInfo.DisplayVersion} · local-first · no telemetry",
+                    Text = $"VisualCat {ProductInfo.BuildVersion} · local-first · no telemetry",
                     FontSize = TextScale.Of(10),
                     TextAlignment = TextAlignment.Center,
                     Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextMuted(dark)),
@@ -718,7 +792,19 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             },
         };
         Avalonia.Automation.AutomationProperties.SetName(button, $"Reopen {name}, {detail}");
-        ToolTip.SetTip(button, session.Path);
+
+        // Not the path. Avalonia surfaces a tooltip as the Android node's content description,
+        // so every cold-start card was handing a screen reader
+        // "/data/user/0/com.barebit.visualcat/files/VisualCat/Sessions/…-<32 hex>.vcat" —
+        // a private storage location and a session GUID, both of which R-25 forbids, and
+        // neither of which is needed to choose a card: the in-page Recent sessions dialog
+        // lists the same three captures without them (finding F-17). The path stays in the
+        // click handler, which is the only thing that needs it, and in Session info, which is
+        // where someone who wants it goes.
+        ToolTip.SetTip(button, $"{name} · {detail}");
+        Avalonia.Automation.AutomationProperties.SetHelpText(
+            button,
+            "Double tap to reopen this capture.");
         button.Click += async (_, _) => await RunAsync(() => _viewModel.OpenSessionAsync(session.Path));
         return button;
     }
@@ -792,8 +878,15 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var button = new Button
         {
             Content = label,
-            Padding = new Thickness(3, 3),
-            MinHeight = 0,
+
+            // The hit rect was the text rect: 58 x 18.8 dp, about a third of the platform
+            // floor, on three adjacent controls separated by a "·" — so a slightly low tap
+            // landed on nothing and a slightly wide one was ambiguous (finding F-03). The
+            // visible link keeps its typography and its baseline; only the target grows,
+            // which is what the command band a few rows above has always done.
+            Padding = new Thickness(10, 3),
+            MinHeight = TouchTarget.Here(),
+            VerticalContentAlignment = VerticalAlignment.Center,
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Cursor = new Cursor(StandardCursorType.Hand),
@@ -832,11 +925,12 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
     private StackPanel BuildActionToolbar()
     {
-        void Primary(string label, Func<Task> action)
+        Button Primary(string label, Func<Task> action)
         {
             var button = ActionButton(label, action, primary: true);
             _toolbarPrimary.Add(button);
             _toolbar.Children.Add(button);
+            return button;
         }
 
         void Flexible(
@@ -874,7 +968,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         {
             if (PlatformSourceRegistry.CreateOnDeviceSource is not null)
             {
-                Primary("●  Live", StartOnDeviceAsync);
+                _liveButton = Primary("●  Live", StartOnDeviceAsync);
+                UpdateLiveCaptureIndicator();
             }
 
             // These three open a different session, so they do not belong under "THIS
@@ -978,6 +1073,35 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// while their controls stayed fully enabled — a command that looks available and does
     /// nothing is indistinguishable from one that is broken (finding 19).
     /// </summary>
+    /// <summary>
+    /// Says on the command band whether this device's log is being recorded right now.
+    /// </summary>
+    /// <remarks>
+    /// There was no global indicator of any kind: a capture left running in a tab the reader
+    /// had switched away from went on recording with nothing on screen to say so, and the
+    /// only tell was the process table (finding F-22). The action that would have started a
+    /// second one is the natural place to put it, because it is the control a reader reaches
+    /// for when they are thinking about capturing.
+    /// </remarks>
+    private void UpdateLiveCaptureIndicator()
+    {
+        if (_liveButton is not { } button)
+        {
+            return;
+        }
+
+        var running = _viewModel.ActiveLiveCapture;
+        button.Content = running is null ? "●  Live" : "◉  Recording";
+        Avalonia.Automation.AutomationProperties.SetName(
+            button,
+            running is null ? "Capture this device's log" : $"Go to the running capture, {running.Title}");
+        ToolTip.SetTip(
+            button,
+            running is null
+                ? "Capture this device's log"
+                : $"{running.Title} is capturing. Tap to go to it; stop it there.");
+    }
+
     private void UpdateSessionActionAvailability()
     {
         foreach (var command in _toolbarFlexible)
@@ -1314,9 +1438,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         });
     }
 
-    private async Task ExportAsync(TimeRange? selectedRange = null)
+    private async Task ExportAsync(TimeRange? selectedRange = null, SessionTabViewModel? sourceTab = null)
     {
-        var tab = _viewModel.Selected;
+        var tab = sourceTab ?? _viewModel.Selected;
         var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
         if (tab?.Snapshot is null || tab.Viewport is null || storage is null)
         {
@@ -1422,6 +1546,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return true;
         }
 
+        var fullDevice = PlatformSourceRegistry.HasFullDeviceLogPermission?.Invoke() ?? true;
         if (_settings.LiveCaptureNoticeAcknowledged)
         {
             // The full explanation is shown once and remembered, because Android's own prompt
@@ -1430,7 +1555,22 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             // and forgotten still deserves a second of warning before a system dialog covers
             // the screen (audit 2, C1). The lane is not a dialog: it says so and gets out of
             // the way.
-            ShowNotice("Android will ask you to allow log access. It asks on every capture.");
+            //
+            // Unless no prompt is coming, in which case saying one is coming is simply false
+            // (finding F-13): without READ_LOGS the capture is own-app-only and Android has
+            // nothing to ask.
+            if (fullDevice)
+            {
+                ShowNotice("Android will ask you to allow log access. It asks on every capture.");
+            }
+            else
+            {
+                ShowNoticeWithGrantCommand(
+                    "This capture will contain only VisualCat's own log lines. Android will not " +
+                    "ask for anything: the permission a full-device capture needs cannot be " +
+                    "requested by an app.");
+            }
+
             return true;
         }
 
@@ -1439,8 +1579,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             "VisualCat reads the Android log and stores it in this app's private storage. " +
             "Nothing is uploaded and there is no telemetry; a session leaves the device only " +
             "when you share or export it yourself.\n\n" +
-            "Android will now ask you to allow access to device logs. It asks every time, " +
-            "because the permission it grants is one-time.",
+            LogAccessExplanation(fullDevice),
             "Continue"));
         if (confirmed != true)
         {
@@ -1456,8 +1595,86 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         return true;
     }
 
+    /// <summary>
+    /// Starts an on-device capture, or takes the reader to the one already running.
+    /// </summary>
+    /// <remarks>
+    /// One device log, one capture of it. The global Live action had no availability logic:
+    /// tapping it during a capture created a second session and a second <c>logcat</c> child,
+    /// and stopping the newly selected session left the first one recording with nothing on
+    /// screen to say so — only closing its tab ended it (finding F-22). A second capture of
+    /// the same source is not a feature anyone asked for; it is two readers of one stream
+    /// competing for the same battery. So Live becomes the way back to the capture that
+    /// exists, and the Stop control in that session stays the single way to end it.
+    /// </remarks>
+    /// <summary>
+    /// What this device will actually do when the capture starts, composed from the grant it
+    /// holds rather than from an assumption.
+    /// </summary>
+    /// <remarks>
+    /// The copy was unconditional and, on a clean install, false: it said Android would ask for
+    /// access, and no sheet can appear without READ_LOGS, because READ_LOGS is not a runtime
+    /// permission and an app cannot request it. Session info explained the same state correctly
+    /// and gave the exact command, so the product contradicted itself two taps apart
+    /// (finding F-13). The two states have nothing in common, so they get two sentences rather
+    /// than one hedged one.
+    /// </remarks>
+    private static string LogAccessExplanation(bool fullDevice) =>
+        fullDevice
+            ? "Android will now ask you to allow access to device logs. It asks every time, " +
+              "because the permission it grants is one-time."
+            : "This capture will contain only VisualCat's own log lines, so an idle app produces " +
+              "almost nothing. Android will not ask you for anything: the permission a " +
+              "full-device capture needs is not one an app can request. Granting it takes one " +
+              "command over adb, and it has to be repeated after every reinstall:\n\n" +
+              (PlatformSourceRegistry.FullDeviceLogGrantCommand ?? string.Empty);
+
+    /// <summary>
+    /// Puts a restricted-scope message in the lane, with the exact grant command and a way to
+    /// copy it.
+    /// </summary>
+    /// <remarks>
+    /// The lane used to say "See the session details for how to widen it" and stop there —
+    /// pointing at a pane that is actually called Session info, and leaving the one thing the
+    /// reader has to run out of the message that told them they needed it (finding F-13).
+    /// </remarks>
+    private void ShowNoticeWithGrantCommand(string message)
+    {
+        if (PlatformSourceRegistry.FullDeviceLogGrantCommand is not { Length: > 0 } command)
+        {
+            ShowNotice(message, NoticeKind.Failure);
+            return;
+        }
+
+        ShowNotice(
+            message + "\n\n" + command,
+            NoticeKind.Failure,
+            new NoticeAction("Copy command", () => CopyGrantCommandAsync(command)));
+    }
+
+    private async Task CopyGrantCommandAsync(string command)
+    {
+        if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard)
+        {
+            ShowNotice("This device did not offer a clipboard.", NoticeKind.Failure);
+            return;
+        }
+
+        await clipboard.SetTextAsync(command);
+        ShowNotice("Grant command copied. Run it from a computer with adb.", NoticeKind.Completion);
+    }
+
     private async Task StartOnDeviceAsync()
     {
+        if (_viewModel.ActiveLiveCapture is { } running)
+        {
+            _viewModel.Selected = running;
+            ShowNotice(
+                $"{running.Title} is already capturing this device's log. " +
+                "Stop it before starting another capture.");
+            return;
+        }
+
         if (!await ConfirmLiveCaptureAsync())
         {
             return;
@@ -1489,10 +1706,20 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             {
                 if (!report.FullDevice && report.Summary is { Length: > 0 })
                 {
+                    // The remedy the source composed is the whole answer — "Tap Live again and
+                    // choose the option that allows access" after a decline, the exact adb
+                    // command when the grant is missing — and the lane used to drop it and
+                    // point at a pane by a name the pane does not have (finding F-13).
+                    var grant = PlatformSourceRegistry.FullDeviceLogGrantCommand;
+                    var copyable = grant is { Length: > 0 } &&
+                        report.Remedy?.Contains(grant, StringComparison.Ordinal) == true;
                     ShowNotice(
                         "Only VisualCat's own log lines are being captured — " +
-                        $"{report.Summary}. See the session details for how to widen it.",
-                        NoticeKind.Failure);
+                        $"{report.Summary}.\n\n{report.Remedy}",
+                        NoticeKind.Failure,
+                        copyable
+                            ? new NoticeAction("Copy command", () => CopyGrantCommandAsync(grant!))
+                            : null);
                     scopeNotice = NoticeRevision;
                 }
                 else if (report.FullDevice && scopeNotice != 0)
@@ -1546,6 +1773,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         viewModel.SnapshotChanged += OnSessionSnapshotChanged;
+        viewModel.PropertyChanged += OnSessionTabPropertyChanged;
         var workspace = CreateWorkspaceView(viewModel, _settings.WorkspaceDisplayMode);
 
         // The header is the session's name for automation only: the strip above draws the
@@ -1586,8 +1814,14 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             _settings.TimelineMinimumBarWidth);
         workspace.NoticeRaised += (message, failure) =>
             ShowNotice(message, failure ? NoticeKind.Failure : NoticeKind.Information);
+        workspace.PartialRecoveryRaised += message =>
+            ShowNotice(
+                message,
+                NoticeKind.Failure,
+                new NoticeAction("Review", () => ReviewRecoveredSessionAsync(viewModel)));
         workspace.RestoreDisplayMode(displayMode);
         workspace.DisplayModeChanged += PersistWorkspaceDisplayMode;
+        workspace.CompactEditorChanged += _ => UpdateCompactCommandComposition();
         workspace.ExportRequested += range => _ = ExportAsync(range);
         workspace.StopRequested += () => _viewModel.StopAsync(viewModel);
 
@@ -1597,12 +1831,96 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         return workspace;
     }
 
+    /// <summary>
+    /// Gives a recovered capture the three explicit dispositions the recovery warning names:
+    /// preserve it as interrupted, export exactly what survived, or confirm permanent
+    /// deletion. The view owns none of these shell-level operations (F-19).
+    /// </summary>
+    private async Task ReviewRecoveredSessionAsync(SessionTabViewModel tab)
+    {
+        if (!_viewModel.Tabs.Contains(tab) || tab.Activity != SessionActivity.RecoverablePartial)
+        {
+            ShowNotice("That recovered capture is no longer open.", NoticeKind.Information);
+            return;
+        }
+
+        var entries = tab.Snapshot?.Descriptor.Counters.ParsedEntries ?? 0;
+        var canDelete = IsDirectCachedSession(tab.SessionPath);
+        var choice = await ShowDialogAsync(new RecoveredSessionDialog(tab.Title, entries, canDelete));
+        switch (choice)
+        {
+            case RecoveredSessionAction.Keep:
+                ShowNotice(
+                    $"Kept {tab.Title} as an interrupted capture; {Counted.Entries(entries)} remain available.",
+                    NoticeKind.Completion);
+                break;
+
+            case RecoveredSessionAction.Export:
+                await ExportAsync(sourceTab: tab);
+                break;
+
+            case RecoveredSessionAction.Delete when canDelete:
+                var confirmed = await ShowDialogAsync(new ConfirmationDialog(
+                    "Delete recovered capture?",
+                    $"{tab.Title} and its {Counted.Entries(entries)} will be permanently removed from this device. " +
+                    "This cannot be undone."));
+                if (confirmed != true)
+                {
+                    break;
+                }
+
+                var path = tab.SessionPath;
+                try
+                {
+                    await _viewModel.CloseAsync(tab);
+                    await Task.Run(() => TemporarySessionRetentionService.DeleteExactSession(
+                        WorkspaceViewModel.TemporarySessionRoot,
+                        path));
+                    ShowNotice($"Deleted recovered capture {tab.Title}.", NoticeKind.Completion);
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException)
+                {
+                    ShowNotice(
+                        $"The recovered capture was closed but could not be deleted: " +
+                        WorkspaceViewModel.FriendlyMessage(exception),
+                        NoticeKind.Failure);
+                }
+
+                break;
+        }
+    }
+
+    private static bool IsDirectCachedSession(string sessionPath)
+    {
+        var root = Path.GetFullPath(WorkspaceViewModel.TemporarySessionRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var path = Path.GetFullPath(sessionPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return string.Equals(Path.GetDirectoryName(path), root, comparison) &&
+               path.EndsWith(".vcat", comparison);
+    }
+
     private void OnSessionSnapshotChanged(object? sender, EventArgs eventArgs) =>
         Dispatcher.UIThread.Post(() =>
         {
             UpdateSessionActionAvailability();
+            UpdateSessionStrip();
             PersistOpenWorkspace();
         });
+
+    private void OnSessionTabPropertyChanged(
+        object? sender,
+        System.ComponentModel.PropertyChangedEventArgs eventArgs)
+    {
+        if (eventArgs.PropertyName is nameof(SessionTabViewModel.Activity) or nameof(SessionTabViewModel.Title))
+        {
+            Dispatcher.UIThread.Post(UpdateSessionStrip);
+        }
+    }
 
     private void RemoveTab(SessionTabViewModel viewModel)
     {
@@ -1612,6 +1930,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         viewModel.SnapshotChanged -= OnSessionSnapshotChanged;
+        viewModel.PropertyChanged -= OnSessionTabPropertyChanged;
         _tabs.Items.Remove(item);
         RemoveSessionChip(viewModel);
         _emptyState.IsVisible = _tabs.Items.Count == 0;
@@ -1687,16 +2006,25 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
     private async Task OpenStartupPathsAsync()
     {
-        var paths = new List<string>(_startupPaths);
+        await OpenPathsAsync(_startupPaths);
         if (PlatformSourceRegistry.ConsumeLaunchFilesAsync is { } consume)
         {
-            paths.AddRange(await consume(CancellationToken.None));
+            await OpenIncomingAsync(await consume(CancellationToken.None));
         }
-
-        await OpenPathsAsync(paths);
     }
 
-    private async Task OpenPathsAsync(IEnumerable<string> values)
+    /// <summary>Opens files another app handed over, each under the name that app gave it.</summary>
+    private async Task OpenIncomingAsync(IReadOnlyList<IncomingFile> files) =>
+        await OpenPathsAsync(
+            files.Select(static file => file.Path),
+            files.ToDictionary(
+                static file => Path.GetFullPath(file.Path),
+                static file => file.DisplayName,
+                StringComparer.OrdinalIgnoreCase));
+
+    private async Task OpenPathsAsync(
+        IEnumerable<string> values,
+        Dictionary<string, string>? displayNames = null)
     {
         foreach (var value in values.Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -1713,7 +2041,12 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             }
             else if (File.Exists(path))
             {
-                await RunAsync(() => _viewModel.ImportFileAsync(path));
+                // The provider's display name when there is one, so the tab is called
+                // "tiny.txt" rather than the private cache filename (finding F-27).
+                var current = path;
+                await RunAsync(() => displayNames?.TryGetValue(current, out var shown) == true
+                    ? _viewModel.ImportFileAsync(current, null, shown)
+                    : _viewModel.ImportFileAsync(current));
             }
             else
             {
@@ -1737,6 +2070,15 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             _viewModel.ConfigureUiRefreshLimit(_settings.UiRefreshLimit);
             await ConfigureDiagnosticsAsync();
             ApplyAppearance();
+            // Restore first, then anything the launch intent carried: a file the reader has
+            // just tapped in another app belongs in front of the workspace they left behind.
+            await RestoreWorkspaceAsync();
+            await OpenStartupPathsAsync();
+
+            // Restore before cleanup so the retention pass can protect every open tab. An
+            // old session that is still part of someone's workspace is in active use even
+            // when it is not a running capture; deleting it underneath that tab would make
+            // the on-screen state impossible to reopen or export (F-23).
             if (_settings.TemporaryCleanupEnabled)
             {
                 var result = await TemporarySessionRetentionService.CleanupAsync(
@@ -1744,21 +2086,33 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     enabled: true,
                     TimeSpan.FromDays(_settings.TemporaryRetentionDays),
                     _settings.TemporaryRetentionMaximumBytes,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    OpenSessionPaths());
                 if (result.Errors.Count > 0)
                 {
                     ShowNotice($"Temporary cleanup left {result.Errors.Count:N0} session(s) in place.", NoticeKind.Failure);
                 }
             }
-
-            // Restore first, then anything the launch intent carried: a file the reader has
-            // just tapped in another app belongs in front of the workspace they left behind.
-            await RestoreWorkspaceAsync();
-            await OpenStartupPathsAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // Startup work that is superseded or abandoned is not a failure, and it is the
+            // one thing this block used to be able to say. A restore whose view refresh was
+            // superseded by the next one reached here and painted a red
+            // "Startup settings: The operation was canceled." over a workspace that had in
+            // fact restored perfectly (third device pass). Nothing is broken, there is
+            // nothing for the reader to do, and so there is nothing to say.
         }
         catch (Exception exception)
         {
-            ShowNotice($"Startup settings: {exception.GetBaseException().Message}", NoticeKind.Failure);
+            // Not "Startup settings": the settings are the first thing this block loads and
+            // usually not the thing that failed, and the reader's question is what it means
+            // for the app in front of them. FriendlyMessage is also what keeps a trimmed
+            // Release build from answering with a resource key (finding F-04).
+            WorkspaceViewModel.RecordFailure("startup", exception);
+            ShowNotice(
+                $"VisualCat started, but part of the startup did not finish · {WorkspaceViewModel.FriendlyMessage(exception)}",
+                NoticeKind.Failure);
         }
     }
 
@@ -1785,6 +2139,15 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
         return capturing;
     }
+
+    /// <summary>
+    /// Every session the current workspace still depends on, whether complete, recovered, or
+    /// actively capturing. Retention treats these paths like open documents, not cache waste.
+    /// </summary>
+    private HashSet<string> OpenSessionPaths() =>
+        _viewModel.Tabs
+            .Select(static tab => Path.GetFullPath(tab.SessionPath))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private async Task OpenRecentAsync()
     {
@@ -1815,7 +2178,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
         catch (Exception exception)
         {
-            ShowNotice(exception.GetBaseException().Message, NoticeKind.Failure);
+            WorkspaceViewModel.RecordFailure("settings.apply", exception);
+            ShowNotice(
+                $"Could not apply the new settings · {WorkspaceViewModel.FriendlyMessage(exception)}",
+                NoticeKind.Failure);
         }
     }
 
@@ -1824,7 +2190,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var updated = await ShowDialogAsync(new SessionCacheDialog(
             WorkspaceViewModel.TemporarySessionRoot,
             _settings,
-            CapturingSessionPaths()));
+            CapturingSessionPaths(),
+            OpenSessionPaths()));
         if (updated is null)
         {
             return;
@@ -2067,8 +2434,20 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// canceled.", "Access to the path is denied.") does not say which action failed, and
     /// §18.1 asks a user message to state what happened and what remains usable.
     /// </summary>
-    private void ReportFailure(Exception exception) =>
-        ShowNotice($"Could not complete that action · {exception.GetBaseException().Message}", NoticeKind.Failure);
+    /// <remarks>
+    /// This is the funnel every <c>RunAsync</c>-wrapped action fails through, so it is also
+    /// the widest way for a framework message to reach a reader. It used to interpolate
+    /// <c>GetBaseException().Message</c> directly, which in a trimmed Release build is a
+    /// resource key rather than a sentence — <c>MakeException, arg0, arg1</c> — the exact
+    /// defect F-04 records, on a route the first remediation did not reach.
+    /// </remarks>
+    private void ReportFailure(Exception exception)
+    {
+        WorkspaceViewModel.RecordFailure("shell.action", exception);
+        ShowNotice(
+            $"Could not complete that action · {WorkspaceViewModel.FriendlyMessage(exception)}",
+            NoticeKind.Failure);
+    }
 
     public async ValueTask DisposeAsync()
     {

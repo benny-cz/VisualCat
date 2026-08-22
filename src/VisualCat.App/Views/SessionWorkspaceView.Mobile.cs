@@ -86,6 +86,11 @@ public sealed partial class SessionWorkspaceView : UserControl
     {
         _inputPaneOpen = eventArgs.NewState == InputPaneState.Open;
         _inputPaneRect = _inputPaneOpen ? eventArgs.EndRect : default;
+        if (!_inputPaneOpen)
+        {
+            SetCompactEditorActive(false);
+        }
+
         ApplyMobileLayout(Bounds.Size);
     }
 
@@ -115,6 +120,19 @@ public sealed partial class SessionWorkspaceView : UserControl
             return;
         }
 
+        // Some Android keyboards publish their final state before Avalonia attaches this
+        // workspace's StateChanged handler. Polling the current properties makes the geometry
+        // correct even when no transition callback belongs to this view (Samsung/One UI,
+        // F-10); the event is still used for animation-time updates.
+        if (_inputPane is { } inputPane)
+        {
+            _inputPaneOpen = inputPane.State == InputPaneState.Open;
+            if (_inputPaneOpen && inputPane.OccludedRect.Height > 0)
+            {
+                _inputPaneRect = inputPane.OccludedRect;
+            }
+        }
+
         var room = double.PositiveInfinity;
         if (_inputPaneOpen &&
             _mobileFiltersOpen &&
@@ -129,6 +147,16 @@ public sealed partial class SessionWorkspaceView : UserControl
                 room = available;
             }
         }
+
+        // Portrait reflowed correctly and landscape did not move at all: the keyboard's top
+        // edge lands about 186 dp down a 434 dp viewport, the drawer starts at the top of the
+        // workspace band, and the room left came out just under the old 190 dp floor — so the
+        // guard declined to constrain the card and Reset, Done, the severity toggles and all
+        // but the top few pixels of the query field stayed behind the keyboard, with no visual
+        // cue that Done existed (finding F-10). The drawer is already built to survive this:
+        // its body is a scroller and its footer is pinned under it, so what a short band costs
+        // is scrolling, not reachability. The floor is therefore the footer plus one row of
+        // body — below which there is genuinely nothing to show — rather than a whole card.
 
         // Guarded: this runs from a layout pass, and an unguarded write would invalidate the
         // layout it was just told about.
@@ -145,10 +173,89 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             panel.VerticalAlignment = wanted;
         }
+
+        ApplyTightDrawerChrome(!double.IsInfinity(room) && room < TightDrawerHeight);
     }
 
-    /// <summary>Below this the drawer is not a card any more, so it keeps its band and scrolls.</summary>
-    private const double MinimumDrawerHeightOverKeyboard = 190;
+    /// <summary>
+    /// Spends the drawer's remaining chrome on its two working rows when the keyboard has
+    /// left it less room than they need.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A 48 dp field and a 48 dp decision row are 96 dp of content, and a landscape keyboard
+    /// on a 393 dp screen leaves the drawer 93 (finding F-30). No arrangement fits both whole,
+    /// so the order of what goes is decided here rather than by whichever one the layout
+    /// happens to reach last: the caption first — its words are already on the field, as the
+    /// field's accessible name and as the hint inside it — and then the padding around both
+    /// rows, which buys back 22 px of the 30 the two rows are short.
+    /// </para>
+    /// <para>
+    /// What is never traded is the field. A reader typing into a drawer needs to see what
+    /// they are typing more than they need eight pixels of air around it, and the decision
+    /// row stays legible and touchable at the height that is left.
+    /// </para>
+    /// </remarks>
+    private void ApplyTightDrawerChrome(bool tight)
+    {
+        if (_mobileQueryCaption is { } caption && caption.IsVisible == tight)
+        {
+            caption.IsVisible = !tight;
+        }
+
+        if (_mobileQuerySection is { } section)
+        {
+            var margin = tight ? new Thickness(8, 2) : new Thickness(8);
+            if (section.Margin != margin)
+            {
+                section.Margin = margin;
+            }
+        }
+
+        if (_mobileFilterFooter is { } footer)
+        {
+            var margin = tight ? new Thickness(8, 2, 8, 2) : new Thickness(8, 2, 8, 8);
+            if (footer.Margin != margin)
+            {
+                footer.Margin = margin;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The drawer height below which the query section drops its caption to keep its field.
+    /// </summary>
+    private const double TightDrawerHeight = 132;
+
+    /// <summary>
+    /// Below this there is no drawer to show: the pinned footer plus one row of scrollable body.
+    /// </summary>
+    /// <remarks>
+    /// It was 190 — a whole card — and a landscape keyboard leaves about 184, so the one
+    /// viewport that most needed the constraint was the one that never got it (finding F-10).
+    /// A band that fits the footer and a row of the body is usable: the body scrolls, Reset and
+    /// Done stay on screen, and the reader can see what they are typing into.
+    /// </remarks>
+    private const double MinimumDrawerHeightOverKeyboard = 64;
+
+    /// <summary>
+    /// Gives the focused query editor the compact-height chrome that the IME would otherwise
+    /// cover, and restores it as one atomic composition when editing ends.
+    /// </summary>
+    private void SetCompactEditorActive(bool active)
+    {
+        active &= _mobile &&
+                  _mobileFiltersOpen &&
+                  _mobileLayoutMode == MobileWorkspaceMode.CompactHeight;
+        if (_compactEditorActive == active)
+        {
+            return;
+        }
+
+        _compactEditorActive = active;
+        CompactEditorChanged?.Invoke(active);
+        ApplyMobileLayout(Bounds.Size);
+    }
 
     private void SetMobileDisplayMode(MobileWorkspaceDisplayMode mode)
     {
@@ -165,6 +272,11 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void SetMobileFiltersOpen(bool open)
     {
         _mobileFiltersOpen = open;
+        if (!open)
+        {
+            SetCompactEditorActive(false);
+        }
+
         ApplyMobileLayout(Bounds.Size);
         if (!open && _mobileFilterButton is { } filterButton)
         {
@@ -226,6 +338,10 @@ public sealed partial class SessionWorkspaceView : UserControl
         var layout = MobileWorkspaceLayout.ForSize(settled.Width, settled.Height);
         var wideComposition = layout.UsesWideMobileComposition;
         _mobileWorkspaceState.ApplyLayout(layout);
+        if (!wideComposition && _compactEditorActive)
+        {
+            SetCompactEditorActive(false);
+        }
 
         if (_mobileLayoutMode != layout.Mode)
         {
@@ -322,6 +438,18 @@ public sealed partial class SessionWorkspaceView : UserControl
             filterPanel.Margin = wideComposition
                 ? new Thickness(6, 2, 6, 2)
                 : new Thickness(6, 2, 6, 4);
+        }
+
+        // The full placeholder is 29 characters and the landscape query field is 444 px:
+        // it rendered as "Search message text" with "or regex…" silently gone and no ellipsis
+        // to show that anything had been cut — which matters because that is the only place
+        // the interface says the field takes a pattern (finding F-11). Seventeen characters
+        // say the same thing and fit.
+        if (_mobileSearchPlaceholder is { } placeholder)
+        {
+            placeholder.Text = wideComposition
+                ? "Search or regex…"
+                : "Search message text or regex…";
         }
 
         if (_mobileFilterScroll is { } filterScroll)
@@ -497,6 +625,51 @@ public sealed partial class SessionWorkspaceView : UserControl
         UpdateEntryLoadControls();
     }
 
+    /// <summary>
+    /// Uses the otherwise empty end of the three-tab strip for the compact count, returning
+    /// its former row to the log. The same TextBlock moves, so its complete automation name
+    /// and tooltip remain the one source of truth.
+    /// </summary>
+    private void MoveSummaryIntoTabStrip(bool intoTabs, double availableAnalysisWidth)
+    {
+        if (_mobileSummaryHost is not { } host || _entryHeader is not { } header ||
+            _summaryInTabStrip == intoTabs)
+        {
+            if (intoTabs && _mobileSummaryHost is { } existing)
+            {
+                existing.MaxWidth = Math.Max(72, availableAnalysisWidth - (3 * 78) - 12);
+            }
+
+            return;
+        }
+
+        if (_summary.Parent is Panel current)
+        {
+            current.Children.Remove(_summary);
+        }
+
+        _summaryInTabStrip = intoTabs;
+        if (intoTabs)
+        {
+            host.MaxWidth = Math.Max(72, availableAnalysisWidth - (3 * 78) - 12);
+            host.Children.Add(_summary);
+            host.IsVisible = true;
+            _summary.Margin = new Thickness(6, 0, 0, 0);
+            _summary.TextWrapping = TextWrapping.NoWrap;
+            _summary.TextTrimming = TextTrimming.CharacterEllipsis;
+            _summary.HorizontalAlignment = HorizontalAlignment.Stretch;
+        }
+        else
+        {
+            host.Children.Remove(_summary);
+            host.IsVisible = false;
+            Grid.SetRow(_summary, 0);
+            Grid.SetColumn(_summary, 0);
+            header.Children.Insert(0, _summary);
+            _summary.HorizontalAlignment = HorizontalAlignment.Stretch;
+        }
+    }
+
     /// <summary>Below this the plot states a shape it cannot draw, so it yields entirely.</summary>
     private const double MinimumReadablePlotHeight = 132;
 
@@ -599,27 +772,24 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         if (_mobileFilterBody is { } filterBody &&
-            _mobileQuerySection is { } query &&
             _mobileSeveritySection is { } severity &&
             _mobileTimeSection is { } time)
         {
-            // Two short groups in one column and the tall one beside them, rather than one
-            // short group in a column of its own and the other two stacked. QUERY spanning
-            // both rows left its column empty below a single 48 dp field while SEVERITY and
-            // TIME LENS shared the other and ran 37 px past the bottom of the viewport, with
-            // roughly 100 × 1000 px of unused space next to the buttons being cut
-            // (audit 3, D2). SEVERITY is the group that grows — its chips wrap — so it is the
-            // one given a column to grow in.
+            // QUERY is not in this grid: it is the drawer's own first band, above the
+            // scroller, in every state (see the panel grid). Compact height is also possible
+            // in a narrow portrait workspace — below a recovery notice, or in split-screen —
+            // so the editor could never own only half the width anyway: Regex,
+            // Case-sensitive and Clear reduced it to 64 dp headlessly and to no Android node
+            // at all on the 360 dp Samsung (C-06.2). What is left here is TIME and the taller
+            // SEVERITY group, which share the two columns a short viewport has to spare and
+            // stack on a portrait one.
             filterBody.ColumnDefinitions = new ColumnDefinitions(enabled ? "*,*" : "*");
-            filterBody.RowDefinitions = new RowDefinitions(enabled ? "Auto,Auto" : "Auto,Auto,Auto");
-            Grid.SetColumn(query, 0);
-            Grid.SetRow(query, 0);
-            Grid.SetRowSpan(query, 1);
+            filterBody.RowDefinitions = new RowDefinitions(enabled ? "Auto" : "Auto,Auto");
             Grid.SetColumn(time, 0);
-            Grid.SetRow(time, enabled ? 1 : 2);
+            Grid.SetRow(time, enabled ? 0 : 1);
             Grid.SetRowSpan(time, 1);
             Grid.SetColumn(severity, enabled ? 1 : 0);
-            Grid.SetRow(severity, enabled ? 0 : 1);
+            Grid.SetRow(severity, 0);
 
             // Not spanned. A row-spanning element's height is shared out across the rows it
             // covers, so the severity group — the tallest of the three — pushed the first row
@@ -630,16 +800,15 @@ public sealed partial class SessionWorkspaceView : UserControl
             Grid.SetRowSpan(severity, 1);
             severity.VerticalAlignment = VerticalAlignment.Top;
 
-            // Regex and Case-sensitive move up beside the field they qualify. They are a full
-            // 48 dp row of their own, and in landscape that row is what makes the drawer's
-            // body taller than the drawer: with it stacked, the whole TIME LENS group sat
-            // below the scroller's fold. Beside the field the body fits, and the field still
-            // has 600 px to type into (audit 3, D2).
+            // Regex and Case-sensitive move beside the field only when the whole drawer is
+            // actually wide. A short 360 dp portrait workspace can select compact-height
+            // composition too; there the options stay directly below the editor so its
+            // width never collapses. The body scrolls while the decision footer stays pinned.
             if (_mobileQueryRow is { } queryRow &&
                 _mobileQuerySection is StackPanel querySection &&
                 _mobileQueryOptions is { } queryOptions)
             {
-                var beside = enabled;
+                var beside = enabled && availableWidth >= 600;
                 if (beside && queryOptions.Parent != queryRow)
                 {
                     querySection.Children.Remove(queryOptions);
@@ -678,6 +847,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         var analysisWidth = splitTimeline ? (availableWidth * 0.58) - 78 : availableWidth - (enabled ? 78 : 0);
+        MoveSummaryIntoTabStrip(enabled, analysisWidth);
         if (_entryHeader is { } entryHeader && _entryActions is { } entryActions)
         {
 
@@ -687,12 +857,19 @@ public sealed partial class SessionWorkspaceView : UserControl
             // a 415 px pane (audit 2, A2/D9). At 330 the count line keeps an ellipsised line
             // of its own beside the actions, which is what it is for.
             var sideBySide = enabled && analysisWidth >= 330;
-            entryHeader.RowDefinitions = new RowDefinitions(sideBySide ? "Auto" : "Auto,Auto");
+            entryHeader.RowDefinitions = new RowDefinitions(sideBySide ? "Auto,Auto" : "Auto,Auto,Auto");
             entryHeader.ColumnDefinitions = new ColumnDefinitions(sideBySide ? "*,Auto" : "*");
             Grid.SetRow(_summary, 0);
             Grid.SetColumn(_summary, 0);
             Grid.SetRow(entryActions, sideBySide ? 0 : 1);
             Grid.SetColumn(entryActions, sideBySide ? 1 : 0);
+            if (_entryOffPageBanner is { } offPageBanner)
+            {
+                // Last row whichever way the header reflowed, and the full width of it.
+                Grid.SetRow(offPageBanner, sideBySide ? 1 : 2);
+                Grid.SetColumn(offPageBanner, 0);
+                Grid.SetColumnSpan(offPageBanner, sideBySide ? 2 : 1);
+            }
             entryActions.HorizontalAlignment = sideBySide
                 ? HorizontalAlignment.Right
                 : HorizontalAlignment.Stretch;
@@ -719,7 +896,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         // Only where the pane is wide enough to hold it beside the count line and the three
         // controls already there: in Split the analysis column is 458 dp, and a fourth control
         // laid out past its right edge is worse than the band it was saving.
-        MoveLoadMore(intoHeader: enabled && analysisWidth >= 560);
+        MoveLoadMore(intoHeader: enabled && analysisWidth >= 300);
 
         // Two lines to a row rather than three, in a viewport that has no height to give one.
         SetCompactEntryRows(enabled);

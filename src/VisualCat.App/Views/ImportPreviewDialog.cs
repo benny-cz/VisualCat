@@ -170,7 +170,11 @@ public sealed class ImportPreviewDialog : Window
         }
         catch (Exception exception) when (exception is InvalidDataException or TimeZoneNotFoundException or InvalidTimeZoneException)
         {
-            _validation.Text = exception.Message;
+            // InvalidDataException here is thrown by this dialog and already reads as a
+            // sentence; the two time-zone exceptions are the framework's, and a trimmed
+            // Release build gives those as resource keys (finding F-04). FriendlyMessage
+            // passes the first through and replaces the second.
+            _validation.Text = Presentation.WorkspaceViewModel.FriendlyMessage(exception);
         }
     }
 

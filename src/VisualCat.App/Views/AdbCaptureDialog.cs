@@ -134,7 +134,12 @@ public sealed class AdbCaptureDialog : Window
         catch (Exception exception)
         {
             _devices.ItemsSource = null;
-            _status.Text = exception.GetBaseException().Message;
+
+            // Product sentence, never the framework's own text: a trimmed build answers with
+            // a resource key instead of a message (finding F-04), and "could not list" is the
+            // part a reader can act on either way.
+            _status.Text =
+                $"Could not list devices · {Presentation.WorkspaceViewModel.FriendlyMessage(exception)}";
         }
         finally
         {

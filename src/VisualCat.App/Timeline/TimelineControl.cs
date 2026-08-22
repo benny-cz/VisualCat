@@ -119,15 +119,9 @@ public sealed class TimelineControl : Control
             }
 
             _pinchViewport ??= _result.Viewport.Range;
-            var transform = new TimelineTransform(_pinchViewport.Value, geometry, _displayLevels);
             ViewportChanged?.Invoke(
                 this,
-                transform.Zoom(
-                    eventArgs.ScaleOrigin.X,
-                    1 / eventArgs.Scale,
-                    MinimumSpan(geometry),
-                    MaximumSpan(session),
-                    session));
+                ZoomViewport(_pinchViewport.Value, geometry, session, eventArgs.ScaleOrigin.X, 1 / eventArgs.Scale));
             eventArgs.Handled = true;
         });
         AddHandler(InputElement.PinchEndedEvent, (_, eventArgs) =>
@@ -143,6 +137,18 @@ public sealed class TimelineControl : Control
     public event EventHandler<TimeRange>? RangeSelected;
     public event EventHandler? FollowRequested;
     public event EventHandler? SearchFocusRequested;
+
+    /// <summary>
+    /// The reader tapped the search-marker lane at this instant.
+    /// </summary>
+    /// <remarks>
+    /// The magenta lane under the plot draws every match in view and was not a control: a tap
+    /// inside it changed nothing, and there was no marker-navigation node in the accessibility
+    /// tree either, so on a phone the product could say "7,181 search matches" and offer no way
+    /// to step through them (finding F-07). The stepper in the status bar is the named route;
+    /// this is the direct one, and it costs one hit test.
+    /// </remarks>
+    public event EventHandler<InstantUs>? SearchMarkerPicked;
     public event EventHandler? ExportRequested;
     public event EventHandler<int>? EntryNavigationRequested;
 
@@ -277,15 +283,9 @@ public sealed class TimelineControl : Control
             return;
         }
 
-        var transform = new TimelineTransform(_result.Viewport.Range, geometry, _displayLevels);
         ViewportChanged?.Invoke(
             this,
-            transform.Zoom(
-                geometry.Left + geometry.Width / 2,
-                factor,
-                MinimumSpan(geometry),
-                MaximumSpan(session),
-                session));
+            ZoomViewport(_result.Viewport.Range, geometry, session, geometry.Left + geometry.Width / 2, factor));
     }
 
     /// <summary>
@@ -823,6 +823,18 @@ public sealed class TimelineControl : Control
 
         var point = e.GetPosition(this);
         var properties = e.GetCurrentPoint(this).Properties;
+        if (properties.IsLeftButtonPressed &&
+            _searchResult is { Markers.Count: > 0 } &&
+            Geometry() is { } markerGeometry &&
+            IsInMarkerLane(point, markerGeometry))
+        {
+            var transform = new TimelineTransform(_result.Viewport.Range, markerGeometry, _displayLevels);
+            SearchMarkerPicked?.Invoke(this, transform.XToInstant(point.X));
+            _suppressCellSelection = true;
+            e.Handled = true;
+            return;
+        }
+
         if (properties.IsRightButtonPressed)
         {
             _rangeOrigin = point;
@@ -833,10 +845,9 @@ public sealed class TimelineControl : Control
         {
             if (e.ClickCount >= 2 && _sessionRange is { } session && Geometry() is { } geometry)
             {
-                var transform = new TimelineTransform(_result.Viewport.Range, geometry, _displayLevels);
                 ViewportChanged?.Invoke(
                     this,
-                    transform.Zoom(point.X, 0.5, MinimumSpan(geometry), MaximumSpan(session), session));
+                    ZoomViewport(_result.Viewport.Range, geometry, session, point.X, 0.5));
 
                 // The release that ends this tap still arrives, and a release that did not
                 // move used to be read as "select this cell" — so one double-tap both zoomed
@@ -936,10 +947,7 @@ public sealed class TimelineControl : Control
         }
 
         var factor = Math.Pow(1.18, -e.Delta.Y);
-        var minimum = MinimumSpan(geometry);
-        var maximum = Math.Max(minimum, MaximumSpan(session));
-        var transform = new TimelineTransform(_result.Viewport.Range, geometry, _displayLevels);
-        ViewportChanged?.Invoke(this, transform.Zoom(e.GetPosition(this).X, factor, minimum, maximum, session));
+        ViewportChanged?.Invoke(this, ZoomViewport(_result.Viewport.Range, geometry, session, e.GetPosition(this).X, factor));
         e.Handled = true;
     }
 
@@ -984,8 +992,8 @@ public sealed class TimelineControl : Control
         {
             Key.Left => transform.Pan(geometry.Width * 0.1, session),
             Key.Right => transform.Pan(-geometry.Width * 0.1, session),
-            Key.Add or Key.OemPlus => transform.Zoom(geometry.Left + geometry.Width / 2, 0.8, MinimumSpan(geometry), MaximumSpan(session), session),
-            Key.Subtract or Key.OemMinus => transform.Zoom(geometry.Left + geometry.Width / 2, 1.25, MinimumSpan(geometry), MaximumSpan(session), session),
+            Key.Add or Key.OemPlus => ZoomViewport(_result.Viewport.Range, geometry, session, geometry.Left + geometry.Width / 2, 0.8),
+            Key.Subtract or Key.OemMinus => ZoomViewport(_result.Viewport.Range, geometry, session, geometry.Left + geometry.Width / 2, 1.25),
             Key.D0 or Key.NumPad0 => session,
             Key.Home => new TimeRange(session.StartInclusive, new InstantUs(session.StartInclusive.Value + _result.Viewport.Range.DurationUs)),
             Key.End => new TimeRange(new InstantUs(session.EndExclusive.Value - _result.Viewport.Range.DurationUs), session.EndExclusive),
@@ -1113,10 +1121,68 @@ public sealed class TimelineControl : Control
             : new TimelineGeometry(76, header, Math.Max(1, Bounds.Width - 88), lanes);
     }
 
+    /// <summary>
+    /// Whether a press landed in the band the search markers are drawn in.
+    /// </summary>
+    /// <remarks>
+    /// The drawn ticks are five pixels tall, which is not a target; the band is the target,
+    /// and it is the full width of the plot because the reader is aiming at a time, not at a
+    /// hairline. The <see cref="TouchTarget"/> floor is applied downward from the lane so the
+    /// axis labels below it keep their own room.
+    /// </remarks>
+    private static bool IsInMarkerLane(Point point, TimelineGeometry geometry)
+    {
+        var top = geometry.Top + geometry.Height;
+        return point.Y >= top && point.Y < top + MarkerLaneTargetHeight &&
+               point.X >= geometry.Left && point.X <= geometry.Left + geometry.Width;
+    }
+
+    /// <summary>How far below the lanes a tap still counts as aiming at a marker.</summary>
+    private const double MarkerLaneTargetHeight = 22;
+
     private long MinimumSpan(TimelineGeometry geometry) =>
         TimelineTransform.MinimumSpanUs(
             geometry.Width * (TopLevel.GetTopLevel(this)?.RenderScaling ?? 1),
             _minimumUsPerPixel);
+
+    /// <summary>
+    /// The one place effective zoom bounds are built, for every gesture and key that zooms.
+    /// </summary>
+    /// <remarks>
+    /// A session holding a single entry spans about two microseconds, while the plot's own
+    /// pixel resolution puts the narrowest useful window near a millisecond — so the largest
+    /// allowed span was smaller than the smallest allowed one.
+    /// <see cref="TimelineTransform.Zoom"/> is right to refuse that inverted contract, and it
+    /// refuses it by throwing; thrown from a touch handler, that ends the process. The wheel
+    /// route guarded the relationship for itself, and double-tap, pinch, keyboard +/- and
+    /// <see cref="ZoomAtCenter"/> each passed the raw session span straight through, so one
+    /// double-tap during the first progressive entry killed the app (finding F-20). The floor
+    /// wins when the two disagree: a session shorter than one physically meaningful span keeps
+    /// the Fit-expanded window and zooming in becomes a bounded no-op. Building the pair here
+    /// rather than at five call sites is the point — a sixth zoom route cannot omit the guard.
+    /// </remarks>
+    private (long Minimum, long Maximum) ZoomBounds(TimelineGeometry geometry, TimeRange session)
+    {
+        var minimum = MinimumSpan(geometry);
+        return (minimum, Math.Max(minimum, MaximumSpan(session)));
+    }
+
+    private TimeRange ZoomViewport(
+        TimeRange viewport,
+        TimelineGeometry geometry,
+        TimeRange session,
+        double focusX,
+        double factor)
+    {
+        var (minimum, maximum) = ZoomBounds(geometry, session);
+        var effective = viewport.DurationUs >= minimum
+            ? viewport
+            : new TimeRange(
+                new InstantUs(checked(viewport.EndExclusive.Value - minimum)),
+                viewport.EndExclusive);
+        return new TimelineTransform(effective, geometry, _displayLevels)
+            .Zoom(focusX, factor, minimum, maximum, session);
+    }
 
     private static long MaximumSpan(TimeRange session) =>
         Math.Max(1, checked((long)Math.Ceiling(session.DurationUs * 1.1)));

@@ -26,6 +26,37 @@ public sealed class LogcatParser
         return TryParse(line.AsSpan(), format, null, out var fields, out _) && fields is not null ? Score(fields) : 0;
     }
 
+    /// <summary>
+    /// Recognises the two lines logcat uses to say which buffer the records after it came from.
+    /// </summary>
+    /// <remarks>
+    /// Only <c>beginning of</c> was recognised, and that one is printed once per buffer at the
+    /// start of the stream. A merged <c>-b all</c> capture therefore latched whichever buffer
+    /// happened to be announced last and stamped it on everything that followed: a four-minute
+    /// device capture attributed 9,376 of its 11,646 records to <c>radio</c>, including
+    /// <c>main</c>-only traffic that a per-buffer probe proved exists nowhere else
+    /// (finding F-12). <c>logcat -D</c> additionally prints <c>--------- switch to &lt;buffer&gt;</c>
+    /// every time the merged stream crosses from one buffer to another, which is the missing
+    /// per-record signal; the sources ask for it, and this is the half that reads it.
+    /// </remarks>
+    internal static bool TryReadBufferDivider(ReadOnlySpan<byte> bytes, out ReadOnlySpan<byte> buffer)
+    {
+        if (bytes.StartsWith("--------- beginning of "u8))
+        {
+            buffer = bytes["--------- beginning of "u8.Length..];
+            return true;
+        }
+
+        if (bytes.StartsWith("--------- switch to "u8))
+        {
+            buffer = bytes["--------- switch to "u8.Length..];
+            return true;
+        }
+
+        buffer = default;
+        return false;
+    }
+
     public static ParseOutcome Parse(SourceLine source, LogcatFormat primaryFormat, string? activeBuffer = null)
     {
         var bytes = TrimLine(source.Bytes.Span);
@@ -34,9 +65,9 @@ public sealed class LogcatParser
             return ParseOutcome.Blank(source);
         }
 
-        if (bytes.StartsWith("--------- beginning of "u8))
+        if (TryReadBufferDivider(bytes, out var divided))
         {
-            return ParseOutcome.Meta(source, $"buffer:{Decode(bytes["--------- beginning of "u8.Length..], out _).Trim()}");
+            return ParseOutcome.Meta(source, $"buffer:{Decode(divided, out _).Trim()}");
         }
 
         var text = Decode(bytes, out var encodingFallback);

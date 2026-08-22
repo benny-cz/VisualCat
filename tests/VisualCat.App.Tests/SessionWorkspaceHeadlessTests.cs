@@ -29,10 +29,11 @@ public sealed class SessionWorkspaceHeadlessTests
         await using var tab = new SessionTabViewModel("Live", root)
         {
             IsLiveCaptureActive = true,
-            // A progressive snapshot used to overwrite Capturing with Importing and
-            // accidentally hide the only graceful-stop action.
-            Status = "Importing · 1 committed · snapshot 1",
         };
+
+        // A progressive snapshot used to overwrite Capturing with Importing and
+        // accidentally hide the only graceful-stop action.
+        tab.ReportActivity(SessionActivity.Importing, "Importing · 1 committed · snapshot 1");
         var view = new SessionWorkspaceView(tab);
         var window = new Window { Content = view, Width = 900, Height = 600 };
         window.Show();
@@ -417,6 +418,87 @@ public sealed class SessionWorkspaceHeadlessTests
                 $"re-engaging follow kept {refollowed.DurationUs / 1_000_000d:N0}s of a {session.DurationUs / 1_000_000d:N0}s session");
 
             await workspace.CloseAsync(tab);
+        }
+        finally
+        {
+            WorkspaceViewModel.ConfigureTemporarySessionRoot(null);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// F-25 — a busy live window can have another page even after it has moved past the entry
+    /// being read. That page cursor must not suppress the off-screen explanation or discard
+    /// the inspector.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AFollowRefreshKeepsAndExplainsAnEntryThatAgesOutWithAnotherPageAvailable()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        WorkspaceViewModel.ConfigureTemporarySessionRoot(root);
+        try
+        {
+            var sourcePath = Path.Combine(root, "busy-live-window.txt");
+            var builder = new StringBuilder(650 * 96);
+            var first = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            for (var index = 0; index < 650; index++)
+            {
+                var instant = first.AddMilliseconds(index * 50);
+                builder.Append(instant.ToString("MM-dd HH:mm:ss.ffffff", CultureInfo.InvariantCulture))
+                    .Append("   100   101 I Worker         : live row ")
+                    .Append(index.ToString(CultureInfo.InvariantCulture))
+                    .AppendLine();
+            }
+
+            await File.WriteAllTextAsync(sourcePath, builder.ToString(), TestContext.Current.CancellationToken);
+            await using var workspace = new WorkspaceViewModel();
+            var tab = await workspace.ImportFileAsync(sourcePath, TestContext.Current.CancellationToken);
+            var session = Assert.IsType<TimeRange>(tab.Snapshot?.TimedRange);
+            var initial = new TimeRange(
+                new InstantUs(session.EndExclusive.Value - 30_000_000),
+                session.EndExclusive);
+            await tab.SetViewportAsync(initial, manual: false);
+            Assert.True(tab.CanLoadMore);
+
+            var view = new SessionWorkspaceView(tab);
+            var window = new Window { Content = view, Width = 900, Height = 700 };
+            window.Show();
+            try
+            {
+                var entries = view.GetLogicalDescendants()
+                    .OfType<ListBox>()
+                    .Single(list => AutomationProperties.GetName(list) == "Filtered log entries");
+                entries.SelectedIndex = 0;
+                var inspected = Assert.IsType<NormalizedEntry>(entries.SelectedItem);
+
+                tab.IsLiveCaptureActive = true;
+                tab.FollowLatest = true;
+                var advanced = new TimeRange(
+                    new InstantUs(initial.StartInclusive.Value + 1_000_000),
+                    initial.EndExclusive);
+                await tab.SetViewportAsync(advanced, manual: false);
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+                Assert.True(tab.CanLoadMore);
+                Assert.DoesNotContain(tab.Entries, entry => entry.EntryId == inspected.EntryId);
+                var explanation = view.GetLogicalDescendants()
+                    .OfType<TextBlock>()
+                    .Single(block => block.Text?.StartsWith("This entry has scrolled out", StringComparison.Ordinal) == true);
+                Assert.True(explanation.IsVisible);
+                var openInspector = view.GetLogicalDescendants()
+                    .OfType<Button>()
+                    .Single(button => AutomationProperties.GetName(button) == "Show the full message of the selected entry");
+                Assert.True(openInspector.IsEnabled);
+            }
+            finally
+            {
+                window.Close();
+                await workspace.CloseAsync(tab);
+            }
         }
         finally
         {

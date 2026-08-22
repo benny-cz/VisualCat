@@ -13,7 +13,9 @@ using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using VisualCat.App.Presentation;
+using VisualCat.Core.Query;
 using VisualCat.App.Timeline;
+using VisualCat.Domain;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
@@ -64,6 +66,11 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
         else
         {
+            // A virtualized item keeps its desired height even when the last viewport sliver
+            // is shorter. Without clipping it painted through the list and into the status
+            // band in compact landscape (F-09). The parent pane clips as well, but the list is
+            // the semantic boundary and owns the invariant.
+            _entries.ClipToBounds = true;
             ApplyEntryRowHeight(64);
 
             // The metadata line is the row's own foreground and Fluent's selection is not,
@@ -773,6 +780,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         };
         _timeline.FollowRequested += (_, _) => _ = _viewModel.ToggleFollowAsync();
         _timeline.SearchFocusRequested += (_, _) => _search.Focus();
+        _timeline.SearchMarkerPicked += (_, instant) => _ = RunUiActionAsync(() => GoToNearestMatchAsync(instant));
         _timeline.ExportRequested += (_, _) => ExportRequested?.Invoke(null);
         _timeline.EntryNavigationRequested += (_, delta) => MoveEntrySelection(delta);
         _timeline.SizeChanged += (_, eventArgs) =>
@@ -795,6 +803,9 @@ public sealed partial class SessionWorkspaceView : UserControl
                 _selectingTimelineEntry = false;
                 var replaced = _inspectedEntry is not { } inspected || inspected.EntryId != entry.EntryId;
                 _selectedEntryId = entry.EntryId;
+                _selectionFilterFingerprint = _viewModel.Filter.Fingerprint();
+                _selectedEntryInstant = entry.Timestamp;
+                SetSelectedEntryOffPage(false);
                 SetInspectedEntry(entry);
 
                 // Reading the table no longer costs the user their place in the plot
@@ -813,10 +824,14 @@ public sealed partial class SessionWorkspaceView : UserControl
             else if (!_reloadingEntries)
             {
                 // A collection reset is not a decision to stop reading an entry; only an
-                // actual deselection is.
-                _selectedEntryId = null;
-                SetInspectedEntry(null);
-                _timeline.SetSelectedEntry(null, null);
+                // actual deselection is. Nor is the live window moving past it: that case is
+                // handled in RestoreEntrySelection, which is what runs after a refresh.
+                if (_selectedEntryOffPage)
+                {
+                    return;
+                }
+
+                ClearEntrySelection();
             }
         };
 
@@ -834,12 +849,17 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Avalonia.Interactivity.RoutingStrategies.Tunnel);
             _entries.Tapped += (_, _) =>
             {
-                if (_pressedSelectedEntry)
+                var onSelected = _pressedSelectedEntry;
+                _pressedSelectedEntry = false;
+                if (onSelected && !EntriesJustMoved())
                 {
-                    _pressedSelectedEntry = false;
                     ShowInspector();
                 }
             };
+
+            // Every arrange, but only a handful of comparisons, and it writes nothing back
+            // into the layout it is observing.
+            _entries.LayoutUpdated += (_, _) => ObserveEntriesPosition();
         }
         else
         {
@@ -868,6 +888,89 @@ public sealed partial class SessionWorkspaceView : UserControl
         _viewModel.SnapshotChanged -= OnViewModelSnapshotChanged;
     }
 
+    /// <summary>Whether this view has already said that its session is a partial recovery.</summary>
+    private bool _partialRecoveryAnnounced;
+
+    /// <summary>
+    /// Says once, in the notice lane, that this session's acquisition never finished.
+    /// </summary>
+    /// <remarks>
+    /// The status line and Session info both carry the fact continuously (finding F-19), but a
+    /// reader entering through automatic session restoration is looking at rows, not at the
+    /// status line, and the difference between "this capture is complete" and "this capture
+    /// stops here because the app did" is the whole meaning of what they are reading.
+    /// </remarks>
+    private void AnnouncePartialRecovery()
+    {
+        if (_partialRecoveryAnnounced ||
+            _viewModel.Activity != SessionActivity.RecoverablePartial)
+        {
+            return;
+        }
+
+        _partialRecoveryAnnounced = true;
+        const string message =
+            "This capture was interrupted. Everything below reached disk and is exact; " +
+            "anything the source produced after the last save is not in the session.";
+        if (PartialRecoveryRaised is { } recovery)
+        {
+            recovery(message);
+        }
+        else
+        {
+            Notify(message, failure: true);
+        }
+    }
+
+    /// <summary>Where the entries list was on screen the last time it was arranged.</summary>
+    private double _entriesTopOnScreen = double.NaN;
+
+    /// <summary>When the entries list last changed position.</summary>
+    private long _entriesMovedAtMs;
+
+    /// <summary>
+    /// Notices the list moving under the reader, so a tap that lands on a row which arrived
+    /// after the finger did is not read as a request to open it.
+    /// </summary>
+    /// <remarks>
+    /// Publishing a notice takes about 160 px from the workspace band, and the row that had
+    /// been under the reader's thumb moves up with everything else. Tapping <em>Copy raw</em>
+    /// and tapping again 350 ms later at the same coordinate therefore hit the reflowed entry
+    /// list, and — because the row that arrived there was the selected one — opened the Entry
+    /// inspector: two taps in one place invoking two different things, which is the invariant
+    /// U-18 exists to hold (finding F-24).
+    /// </remarks>
+    private void ObserveEntriesPosition()
+    {
+        if (TopLevel.GetTopLevel(this) is not { } topLevel ||
+            _entries.TranslatePoint(default, topLevel) is not { } origin)
+        {
+            return;
+        }
+
+        if (double.IsNaN(_entriesTopOnScreen))
+        {
+            _entriesTopOnScreen = origin.Y;
+            return;
+        }
+
+        if (Math.Abs(origin.Y - _entriesTopOnScreen) > 1)
+        {
+            _entriesTopOnScreen = origin.Y;
+            _entriesMovedAtMs = Environment.TickCount64;
+        }
+    }
+
+    /// <summary>Whether the list moved within the platform's double-tap interval.</summary>
+    private bool EntriesJustMoved() =>
+        _entriesMovedAtMs != 0 &&
+        Environment.TickCount64 - _entriesMovedAtMs < ListSettleMilliseconds;
+
+    /// <summary>
+    /// Android's own double-tap timeout, which is the window a second tap can arrive in.
+    /// </summary>
+    private const long ListSettleMilliseconds = 400;
+
     private void OnEntriesReloading(object? sender, EventArgs eventArgs) => _reloadingEntries = true;
 
     private void OnEntriesReloaded(object? sender, EventArgs eventArgs)
@@ -895,6 +998,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 case nameof(SessionTabViewModel.Overview):
                 case nameof(SessionTabViewModel.Viewport):
                     UpdateTimelines();
+                    UpdateMarkerNavigation();
                     break;
                 case nameof(SessionTabViewModel.SearchText):
                     _search.Text = _viewModel.SearchText;
@@ -904,6 +1008,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                     break;
                 case nameof(SessionTabViewModel.SearchResult):
                     _timeline.SetSearchResult(_viewModel.SearchResult);
+                    UpdateMarkerNavigation();
                     break;
                 case nameof(SessionTabViewModel.Status):
                     ApplyStatusText();
@@ -912,6 +1017,11 @@ public sealed partial class SessionWorkspaceView : UserControl
                 case nameof(SessionTabViewModel.Activity):
                 case nameof(SessionTabViewModel.FailureReason):
                     UpdateCaptureActions();
+                    AnnouncePartialRecovery();
+                    break;
+                case nameof(SessionTabViewModel.Completion):
+                    UpdateSessionInfo();
+                    AnnouncePartialRecovery();
                     break;
                 case nameof(SessionTabViewModel.CaptureScopeRemedy):
                 case nameof(SessionTabViewModel.CaptureScopeSummary):
@@ -931,7 +1041,9 @@ public sealed partial class SessionWorkspaceView : UserControl
                     UpdateStatistics();
                     break;
                 case nameof(SessionTabViewModel.SearchStatus):
+                case nameof(SessionTabViewModel.SearchInProgress):
                     _searchStatus.Text = _viewModel.SearchStatus;
+                    UpdateMarkerNavigation();
                     break;
                 case nameof(SessionTabViewModel.DetailRange):
                     // The outline and the detail scope are one state: whoever releases
@@ -1063,10 +1175,49 @@ public sealed partial class SessionWorkspaceView : UserControl
     }
 
 
-    private async Task ApplySearchAsync()
+    /// <summary>
+    /// Applies the query, and says why if it cannot be applied.
+    /// </summary>
+    /// <returns><c>true</c> when the query is now in force.</returns>
+    private async Task<bool> ApplySearchAsync()
     {
         _viewModel.SearchText = _search.Text ?? string.Empty;
-        await _viewModel.ApplySearchAsync(_regex.IsChecked == true, _caseSensitive.IsChecked == true);
+        var problem = await _viewModel.ApplySearchAsync(_regex.IsChecked == true, _caseSensitive.IsChecked == true);
+        ShowSearchPatternProblem(problem);
+        return problem is null;
+    }
+
+    /// <summary>
+    /// Marks the query field, or clears the mark, and says the reason beside it.
+    /// </summary>
+    /// <remarks>
+    /// Nothing else changes: a rejected pattern leaves the previous result, the chip bar and
+    /// the status line exactly as they were, because none of them has stopped being true
+    /// (finding F-04). The message is assertive because it appears in response to something
+    /// the reader just did, and it is on the field rather than on the status line so that a
+    /// screen reader hears it while the field still has focus.
+    /// </remarks>
+    private void ShowSearchPatternProblem(SearchPatternProblem? problem)
+    {
+        if (problem is not { } invalid)
+        {
+            _searchProblem.IsVisible = false;
+            _searchProblem.Text = string.Empty;
+            AutomationProperties.SetHelpText(_searchProblem, null);
+            _search.Classes.Remove("invalid");
+            _search.BorderBrush = null;
+            return;
+        }
+
+        var sentence = invalid.Sentence;
+        _searchProblem.Text = sentence;
+        _searchProblem.Foreground = new SolidColorBrush(LevelPalette.InkOf(LogLevel.Error, ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light));
+        _searchProblem.IsVisible = true;
+        AutomationProperties.SetLiveSetting(_searchProblem, AutomationLiveSetting.Assertive);
+        AutomationProperties.SetName(_searchProblem, sentence);
+        _search.Classes.Add("invalid");
+        _search.BorderBrush = _searchProblem.Foreground;
+        AutomationProperties.SetHelpText(_search, sentence);
     }
 
     private void QueueDebouncedSearch()
@@ -1093,6 +1244,14 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
     }
 
+    /// <summary>Applies the query inside the same failure guard every other action uses.</summary>
+    private async Task<bool> ApplySearchGuardedAsync()
+    {
+        var applied = false;
+        await RunUiActionAsync(async () => applied = await ApplySearchAsync());
+        return applied;
+    }
+
     private async Task RunUiActionAsync(Func<Task> action)
     {
         try
@@ -1101,12 +1260,31 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
         catch (OperationCanceledException)
         {
-            _status.Text = "Cancelled";
+            _viewModel.ReportTransientStatus("Cancelled");
         }
         catch (Exception exception)
         {
-            _status.Text = $"Failed · {exception.GetBaseException().Message}";
+            _viewModel.ReportTransientStatus(FriendlyActionFailure(exception));
         }
+    }
+
+    /// <summary>
+    /// What an action that threw says on the status line.
+    /// </summary>
+    /// <remarks>
+    /// This used to interpolate <c>exception.GetBaseException().Message</c>. In a Release
+    /// Android build the .NET SDK trims framework resource strings, so that message is the
+    /// resource key and its arguments rather than a sentence — the status line read
+    /// <c>Failed · MakeException, (unclosed, 9, InsufficientClosingParentheses</c> on the
+    /// device and the ordinary sentence in every test (finding F-04). A framework sentence
+    /// would not be product language either, so the message is composed here, and the raw
+    /// exception goes to the diagnostic bundle where it is useful.
+    /// </remarks>
+    private static string FriendlyActionFailure(Exception exception)
+    {
+        var cause = exception.GetBaseException();
+        WorkspaceViewModel.RecordFailure("workspace.action.failed", cause);
+        return $"Failed · {WorkspaceViewModel.FriendlyMessage(cause)}";
     }
 
     private async Task ToggleLoadAllEntriesAsync()
@@ -1132,7 +1310,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
         catch (Exception exception)
         {
-            _status.Text = $"Failed · {exception.GetBaseException().Message}";
+            _viewModel.ReportTransientStatus(FriendlyActionFailure(exception));
         }
         finally
         {
@@ -1169,18 +1347,17 @@ public sealed partial class SessionWorkspaceView : UserControl
             // and can say the whole sentence; in the short composition it shares one row with
             // the count line and three other controls, and a 170 dp label there is what pushes
             // the row past the edge of a Split-mode column (audit 3, D2).
-            var label = loading
+            var fullLabel = loading
                 ? "Loading…"
-                : _loadMoreInHeader == true
-                    ? remaining > 0
-                        ? $"+{Math.Min(remaining, SessionTabViewModel.EntryPageSize):N0} · {remaining:N0} left"
-                        : $"+{SessionTabViewModel.EntryPageSize:N0}"
-                    : remaining > 0
-                        ? $"Load {Math.Min(remaining, SessionTabViewModel.EntryPageSize):N0} more · {remaining:N0} left"
-                        : $"Load next {SessionTabViewModel.EntryPageSize:N0}";
-            _loadMore.Content = label;
-            AutomationProperties.SetName(_loadMore, label);
-            ToolTip.SetTip(_loadMore, label);
+                : remaining > 0
+                    ? $"Load {Math.Min(remaining, SessionTabViewModel.EntryPageSize):N0} more; {remaining:N0} remaining"
+                    : $"Load next {SessionTabViewModel.EntryPageSize:N0}";
+            _loadMore.Content = _loadMoreInHeader == true && !loading
+                ? $"+{Math.Min(Math.Max(remaining, 1), SessionTabViewModel.EntryPageSize):N0}"
+                : fullLabel.Replace(';', '·');
+            AutomationProperties.SetName(_loadMore, fullLabel);
+            AutomationProperties.SetHelpText(_loadMore, fullLabel);
+            ToolTip.SetTip(_loadMore, fullLabel);
         }
 
         UpdateEntryActionRows();
@@ -1259,20 +1436,111 @@ public sealed partial class SessionWorkspaceView : UserControl
             if (candidate.EntryId == entryId)
             {
                 _entries.SelectedItem = candidate;
+                SetSelectedEntryOffPage(false);
                 return;
             }
         }
 
-        // The entry is not among the loaded rows. While rows remain unloaded it may simply be
-        // further down the list, but a complete page that does not contain it means the
-        // current view no longer holds it — and the plot's caret then marks a row the table
-        // cannot show, in a lane whose own header reads zero (finding 28).
-        if (!_viewModel.CanLoadMore)
+        // In Follow, a refresh that no longer returns the inspected identity has moved the
+        // live window/page past it. `CanLoadMore` can still be true because the new 30-second
+        // window itself contains more than 500 rows; treating that as "the old row may be on
+        // the next page" kept the inspector alive but hid the off-page explanation and its
+        // Show-it route on busy captures (Samsung F-25 recheck).
+        if (_viewModel.FollowLatest && _viewModel.IsLiveCaptureActive)
         {
-            _selectedEntryId = null;
-            SetInspectedEntry(null);
-            _timeline.SetSelectedEntry(null, null);
+            SetSelectedEntryOffPage(true);
+            return;
         }
+
+        // Outside a moving live window, rows remaining unloaded really can mean the entry is
+        // simply further down the current result page.
+        if (_viewModel.CanLoadMore)
+        {
+            return;
+        }
+
+        // A complete page that does not contain it means one of two very different things.
+        // The filter has changed and now excludes the record — in which case the plot's caret
+        // would mark a row the table cannot show, in a lane whose own header reads zero
+        // (finding 28) — or the record is exactly as it was and the window it was in has moved
+        // on, which is what a live capture does every second and is not a deselection
+        // (finding F-25).
+        if (!string.Equals(_selectionFilterFingerprint, _viewModel.Filter.Fingerprint(), StringComparison.Ordinal))
+        {
+            ClearEntrySelection();
+            return;
+        }
+
+        // Kept: the inspector goes on showing the message and the source bytes, the caret goes
+        // on marking where the entry is, and the pane says the row is no longer on screen and
+        // offers the way back to it.
+        SetSelectedEntryOffPage(true);
+    }
+
+    /// <summary>Drops the inspected entry, its caret and its actions, together.</summary>
+    private void ClearEntrySelection()
+    {
+        _selectedEntryId = null;
+        _selectionFilterFingerprint = null;
+        _selectedEntryInstant = null;
+        SetSelectedEntryOffPage(false);
+        SetInspectedEntry(null);
+        _timeline.SetSelectedEntry(null, null);
+    }
+
+    /// <summary>
+    /// Says whether the inspected entry is still among the rows on screen, and offers the
+    /// way back to it when it is not.
+    /// </summary>
+    private void SetSelectedEntryOffPage(bool offPage)
+    {
+        if (_selectedEntryOffPage == offPage && _entryOffPageBanner is not null)
+        {
+            if (_entryOffPageBanner.IsVisible == offPage)
+            {
+                return;
+            }
+        }
+
+        _selectedEntryOffPage = offPage;
+        if (_entryOffPageBanner is { } banner)
+        {
+            banner.IsVisible = offPage;
+        }
+
+        if (offPage && _entryOffPageText is { } text)
+        {
+            text.Text = _viewModel.FollowLatest
+                ? "This entry has scrolled out of the live window. It is still open below."
+                : "This entry is outside the rows on screen. It is still open below.";
+            AutomationProperties.SetName(text, text.Text);
+        }
+    }
+
+    /// <summary>
+    /// Puts the live edge down and brings the inspected entry back into view.
+    /// </summary>
+    private async Task ShowInspectedEntryAgainAsync()
+    {
+        if (_selectedEntryInstant is not { } instant ||
+            _viewModel.Viewport is not { } viewport ||
+            _viewModel.Snapshot?.TimedRange is not { } session)
+        {
+            return;
+        }
+
+        // Following the live edge and holding a place in the past are opposite requests, and
+        // the reader has just made the second one.
+        if (_viewModel.FollowLatest)
+        {
+            await _viewModel.ToggleFollowAsync().ConfigureAwait(true);
+        }
+
+        var span = Math.Min(viewport.DurationUs, session.DurationUs);
+        var maximumStart = session.EndExclusive.Value - span;
+        var start = Math.Clamp(instant.Value - span / 2, session.StartInclusive.Value, maximumStart);
+        await _viewModel.SetViewportAsync(
+            new TimeRange(new InstantUs(start), new InstantUs(start + span))).ConfigureAwait(true);
     }
 
     /// <summary>Brings the selected entry's full message on screen (§14.9).</summary>
@@ -1337,9 +1605,7 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         var text = await _viewModel.ReadRawEntriesAsync(selected);
         await clipboard.SetTextAsync(text);
-        Notify(selected.Length == 1
-            ? "Copied the raw text of 1 entry."
-            : $"Copied the raw text of {selected.Length:N0} entries.");
+        Notify($"Copied the raw text of {Counted.Entries(selected.Length)}.");
     }
 
 }

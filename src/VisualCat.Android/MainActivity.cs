@@ -57,8 +57,20 @@ public sealed class MainActivity : AvaloniaMainActivity
         // again, with the new value, for the build that replaces this one.
         PlatformSourceRegistry.PlatformFontScale = Resources?.Configuration?.FontScale;
         PlatformSourceRegistry.CreateOnDeviceSource = static () => new OnDeviceLogSource();
+
+        // Asked fresh each time rather than cached: `pm grant` and `pm revoke` both take
+        // effect against a running process (revoking one killed the app during the live test),
+        // and the pre-capture explanation has to describe the state the next capture will
+        // actually have (finding F-13).
+        PlatformSourceRegistry.HasFullDeviceLogPermission = static () =>
+            global::Android.App.Application.Context.CheckSelfPermission(
+                global::Android.Manifest.Permission.ReadLogs) == Permission.Granted;
+        var packageName = global::Android.App.Application.Context.PackageName;
+        PlatformSourceRegistry.FullDeviceLogGrantCommand =
+            $"adb shell pm grant {packageName} android.permission.READ_LOGS";
         PlatformSourceRegistry.ShareFileAsync = ShareCurrentAsync;
         PlatformSourceRegistry.ConsumeLaunchFilesAsync = ConsumeCurrentLaunchFilesAsync;
+        PlatformSourceRegistry.SetGestureExclusions = ApplyGestureExclusions;
         base.OnCreate(savedInstanceState);
     }
 
@@ -114,7 +126,10 @@ public sealed class MainActivity : AvaloniaMainActivity
             s_current = null;
             PlatformSourceRegistry.ShareFileAsync = null;
             PlatformSourceRegistry.CreateOnDeviceSource = null;
+            PlatformSourceRegistry.HasFullDeviceLogPermission = null;
+            PlatformSourceRegistry.FullDeviceLogGrantCommand = null;
             PlatformSourceRegistry.ConsumeLaunchFilesAsync = null;
+            PlatformSourceRegistry.SetGestureExclusions = null;
         }
 
         base.OnDestroy();
@@ -130,11 +145,11 @@ public sealed class MainActivity : AvaloniaMainActivity
         return activity.ShareAsync(path, cancellationToken);
     }
 
-    private static Task<IReadOnlyList<string>> ConsumeCurrentLaunchFilesAsync(CancellationToken cancellationToken)
+    private static Task<IReadOnlyList<IncomingFile>> ConsumeCurrentLaunchFilesAsync(CancellationToken cancellationToken)
     {
         if (s_current?.TryGetTarget(out var activity) != true || activity is null)
         {
-            return Task.FromResult<IReadOnlyList<string>>([]);
+            return Task.FromResult<IReadOnlyList<IncomingFile>>([]);
         }
 
         return activity.MaterializeIncomingAsync(activity.Intent, cancellationToken);
@@ -153,7 +168,7 @@ public sealed class MainActivity : AvaloniaMainActivity
         }
     }
 
-    private async Task<IReadOnlyList<string>> MaterializeIncomingAsync(
+    private async Task<IReadOnlyList<IncomingFile>> MaterializeIncomingAsync(
         Intent? intent,
         CancellationToken cancellationToken)
     {
@@ -176,7 +191,7 @@ public sealed class MainActivity : AvaloniaMainActivity
             uri.Path is { } localPath &&
             File.Exists(localPath))
         {
-            return [localPath];
+            return [new IncomingFile(localPath, Path.GetFileName(localPath))];
         }
 
         if (!string.Equals(uri.Scheme, "content", StringComparison.OrdinalIgnoreCase))
@@ -188,9 +203,13 @@ public sealed class MainActivity : AvaloniaMainActivity
             ?? throw new InvalidOperationException("Android cache storage is unavailable.");
         var incomingDirectory = Path.Combine(cache, "incoming");
         Directory.CreateDirectory(incomingDirectory);
-        var proposedName = uri.LastPathSegment ?? "shared-log.txt";
+        // The provider's own name for the document, not the URI's last segment. The last
+        // segment is a document id — "raw:_storage_emulated_0_Download_tiny.txt" for one
+        // Downloads form of the same file, "msf:1000000323" for another — and it was becoming
+        // both the cache filename and the tab title (finding F-27).
+        var displayName = QueryDisplayName(uri) ?? "shared-log.txt";
         var safeName = string.Concat(
-            proposedName.Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
+            displayName.Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
         if (string.IsNullOrWhiteSpace(Path.GetExtension(safeName)))
         {
             safeName += ".txt";
@@ -210,7 +229,63 @@ public sealed class MainActivity : AvaloniaMainActivity
             FileOptions.Asynchronous);
         await input.CopyToAsync(output, cancellationToken);
         await output.FlushAsync(cancellationToken);
-        return [destination];
+        return [new IncomingFile(destination, safeName)];
+    }
+
+    /// <summary>
+    /// What the content provider calls this document, length-capped and never a path.
+    /// </summary>
+    /// <remarks>
+    /// <c>OpenableColumns.DisplayName</c> is the documented way to ask, and a provider may
+    /// decline to answer or answer with something hostile — a traversal fragment, a name
+    /// thousands of characters long, an empty string. Anything that is not a plain file name
+    /// is refused here and the caller falls back to a neutral one; the safe characters are
+    /// filtered again by the caller, because this is untrusted text from another app.
+    /// </remarks>
+    private string? QueryDisplayName(global::Android.Net.Uri uri)
+    {
+        try
+        {
+            using var cursor = ContentResolver?.Query(
+                uri,
+                [global::Android.Provider.IOpenableColumns.DisplayName],
+                null,
+                null,
+                null);
+            if (cursor is null || !cursor.MoveToFirst())
+            {
+                return null;
+            }
+
+            var column = cursor.GetColumnIndex(global::Android.Provider.IOpenableColumns.DisplayName);
+            var value = column >= 0 ? cursor.GetString(column) : null;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            value = value.Trim();
+            if (value.Length > 96)
+            {
+                value = value[..96];
+            }
+
+            // A name, not a location: anything carrying a separator or a relative segment is
+            // another app's idea of a path and is not shown or written.
+            return value.Contains('/', StringComparison.Ordinal) ||
+                   value.Contains('\\', StringComparison.Ordinal) ||
+                   value is "." or ".."
+                ? null
+                : value;
+        }
+        catch (Exception exception) when (
+            exception is global::Android.Database.SQLException or
+                global::Java.Lang.SecurityException or
+                global::Java.Lang.IllegalArgumentException)
+        {
+            global::Android.Util.Log.Warn("VisualCat", $"Provider did not answer for a display name: {exception.Message}");
+            return null;
+        }
     }
 
     private async Task ShareAsync(string path, CancellationToken cancellationToken)
@@ -242,6 +317,63 @@ public sealed class MainActivity : AvaloniaMainActivity
         intent.PutExtra(Intent.ExtraStream, uri);
         intent.AddFlags(ActivityFlags.GrantReadUriPermission);
         StartActivity(Intent.CreateChooser(intent, "Share VisualCat session"));
+    }
+
+    /// <summary>
+    /// Claims the touches inside these rectangles for the app, where the system's back
+    /// gesture would otherwise take them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The back gesture owns a strip about 30 dp wide down both edges of a gesture-navigation
+    /// screen. The heat map runs to 12 dp of both, and a drag-to-pan started in the overlap
+    /// was delivered to the system instead: it went Back, and with no overlay open that means
+    /// leaving the workspace for the home screen (finding F-28, third device pass). The
+    /// rectangles arrive in window pixels, which is the coordinate space of the decor view, so
+    /// they are set there rather than on a child whose own offset would have to be undone.
+    /// </para>
+    /// <para>
+    /// Android honours at most 200 dp of exclusion height per edge and silently keeps the
+    /// lowest rectangles past that, so the shared side is deliberate about what it sends: the
+    /// plot and the minimap, and nothing else on the screen.
+    /// </para>
+    /// </remarks>
+    private void ApplyGestureExclusions(IReadOnlyList<Avalonia.PixelRect> rectangles)
+    {
+        ArgumentNullException.ThrowIfNull(rectangles);
+        var view = Window?.DecorView;
+        if (view is null)
+        {
+            return;
+        }
+
+        var rects = new List<global::Android.Graphics.Rect>(rectangles.Count);
+        foreach (var rectangle in rectangles)
+        {
+            if (rectangle.Width <= 0 || rectangle.Height <= 0)
+            {
+                continue;
+            }
+
+            rects.Add(new global::Android.Graphics.Rect(
+                rectangle.X,
+                rectangle.Y,
+                rectangle.X + rectangle.Width,
+                rectangle.Y + rectangle.Height));
+        }
+
+        RunOnUiThread(() =>
+        {
+            try
+            {
+                view.SystemGestureExclusionRects = rects;
+            }
+            catch (global::Java.Lang.Throwable)
+            {
+                // A view that is being torn down refuses the call. Losing an exclusion for a
+                // window that is going away costs the reader nothing.
+            }
+        });
     }
 }
 

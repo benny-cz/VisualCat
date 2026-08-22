@@ -97,6 +97,13 @@ public sealed class ParserTests
     public void RecognizesMetaBlankMalformedAndInvalidEncoding()
     {
         Assert.Equal(ParseOutcomeKind.MetaRecord, Parse("--------- beginning of system\n", LogcatFormat.ThreadTime).Kind);
+
+        // logcat -D prints this one on every crossing of the merged stream, and it is the only
+        // per-record buffer signal there is: without it a -b all capture stamped whichever
+        // buffer happened to be announced last on everything after it (finding F-12).
+        var switched = Parse("--------- switch to radio\n", LogcatFormat.ThreadTime);
+        Assert.Equal(ParseOutcomeKind.MetaRecord, switched.Kind);
+        Assert.Equal("buffer:radio", switched.Reason);
         Assert.Equal(ParseOutcomeKind.IgnoredBlank, Parse("\n", LogcatFormat.ThreadTime).Kind);
         Assert.Equal(ParseOutcomeKind.UnknownLine, Parse("not a header\n", LogcatFormat.ThreadTime).Kind);
         var bytes = new byte[] { (byte)'D', (byte)'/', 0xff, (byte)'(', (byte)'1', (byte)')', (byte)':', (byte)' ', (byte)'x' };

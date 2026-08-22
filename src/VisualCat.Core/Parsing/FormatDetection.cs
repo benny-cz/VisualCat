@@ -30,7 +30,7 @@ public sealed class FormatDetector
             }
 
             var line = TrimLine(memory.Span);
-            if (line.IsEmpty || line.StartsWith("--------- beginning of "u8))
+            if (line.IsEmpty || LogcatParser.TryReadBufferDivider(line, out _))
             {
                 continue;
             }

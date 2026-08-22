@@ -2,6 +2,21 @@ using VisualCat.Application.Ports;
 
 namespace VisualCat.App.Platform;
 
+/// <summary>
+/// A file another app handed to VisualCat, and the name that app calls it.
+/// </summary>
+/// <remarks>
+/// The path is a private cache file whose name has to be unique, so it carries a UTC stamp
+/// and a GUID; the display name is what the provider says the document is called. They were
+/// the same string, so opening <c>tiny.txt</c> through Open with produced a tab named
+/// <c>20260821-200744-8fde316a7e2447a281e7e825dfc2d0f5-raw:_storage_emulated_0_Download_tiny.txt</c>
+/// and read the whole of it — timestamp, GUID, provider document id and absolute shared-storage
+/// path — to a screen reader (finding F-27). Two facts, two fields.
+/// </remarks>
+/// <param name="Path">Where the bytes are, which only the importer needs.</param>
+/// <param name="DisplayName">What to call it on screen.</param>
+public sealed record IncomingFile(string Path, string DisplayName);
+
 public static class PlatformSourceRegistry
 {
     /// <summary>
@@ -11,10 +26,30 @@ public static class PlatformSourceRegistry
     public static double? PlatformFontScale { get; set; }
 
     public static Func<ILogSource?>? CreateOnDeviceSource { get; set; }
-    public static Func<string, CancellationToken, Task>? ShareFileAsync { get; set; }
-    public static Func<CancellationToken, Task<IReadOnlyList<string>>>? ConsumeLaunchFilesAsync { get; set; }
 
-    public static event Action<IReadOnlyList<string>>? LaunchFilesReceived;
+    /// <summary>
+    /// Whether the platform currently grants this app the whole device's log, or null where
+    /// the platform has no such distinction.
+    /// </summary>
+    /// <remarks>
+    /// The pre-capture explanation was unconditional: it promised that "Android will now ask
+    /// you to allow access to device logs" on every capture, and on a clean install — where
+    /// READ_LOGS is not held — no sheet can appear at all, because READ_LOGS is not a runtime
+    /// permission and an app cannot request it. The product then contradicted itself, since
+    /// Session info correctly explained the same state and gave the exact grant command
+    /// (finding F-13). The shell has to be able to ask before it writes the sentence.
+    /// </remarks>
+    public static Func<bool>? HasFullDeviceLogPermission { get; set; }
+
+    /// <summary>
+    /// The exact command a person runs to grant full-device log access on this platform, or
+    /// null where nothing of the sort applies.
+    /// </summary>
+    public static string? FullDeviceLogGrantCommand { get; set; }
+    public static Func<string, CancellationToken, Task>? ShareFileAsync { get; set; }
+    public static Func<CancellationToken, Task<IReadOnlyList<IncomingFile>>>? ConsumeLaunchFilesAsync { get; set; }
+
+    public static event Action<IReadOnlyList<IncomingFile>>? LaunchFilesReceived;
     public static event Action? AppResumed;
 
     /// <summary>
@@ -38,11 +73,25 @@ public static class PlatformSourceRegistry
     /// </summary>
     public static event Action? AppPaused;
 
-    public static void PublishLaunchFiles(IReadOnlyList<string> paths)
+    /// <summary>
+    /// Asks the platform to let the app have the touches inside these rectangles, even where
+    /// they overlap one of the platform's own edge gestures. Coordinates are device pixels
+    /// relative to the top-level's window; an empty list releases every previous claim.
+    /// </summary>
+    /// <remarks>
+    /// Installed only by a host that has such gestures — Android's back swipe, which owns a
+    /// strip about 30 dp wide down both edges of the screen and would otherwise take a
+    /// drag-to-pan on the heat map and send the reader to the home screen (finding F-28).
+    /// Where this is null, <see cref="EdgeGestureGuard"/> does nothing at all.
+    /// </remarks>
+    public static Action<IReadOnlyList<Avalonia.PixelRect>>? SetGestureExclusions { get; set; }
+
+    public static void PublishLaunchFiles(IReadOnlyList<IncomingFile> files)
     {
-        if (paths.Count > 0)
+        ArgumentNullException.ThrowIfNull(files);
+        if (files.Count > 0)
         {
-            LaunchFilesReceived?.Invoke(paths);
+            LaunchFilesReceived?.Invoke(files);
         }
     }
 

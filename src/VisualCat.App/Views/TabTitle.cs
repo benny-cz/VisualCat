@@ -5,6 +5,21 @@ namespace VisualCat.App.Views;
 /// </summary>
 internal static class TabTitle
 {
+    /// <summary>How many characters a phone tab shows before a name is shortened.</summary>
+    /// <remarks>
+    /// It was 24. <c>On-device logcat HHhMMmSS</c> — the name this product gives every capture
+    /// it makes — is 25, so every on-device capture was middle-truncated, always, and what the
+    /// ellipsis ate was the word that says what the session is:
+    /// <c>On-device log…t 03h45m47</c>. That is the second half of finding F-16, still true
+    /// after the first half was fixed, and one character of budget was the whole difference
+    /// (third device pass). The budget is that name's length plus one, so the product's own
+    /// default fits whole and a genuinely long imported filename still shortens.
+    /// </remarks>
+    internal const int MobileBudget = 26;
+
+    /// <summary>How many characters a desktop tab shows before a name is shortened.</summary>
+    internal const int DesktopBudget = 34;
+
     /// <summary>
     /// Keeps both ends of a name, dropping the middle.
     /// </summary>

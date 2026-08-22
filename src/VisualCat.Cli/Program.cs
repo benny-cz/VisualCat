@@ -56,7 +56,24 @@ internal static class VisualCatCli
         try
         {
             var command = args[0].ToLowerInvariant();
+
+            // Asking a command to explain itself must never be the same thing as running it.
+            // "--help" was neither recognised nor rejected: it fell through to the command's
+            // defaults, so `vcat generate-test-log --help` wrote a 90 MB file into the working
+            // directory and said nothing (finding F-02). Handled here, before any command
+            // runs, so it is true of every command rather than of the ones somebody
+            // remembered.
+            if (args[1..].Any(static value => value is "-h" or "--help" or "-?" or "/?"))
+            {
+                PrintCommandHelp(command);
+                return 0;
+            }
+
             var options = Arguments.Parse(args[1..]);
+
+            // Same reason. An unrecognised option was silently ignored, so `--lines1000`
+            // produced a million-line file instead of an error.
+            options.RejectUnknown(command, KnownOptions(command));
             return command switch
             {
                 "index" => await IndexAsync(options, cancellation.Token).ConfigureAwait(false),
@@ -434,6 +451,62 @@ internal static class VisualCatCli
     private static string Sanitize(string value) =>
         string.Concat(value.Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
 
+    /// <summary>Every option one command accepts, for both usage and unknown-option checks.</summary>
+    /// <remarks>
+    /// One table, used by two things that must not disagree: what the usage line prints and
+    /// what the parser will accept. A command missing from it accepts anything, which is the
+    /// safe direction — it can only fail to reject, never wrongly reject.
+    /// </remarks>
+    private static HashSet<string>? KnownOptions(string command) => command switch
+    {
+        "index" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "--output", "--portable", "--format", "--workers", "--year", "--zone" },
+        "info" => new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "--format" },
+        "stats" => new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "--levels", "--top" },
+        "query" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "--from", "--to", "--limit", "--levels", "--tags", "--processes", "--pids", "--order" },
+        "search" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "--regex", "--case-sensitive", "--limit" },
+        "templates" => new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "--top" },
+        "export" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "--type", "--from", "--to", "--levels", "--order" },
+        "verify" => new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+        "generate-test-log" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "--output", "--lines", "--seed" },
+        "adb-devices" => new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "--adb" },
+        "capture-adb" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "--serial", "--output", "--duration-seconds", "--max-bytes", "--adb", "--buffers", "--format" },
+        _ => null,
+    };
+
+    /// <summary>The usage line for one command, or the whole map when the command is unknown.</summary>
+    private static void PrintCommandHelp(string command)
+    {
+        var usage = command switch
+        {
+            "index" => "vcat index <log.txt> [--output session.vcat] [--portable] [--format threadtime]",
+            "info" => "vcat info <log.txt|session.vcat>",
+            "stats" => "vcat stats <session.vcat> [--levels W,E,F] [--top 20]",
+            "query" => "vcat query <session.vcat> [--from ISO|us] [--to ISO|us] [--limit 100] [--processes NAME]",
+            "search" => "vcat search <session.vcat> <text> [--regex] [--case-sensitive]",
+            "templates" => "vcat templates <session.vcat> [--top 50]",
+            "export" => "vcat export <session.vcat> <output> [--type raw|csv|templates-md|templates-csv|stats-md|stats-csv|portable|portable-zip]",
+            "verify" => "vcat verify <session.vcat>",
+            "generate-test-log" => "vcat generate-test-log [--output log.txt] [--lines 1000000] [--seed 42]",
+            "adb-devices" => "vcat adb-devices [--adb path]",
+            "capture-adb" => "vcat capture-adb --serial SERIAL [--output session.vcat] [--duration-seconds N] [--max-bytes N]",
+            _ => null,
+        };
+
+        if (usage is null)
+        {
+            PrintHelp();
+            return;
+        }
+
+        Console.WriteLine(usage);
+    }
+
     private static void PrintHelp() => Console.WriteLine(
         $"""
         VisualCat v2 command line ({ProductInfo.InformationalVersion})
@@ -490,6 +563,32 @@ internal sealed class Arguments
         }
 
         return parsed;
+    }
+
+    /// <summary>
+    /// Refuses an option the command does not have.
+    /// </summary>
+    /// <remarks>
+    /// Unknown options were dropped on the floor, so a typo silently produced a run with the
+    /// defaults — <c>--lines1000</c> asked for a thousand lines and got a million
+    /// (finding F-02). Exit code 2 is what the rest of the CLI already uses for "you asked for
+    /// something that is not a thing", and the message names the option so the typo is visible.
+    /// </remarks>
+    public void RejectUnknown(string command, IReadOnlySet<string>? known)
+    {
+        if (known is null)
+        {
+            return;
+        }
+
+        foreach (var name in _options.Keys)
+        {
+            if (!known.Contains(name))
+            {
+                throw new CommandException(
+                    $"'{command}' does not take '{name}'. Run 'vcat {command} --help' to see what it does take.");
+            }
+        }
     }
 
     public bool Has(string name) => _options.ContainsKey(name);

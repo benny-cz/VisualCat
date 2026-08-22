@@ -217,7 +217,7 @@ public sealed partial class MainView : IDialogHost
             var close = new Button
             {
                 Content = "Close",
-                MinHeight = 44,
+                MinHeight = TouchTarget.Minimum,
                 Padding = new Thickness(12, 0),
                 VerticalContentAlignment = VerticalAlignment.Center,
             };

@@ -13,6 +13,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
+using VisualCat.Domain;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
@@ -34,8 +35,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void SetStatusExpanded(bool expanded)
     {
         _statusExpanded = expanded;
-        _status.TextWrapping = expanded ? TextWrapping.Wrap : TextWrapping.NoWrap;
-        _status.TextTrimming = expanded ? TextTrimming.None : TextTrimming.CharacterEllipsis;
+        _status.SetExpanded(expanded);
         _searchStatus.TextWrapping = expanded ? TextWrapping.Wrap : TextWrapping.NoWrap;
         _searchStatus.TextTrimming = expanded ? TextTrimming.None : TextTrimming.CharacterEllipsis;
         if (_statusBar is { } statusBar)
@@ -72,7 +72,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         // This runs from every layout pass, and the answer can only change when the sentence
         // or the width it is being laid out in changes. Both are cheap to compare and the
         // text layout behind StatusOverflows is not cheap to walk.
-        var shape = (_status.Text, _status.Bounds.Width, _statusExpanded);
+        var shape = (_status.Text, _status.ArrangedWidth, _statusExpanded);
         if (shape == _statusShape)
         {
             return;
@@ -112,7 +112,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// </remarks>
     private bool StatusOverflows()
     {
-        if (_status.TextLayout is not { } layout || layout.TextLines.Count == 0)
+        if (_status.Layout is not { } layout || layout.TextLines.Count == 0)
         {
             return false;
         }
@@ -141,29 +141,19 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// rewritten: the accessible name and description were set once, by the full presentation
     /// refresh, and Android's node then kept the first description it read forever. A
     /// finished session went on being announced as "Starting capture", and a session of
-    /// 59 640 entries as "Importing…" (audit 2, B2). Every route that changes the status now
-    /// comes through here, and an explicitly set HelpText is a property change the platform
-    /// follows — which is why the containing row's own help text had always been correct.
+    /// 59 640 entries as "Importing…" (audit 2, B2). That was fixed by routing every write
+    /// through this method — and five routes then went around it anyway (finding F-05), which
+    /// is why the line itself is now a <see cref="StatusLine"/> whose only mutator reads the
+    /// view model. There is no longer a text property for a sixth route to poke.
     /// </remarks>
-    private void ApplyStatusText()
-    {
-        var status = _viewModel.Status ?? string.Empty;
-        _status.Text = status;
-
-        // The visible line may be clipped; what a screen reader is handed never is.
-        AutomationProperties.SetName(_status, status);
-        AutomationProperties.SetHelpText(_status, status);
-        ToolTip.SetTip(_status, status.Length > 0 ? status : null);
-
-        // A report on work in progress, so a reader who is not looking at it is told when it
-        // changes — politely, because a failure raises the notice lane, which is assertive.
-        AutomationProperties.SetLiveSetting(_status, AutomationLiveSetting.Polite);
-    }
+    private void ApplyStatusText() => _status.Refresh();
 
     private void RefreshPresentation()
     {
         ApplyStatusText();
         _searchStatus.Text = _viewModel.SearchStatus;
+        UpdateMarkerNavigation();
+
         UpdateFollowButton();
         _search.Text = _viewModel.SearchText;
         _order.SelectedIndex = _viewModel.EntryOrder == EntryOrder.SourceSequence ? 1 : 0;
@@ -406,6 +396,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                                 inView is 0 or null &&
                                 stats.FirstInstant is not null &&
                                 stats.LastInstant is not null;
+        UpdateEmptyResults();
         UpdateEntryActionRows();
 
         // The summary above tracks the viewport, but chips and facets depend only on the
@@ -421,6 +412,169 @@ public sealed partial class SessionWorkspaceView : UserControl
         _renderedFacets = stats;
         RebuildChips();
         RebuildFacets(stats);
+    }
+
+    /// <summary>
+    /// Explains an empty entries list, and offers the action that would refill it.
+    /// </summary>
+    /// <remarks>
+    /// U-13 requires every empty state to explain itself in product language and offer the
+    /// next action, and fails explicitly if one "renders as a blank pane" — which is what the
+    /// largest region of the workspace did whenever a filter matched nothing (finding F-06).
+    /// The list is left in the tree and named with the count, so the screen reader hears the
+    /// same thing the screen says.
+    /// </remarks>
+    private void UpdateEmptyResults()
+    {
+        if (_emptyResultsCard is not { } card ||
+            _emptyResultsTitle is not { } title ||
+            _emptyResultsDetail is not { } detail ||
+            _emptyResultsWiden is not { } widen ||
+            _emptyResultsClear is not { } clear)
+        {
+            return;
+        }
+
+        var stats = _viewModel.Statistics;
+        var filtered = _viewModel.Filter.Fingerprint() != FilterSpec.All.Fingerprint();
+        var empty = _viewModel.Entries.Count == 0 &&
+                    _viewModel.Snapshot is not null &&
+                    !_viewModel.IsSessionWorkInFlight;
+
+        card.IsVisible = empty;
+        _entries.IsVisible = !empty;
+        if (!empty)
+        {
+            AutomationProperties.SetName(_entries, "Filtered log entries");
+            return;
+        }
+
+        var session = _viewModel.Snapshot?.Descriptor.Counters.TimedEntries ?? 0;
+        var matching = stats?.TotalMatching ?? 0;
+        var elsewhere = matching > 0;
+        var dark = ActualThemeVariant != ThemeVariant.Light;
+        card.Background = new SolidColorBrush(WorkspacePalette.SurfaceRaised(dark));
+        card.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
+        title.Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
+        detail.Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
+
+        if (!filtered && session == 0)
+        {
+            title.Text = "This session has no entries yet";
+            detail.Text = "Nothing has been parsed into it. A capture that has just started shows its first rows here.";
+            widen.IsVisible = false;
+            clear.IsVisible = false;
+        }
+        else if (elsewhere)
+        {
+            title.Text = "No match in the time range on screen";
+            detail.Text =
+                $"{Counted.Entries(matching)} in this session match these filters, outside the range the plot is showing. " +
+                $"The session holds {Counted.Entries(session)}.";
+            widen.IsVisible = true;
+            clear.IsVisible = true;
+        }
+        else
+        {
+            title.Text = "No entry matches these filters";
+            detail.Text = $"The session holds {Counted.Entries(session)}. Clearing the filters brings all of them back.";
+            widen.IsVisible = false;
+            clear.IsVisible = filtered;
+        }
+
+        // The empty list keeps its place in the accessibility tree so the announcement and
+        // the screen agree; naming it with the reason is what it was missing.
+        AutomationProperties.SetName(_entries, $"Filtered log entries: {title.Text}. {detail.Text}");
+        AutomationProperties.SetName(card, $"{title.Text}. {detail.Text}");
+    }
+
+    /// <summary>
+    /// Shows where in the matches the view is, and offers the two steps either way.
+    /// </summary>
+    /// <remarks>
+    /// The position is derived from the viewport rather than stored, so it cannot drift out of
+    /// agreement with what is drawn: after a step the viewport is centred on that marker, so
+    /// the number is exact; after a pan it names the match nearest the middle of the view, or
+    /// says there is none in view at all. Disabled with a reason when no search is active,
+    /// which is what U-10 asks of a control that is sometimes not applicable.
+    /// </remarks>
+    private void UpdateMarkerNavigation()
+    {
+        if (_markerNav is not { } nav ||
+            _markerPosition is not { } position ||
+            _markerPrevious is not { } previous ||
+            _markerNext is not { } next)
+        {
+            return;
+        }
+
+        var markers = _viewModel.SearchResult?.Markers;
+        var count = markers?.Count ?? 0;
+        nav.IsVisible = count > 0;
+
+        // The stepper already ends in "/ 7,181", so a "7,181 search matches" label beside it
+        // is the same number twice on a row that is one clipped line wide — and it was pushing
+        // the session's own status out to "Ready · 49,…". While a search is still running the
+        // percentage is the useful half and the total is not settled, so the label comes back.
+        _searchStatus.IsVisible = !nav.IsVisible || _viewModel.SearchInProgress;
+        previous.IsEnabled = count > 0;
+        next.IsEnabled = count > 0;
+        if (count == 0)
+        {
+            const string reason = "No search is active, so there are no matches to step through.";
+            AutomationProperties.SetHelpText(previous, reason);
+            AutomationProperties.SetHelpText(next, reason);
+            return;
+        }
+
+        AutomationProperties.SetHelpText(previous, null);
+        AutomationProperties.SetHelpText(next, null);
+        position.Foreground = new SolidColorBrush(
+            WorkspacePalette.TextPrimary(ActualThemeVariant != ThemeVariant.Light));
+
+        var index = MarkerIndexInView(markers!);
+        position.Text = index is { } visible
+            ? $"{visible + 1:N0} / {count:N0}"
+            : $"– / {count:N0}";
+        var spoken = index is { } inView
+            ? $"Match {inView + 1:N0} of {count:N0}"
+            : $"{Counted.Of(count, "match", "matches")}, none in the range on screen";
+        AutomationProperties.SetName(position, spoken);
+        ToolTip.SetTip(position, spoken);
+
+        // Announced politely, so stepping through matches reports where it arrived without
+        // interrupting whatever the reader is reading (U-17).
+        AutomationProperties.SetLiveSetting(position, AutomationLiveSetting.Polite);
+    }
+
+    /// <summary>The match nearest the middle of the viewport, when one is inside it.</summary>
+    private int? MarkerIndexInView(IReadOnlyList<InstantUs> markers)
+    {
+        if (_viewModel.Viewport is not { } viewport)
+        {
+            return null;
+        }
+
+        var centre = viewport.StartInclusive.Value + viewport.DurationUs / 2;
+        int? best = null;
+        var bestDistance = long.MaxValue;
+        for (var i = 0; i < markers.Count; i++)
+        {
+            var value = markers[i].Value;
+            if (value < viewport.StartInclusive.Value || value >= viewport.EndExclusive.Value)
+            {
+                continue;
+            }
+
+            var distance = Math.Abs(value - centre);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = i;
+            }
+        }
+
+        return best;
     }
 
     private void UpdateSummaryText()
@@ -457,7 +611,12 @@ public sealed partial class SessionWorkspaceView : UserControl
             " · ",
             new[] { $"{inView:N0} {scope}", $"{stats.TotalMatching:N0} match", sessionPart }
                 .Where(static part => part is { Length: > 0 }));
-        _summary.Text = _mobile ? mobileSummary : full;
+        var compactSummary = sessionTotal is { } compactTotal
+            ? $"{inView:N0} view · {compactTotal:N0}"
+            : $"{inView:N0} view";
+        _summary.Text = _mobile
+            ? _summaryInTabStrip ? compactSummary : mobileSummary
+            : full;
         AutomationProperties.SetName(_summary, full);
         ToolTip.SetTip(_summary, full);
     }

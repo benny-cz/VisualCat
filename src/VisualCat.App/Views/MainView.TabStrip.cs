@@ -35,7 +35,17 @@ public sealed partial class MainView
         // The strip's horizontal scrollbar is drawn over its content, not under it, so the
         // thumb cut a grey line straight through the bottom edge of every tab. Reserving the
         // thumb's own row is what stops it crossing the chrome (finding 11).
-        Margin = new Thickness(0, 0, 0, 7),
+        //
+        // The trailing room is what lets the last chip's close button reach the viewport at
+        // all. Measured on the device with three sessions open: the scroll host reported
+        // extent 656.7 and viewport 433.8 — so a maximum offset of 222.9, which it was already
+        // at — while the last chip's own bounds ran to 686.5. The content is ~30 px longer
+        // than the host believes, so the selected session's close settled 84 physical px past
+        // the right edge and every further scroll request clamped to no movement (A-05,
+        // finding F-26). One close target plus a gutter of trailing room is both the fix and
+        // the right shape: the strip now ends in a margin instead of ending in a control cut
+        // off by the screen edge.
+        Margin = new Thickness(0, 0, TouchTarget.Minimum + 10, 7),
     };
 
     private readonly Dictionary<SessionTabViewModel, TabChip> _chips = [];
@@ -113,14 +123,74 @@ public sealed partial class MainView
             return;
         }
 
-        var left = strip.Offset.X;
-        var right = left + strip.Viewport.Width;
-        foreach (var chip in _chips.Values)
+        // Before the offer, because holding a close button changes the chip's width and
+        // therefore the answer to "is it whole?" — settle the position first, decide second.
+        if (_chipScrollPending)
         {
-            var bounds = chip.Root.Bounds;
-            var whole = bounds.Width > 0 && bounds.Left >= left - 0.5 && bounds.Right <= right + 0.5;
-            ControlSlot.Hold(chip.Close, whole);
+            ScrollSelectedChipIntoView();
         }
+
+        var selected = _viewModel.Selected;
+        foreach (var (viewModel, chip) in _chips)
+        {
+            var whole = chip.Root.Bounds.Width > 0 && ChipIsWhole(chip.Root);
+
+            // The selected chip always keeps its close button, whatever the strip has done
+            // with it. Two reasons. The rule this guards — a close target must not float
+            // unlabelled beside a name that has scrolled away — cannot apply to the selected
+            // session, because the whole workspace under the strip says which one it is. And
+            // holding it changes the chip's width, so the width the scroll is trying to fit
+            // depended on whether it fitted: the strip converged on "close held", which is
+            // how the active session's own close ended up as a 19 dp sliver at the screen
+            // edge on the device (A-05, finding F-26).
+            ControlSlot.Hold(chip.Close, whole || ReferenceEquals(viewModel, selected));
+        }
+    }
+
+    /// <summary>Whether the selected chip still owes the strip a scroll.</summary>
+    /// <remarks>
+    /// One posted attempt is not enough. The chips are measured, the close buttons are then
+    /// offered or held — which changes their widths — and the strip's own extent is only final
+    /// after that; a single request at <see cref="DispatcherPriority.Loaded"/> could run
+    /// against an extent of zero and clamp itself to no movement at all, which is how the
+    /// selected rightmost chip ended up with 19 dp of its close target on screen (A-05,
+    /// finding F-26). The request stands until it is satisfied, and it is retried from the
+    /// layout pass that would otherwise have made it wrong. It clears the moment the chip is
+    /// whole, so it never fights a reader who is scrolling the strip themselves.
+    /// </remarks>
+    private bool _chipScrollPending;
+
+    private void ScrollSelectedChipIntoView()
+    {
+        if (_tabStrip is not { } strip ||
+            strip.Viewport.Width <= 0 ||
+            _viewModel.Selected is not { } selected ||
+            !_chips.TryGetValue(selected, out var chip) ||
+            chip.Root.Bounds.Width <= 0)
+        {
+            return;
+        }
+
+        var before = strip.Offset.X;
+        ScrollChipIntoView(chip.Root);
+        if (Math.Abs(strip.Offset.X - before) < 0.5 && ChipIsWhole(chip.Root))
+        {
+            _chipScrollPending = false;
+        }
+    }
+
+    /// <summary>Whether a chip is entirely inside the strip, measured on screen.</summary>
+    private bool ChipIsWhole(Control chip)
+    {
+        if (_tabStrip is not { } strip ||
+            strip.Bounds.Width <= 0 ||
+            chip.Bounds.Width <= 0 ||
+            chip.TranslatePoint(default, strip) is not { } origin)
+        {
+            return true;
+        }
+
+        return origin.X >= -0.5 && origin.X + chip.Bounds.Width <= strip.Bounds.Width + 0.5;
     }
 
     private void AddSessionChip(SessionTabViewModel viewModel)
@@ -128,7 +198,7 @@ public sealed partial class MainView
         var mobile = OperatingSystem.IsAndroid();
         var title = new TextBlock
         {
-            Text = TabTitle.Shorten(viewModel.Title, mobile ? 24 : 34),
+            Text = TabTitle.Shorten(viewModel.Title, mobile ? TabTitle.MobileBudget : TabTitle.DesktopBudget),
             VerticalAlignment = VerticalAlignment.Center,
             FontSize = TextScale.Of(mobile ? 12.5 : 12),
         };
@@ -139,11 +209,13 @@ public sealed partial class MainView
             BorderThickness = new Thickness(0),
             CornerRadius = new CornerRadius(7, 0, 0, 7),
             Padding = new Thickness(11, 0),
-            MinHeight = mobile ? 44 : 30,
+
+            // Switching and closing a session are primary controls, and both measured
+            // 43.7 dp against the platform's 48 dp floor (finding F-26).
+            MinHeight = TouchTarget.For(mobile, 30),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
-        ToolTip.SetTip(select, viewModel.Title);
-        AutomationProperties.SetName(select, $"Show session {viewModel.Title}");
+        ApplySessionChipSemantics(viewModel, select);
         select.Click += (_, _) =>
         {
             if (_tabItems.TryGetValue(viewModel, out var item))
@@ -156,11 +228,15 @@ public sealed partial class MainView
         {
             Content = "×",
             Background = Brushes.Transparent,
+            // A destructive target sharing an edge with the switch target is a session
+            // closed by a thumb that meant to select it. The divider is the separation the
+            // report asked for, and the margin keeps the two hit rects from touching.
             BorderThickness = new Thickness(1, 0, 0, 0),
+            Margin = new Thickness(mobile ? 2 : 0, 0, 0, 0),
             CornerRadius = new CornerRadius(0, 7, 7, 0),
             Padding = new Thickness(0),
-            MinWidth = mobile ? 44 : 26,
-            MinHeight = mobile ? 44 : 30,
+            MinWidth = TouchTarget.For(mobile, 26),
+            MinHeight = TouchTarget.For(mobile, 30),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
         };
@@ -217,7 +293,8 @@ public sealed partial class MainView
                 ? WorkspacePalette.TextPrimary(dark)
                 : WorkspacePalette.TextMuted(dark));
             chip.Title.FontWeight = isSelected ? FontWeight.SemiBold : FontWeight.Normal;
-            chip.Title.Text = TabTitle.Shorten(viewModel.Title, OperatingSystem.IsAndroid() ? 24 : 34);
+            chip.Title.Text = TabTitle.Shorten(viewModel.Title, OperatingSystem.IsAndroid() ? TabTitle.MobileBudget : TabTitle.DesktopBudget);
+            ApplySessionChipSemantics(viewModel, chip.Select);
             chip.Close.Foreground = new SolidColorBrush(WorkspacePalette.TextMuted(dark));
             chip.Close.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
             if (isSelected)
@@ -234,6 +311,31 @@ public sealed partial class MainView
         }
 
         UpdateChipEdges();
+    }
+
+    /// <summary>
+    /// Names the durable completion state on the tab itself, not only in the workspace it
+    /// opens. An interrupted capture must not sound identical to a complete one while a
+    /// screen-reader user moves through the open-session strip (F-19).
+    /// </summary>
+    internal static void ApplySessionChipSemantics(SessionTabViewModel viewModel, Button select)
+    {
+        var outcome = viewModel.Activity switch
+        {
+            SessionActivity.RecoverablePartial => "interrupted",
+            SessionActivity.Capturing or SessionActivity.Connecting or SessionActivity.Starting or
+                SessionActivity.Queued or SessionActivity.Opening or SessionActivity.Importing or
+                SessionActivity.Stopping => "in progress",
+            SessionActivity.Failed => "failed",
+            _ => "complete",
+        };
+        ToolTip.SetTip(select, $"{viewModel.Title} · {outcome}");
+        AutomationProperties.SetName(select, $"Show {outcome} session {viewModel.Title}");
+        AutomationProperties.SetHelpText(
+            select,
+            outcome == "interrupted"
+                ? "This capture ended before it was finalized; open it to inspect the recovered data."
+                : $"Open this {outcome} session.");
     }
 
     /// <summary>
@@ -254,8 +356,62 @@ public sealed partial class MainView
     /// screen edge (audit 3, D4), and the button that closes what you are looking at is the
     /// one that must not be a sliver.
     /// </remarks>
-    private static void BringChipIntoView(Control chip) =>
-        Dispatcher.UIThread.Post(
-            () => chip.BringIntoView(new Rect(-10, 0, chip.Bounds.Width + 20, chip.Bounds.Height)),
-            DispatcherPriority.Loaded);
+    /// <remarks>
+    /// <c>BringIntoView(Rect)</c> was asked for a rect ten pixels wider than the
+    /// chip on each side, and with three sessions open the selected rightmost chip still came
+    /// to rest with its close node clipped from 124 px to 43 — 15.3 dp of the one control that
+    /// closes the session the reader is looking at (A-05, compounding finding F-26). The
+    /// request is a hint the scroll host may satisfy approximately; the offset is not. So the
+    /// arithmetic is done here, against the strip's own viewport, and the result is a clamped
+    /// assignment rather than a request.
+    /// </remarks>
+    private void BringChipIntoView(Control chip)
+    {
+        _chipScrollPending = true;
+        Dispatcher.UIThread.Post(() => ScrollChipIntoView(chip), DispatcherPriority.Loaded);
+    }
+
+    private void ScrollChipIntoView(Control chip)
+    {
+        if (_tabStrip is not { } strip ||
+            strip.Bounds.Width <= 0 ||
+            chip.Bounds.Width <= 0 ||
+            chip.TranslatePoint(default, strip) is not { } origin)
+        {
+            return;
+        }
+
+        // Measured against the strip itself rather than against its reported viewport and
+        // extent. Those describe the content, and the arithmetic that goes through them has to
+        // agree with the scroll host about padding, spacing and what a "viewport" includes —
+        // which on the device it did not: the strip settled with the selected chip's close
+        // button 78 px past the right edge and every further request clamped to no movement at
+        // all. A translated point and the control's own width are facts about the screen, and
+        // the correction is the difference between them.
+        //
+        // A gutter on both sides, because the chip's own bounds end exactly at its close
+        // button and a target flush with the screen edge is a target a thumb misses.
+        const double Gutter = 10;
+        var overflowRight = origin.X + chip.Bounds.Width + Gutter - strip.Bounds.Width;
+        var overflowLeft = Gutter - origin.X;
+
+        // Right first, then left: a chip wider than the strip must show its start rather than
+        // its end, because that is where its name is.
+        var delta = overflowRight > 0 ? overflowRight : 0;
+        if (overflowLeft > 0)
+        {
+            delta = -overflowLeft;
+        }
+
+        if (Math.Abs(delta) < 0.5)
+        {
+            return;
+        }
+
+        var wanted = Math.Max(0, strip.Offset.X + delta);
+        if (Math.Abs(wanted - strip.Offset.X) > 0.5)
+        {
+            strip.Offset = new Vector(wanted, strip.Offset.Y);
+        }
+    }
 }

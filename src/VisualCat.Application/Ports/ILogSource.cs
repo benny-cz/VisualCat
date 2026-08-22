@@ -35,14 +35,20 @@ public sealed record SourceMetadata(
     /// between them (audit 2, C2). The start time is the discriminator, because it is the
     /// one thing that differs and the one the reader already remembers.
     ///
-    /// Local time, because it is read by a person standing next to the device. Hyphens
-    /// rather than colons because this becomes a folder name and a suggested filename, and a
-    /// sanitised name in one list beside an unsanitised one in another is the inconsistency
-    /// that started all this; a period would be worse, since
+    /// Local time, because it is read by a person standing next to the device. Not colons:
+    /// this becomes a folder name and a suggested filename, and a sanitised name in one list
+    /// beside an unsanitised one in another is the inconsistency that started all this; a
+    /// period would be worse, since
     /// <see cref="System.IO.Path.GetFileNameWithoutExtension(string)"/> would eat the seconds.
+    ///
+    /// Not hyphens either, which is what they were. A capture started at 20:09:12 was called
+    /// "On-device logcat 20-09-12", and hyphenated triples of two digits are what dates look
+    /// like: the first thing that name says is "12 September 2020" (finding F-16). The
+    /// h/m separators are unambiguous, filesystem-safe on every platform the product runs on,
+    /// and one character narrower than nothing else would be.
     /// </remarks>
     public static string NameCaptureStartedNow(string sourceName) =>
-        $"{sourceName} {DateTimeOffset.Now:HH-mm-ss}";
+        $"{sourceName} {DateTimeOffset.Now:HH}h{DateTimeOffset.Now:mm}m{DateTimeOffset.Now:ss}";
 
     /// <summary>The declared timestamp zone, or the local zone when the source is silent.</summary>
     public string ResolveLogTimeZoneId() =>

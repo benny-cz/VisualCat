@@ -43,12 +43,94 @@ public static class TemporarySessionRetentionService
             .ToArray();
     }
 
+    /// <summary>
+    /// The sessions a cleanup with this policy would delete, without deleting anything.
+    /// </summary>
+    /// <remarks>
+    /// The irreversible confirmation said only that "sessions older than the configured age,
+    /// and oldest sessions above the size cap, will be permanently removed" — not the policy
+    /// values, not how many sessions, not how many bytes, not even whether the answer was
+    /// zero. It asked the reader to run the policy in their head against a long cache list,
+    /// and A-15 requires a delete action to name exactly what it will remove (finding F-23).
+    /// The preview and the deletion share <see cref="SelectEligible"/>, so the sentence on the
+    /// confirmation and the act it confirms cannot drift apart.
+    /// </remarks>
+    public static async Task<IReadOnlyList<TemporarySessionInfo>> PreviewAsync(
+        string cacheRoot,
+        TimeSpan maximumAge,
+        long? maximumTotalBytes,
+        DateTimeOffset now,
+        IReadOnlySet<string>? protectedPaths = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maximumAge, TimeSpan.Zero);
+        var sessions = await ScanAsync(Path.GetFullPath(cacheRoot), cancellationToken).ConfigureAwait(false);
+        var eligible = SelectEligible(sessions, maximumAge, maximumTotalBytes, now, protectedPaths);
+        return sessions.Where(session => eligible.Contains(session.Path)).ToArray();
+    }
+
+    /// <summary>
+    /// Which stored sessions the policy makes eligible — the one rule, used by preview and
+    /// by deletion alike.
+    /// </summary>
+    private static HashSet<string> SelectEligible(
+        IReadOnlyList<TemporarySessionInfo> sessions,
+        TimeSpan maximumAge,
+        long? maximumTotalBytes,
+        DateTimeOffset now,
+        IReadOnlySet<string>? protectedPaths)
+    {
+        var delete = new HashSet<string>(PathComparer);
+
+        // A session this app is writing into is not a candidate at any age: deleting the
+        // folder under a running capture loses the capture and leaves the writer holding
+        // handles into nothing.
+        bool Protected(TemporarySessionInfo session) =>
+            protectedPaths is { Count: > 0 } && protectedPaths.Contains(session.Path);
+
+        var cutoff = now - maximumAge;
+        foreach (var session in sessions.Where(session => session.UpdatedUtc < cutoff && !Protected(session)))
+        {
+            delete.Add(session.Path);
+        }
+
+        if (maximumTotalBytes is { } cap)
+        {
+            var retainedBytes = sessions.Where(session => !delete.Contains(session.Path)).Sum(static session => session.SizeBytes);
+            foreach (var session in sessions.OrderBy(static session => session.UpdatedUtc))
+            {
+                if (retainedBytes <= cap)
+                {
+                    break;
+                }
+
+                if (!Protected(session) && delete.Add(session.Path))
+                {
+                    retainedBytes -= session.SizeBytes;
+                }
+            }
+        }
+
+        return delete;
+    }
+
     public static async Task<TemporaryCleanupResult> CleanupAsync(
         string cacheRoot,
         bool enabled,
         TimeSpan maximumAge,
         long? maximumTotalBytes,
         DateTimeOffset now,
+        CancellationToken cancellationToken = default)
+        => await CleanupAsync(cacheRoot, enabled, maximumAge, maximumTotalBytes, now, null, cancellationToken)
+            .ConfigureAwait(false);
+
+    public static async Task<TemporaryCleanupResult> CleanupAsync(
+        string cacheRoot,
+        bool enabled,
+        TimeSpan maximumAge,
+        long? maximumTotalBytes,
+        DateTimeOffset now,
+        IReadOnlySet<string>? protectedPaths,
         CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maximumAge, TimeSpan.Zero);
@@ -65,29 +147,7 @@ public static class TemporarySessionRetentionService
             return new TemporaryCleanupResult(sessions, [], []);
         }
 
-        var delete = new HashSet<string>(PathComparer);
-        var cutoff = now - maximumAge;
-        foreach (var session in sessions.Where(session => session.UpdatedUtc < cutoff))
-        {
-            delete.Add(session.Path);
-        }
-
-        if (maximumTotalBytes is { } cap)
-        {
-            var retainedBytes = sessions.Where(session => !delete.Contains(session.Path)).Sum(static session => session.SizeBytes);
-            foreach (var session in sessions.OrderBy(static session => session.UpdatedUtc))
-            {
-                if (retainedBytes <= cap)
-                {
-                    break;
-                }
-
-                if (delete.Add(session.Path))
-                {
-                    retainedBytes -= session.SizeBytes;
-                }
-            }
-        }
+        var delete = SelectEligible(sessions, maximumAge, maximumTotalBytes, now, protectedPaths);
 
         var deleted = new List<string>();
         var errors = new List<string>();
@@ -108,6 +168,19 @@ public static class TemporarySessionRetentionService
 
         var remaining = sessions.Where(session => !deleted.Contains(session.Path, PathComparer)).ToArray();
         return new TemporaryCleanupResult(remaining, deleted, errors);
+    }
+
+    /// <summary>
+    /// Deletes one explicitly chosen cached session after its UI has closed every handle.
+    /// The same direct-child and reparse-point rules as policy cleanup apply; arbitrary paths
+    /// can never be turned into a recursive delete target.
+    /// </summary>
+    public static void DeleteExactSession(string cacheRoot, string sessionPath)
+    {
+        var root = Path.GetFullPath(cacheRoot);
+        var path = Path.GetFullPath(sessionPath);
+        ValidateDeletionTarget(root, path);
+        Directory.Delete(path, recursive: true);
     }
 
     private static async Task<TemporarySessionInfo?> TryInspectAsync(

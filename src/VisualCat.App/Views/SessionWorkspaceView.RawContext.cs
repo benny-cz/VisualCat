@@ -14,6 +14,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
+using VisualCat.Domain;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
@@ -386,9 +387,11 @@ public sealed partial class SessionWorkspaceView : UserControl
             FontWeight = FontWeight.Bold,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        // The claim has to match what is drawn. Each line carries a sequence number and a
+        // The claim has to match what is drawn. Each line carries a line number and a
         // parse tag before the file's own text, so "exact bytes" was wrong about the line and
-        // right only about the part after the divider (finding 15a).
+        // right only about the part after the divider (finding 15a). The number is 1-based, so
+        // it is the same line `sed -n Np`, `grep -n` and an editor's Go to line would name
+        // (finding F-08).
         //
         // The glyph is named rather than shown. While the section is collapsed the divider is
         // not on screen, so the caption ended on a bare vertical bar and read as a sentence
@@ -406,14 +409,14 @@ public sealed partial class SessionWorkspaceView : UserControl
         };
         ToolTip.SetTip(
             hint,
-            "Each line shows its source sequence number and how the parser read it, then the "
+            "Each line shows its line number in the file and how the parser read it, then the "
             + "file's own bytes after the divider.");
         var header = _sourceHeader = new Button
         {
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0, 4),
-            MinHeight = _mobile ? 44 : 0,
+            MinHeight = TouchTarget.For(_mobile),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Left,
             Content = new StackPanel
@@ -783,7 +786,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         await clipboard.SetTextAsync(entry.Message);
-        _status.Text = $"Copied {entry.Message.Length:N0} characters";
+        _viewModel.ReportTransientStatus($"Copied {entry.Message.Length:N0} characters");
         Notify($"Copied {entry.Message.Length:N0} characters of this entry.");
     }
 
@@ -1345,7 +1348,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_rawPlaceholder is { } description)
         {
             description.Text = timelineCount is > 0
-                ? $"Reading the first of {timelineCount:N0} entries in the selected timeline bar."
+                ? $"Reading the first of {Counted.Entries(timelineCount.Value)} in the selected timeline bar."
                 : "Reading the selected entry.";
         }
 
@@ -1420,6 +1423,6 @@ public sealed partial class SessionWorkspaceView : UserControl
             AutomationProperties.SetName(emptyCard, "Source context unavailable");
         }
 
-        _status.Text = $"Source unavailable · {exception.Message}";
+        _viewModel.ReportTransientStatus($"Source unavailable · {WorkspaceViewModel.FriendlyMessage(exception)}");
     }
 }

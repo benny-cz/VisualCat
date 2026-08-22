@@ -13,6 +13,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
+using VisualCat.Domain;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
@@ -348,7 +349,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         };
         Grid.SetColumn(countText, 1);
         row.Children.Add(countText);
-        var subject = $"{Singular(heading)} {text}, {count:N0} entries";
+        var subject = $"{Singular(heading)} {text}, {Counted.Entries(count)}";
         var include = FacetButton("+", state == FacetState.Included, IncludeActive, dimension, key, subject, exclude: false);
         Grid.SetColumn(include, 2);
         row.Children.Add(include);
