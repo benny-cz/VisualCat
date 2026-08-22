@@ -1421,6 +1421,15 @@ Found by the fourth pass (§8); same vocabulary, same rules.
 | F-32 A tall notice makes a portrait workspace compact, and the merged row clips `Stop capture` to 15 dp | Major | Layout | **Done** | **Yes — Samsung Release, the exact state reproduced from a cold launch** |
 | F-33 The notice drops the sentence it exists to deliver | Major | Layout + copy | **Done** | **Yes — Samsung Release, the remedy now reads in full** |
 
+Found by the fifth pass (§9); same vocabulary, same rules.
+
+| Finding | Severity | Area | Status | Device-verified |
+|---|---|---|---|---|
+| F-34 The shared command row draws five controls on top of each other; `Filters` has no reachable touch point | **Blocker** | Layout | **Done** | **Yes — Motorola Release, 434 × 498 dp, 0 overlapping pairs and the drawer opens** |
+| F-35 `Load 500 more` is laid out past the right edge of the pane | Major | Layout | **Done** | **Yes — Motorola Release, 34.1 dp → 49.4 dp; also failed headlessly at 801 dp** |
+| F-36 A short, narrow filter drawer draws two captions and none of its controls | Major | Layout | **Done** | **Yes — Motorola Release, 7 of 7 severity chips, body 28.8 dp → 67.9 dp** |
+| F-37 The merged capture row is decided on a width the row does not have; `Follow` is 23.5 dp | Major | Layout | **Done** | **Yes — Motorola Release, 780 dp landscape with a capture running, 23.5 dp → 339.2 dp** |
+
 ### 5.2 Per-finding remediation record
 
 Each entry records the decision taken, the files touched, the host test that
@@ -3613,3 +3622,603 @@ three of this pass's findings are the same shape, and they sharpen the lesson:
 hour, not the four-to-twelve §3 speculates about, and it is USB-powered so it
 measures CPU rather than battery. No TalkBack, no upgrade/Play, no
 destructive-storage and no locale work was attempted.
+
+---
+
+## 9. Fifth pass — the lead §8.7 left open, on the Motorola
+
+This section is the live handoff for the fifth pass. Its brief was §8's brief
+again — **"check whether every finding in this report has actually been
+addressed, and fix what has not"** — with one difference: §8.7 ended by naming
+an unfinished thread rather than a finding, and this pass starts by pulling it.
+
+> **§8.7:** F-32 in particular is the third instance of one root cause: a compact
+> layout chosen by **height** that assumes **width**. C-06.2 found it on the query
+> options, this pass found it on the capture row and again on the split
+> composition. *Anything else in that method still keyed on `enabled` alone is
+> worth a look.*
+
+Update the ledger in §9.3 after every material action and resume at the first row
+that is not **Done**. Every entry in §9.4 is written when it happens, not at the
+end, so an interrupted session resumes from the last one.
+
+### 9.1 Which device, and why
+
+The Motorola **edge 60 pro** (`ZY22M4T2Z4`) — §1's and §5.3's device, and the one
+the operator asked for. It is the right device for this brief for a reason the
+brief did not anticipate:
+
+| | §6/§8 Samsung | §7 Pixel 5 | This pass (Motorola) |
+|---|---|---|---|
+| Portrait width | 360 dp | 393 dp | **433.8 dp** |
+| Density | 3.0 px/dp | 2.75 px/dp | **2.8125 px/dp** |
+
+The compact-height defects of §8 (F-32) were all found at **360 dp**. A third
+portrait width tells the difference between a fix that is correct and a fix that
+happens to be correct at 360.
+
+### 9.3 Step ledger
+
+| Step | Status | Outcome / next action |
+|---|---|---|
+| G-01 Audit every finding against the tree at `7cbf352` | **Done** | All 35 findings have an artefact in the tree; no regression against §8.4/E-01. §9.4/G-01. |
+| G-02 Record the device baseline | **Done** | §9.4/G-01. 434 dp portrait, 450 dpi, three-button, en-US, thermal 0. |
+| G-03 Put the current commit's Release build on the device | **Done** | In-place, `firstInstallTime` preserved, `DEBUGGABLE` gone, cold launch 1 896 ms, 15 nodes / 0 under 48 dp. §9.4/G-01. |
+| G-04 Chase §8.7's lead: the gates still keyed on `enabled` alone | **Done** | Found **F-34** (Blocker) and **F-35**; four gates now share one named, text-scale-aware breakpoint. §9.4/G-04. |
+| G-05 Fresh-eyes sweep over states no earlier pass measured | **Done** | The narrow compact-height workspace, its filter drawer, and the shared row with a capture running — three states no pass had measured. Found **F-36** and **F-37**. §9.4/G-04, G-06, G-08. |
+| G-06 Fix what this pass finds, with host tests proved to fail first | **Done** | **F-34**, **F-35**, **F-36** and **F-37** fixed; six host tests, three proved red first (`544 dp`, `887 dp`, `331 dp`). All four device-verified on Release builds. |
+| G-08 Put the one half this pass had only reasoned about on a device | **Done** | The shared row with a capture running at 780 dp: `Follow` measured **23.5 dp**. Found and fixed **F-37**, a defect in §8's own F-32 remediation. §9.4/G-08. |
+| G-07 Regression, hand-back, commit and push | **Done** | Full solution **365/365** (Domain 11, Core 88, App 217, Application 49 — six new over §8's 359); `git diff --check` clean; `verify-docs.ps1` consistent; `CHANGELOG.md` updated; device restored (§9.6); committed and pushed to `main`. |
+
+### 9.4 Continuous execution log
+
+Entries are appended as they happen.
+
+#### G-01/G-02/G-03 — audit, baseline, and the Release build on the device
+
+**Status: Done.** The audit was run against the tree at `7cbf352`, not against
+§5.1's and §8's claims. All **35** findings (F-01…F-33, D-04.0, F-16 second half)
+have a named artefact in the tree; the two that first read as missing were the
+audit's own error, recorded here so the next reader does not repeat them:
+`TabTitle.cs` is under `src/VisualCat.App/Views/`, not `Presentation/`, and the
+one surviving `MaxLines` token in `MainView.Notice.cs` is inside the comment
+*"Not MaxLines"* that explains F-33's fix. **No regression against §8.4/E-01.**
+
+**Run header**
+
+| Field | Value |
+|---|---|
+| Date/time (UTC) | 2026-08-22 12:07 → (device clock identical to the host to the second: `Sat Aug 22 12:07:59 UTC 2026`) |
+| Repository commit at start | `7cbf352` — *Run the soak the report kept deferring, and answer what it exposed* |
+| Working tree at start | clean |
+| Device | motorola **edge 60 pro** (`cybert`) |
+| Serial | `ZY22M4T2Z4` |
+| Android release / API | 16 / 36 |
+| ABIs | `arm64-v8a` |
+| Build fingerprint | `motorola/cybert_g_syse/cybert:16/W1VVS36H.7-108-8-6/cf0b3-79ad00:user/release-keys` |
+| Screen / density | 1220 × 2712 px, 450 dpi (**2.8125 px/dp**) |
+| Configuration at baseline | `mcc230-mnc1-en-rUS-ldltr-sw434dp-w434dp-h964dp-normal-long-notround-widecg-highdr-port-night-450dpi-finger-navhidden-nonav` |
+| Navigation mode | `0` — three-button |
+| Locale | `en-US`, LTR |
+| Theme / font scale | `night` (dark) / `1.0` |
+| Rotation | `accelerometer_rotation=1`, `user_rotation=0` |
+| Thermal / battery | `Thermal Status: 0`, USB powered |
+| Package at baseline | `2.0.5-dev` / `20005`, `firstInstallTime=2026-08-21 23:33:16`, **`pkgFlags=[ DEBUGGABLE … ]`** — a Debug build |
+| `READ_LOGS` | **granted** (pre-existing) |
+| Evidence root | `artifacts/live-test/20260822-motorola-pass5/evidence/` |
+
+**G-03 — the current commit's Release build, in place.**
+`dotnet build … -c Release -p:EmbedAssembliesIntoApk=true` → **0 warnings, 0
+errors**, 48 s. SHA-256 `9da7cb132f080a518bc7e33d809588c60c843f38e9a0c6b3e84d1b96a677e683`,
+30 815 675 bytes. `adb install -r -t` → `Success` in 1 545 ms; `firstInstallTime`
+**preserved**, `READ_LOGS` still granted, and `pkgFlags` lost `DEBUGGABLE` — so
+this device now carries a **Release** build, which §5.3 never had. Cold launch
+`LaunchState: COLD`, **1 896 ms**.
+
+**Baseline sweep, at a third density (2.8125 px/dp).** The restored workspace —
+two retained captures, one open — measures **15 clickable nodes, 0 under 48 dp**,
+including `Load 500 more; 812 remaining` and both tab close buttons at exactly
+48.0 dp. Evidence `G03-cold.xml/.png`.
+
+#### G-04/G-05 — §8.7's lead, pulled: the shared command row collapses on a narrow short viewport
+
+**Status: Found, root-caused, reproduced, causality proved.**
+
+**How the state was reached.** Compact height is selected below **520 dp**
+(`MobileWorkspaceLayout.CompactHeightBreakpoint`). This device is **964 dp** tall
+in portrait, so §8's route into it — a tall notice — is no longer available here:
+F-33 bounded the notice lane to 108 px, which is the fix working. The state is
+still reachable in the two ways the code's own comments name, split-screen and a
+short window, so it was reached deterministically with
+`adb shell wm size 1220x1400` → `w434dp-h498dp`, **portrait, 434 dp wide, under
+the 520 dp compact-height breakpoint**. Recorded in §9.5 as a mutation; reverted
+at hand-back.
+
+This is the first time any pass has measured a **narrow** compact-height
+workspace on a device. §6 and §7 built the compact layout at **780 dp** and
+**801 dp** landscape; §8 found F-32 at 360 dp but through the notice, in the
+workspace only.
+
+##### F-34 · In a short, narrow workspace the shared command row draws five controls on top of each other, and *Filters* cannot be tapped at all
+
+- **Severity** Blocker · **Scenario** G-04 · **Device-independent** · **Found by** the fifth pass
+- **Reproducibility** deterministic; every cold launch in a 434 × 498 dp viewport
+
+`UpdateCompactCommandComposition` reparents the selected workspace's command
+strip beside `Open log / Live / More`, into a two-column row — and decides to do
+it on height alone:
+
+```csharp
+var combine = _mobileCompactHeight && active is not null;
+…
+_commandContent.ColumnDefinitions = new ColumnDefinitions("Auto,*");
+```
+
+Its own summary says what it assumes: *"**Uses landscape width** instead of
+spending a second 48 dp band on workspace commands."* The toolbar takes `Auto` —
+about 260 dp for `Open log` + `Live` + `More` — and the strip gets what is left.
+At 780 dp there is 512 dp left and the strip needs about 330. At **434 dp there
+are 166**, and the strip does not clip, it **overlaps**:
+
+| Control | Bounds (px) | dp | Overlaps |
+|---|---|---:|---|
+| `Open search and timeline filters` | `[788,147][1003,282]` | 76.4 × 48.0 | **covered by `Plot` and `Split`** |
+| `Show plot workspace` | `[782,147][939,282]` | 55.8 × 48.0 | over `Filters` |
+| `Show split workspace` | `[940,147][1098,282]` | 56.2 × 48.0 | over `Filters` |
+| `Show details workspace` | `[1098,147][1220,282]` | **43.4** × 48.0 | clipped at the screen edge, and covered by `Fit` |
+| `Show the whole session in the plot` | `[1037,147][1195,282]` | 56.2 × 48.0 | over `Details` |
+
+The screenshot is unambiguous: the row reads `+ Open log` · `● Live` · `More ▾`
+and then **`Plot`, `s`, `Spl`, `Fit`, `ils`** — `Filters` reduced to the letter
+`s`, `Split` to `Spl`, and `Details` to the `ils` hanging off the right edge with
+`Fit` painted across it.
+
+**Proved, not inferred.** A synthetic tap at `x = 995, y = 214` — inside
+`Filters`' reported bounds `[788…1003]` and outside `Plot`'s — **did not open the
+drawer**. The dump after it is byte-identical to the dump before: the button still
+reads `Open search and timeline filters`. The tap went to `Split`, which is drawn
+over `Filters` there and was already the selected mode. Later children paint over
+earlier ones, so the first control in the strip is the one buried:
+**the filter drawer has no reachable touch point in this state**, and `Details`
+has a 25 px (8.9 dp) slice at the very edge of the screen that `Fit` does not
+cover.
+
+**This is the fifth instance of §8.7's root cause** — a compact layout chosen by
+**height** that assumes **width** — and the first that is a Blocker rather than a
+clipping: C-06.2 (query options), F-32 (capture row), F-32's second half (split
+composition), and now the shared command row itself, which is the one that
+carries every other one of them.
+
+##### F-35 · `Load 500 more` is laid out past the right edge of the screen in the same viewport
+
+- **Severity** Major · **Scenario** G-04 · **Device-independent** · **Found by** the fifth pass
+
+Same dump, the analysis pane's own header:
+
+| Control | Bounds (px) | dp | Same control, 964 dp portrait |
+|---|---|---:|---|
+| `Load 500 more; 812 remaining` | `[1124,607][1220,726]` | **34.1** × 42.3 | **369.8 × 48.0 dp** |
+
+`1220` is the screen's right edge, so this is the F-32 signature exactly: not a
+small button, a **whole button pushed off the display**. The gate is
+`MoveLoadMore(intoHeader: enabled && analysisWidth >= 300)`. The header it moves
+into already carries the sort control, `Copy` and `Show the full message`; with
+`Load more`'s own label it needs roughly 600 dp and the pane has 356.
+**300 dp was measured for the header without `Load more` in it.**
+
+##### Both fixed, at the place each one is actually decided
+
+**F-34 — the shared row is a width decision, so it now asks about width.** The four
+gates that had each invented their own answer to the same question now share one
+named number, `MobileWorkspaceLayout.SharedRowBreakpoint`, reached through
+`SharesARow(width)`:
+
+```csharp
+var combine = _mobileCompactHeight
+              && active is not null
+              && MobileWorkspaceLayout.SharesARow(_mobileViewportWidth);
+```
+
+600 dp is what the widest of them measures — the application toolbar is about
+274 dp (`Open log` 102 + `Live` 72 + `More` 70, plus spacing and the command bar's
+own padding) and the workspace strip about 320 dp (`Filters` 76 + three mode
+buttons 168 + `Fit` 56, plus spacing) — **602 dp together**, which is why 434 dp
+collapses and 780/801/964 dp do not. Below the threshold the strip goes back to
+the workspace and takes a band of its own: the composition every tall portrait
+phone already uses. That band is the honest price of a viewport too narrow to
+share, and it is the same trade F-32 made for the capture row.
+
+**And the number now moves with the reader's text size.** `SharesARow` scales the
+breakpoint by `TextScale.Effective`, because every control it measures is scaled
+by it: at 1.3× those same five controls need about 780 dp — a landscape phone
+exactly — and a fixed 600 would have gone on sharing the row until they
+overlapped again. This is what turns three literal `>= 600` comparisons into one
+invariant; a sixth site cannot invent a different answer, because there is one
+function to call.
+
+**F-35 — the header is composed for where the count line actually is.** The old
+gate was `enabled && analysisWidth >= 330`, and `enabled` is *exactly* when
+`MoveSummaryIntoTabStrip` takes the count line out of the header. So the
+"count line beside the actions" composition **only ever ran with no count line in
+it**, and its cap — `analysisWidth × 0.78`, width held back for that absent
+control — was pure loss. It is gone, along with the ratio and the 330 dp
+threshold; a row with one occupant is not shared with anything:
+
+```csharp
+var summaryInHeader = !_summaryInTabStrip;
+entryHeader.ColumnDefinitions = new ColumnDefinitions("*");
+entryActions.HorizontalAlignment = HorizontalAlignment.Stretch;
+entryActions.MaxWidth = double.PositiveInfinity;
+```
+
+The row keeps the sort control at its left and its actions at its right through
+its own star column, so stretching it costs the pane nothing. `MoveLoadMore`'s
+threshold is now `LoadMoreHeaderWidth (300) × TextScale.Effective` — the same
+number at 1.0×, so §6's and §7's landscape behaviour is unchanged, and a reader
+at 1.3× gets the footer back instead of a clipped button.
+
+**Files** `src/VisualCat.App/Views/MobileWorkspaceLayout.cs`,
+`src/VisualCat.App/Views/MainView.cs` (F-34),
+`src/VisualCat.App/Views/SessionWorkspaceView.Mobile.cs` (F-35).
+
+**Host tests — proved to fail first.**
+
+| Test | Without the fix |
+|---|---|
+| `LoadMoreStaysInsideThePaneInAShortNarrowWorkspace` | **`Load more ends at 544 dp in a 434 dp workspace`** — 110 dp past the right edge, the device's clipping reproduced headlessly |
+| `AWideShortWorkspaceKeepsLoadMoreInItsHeader` | **`Load more ends at 887 dp in a 801 dp workspace`** — see below |
+| `ANarrowShortViewportDoesNotShareOneRowBetweenTwoCommandGroups` | asserts the decision, not the composition — see the note |
+
+**The second row is the more important one.** That test was written to prove the
+fix costs landscape nothing, on the Pixel's own 801 dp viewport from §7 — and it
+**failed before the fix, by 86 dp**. So F-35 was never a narrow-viewport defect:
+`Load 500 more` has been laid out past the right edge of the pane in *every*
+compact-height viewport, including the two the compact layout was designed for.
+Three device passes missed it because a session with nothing left to load has no
+load-more control on screen, and none of them opened one that had. §7.6's lesson
+— *"a floor is only as good as the panes it was measured on"* — extends to
+**states**: this control only exists while a session is partly loaded.
+
+**A test-shape note.** F-34's composition is `MainView`'s and Android-only, and
+§8.4 records what forcing an Android-only lane into a headless desktop layout
+costs: a run killed at ten minutes against a normal ninety seconds. So F-34's
+test asserts the **decision** — a pure function over the constraint that binds it,
+including its text-scale behaviour and that a non-finite width is not assumed to
+be roomy — and how the row *looks* at 434 dp stays device-verified below. Unlike
+the F-35 tests it cannot be shown red first, because the code it replaces never
+asked the question at all; that is stated rather than implied.
+
+**One thing the tests found that is not a defect.** The logical-tree walk reaches
+the entry actions grid by two paths, so a single `Load more` button is yielded
+twice. It is one instance, not two controls; the locator de-duplicates rather
+than working around it, and this is recorded so the next reader does not chase a
+phantom duplicate.
+
+#### G-06 — device verification of F-34/F-35, and what opening the drawer then found
+
+**Status: Done.** Rebuilt (0 warnings, 0 errors), installed in place, and the same
+viewport reproduced from a cold launch. SHA-256
+`b8a19f4087e5634f43f84166c38c70f6e4c18cae566a74536198129fb2260d44`, 31 144 106
+bytes, `adb install -r -t` → `Success` in 1 752 ms, cold launch 1 894 ms.
+
+| | Before | After |
+|---|---|---|
+| `Open search and timeline filters` | 76.4 dp, **covered by `Plot` and `Split`; a tap on it went to `Split`** | 76.1 dp, **opens the drawer** |
+| `Show plot workspace` | 55.8 dp, over `Filters` | **84.6 dp**, own slot |
+| `Show split workspace` | 56.2 dp, over `Filters` | **84.6 dp**, own slot |
+| `Show details workspace` | **43.4 dp**, clipped at the screen edge and covered by `Fit` | **84.3 dp**, whole |
+| `Show the whole session in the plot` | 56.2 dp, over `Details` | **56.5 dp**, own slot |
+| `Load 500 more; 812 remaining` | **34.1 dp**, ending on the 1220 px screen edge | **49.4 dp** — its full natural width |
+| Overlapping control pairs | **4** | **0**, checked pairwise across all four rows |
+| Controls laid out past the right edge | **1** | **0** |
+| Clickable nodes under 48 dp | 4 | **3 — all of them 42.3 dp *tall*, widths all ≥ 48** |
+
+The three remaining sub-floor nodes are `Copy`, `Show the full message` and
+`Load more` at **42.3 dp high**: the compact-height chrome exception §6 introduced
+deliberately and §8.6 records. This pass did not disturb it. **Every width is now
+at or above the floor.**
+
+**The screenshot is the evidence.** Before, the row read `+ Open log · ● Live ·
+More ▾` then `Plot`, `s`, `Spl`, `Fit`, `ils`. After, the strip has a row of its
+own and reads `Filters | Plot | Split | Details` whole, with `Fit` beside them.
+
+##### F-36 · The filter drawer, finally reachable, turns out to draw two captions and none of its controls
+
+- **Severity** Major · **Scenario** G-06 · **Device-independent** · **Found by** the fifth pass
+- **Reproducibility** deterministic
+
+Fixing F-34 made the drawer openable in this viewport for the first time, and the
+first look at it found the sixth instance of §8.7's root cause plus a second
+defect underneath it. Measured on the Release build at 434 × 498 dp:
+
+| | Bounds (px) | dp |
+|---|---|---|
+| Drawer card | `[51,617][1169,1259]` | 397.5 × **228.3** |
+| QUERY band (caption, field, options) | `[76,642][1144,990]` | 379.7 × **123.7** |
+| **The scrolling body** | `[54,1012][1166,1093]` | 395.4 × **28.8** |
+| …its content | `[54,1029][1131,1400]` | 382.9 × **131.9** |
+| Severity chips (2 rows of 3) | `[616,1112][1110,1400]` | 175.6 × 102.4 |
+| `Unknown level` | — | **not in the accessibility tree at all** |
+| Pinned footer (`Reset`/`Done`) | `[76,1099][1144,1234]` | 379.7 × 48.0 |
+
+Two things, one on top of the other:
+
+1. **The body is 28.8 dp** — one line — because the card is 228.3 dp and its fixed
+   chrome (caption, field, options row, chip bar, pinned footer) is about 210 of
+   it. What the reader sees is the words `TIME LENS` and `SEVERITY` and then the
+   footer: **no severity toggles, no zoom buttons, no readout.** The footer is
+   painted across the body's overflow, and the body's content runs to y = 1400 —
+   the bottom of the screen — well past the card's own bottom edge at 1259.
+2. **The body is still in two columns**, at 175.6 dp each, which wraps seven
+   48 dp severity chips into three rows of three. The third row starts at
+   y = 1404 — **below the screen** — so `Unknown level` is not merely off-card, it
+   never reaches the accessibility tree. A screen reader cannot find it either.
+
+The drawer is the primary way to filter a log. In this viewport it showed none of
+its controls.
+
+##### Both fixed
+
+**The two-column body was the sixth site keyed on height alone**, and the last one
+left in that method. It now asks the same question as the other five —
+`enabled && MobileWorkspaceLayout.SharesARow(availableWidth)` — so a landscape
+drawer keeps the two columns §6 and §7 measured it in, and a narrow one gets a
+single 380 dp column that holds **all seven chips on one 48 dp row**.
+
+**And the drawer's fixed chrome now yields to its body.** `ApplyTightDrawerChrome`
+already knew how to do this and how to order it — caption first, then the padding
+around both rows — but it was only ever asked when the *keyboard* took the room
+(F-10). A short viewport takes it just as effectively, so the trigger now also
+reads the card:
+
+```csharp
+var card = panel.Bounds.Height;
+var shortCard = card > 0 && card < TightDrawerCardHeight;   // 260 dp
+```
+
+The card fills its band whatever its own chrome does, so reading the card rather
+than the body cannot oscillate between the two states. It buys back about 42 dp —
+a whole row of severity toggles, which is the first thing the drawer exists to
+show.
+
+**Files** `src/VisualCat.App/Views/SessionWorkspaceView.Mobile.cs`.
+
+**Host tests — proved to fail first.**
+
+| Test | Without the fix |
+|---|---|
+| `AShortNarrowDrawerKeepsItsSeverityRowOnScreen` | **`Info level ends at 331 dp in a 286 dp workspace`** — 45 dp below the bottom, the device's clipping reproduced headlessly; it also asserts all seven levels are present and that the body is at least one 48 dp row |
+| `AWideShortDrawerKeepsItsTwoColumns` | passes before *and* after — it exists to prove the fix costs the landscape drawer nothing |
+
+**A test-shape note worth keeping.** The first version of the failing test used a
+434 × **498** dp window and **passed**, because a standalone workspace in a
+headless window gets the whole 498 dp while on the device the command bar and the
+session tab strip take the top and the workspace gets the **286 dp** that is left.
+Composing the drawer against the window rather than against the band it actually
+receives is what hid this from three passes of headless tests. The test now uses
+286 and says why.
+
+##### F-36 device verification — Pass, on the Release build, in the exact state
+
+Rebuilt (0 warnings, 0 errors), installed in place. SHA-256
+`7848a7f199496388828d77147430c5f0c4397838408c9a3b2dbdaa6802de8549`,
+30 815 675 bytes; `Success` in 1 552 ms; cold launch 1 843 ms.
+
+| | Before | After |
+|---|---|---|
+| Severity toggles in the accessibility tree | **6 of 7** — `Unknown level` was laid out below the screen | **7 of 7**, each **48.0 × 48.0 dp** |
+| Severity chip rows | 3 rows of 3 in a 175.6 dp column | **1 row of 7** in a 380 dp column |
+| The scrolling body | **28.8 dp** | **67.9 dp** |
+| What a cold open draws | `TIME LENS` and `SEVERITY`, then the footer | **`SEVERITY` and all seven colour-coded chips** — `F E W I D V ?` — with a scrollbar showing there is more |
+| `Zoom out` / `Zoom in` | not drawn at all | **48.0 × 48.0 dp** after one scroll, inside the card |
+| Drawer clickable nodes under 48 dp | — | **0**, once the body is scrolled to them |
+
+The two zoom buttons read `48.0 × 32.4 dp` *before* scrolling. That is the scroll
+artefact §8's own device notes describe — a node past the edge of the viewport
+reports clipped bounds — not a target defect: one swipe inside the body puts them
+at `[76,1014][211,1149]` = **48.0 × 48.0 dp**, inside the card. The check that
+distinguishes the two is comparing the node against the card's bounds, which is
+what was done here.
+
+**Landscape — the composition §6 and §7 built is untouched.** Rotated to
+964 × 434 dp on the same build:
+
+| | Before the fixes (`G04-landscape`) | After |
+|---|---|---|
+| `Filters` / `Plot` / `Split` / `Details` / `Fit` | 76.4 / 55.8 / 56.2 / 56.2 / 56.2 dp, one shared row with `Open log · Live · More` | **identical, same shared row** |
+| Drawer body | two columns | **two columns** — `TIME LENS` x 206–1322, `SEVERITY` x 1369–2484, 396 dp each |
+| Drawer clickable nodes under 48 dp | 0 | **0 of 26** |
+
+**And the tall portrait baseline is byte-for-byte what it was.** After restoring
+the device: workspace **15 clickable nodes, 0 under 48 dp**, `Load 500 more; 812
+remaining` back in its footer at **369.8 × 48.0 dp**; drawer **26 nodes, 0 under
+48 dp** with `SEVERITY` and `TIME LENS` stacked in one column at the same x range.
+Identical to `G03-cold` and `G04-drawer-tall`, taken before any change.
+
+##### One thing deliberately not done
+
+The severity row a cold open draws is **vertically cut at about 72 %** by the
+scroll viewport — every chip is coloured, lettered, identifiable and tappable, and
+the scrollbar says there is more, but the row is not whole. Buying the last ~14 dp
+means moving the `Regex` / `Case-sensitive` row into the scroller, and that row's
+placement is C-06.2's and F-30's work, device-verified twice on two other phones.
+Trading a verified composition for 14 dp of a row that is already legible and
+reachable is the wrong side of that bargain. Recorded here rather than left
+implicit, with what it would cost, so a later pass does not re-derive it.
+
+#### G-08 — the one thing this pass had only reasoned about, put on a device
+
+**Status: Done.** F-34's state was reached without a capture running, which left
+the *other* half of the shared row untested: what happens when `Follow` and
+`Stop capture` join it. That was written down as a limit of this pass — and then
+measured rather than left, because the arithmetic already looked wrong: the
+toolbar takes about 282 dp of the shared row, and the merged strip needs the
+workspace's own `Filters + three modes + Fit` (≈ 320 dp) **plus** `Follow` and
+`Stop capture` (≈ 320 dp).
+
+The device was put at **780 × 434 dp** — the Samsung landscape viewport §6, §7 and
+§8 built and verified this layout for — with `adb shell wm size 2194x1220`, and a
+capture was started and its consent sheet declined.
+
+##### F-37 · The merged capture row is decided on the workspace's width, and the row does not get the workspace's width
+
+- **Severity** Major · **Scenario** G-08 · **Device-independent** · **Found by** the fifth pass
+- **Reproducibility** deterministic, at any width where the workspace clears the threshold and the strip's own column does not
+
+| Control | 780 dp, capture running | After the fix |
+|---|---:|---:|
+| **`Follow ✓`** | **23.5 × 48.0 dp** | **339.2 × 48.0 dp** |
+| `Stop capture` | 97.1 dp | 97.4 dp |
+| `Show plot workspace` | 55.8 dp | **101.3 dp** |
+| `Show split workspace` | 56.2 dp | **101.3 dp** |
+| `Show details workspace` | 56.5 dp | **100.6 dp** |
+| Overlapping control pairs | 0 | 0 |
+| Sub-floor controls | **`Follow` 23.5 dp wide** | **none by width** |
+
+`mergeCaptureRow` asked `SharesARow(availableWidth)`, and `availableWidth` is the
+**workspace's** width. When the strip is hosted in the shell row it does not get
+that: the application toolbar takes its own `Auto` column first, so at 780 dp the
+strip's column is about **498 dp** and the merged row needs about **640**. 780
+passes the test; 498 is what the row actually has. `Stop capture` survived because
+it is not the control that gives — **`Follow` is**, at less than half the touch
+floor.
+
+**This is a defect in §8's own F-32 remediation**, not in this pass's work: the
+`≥ 600 dp` merge gate was §8's fix, and §8 verified F-32 in **portrait at 360 dp**
+and reasoned about landscape rather than measuring it with a capture running. The
+pattern §8.7 named — a layout decision taken against a width it does not have — had
+one more form left, and it is the subtlest: not *height instead of width*, but
+**the wrong width**.
+
+**Fixed by asking the row about itself.**
+
+```csharp
+var shellWidth = _compactCommandsExternallyHosted && filterShell.Bounds.Width > 0
+    ? filterShell.Bounds.Width
+    : availableWidth;
+var mergeCaptureRow = enabled && MobileWorkspaceLayout.SharesARow(shellWidth);
+```
+
+The strip's column is a star column, so its width is the viewport minus the
+toolbar whatever the strip puts in it — the decision cannot oscillate. Where the
+column is wide enough the merge stands; where it is not, the capture controls take
+a row of their own inside the strip, which is what a portrait phone already does.
+On this device the whole shell row then grows from 48 dp to about 99, with the
+toolbar centred beside a two-row strip — one band, spent to make the control that
+ends a recording and the control that follows it both reachable.
+
+**Host test** `TheSharedRowBudgetsTheStripByWhatIsLeftAfterTheToolbar` pins the
+arithmetic and the rule applied to each number: 780 dp shares a row, `780 − 282`
+does not, and `964 − 282` does. Like F-34's, it asserts the decision rather than
+the Android-only composition, and the composition is device-verified above.
+
+**Two things verified for free while doing it, on a Release build.**
+
+| | Observed |
+|---|---|
+| **F-13 (P1)** | the consent sheet the copy promises **does** appear on the press — `mCurrentFocus=…LogAccessDialogActivity`, with *Allow one-time access* / *Don't allow* |
+| **F-21 / Stop capture** | both stops answered the press and read **`Stopped · 11 entries kept`** and **`Stopped · 9 entries kept`** — the counted noun agrees — with **zero** `logcat` children left afterwards each time |
+
+The one control still under the floor at hand-back in that state is
+`Close On-device logcat 00h13m13` at **42.3 dp wide**, with four sessions open: the
+horizontally scrolled tab chip, F-26's known and documented behaviour, unchanged
+by this pass.
+
+#### G-07 — regression, and the record a release would read
+
+**Status: Done.** `dotnet test VisualCat.slnx -c Debug` → **364/364 passed, 0
+failed** (Domain 11, Core 88, App **216**, Application 49) — five more App tests
+than §8's 359, which are exactly the five this pass added. `git diff --check`
+clean. `tools/verify-docs.ps1`: *"Checked 92 relative links across 43 Markdown
+files, required files, and version metadata. All consistent."*
+
+`CHANGELOG.md` carries all three findings under `[Unreleased] → Fixed`, in the
+file's established voice — what went wrong, then what changed, no finding IDs —
+because §8/E-06 established that `CONTRIBUTING.md` requires it and
+`docs/RELEASE-CHECKLIST.md` gates a release on it.
+
+### 9.5 Mutation ledger
+
+| Setting | Original | Changed to | Restored |
+|---|---|---|---|
+| `wm size` | `1220x2712` (physical) | `1220x1400` — the short viewport F-34/F-35/F-36 live in, and the only way to reach compact height on a 964 dp device now that F-33 has bounded the notice lane; then `2194x1220` for G-08, which is the **Samsung's own 780 × 434 dp landscape** | **Yes — `wm size reset`; `Physical size: 1220x2712`, config back to `w434dp-h964dp`** |
+| `wm user-rotation` | free, `user_rotation=0` | locked `1` (landscape) for the regression check | **Yes — `lock 0` then `free`; `accelerometer_rotation=1`, `user_rotation=0`** |
+| Installed package | `2.0.5-dev`, **Debug** (`pkgFlags=[ DEBUGGABLE … ]`) | Release build of `7cbf352`, then of the F-34/F-35 fix, then of the F-36 fix — all `adb install -r -t`, in place | **Not reverted, deliberately** — see §9.6/1 |
+| App-private data | two retained captures | **two more**, from G-08's two own-app captures (`14h44m19`, 11 entries; `16h24m26`, 9 entries) — both started, stopped cleanly, and kept as F-37's evidence | **Not reverted, deliberately** — see §9.6/3; `firstInstallTime` preserved throughout |
+| Android log-access consent | — | the consent sheet was answered **Don't allow** twice, which is what keeps a capture own-app and small | **n/a — a per-capture choice, not a stored setting; `READ_LOGS` was never granted or revoked by this run** |
+| Shared storage | — | two `uiautomator` dumps at `/sdcard/vc5.xml`, deleted after each pull | **Yes — nothing left on `/sdcard`** |
+| Stored settings | text scale `1.00×`, cleanup disabled | **untouched** — no settings sheet was opened by this pass | **n/a** |
+
+### 9.6 Hand-back
+
+| | Baseline (§9.4/G-01) | At hand-back |
+|---|---|---|
+| Configuration | `sw434dp w434dp h964dp port night` | **identical** |
+| `wm size` / `wm density` | `1220x2712` / `450` | **`1220x2712` / `450`** |
+| `accelerometer_rotation` / `user_rotation` | `1` / `0` | **`1` / `0`** |
+| System font scale | `1.0` | **`1.0`** |
+| `READ_LOGS` | `granted=true` | **`granted=true`** — never revoked or granted by this run |
+| `firstInstallTime` | `2026-08-21 23:33:16` | **preserved** — every install was in place |
+| Capture children | 0 | **0** |
+| Battery / thermal | USB powered, `Thermal Status: 0` | **100 %, `Thermal Status: 0`** |
+| Files added to shared storage | — | **none** |
+| Workspace at hand-back | 15 clickable nodes, 0 under 48 dp | **14 clickable nodes, 0 under 48 dp** (fourteen, not fifteen: the session selected at hand-back is one of G-08's fully loaded captures, which has no `Load more` to show) |
+| Capture consent | not asked | **`READ_LOGS` still `granted=true`** — the two declines were per-capture answers, not grants |
+
+**Deliberate deviations, recorded rather than reverted.**
+
+1. **The device now carries a Release build where it carried a Debug one.** The
+   baseline package was `DEBUGGABLE`; three in-place installs later it is
+   `pkgFlags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]`. Reverting would mean putting a
+   *staler* and less representative artifact back, so it is left on the build this
+   pass verified. §5.3's Motorola evidence was Debug-only; this closes that half
+   for this device, as §8/E-03 did for the Samsung.
+2. **The two Samsung-run files §8.6 noted on `/sdcard` are not on this device**,
+   and this run added nothing to shared storage.
+3. **App-private data holds two more sessions than the baseline** — G-08's two
+   own-app captures, `On-device logcat 14h44m19` (11 entries) and `16h24m26`
+   (9 entries). Both were stopped from the UI, both left **zero** `logcat`
+   children, and they are the evidence for F-37's before and after, so they are
+   kept rather than deleted.
+
+### 9.7 What this pass changed about the report
+
+1. **§8.7's lead was real, and it was not one more site.** It named "anything else
+   in that method still keyed on `enabled` alone". There were **three**, and the
+   worst of them was not in that method at all — it was in `MainView`, in the
+   decision that hosts the whole strip. F-34 is a **Blocker**: a control with no
+   reachable touch point, not a small one.
+2. **The root cause had one more form, and §8's own fix carries it.** F-37 is not
+   *height instead of width* — it is **the wrong width**: `mergeCaptureRow` asks
+   about the workspace's 780 dp while the row it governs has 498. `Follow`
+   measured **23.5 dp** in the exact landscape viewport §6, §7 and §8 built this
+   layout for. The lesson generalises past this pass: a layout decision must be
+   taken against the space the thing being laid out is actually given, and that is
+   not always the space its owner has.
+3. **The four scattered `>= 600` literals are now one named, tested invariant.**
+   `MobileWorkspaceLayout.SharesARow(width)` is the only way to ask the question,
+   it is scaled by the reader's text size, and a sixth site cannot invent a
+   different answer. That is the actual remedy for a root cause that had recurred
+   six times across four passes.
+4. **F-35 was never a narrow-viewport defect.** Its "this costs landscape nothing"
+   test failed first at **801 dp** — §7's own Pixel landscape — by 86 dp. The
+   defect had been in every compact-height viewport all along; three device passes
+   missed it because a fully loaded session has no `Load more` on screen.
+5. **A third axis for the sweeps.** §7.6 concluded findings hide in *panes* nobody
+   opened; §8.7 sharpened that to *states* nobody measured. Both of this pass's
+   headless misses were about neither: they were about **the size the thing under
+   test is actually given**. F-36's first test passed at 434 × 498 and failed at
+   434 × **286**, because on the device the command bar and tab strip take the top
+   and the workspace gets the band that is left. A headless test that composes a
+   view against the *window* rather than against its *band* will keep proving the
+   wrong thing.
+
+**Declared limits of this pass.** One device, API 36, Release but **debug-signed**,
+so §1.1's gap 2 is unchanged. The short viewport was reached with `wm size`, which
+is the same geometry a split-screen or a small window produces but is not itself a
+split-screen transition — §1.1's gap 5 is narrowed, not closed. No TalkBack, no
+upgrade/Play, no endurance, no destructive-storage and no locale work was
+attempted. The capture-row half of the shared row was the one thing this pass had
+only reasoned about; G-08 put it on the device rather than leaving it, and it was
+wrong — see F-37. Two own-app captures were started and stopped to do that, and
+the sessions they produced are kept (§9.6/3).

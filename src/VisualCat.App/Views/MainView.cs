@@ -90,6 +90,12 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private double _lastToolbarWidth = -1;
     private bool _reflowingToolbar;
     private bool _mobileCompactHeight;
+
+    /// <summary>
+    /// The viewport width the chrome was last composed for, so the shared-row decision can
+    /// read the constraint that actually binds it rather than only the one that selected it.
+    /// </summary>
+    private double _mobileViewportWidth = double.PositiveInfinity;
     private StackPanel? _recentList;
     private TextBlock? _recentHeading;
     private Control? _recentSection;
@@ -495,6 +501,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         var compactHeight = size.Width > size.Height || size.Height < MobileWorkspaceLayout.CompactHeightBreakpoint;
+        _mobileViewportWidth = size.Width;
         var sessionOpen = _tabs.Items.Count > 0;
         var compositionChanged = _mobileCompactHeight != compactHeight;
         _mobileCompactHeight = compactHeight;
@@ -524,6 +531,17 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// whole shared row yields to the drawer; Reset and Done then remain above even an IME that
     /// overlays rather than resizes the activity (F-09/F-10).
     /// </summary>
+    /// <remarks>
+    /// "Landscape width" was the assumption and height alone was the test, so a short
+    /// <em>portrait</em> viewport — split-screen, a short window, or a tall notice on a
+    /// smaller phone — reached it too. The toolbar takes <c>Auto</c>; at 434 dp that left the
+    /// strip 166 dp for about 330 dp of controls, and the strip does not clip, it overlaps:
+    /// the row read <c>Plot · s · Spl · Fit · ils</c>, and <c>Filters</c> — painted first, so
+    /// painted under — had no reachable touch point at all. A tap inside its own reported
+    /// bounds went to <c>Split</c> instead (finding F-34). Below the threshold the strip goes
+    /// back to the workspace and takes a band of its own, which is what every tall portrait
+    /// phone already does; that band is the honest price of a viewport too narrow to share.
+    /// </remarks>
     private void UpdateCompactCommandComposition()
     {
         if (!OperatingSystem.IsAndroid() || _commandBar is null)
@@ -534,7 +552,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var active = _tabs.SelectedItem is TabItem { Content: SessionWorkspaceView workspace }
             ? workspace
             : null;
-        var combine = _mobileCompactHeight && active is not null;
+        var combine = _mobileCompactHeight
+                      && active is not null
+                      && MobileWorkspaceLayout.SharesARow(_mobileViewportWidth);
 
         foreach (var item in _tabItems.Values)
         {

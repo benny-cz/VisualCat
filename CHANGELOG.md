@@ -14,6 +14,45 @@ screenshot says which build it came from.
 ## [Unreleased]
 
 ### Fixed
+- The workspace commands are reachable on a short, narrow screen. On a screen that
+  is short but wide - a phone in landscape - the app's own buttons and the
+  workspace's own buttons share one row, which saves a band of height worth having.
+  A screen can be short without being wide, though: in split-screen, in a small
+  window, or under a tall notice. There the shared row had about half the width the
+  two groups need, and rather than clipping they were drawn on top of each other -
+  the row read "Plot", "s", "Spl", "Fit", "ils", with Filters underneath the mode
+  buttons and no reachable touch point at all, so the filter drawer could not be
+  opened. Sharing a row is now decided by whether the row is wide enough to be
+  shared, and by how large the reader's text is, since both groups are made of
+  labels. A landscape phone keeps the row it had; a narrow one gives the workspace
+  commands a band of their own, which is what a tall portrait screen already did.
+- Follow and Stop capture stay usable while recording on a landscape phone. The
+  app's buttons and the workspace's buttons share one row when the screen is wide
+  enough, and the capture controls join them - but how wide the row is was measured
+  on the whole screen, and the row does not get the whole screen: the app's own
+  buttons take their share first. On a common landscape phone that left the row
+  about 500 dp for roughly 640 dp of controls, and Follow was squeezed to 23 dp,
+  less than half a usable touch target, while a recording was running. The decision
+  now asks the row how wide it actually is. A screen with room keeps everything on
+  one line; one without gives the capture controls a line of their own.
+- The filter drawer shows its filters on a short screen. Its severity toggles and
+  time-lens controls sat in two columns, which suits a landscape screen and leaves
+  about 175 dp per column on a narrow one - enough to wrap seven severity toggles
+  into three rows and push the last one off the bottom of the screen, where not
+  even a screen reader could find it. The scrolling part of the drawer had also
+  been squeezed to a single line, so the card showed the words "TIME LENS" and
+  "SEVERITY" and none of the controls they name. The columns now depend on the
+  width available, and when the card is short the drawer spends its own chrome -
+  the query caption and some padding - to keep a full row of severity toggles
+  visible. All seven now fit on one row.
+- "Load more" stays inside the entry list it belongs to. The header row it moves
+  into on a short screen was reserving width for the count line beside it, except
+  that on a short screen the count line has already moved to the tab strip - so
+  the reservation protected nothing and pushed the last control in the row past
+  the right edge of the pane instead. It was measured 34 dp wide against its
+  natural 49, ending exactly on the edge of the screen, and it overflowed in
+  landscape too, which had gone unnoticed because a fully loaded session has no
+  "Load more" to show. The header is now laid out for what is actually in it.
 - A capture can be stopped while the app is telling you something. A notice takes
   its height out of the workspace, and a long one - the notice shown when Android's
   log-access consent is declined, for instance - made the workspace short enough to

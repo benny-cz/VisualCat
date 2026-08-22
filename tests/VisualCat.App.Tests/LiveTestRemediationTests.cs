@@ -15,6 +15,7 @@ using VisualCat.App.Views;
 using VisualCat.Application.Ports;
 using VisualCat.Core.Query;
 using VisualCat.Domain;
+using VisualCat.Domain.Entries;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
@@ -924,6 +925,288 @@ public sealed partial class LiveTestRemediationTests
         Assert.Contains('…', long_);
         Assert.StartsWith("northlight", long_, StringComparison.Ordinal);
         Assert.EndsWith(".txt", long_, StringComparison.Ordinal);
+    }
+
+    // --------------------------------------------------------------- F-37 ---
+
+    /// <summary>
+    /// F-37 - the merged capture row was decided on the workspace's width, and the strip that
+    /// holds it does not get the workspace's width: the application toolbar takes its own
+    /// column first. At 780 dp - the landscape viewport §6, §7 and §8 built this layout for -
+    /// the strip has about 498 dp, the merged row needs about 640, and `Follow` measured
+    /// 23.5 dp on the device.
+    /// </summary>
+    /// <remarks>
+    /// The hosting itself is <see cref="MainView"/>'s and Android-only, so what is pinned here
+    /// is the arithmetic that makes the two numbers different, and the rule applied to each.
+    /// The composition is device-verified in §9.4/G-08.
+    /// </remarks>
+    [AvaloniaFact]
+    public void TheSharedRowBudgetsTheStripByWhatIsLeftAfterTheToolbar()
+    {
+        // Measured on the device at 780 dp landscape, with a capture running.
+        const double viewport = 780;
+        const double toolbar = 282;
+        var strip = viewport - toolbar;
+
+        // The viewport is wide enough to share a row at all - which is why the strip is
+        // hosted there in the first place, and why deciding on it looked right.
+        Assert.True(MobileWorkspaceLayout.SharesARow(viewport));
+
+        // The strip's own budget is not, so the capture controls keep a row of their own.
+        Assert.False(MobileWorkspaceLayout.SharesARow(strip));
+
+        // And a viewport that really can hold both still does.
+        Assert.True(MobileWorkspaceLayout.SharesARow(964 - toolbar));
+    }
+
+    // --------------------------------------------------------------- F-36 ---
+
+    /// <summary>
+    /// F-36 - the filter drawer in a short, narrow viewport. Two columns of 175.6 dp wrapped
+    /// the seven severity toggles into three rows and put the third below the bottom of the
+    /// screen, and the scrolling body was left 28.8 dp, so the drawer drew two captions and
+    /// none of the controls they name.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AShortNarrowDrawerKeepsItsSeverityRowOnScreen()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            // 286 dp, not 498: on the device the command bar and the session tab strip take
+            // the top of a 498 dp viewport and the workspace gets the band that is left. That
+            // band is what the drawer is composed against, so it is what this measures.
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(
+                FourEntryLog,
+                width: 434,
+                height: 286);
+            Filters(fixture).RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            fixture.Window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var toggles = fixture.View.GetLogicalDescendants()
+                .OfType<ToggleButton>()
+                .Where(toggle => AutomationProperties.GetName(toggle) is { } name
+                                 && name.EndsWith(" level", StringComparison.Ordinal))
+                .Distinct()
+                .ToList();
+
+            // Every severity the product filters by, including Unknown.
+            Assert.Equal(LogLevels.DisplayOrder.Length, toggles.Count);
+
+            foreach (var toggle in toggles)
+            {
+                var bottom = toggle.TranslatePoint(new Point(0, toggle.Bounds.Height), fixture.View);
+                Assert.NotNull(bottom);
+                Assert.True(
+                    bottom!.Value.Y <= fixture.View.Bounds.Height + 0.5,
+                    $"{AutomationProperties.GetName(toggle)} ends at {bottom.Value.Y:0.#} dp "
+                    + $"in a {fixture.View.Bounds.Height:0.#} dp workspace");
+            }
+
+            // And the body they sit in is at least a row tall, rather than a caption strip.
+            var body = fixture.View.GetLogicalDescendants()
+                .OfType<ScrollViewer>()
+                .Distinct()
+                .Single(view => view.GetLogicalDescendants().OfType<ToggleButton>().Any());
+            Assert.True(
+                body.Bounds.Height >= 48,
+                $"The drawer body is {body.Bounds.Height:0.#} dp tall");
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    /// <summary>
+    /// F-36, the other half - a short viewport that really is wide keeps the two columns §6
+    /// and §7 measured the drawer in.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AWideShortDrawerKeepsItsTwoColumns()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(
+                FourEntryLog,
+                width: 801,
+                height: 341);
+            Filters(fixture).RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            fixture.Window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var severity = fixture.View.GetLogicalDescendants()
+                .OfType<ToggleButton>()
+                .First(toggle => AutomationProperties.GetName(toggle) == "Fatal level");
+            var body = severity.GetVisualAncestors()
+                .OfType<Grid>()
+                .First(grid => grid.ColumnDefinitions.Count > 0 && grid.RowDefinitions.Count > 0);
+
+            Assert.Equal(2, body.ColumnDefinitions.Count);
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    // --------------------------------------------------------------- F-34 ---
+
+    /// <summary>
+    /// F-34 - the shared command row is a width decision. Compact height selected it and
+    /// nothing checked whether the row could hold two groups, so a 434 dp portrait workspace
+    /// drew five controls on top of each other and <c>Filters</c>, painted first and so
+    /// painted under, had no reachable touch point at all.
+    /// </summary>
+    /// <remarks>
+    /// The composition itself is <see cref="MainView"/>'s and Android-only, and §8.4 records
+    /// what forcing an Android-only lane into a headless desktop layout costs — the run hung
+    /// for ten minutes against a normal ninety seconds. So the decision is asserted here,
+    /// where it is a pure function over the constraint that binds it, and how the row looks
+    /// at 434 dp stays device-verified (§9.4).
+    /// </remarks>
+    [AvaloniaFact]
+    public void ANarrowShortViewportDoesNotShareOneRowBetweenTwoCommandGroups()
+    {
+        // The application toolbar is about 274 dp and the workspace strip about 320 dp, so a
+        // 434 dp portrait workspace is 168 dp short of holding both.
+        Assert.False(MobileWorkspaceLayout.SharesARow(434));
+        Assert.False(MobileWorkspaceLayout.SharesARow(360));
+        Assert.False(MobileWorkspaceLayout.SharesARow(599));
+
+        // The landscape viewports §6 and §7 built the compact layout for keep it.
+        Assert.True(MobileWorkspaceLayout.SharesARow(600));
+        Assert.True(MobileWorkspaceLayout.SharesARow(780));
+        Assert.True(MobileWorkspaceLayout.SharesARow(801));
+        Assert.True(MobileWorkspaceLayout.SharesARow(964));
+
+        // An unmeasured viewport must not be assumed to be roomy.
+        Assert.False(MobileWorkspaceLayout.SharesARow(double.NaN));
+
+        // And the number moves with the reader's text size, because every control it
+        // measures does: at 1.3x the same five controls need a landscape phone exactly.
+        var user = TextScale.User;
+        try
+        {
+            TextScale.User = 1.3;
+            Assert.False(MobileWorkspaceLayout.SharesARow(779));
+            Assert.True(MobileWorkspaceLayout.SharesARow(781));
+        }
+        finally
+        {
+            TextScale.User = user;
+        }
+    }
+
+    // --------------------------------------------------------------- F-35 ---
+
+    /// <summary>
+    /// F-35 - the entry header reserved width for a count line that had already moved to the
+    /// tab strip, and the load-more control was laid out past the right edge of the pane for
+    /// it: 34.1 dp of its own 49.4, ending exactly on the device's 1220 px screen edge.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task LoadMoreStaysInsideThePaneInAShortNarrowWorkspace()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            // The device's own viewport: 1220 x 1400 px at 2.8125 px/dp.
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(
+                PagedLog(650),
+                width: 434,
+                height: 498);
+            fixture.Window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(fixture.Tab.CanLoadMore);
+            var loadMore = LoadMore(fixture);
+            Assert.True(loadMore.IsVisible);
+
+            var right = loadMore.TranslatePoint(new Point(loadMore.Bounds.Width, 0), fixture.View);
+            Assert.NotNull(right);
+            Assert.True(
+                right!.Value.X <= fixture.View.Bounds.Width + 0.5,
+                $"Load more ends at {right.Value.X:0.#} dp in a {fixture.View.Bounds.Width:0.#} dp workspace");
+            Assert.True(
+                loadMore.Bounds.Width >= 48,
+                $"Load more is {loadMore.Bounds.Width:0.#} dp wide in a 434 dp workspace");
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    /// <summary>
+    /// F-35, the other half - a short viewport that really is wide keeps the load-more control
+    /// in the header, so the band audit 3/D2 gave back to the list stays given back.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AWideShortWorkspaceKeepsLoadMoreInItsHeader()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(
+                PagedLog(650),
+                width: 801,
+                height: 341);
+            fixture.Window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var loadMore = LoadMore(fixture);
+
+            // In the header it is a cell of the actions grid; in its footer it is the child of
+            // a Border under the list.
+            Assert.IsType<Grid>(loadMore.Parent);
+
+            var right = loadMore.TranslatePoint(new Point(loadMore.Bounds.Width, 0), fixture.View);
+            Assert.NotNull(right);
+            Assert.True(
+                right!.Value.X <= fixture.View.Bounds.Width + 0.5,
+                $"Load more ends at {right.Value.X:0.#} dp in a {fixture.View.Bounds.Width:0.#} dp workspace");
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    /// <summary>
+    /// Found by its accessible name, which is the same sentence in both of its homes - the
+    /// drawn label is deliberately not: a header placement shortens it to <c>+150</c>.
+    /// </summary>
+    private static Button LoadMore(LiveTestWorkspaceFixture fixture) =>
+        fixture.View.GetLogicalDescendants()
+            .OfType<Button>()
+            .Where(button => AutomationProperties.GetName(button) is { } name
+                             && name.Contains(" more;", StringComparison.Ordinal))
+
+            // Distinct because the logical walk reaches the actions grid by two paths and so
+            // yields the one control twice; this is the same instance, not two buttons.
+            .Distinct()
+            .Single();
+
+    /// <summary>A session with more entries than one page, so load-more is on screen.</summary>
+    private static string PagedLog(int lines)
+    {
+        var log = new System.Text.StringBuilder();
+        for (var index = 0; index < lines; index++)
+        {
+            log.Append("01-01 00:00:")
+                .Append((index / 60 % 60).ToString("00", System.Globalization.CultureInfo.InvariantCulture))
+                .Append('.')
+                .Append((index % 60 * 1000).ToString("000000", System.Globalization.CultureInfo.InvariantCulture))
+                .Append("   100   101 I Worker         : line ")
+                .Append(index.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                .Append('\n');
+        }
+
+        return log.ToString();
     }
 
     /// <summary>The signature of a trimmed framework resource string.</summary>

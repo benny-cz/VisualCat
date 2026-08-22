@@ -174,7 +174,17 @@ public sealed partial class SessionWorkspaceView : UserControl
             panel.VerticalAlignment = wanted;
         }
 
-        ApplyTightDrawerChrome(!double.IsInfinity(room) && room < TightDrawerHeight);
+        // The keyboard is not the only thing that can leave this card too little. A short
+        // viewport gives the drawer the band below the command strip and no more: at
+        // 434 x 498 dp the card is 228.3 dp, its fixed chrome - caption, field, the options
+        // row, the chip bar and the pinned footer - is about 210 of that, and the scrolling
+        // body was left **28.8 dp**. The drawer then drew two captions and nothing else: no
+        // severity chips, no zoom controls, no readout, with the footer painted across what
+        // did not fit (finding F-36). The card fills its band whatever its chrome does, so
+        // this reads the card and not the body, and cannot oscillate between the two states.
+        var card = panel.Bounds.Height;
+        var shortCard = card > 0 && card < TightDrawerCardHeight;
+        ApplyTightDrawerChrome((!double.IsInfinity(room) && room < TightDrawerHeight) || shortCard);
     }
 
     /// <summary>
@@ -226,6 +236,18 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// The drawer height below which the query section drops its caption to keep its field.
     /// </summary>
     private const double TightDrawerHeight = 132;
+
+    /// <summary>
+    /// The card height below which the drawer's fixed chrome yields so its body keeps a row.
+    /// </summary>
+    /// <remarks>
+    /// The chrome that does not scroll - the query caption, field and options, the chip bar
+    /// and the pinned decision footer - is about 210 dp, so a card under about 260 dp leaves
+    /// the scrolling body less than one 48 dp row of controls. Trading the caption and the
+    /// padding around both rows buys back about 42 dp, which is a whole row of severity
+    /// toggles: the first thing the drawer exists to show.
+    /// </remarks>
+    private const double TightDrawerCardHeight = 260;
 
     /// <summary>
     /// Below this there is no drawer to show: the pinned footer plus one row of scrollable body.
@@ -582,6 +604,18 @@ public sealed partial class SessionWorkspaceView : UserControl
     private bool? _loadMoreInHeader;
 
     /// <summary>
+    /// The analysis width the header row needs before the load-more control may join it.
+    /// </summary>
+    /// <remarks>
+    /// Measured on the device at 2.8125 px/dp: the sort control is 112 dp, <c>Copy</c> 49.4,
+    /// <c>Entry &#x2921;</c> 63.6 and load-more 49.4, with four 6 dp gaps - 298.4 dp. Scaled by the
+    /// reader's text size for the same reason the shared-row breakpoint is: the labels are
+    /// what the number measures. Below it the control keeps its footer, where it costs a band
+    /// and reads in full, rather than being laid out past the right edge of the pane.
+    /// </remarks>
+    private const double LoadMoreHeaderWidth = 300;
+
+    /// <summary>
     /// Puts the load-more control in the header row, or back in its own footer under the list.
     /// </summary>
     /// <remarks>
@@ -708,7 +742,8 @@ public sealed partial class SessionWorkspaceView : UserControl
         // they do in an ordinary portrait workspace, and the pane gets the whole width; the
         // compact row structure and its shorter chrome still apply, because those save height
         // and height is what is actually short.
-        var splitTimeline = enabled && timelineVisible && analysisVisible && availableWidth >= 600;
+        var splitTimeline = enabled && timelineVisible && analysisVisible &&
+                            MobileWorkspaceLayout.SharesARow(availableWidth);
         _root.ColumnDefinitions = new ColumnDefinitions(splitTimeline ? "21*,29*" : "*");
 
         if (_mobileFilterShell is { } topStrip)
@@ -774,7 +809,20 @@ public sealed partial class SessionWorkspaceView : UserControl
             // so this is gated on the thing that actually constrains it. It is the same gate,
             // and the same 600 dp, that the query options below already use for the same
             // reason (C-06.2).
-            var mergeCaptureRow = enabled && availableWidth >= 600;
+            //
+            // On the width this row actually gets, which is not the workspace's. When the
+            // strip is hosted in the shell row the application toolbar takes its own Auto
+            // column first - about 282 dp - and the strip gets the star column that is left.
+            // Deciding the merge on the workspace's width instead squeezed `Follow` to
+            // **23.5 dp** at 780 dp, the Samsung landscape viewport §6, §7 and §8 built this
+            // layout for: 780 passed the test, the strip had 498, and the merged row needs
+            // about 640 (finding F-37). `Stop capture` survived it, which is why F-32's own
+            // device check - taken in portrait, and reasoning about landscape rather than
+            // measuring it - did not see this.
+            var shellWidth = _compactCommandsExternallyHosted && filterShell.Bounds.Width > 0
+                ? filterShell.Bounds.Width
+                : availableWidth;
+            var mergeCaptureRow = enabled && MobileWorkspaceLayout.SharesARow(shellWidth);
             filterShell.RowDefinitions = new RowDefinitions("Auto,Auto,Auto");
             filterShell.ColumnDefinitions = new ColumnDefinitions(mergeCaptureRow ? "Auto,*" : "*");
             Grid.SetRow(quickActions, 0);
@@ -803,12 +851,21 @@ public sealed partial class SessionWorkspaceView : UserControl
             // at all on the 360 dp Samsung (C-06.2). What is left here is TIME and the taller
             // SEVERITY group, which share the two columns a short viewport has to spare and
             // stack on a portrait one.
-            filterBody.ColumnDefinitions = new ColumnDefinitions(enabled ? "*,*" : "*");
-            filterBody.RowDefinitions = new RowDefinitions(enabled ? "Auto" : "Auto,Auto");
+            //
+            // Two columns need the width for two columns. This was the sixth site keyed on
+            // height alone, and the last one left: at 434 dp each column is 175.6 dp, which
+            // wraps the seven severity chips into three rows of three, and the third row -
+            // the one holding `Unknown` - was laid out below the bottom of the screen and did
+            // not reach the accessibility tree at all (finding F-36). One column of 380 dp
+            // holds all seven on a single 48 dp row, which is also the first thing a short
+            // drawer has room to show.
+            var twoColumns = enabled && MobileWorkspaceLayout.SharesARow(availableWidth);
+            filterBody.ColumnDefinitions = new ColumnDefinitions(twoColumns ? "*,*" : "*");
+            filterBody.RowDefinitions = new RowDefinitions(twoColumns ? "Auto" : "Auto,Auto");
             Grid.SetColumn(time, 0);
-            Grid.SetRow(time, enabled ? 0 : 1);
+            Grid.SetRow(time, twoColumns ? 0 : 1);
             Grid.SetRowSpan(time, 1);
-            Grid.SetColumn(severity, enabled ? 1 : 0);
+            Grid.SetColumn(severity, twoColumns ? 1 : 0);
             Grid.SetRow(severity, 0);
 
             // Not spanned. A row-spanning element's height is shared out across the rows it
@@ -828,7 +885,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 _mobileQuerySection is StackPanel querySection &&
                 _mobileQueryOptions is { } queryOptions)
             {
-                var beside = enabled && availableWidth >= 600;
+                var beside = enabled && MobileWorkspaceLayout.SharesARow(availableWidth);
                 if (beside && queryOptions.Parent != queryRow)
                 {
                     querySection.Children.Remove(queryOptions);
@@ -871,39 +928,43 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_entryHeader is { } entryHeader && _entryActions is { } entryActions)
         {
 
-            // 400 was still above what a split landscape phone actually offers: a 1080 px
-            // portrait device turned sideways leaves this pane about 374 px, so the summary
-            // went on taking a second full touch row and the entries list was left 106 px of
-            // a 415 px pane (audit 2, A2/D9). At 330 the count line keeps an ellipsised line
-            // of its own beside the actions, which is what it is for.
-            var sideBySide = enabled && analysisWidth >= 330;
-            entryHeader.RowDefinitions = new RowDefinitions(sideBySide ? "Auto,Auto" : "Auto,Auto,Auto");
-            entryHeader.ColumnDefinitions = new ColumnDefinitions(sideBySide ? "*,Auto" : "*");
+            // Composed for where the count line actually is, not for the viewport that was
+            // expected to move it. MoveSummaryIntoTabStrip has just run, so this reads its
+            // result rather than re-deriving it - and the two never agreed. The old gate was
+            // `enabled && analysisWidth >= 330`, and `enabled` is exactly when the summary
+            // leaves the header, so the "count line beside the actions" composition only ever
+            // ran with no count line in it, and its cap - width held back for that absent
+            // control - was pure loss. In a 434 dp portrait workspace the cap left the actions
+            // 258.8 dp for 298.4 dp of controls, and `Load 500 more` was laid out past the
+            // right edge of the screen: 34.1 dp of its own 49.4, ending on the 1220 px edge
+            // (finding F-35). Audit 3/D2 met the same failure and answered it by raising the
+            // cap's ratio from 0.62 to 0.78, which fits one viewport rather than stating an
+            // invariant. There is no ratio here, because a row with one occupant is not
+            // shared with anything.
+            var summaryInHeader = !_summaryInTabStrip;
+            entryHeader.RowDefinitions = new RowDefinitions(summaryInHeader ? "Auto,Auto,Auto" : "Auto,Auto");
+            entryHeader.ColumnDefinitions = new ColumnDefinitions("*");
             Grid.SetRow(_summary, 0);
             Grid.SetColumn(_summary, 0);
-            Grid.SetRow(entryActions, sideBySide ? 0 : 1);
-            Grid.SetColumn(entryActions, sideBySide ? 1 : 0);
+            Grid.SetRow(entryActions, summaryInHeader ? 1 : 0);
+            Grid.SetColumn(entryActions, 0);
             if (_entryOffPageBanner is { } offPageBanner)
             {
                 // Last row whichever way the header reflowed, and the full width of it.
-                Grid.SetRow(offPageBanner, sideBySide ? 1 : 2);
+                Grid.SetRow(offPageBanner, summaryInHeader ? 2 : 1);
                 Grid.SetColumn(offPageBanner, 0);
-                Grid.SetColumnSpan(offPageBanner, sideBySide ? 2 : 1);
+                Grid.SetColumnSpan(offPageBanner, 1);
             }
-            entryActions.HorizontalAlignment = sideBySide
-                ? HorizontalAlignment.Right
-                : HorizontalAlignment.Stretch;
-            // The cap keeps the actions from eating the count line beside them. It has to know
-            // how many controls are in the row: with the load-more control moved up here, a
-            // cap sized for three left the fourth to be laid out past the right edge of the
-            // pane, and in Split it landed off the screen entirely (audit 3, D2).
-            entryActions.MaxWidth = sideBySide
-                ? Math.Clamp(analysisWidth * (enabled ? 0.78 : 0.62), 240, 560)
-                : double.PositiveInfinity;
-            _summary.TextWrapping = sideBySide ? TextWrapping.NoWrap : TextWrapping.Wrap;
-            _summary.TextTrimming = sideBySide ? TextTrimming.CharacterEllipsis : TextTrimming.None;
+
+            // The row keeps the sort control at its left and its actions at its right through
+            // its own star column, so stretching it costs the pane nothing and gives the last
+            // control the width it measured for.
+            entryActions.HorizontalAlignment = HorizontalAlignment.Stretch;
+            entryActions.MaxWidth = double.PositiveInfinity;
+            _summary.TextWrapping = summaryInHeader ? TextWrapping.Wrap : TextWrapping.NoWrap;
+            _summary.TextTrimming = summaryInHeader ? TextTrimming.None : TextTrimming.CharacterEllipsis;
             _summary.FontSize = TextScale.Of(enabled ? 11 : 12);
-            _summary.Margin = sideBySide ? new Thickness(0, 0, 8, 0) : new Thickness(0, 0, 0, 4);
+            _summary.Margin = summaryInHeader ? new Thickness(0, 0, 0, 4) : new Thickness(6, 0, 0, 0);
         }
 
         // The load-more control stops taking a band of its own where there is no band to
@@ -916,7 +977,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         // Only where the pane is wide enough to hold it beside the count line and the three
         // controls already there: in Split the analysis column is 458 dp, and a fourth control
         // laid out past its right edge is worse than the band it was saving.
-        MoveLoadMore(intoHeader: enabled && analysisWidth >= 300);
+        MoveLoadMore(intoHeader: enabled && analysisWidth >= LoadMoreHeaderWidth * TextScale.Effective);
 
         // Two lines to a row rather than three, in a viewport that has no height to give one.
         SetCompactEntryRows(enabled);

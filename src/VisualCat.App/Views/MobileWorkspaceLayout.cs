@@ -88,6 +88,39 @@ internal readonly record struct MobileWorkspaceLayout(
     internal const double CompactHeightBreakpoint = 520;
 
     /// <summary>
+    /// The width at which two command groups may share one row instead of taking one each.
+    /// </summary>
+    /// <remarks>
+    /// Compact height is chosen by height alone, and every gate that then went on to assume
+    /// width has failed the same way: the query options collapsed the editor to 64 dp
+    /// (C-06.2), the capture row clipped <c>Stop capture</c> to 15 dp (F-32), the split
+    /// composition left the analysis pane 131 dp (F-32's second half), and the shared command
+    /// row drew five controls on top of each other with <c>Filters</c> underneath them and
+    /// unreachable (F-34). They are one decision, so they are one number, named once here
+    /// rather than repeated as a literal at each site.
+    /// <para>
+    /// 600 is what the widest of them measures: the application toolbar is about 274 dp
+    /// (<c>Open log</c> 102 + <c>Live</c> 72 + <c>More</c> 70, plus spacing and the command
+    /// bar's own padding) and the workspace strip about 320 dp (<c>Filters</c> 76 + three
+    /// mode buttons 168 + <c>Fit</c> 56, plus spacing), which is 602 dp together. It sits
+    /// well below the 780 dp and 801 dp landscape viewports §6 and §7 built the compact
+    /// layout for, so landscape keeps exactly the composition it had.
+    /// </para>
+    /// </remarks>
+    internal const double SharedRowBreakpoint = 600;
+
+    /// <summary>
+    /// Whether a viewport of <paramref name="width"/> can hold two command groups on one row.
+    /// </summary>
+    /// <remarks>
+    /// Scaled by the reader's text size, because every control in those groups is: at 1.3×
+    /// the same five controls need about 780 dp, which is a landscape phone exactly, and a
+    /// fixed 600 would have gone on sharing the row until they overlapped again.
+    /// </remarks>
+    internal static bool SharesARow(double width) =>
+        double.IsFinite(width) && width >= SharedRowBreakpoint * TextScale.Effective;
+
+    /// <summary>
     /// A short viewport has width to spare and height to protect. Navigation moves to side
     /// rails and adjacent command groups share a row in this mode, leaving the primary data
     /// surface tall enough to scroll comfortably.
