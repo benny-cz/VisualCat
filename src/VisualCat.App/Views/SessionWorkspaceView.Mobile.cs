@@ -659,19 +659,84 @@ public sealed partial class SessionWorkspaceView : UserControl
         UpdateEntryLoadControls();
     }
 
+    /// <summary>The narrowest the compact count line is worth showing at.</summary>
+    private const double SummaryFloor = 72;
+
+    /// <summary>What the analysis tab strip spends on itself before its tabs get anything.</summary>
+    private const double TabStripSlack = 16;
+
+    /// <summary>The share and composition the tab strip was last given.</summary>
+    private (double Share, bool Compact) _tabStripApplied = (double.NaN, false);
+
+    /// <summary>
+    /// Whether the tab strip's metrics have to be written again.
+    /// </summary>
+    /// <remarks>
+    /// This runs on every arrange, and re-arranging the strip is only free while nothing has
+    /// changed, so the numbers are compared before they are written.
+    /// </remarks>
+    private bool ApplyTabStripMetrics(TabControl tabs, double share, bool compact)
+    {
+        _ = tabs;
+        if (Math.Abs(_tabStripApplied.Share - share) < 0.5 && _tabStripApplied.Compact == compact)
+        {
+            return false;
+        }
+
+        _tabStripApplied = (share, compact);
+        return true;
+    }
+
+    /// <summary>
+    /// Tells the strip that the row it laid out is not the row it has.
+    /// </summary>
+    /// <remarks>
+    /// The strip arranges its three tabs once, from the sizes they had before this class ever
+    /// wrote to them, and a later change re-measured each tab without re-arranging the row:
+    /// the panel's own desired width changed and its <em>arrange</em> did not, so the slots
+    /// stayed the width the first pass had given them. That is the whole of F-41. On the
+    /// device the first pass ran before the headers were templated, so every tab was arranged
+    /// at its bare <c>MinWidth</c> — 92.0 dp in portrait, 78.2 in landscape, byte-identical
+    /// from 0.85x to 1.3x — and no later text size ever moved them; headlessly the first pass
+    /// ran after templating, so the same defect showed as tabs frozen at their 1.0x content
+    /// instead. Writing a new width without this left each tab drawing 25 dp outside its own
+    /// slot, over its neighbour, with the first starting 16 dp off the left edge.
+    ///
+    /// The panel is reached through the presenter because it is the panel's arrange that is
+    /// stale; invalidating the <see cref="TabControl"/> re-measures the strip and leaves the
+    /// slots exactly where they were.
+    /// </remarks>
+    private static void RearrangeTabStrip(TabControl tabs)
+    {
+        if (tabs.GetVisualDescendants().OfType<ItemsPresenter>().FirstOrDefault()?.Panel is not { } strip)
+        {
+            return;
+        }
+
+        strip.InvalidateMeasure();
+        strip.InvalidateArrange();
+    }
+
     /// <summary>
     /// Uses the otherwise empty end of the three-tab strip for the compact count, returning
     /// its former row to the log. The same TextBlock moves, so its complete automation name
     /// and tooltip remain the one source of truth.
     /// </summary>
-    private void MoveSummaryIntoTabStrip(bool intoTabs, double availableAnalysisWidth)
+    /// <param name="intoTabs">Whether the compact composition is in force.</param>
+    /// <param name="roomBesideTheTabs">
+    /// What is left of the analysis pane once the tabs have taken their share. The caller
+    /// owns that arithmetic because it is the caller that decides the share (F-41); this
+    /// method used to re-derive it from a hard-coded 78 dp tab and the two then disagreed
+    /// whenever the tabs were given anything else.
+    /// </param>
+    private void MoveSummaryIntoTabStrip(bool intoTabs, double roomBesideTheTabs)
     {
         if (_mobileSummaryHost is not { } host || _entryHeader is not { } header ||
             _summaryInTabStrip == intoTabs)
         {
             if (intoTabs && _mobileSummaryHost is { } existing)
             {
-                existing.MaxWidth = Math.Max(72, availableAnalysisWidth - (3 * 78) - 12);
+                existing.MaxWidth = Math.Max(SummaryFloor, roomBesideTheTabs);
             }
 
             return;
@@ -685,7 +750,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         _summaryInTabStrip = intoTabs;
         if (intoTabs)
         {
-            host.MaxWidth = Math.Max(72, availableAnalysisWidth - (3 * 78) - 12);
+            host.MaxWidth = Math.Max(SummaryFloor, roomBesideTheTabs);
             host.Children.Add(_summary);
             host.IsVisible = true;
             _summary.Margin = new Thickness(6, 0, 0, 0);
@@ -900,7 +965,22 @@ public sealed partial class SessionWorkspaceView : UserControl
             }
         }
 
-        if (_mobileAnalysisTabs is { } tabs)
+        var analysisWidth = splitTimeline ? (availableWidth * 0.58) - 78 : availableWidth - (enabled ? 78 : 0);
+
+        // What the three tabs may take of the analysis pane. In the compact composition the
+        // count line shares their row, so it keeps its own floor out of the budget first.
+        var tabFloor = enabled ? 78.0 : 92.0;
+        var tabBudget = enabled
+            ? Math.Max(3 * tabFloor, analysisWidth - SummaryFloor - 12)
+            : analysisWidth;
+
+        // `analysisWidth` is the pane's, and the strip inside it pays for its own padding
+        // and the selected-tab margin, so three tabs that add up to exactly the pane wrap to
+        // a second row and take a band of log with them. The slack is what keeps one row one
+        // row at every width measured.
+        var tabShare = Math.Max(tabFloor, Math.Floor((tabBudget - TabStripSlack) / 3));
+
+        if (_mobileAnalysisTabs is { } tabs && ApplyTabStripMetrics(tabs, tabShare, enabled))
         {
             // The rail stays on top in every orientation. A left rail looked like it saved
             // the height a short viewport needs, but the strip laid `Entries` and `Entry`
@@ -911,8 +991,11 @@ public sealed partial class SessionWorkspaceView : UserControl
             // legible (finding 3c).
             foreach (var item in tabs.Items.OfType<TabItem>())
             {
-                item.MinWidth = enabled ? 78 : 92;
-                item.Width = double.NaN;
+                // The width the room actually allows, not a constant chosen at 1.0x text.
+                // Min and Max together rather than `Width`, so the three are pinned by the
+                // same constraint the strip already honours (F-41).
+                item.MinWidth = tabShare;
+                item.MaxWidth = tabShare;
                 item.FontSize = TextScale.Of(enabled ? 12.5 : 14);
                 item.Padding = enabled ? new Thickness(7, 0) : new Thickness(10, 0);
 
@@ -926,10 +1009,11 @@ public sealed partial class SessionWorkspaceView : UserControl
                 // (finding F-38). 6 dp of one band is what the reach costs.
                 item.MinHeight = TouchTarget.Minimum;
             }
+
+            RearrangeTabStrip(tabs);
         }
 
-        var analysisWidth = splitTimeline ? (availableWidth * 0.58) - 78 : availableWidth - (enabled ? 78 : 0);
-        MoveSummaryIntoTabStrip(enabled, analysisWidth);
+        MoveSummaryIntoTabStrip(enabled, analysisWidth - (3 * tabShare) - 12);
         if (_entryHeader is { } entryHeader && _entryActions is { } entryActions)
         {
 

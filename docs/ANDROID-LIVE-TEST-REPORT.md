@@ -7,10 +7,10 @@ against a physical Android device.
 across an interrupted test process, and the final device hand-back is recorded
 below. Declared gaps remain gaps rather than implied passes.
 
-**Six passes have now run over this report.** §1–§5 are the original run and its
-remediation; §6, §7, §8, §9 and §10 are re-audits on three devices, each of which
-found defects the ones before it did not. §5.1 remains the single status table for
-every finding, and the newest pass is always the last section.
+**Seven passes have now run over this report.** §1–§5 are the original run and its
+remediation; §6 to §11 are re-audits on three devices, each of which found defects
+the ones before it did not. §5.1 remains the single status table for every
+finding, and the newest pass is always the last section.
 
 This report is context-agnostic. Device identity, artifact provenance, oracles,
 and observations are all recorded here; nothing depends on a previous session.
@@ -1442,6 +1442,14 @@ Found by the sixth pass (§10); same vocabulary, same rules.
 | F-38 Every compact-height pane opts nine controls out of the 48 dp floor | Minor | Layout | **Done** | **Yes — Motorola Release, landscape; 42.3 dp → 48.0 dp on all five measurable controls** |
 | F-39 Each system text-size change, and each session close, leaves another copy of the command strip in the shell row | Major | Shell | **Done** | **Yes — Motorola Release, four text-size changes and two tab closes; 1 strip and 0 overlapping pairs throughout** |
 
+Found by the seventh pass (§11); same vocabulary, same rules.
+
+| Finding | Severity | Area | Status | Device-verified |
+|---|---|---|---|---|
+| F-40 A sheet is built from the state it opened in, and no state change reaches it | Minor | Shell | **Done** | **Yes — Pixel 5 Release, theme flip and rotation; light sheet on a light shell, 9 of 9 commands** |
+| F-41 The analysis tab strip is arranged once and never again, so it slices its own labels at any enlarged text size | Minor | Layout | **Done** | **Yes — Pixel 5 Release, 92.0 dp → 117.1 dp, contiguous, `Entries`/`Insights`/`Entry` whole at 1.3×** |
+| F-42 `Load 500 more· 49,656 remaining` — the separator lost its space | Polish | Copy | **Done** | **Yes — Pixel 5 Release** |
+
 ### 5.2 Per-finding remediation record
 
 Each entry records the decision taken, the files touched, the host test that
@@ -1793,6 +1801,18 @@ them or assume they were missed.
    both legs on a Release build: idle 0.04 % / 0.11 %, capture **1.29 % mean over
    six 600-second windows** with the screen off. The hours-long half is honest
    about what it is — one hour of flat, non-drifting samples, not twelve.
+5. **F-40 — a dialog body still does not re-resolve its own typography.** The
+   sheet around it does: scrim, panel, border, heading, height cap and fade all
+   answer a theme, size or text-size change, and the command sheet — a menu that
+   holds nothing the reader has half-finished — is given a whole new body. A
+   `DialogBody` is not, because rebuilding one would discard exactly the edit the
+   reader opened it to make: a half-changed text scale, a chosen export order, a
+   typed filename. Its own controls are theme-resourced and follow the variant on
+   their own, so what is left stale is a handful of `TextScale.Of` sizes inside
+   five dialogs until the sheet is next opened. Making that live needs the font
+   sizes to be bound rather than resolved at build time, which is a change to how
+   every view in the product is built — including the seam F-39 lives in — and
+   not one to make from inside a remediation.
 
 ---
 
@@ -4719,3 +4739,371 @@ exercised with a recording running. No TalkBack session, which is where §10.6's
 scrolled-bounds observation would actually be judged. No upgrade, Play, endurance,
 destructive-storage or locale work. The `RemoveTab` half of F-39's fix has no
 headless test and says so in §10.4.
+
+---
+
+## 11. Seventh pass — what a state change leaves behind, on the Pixel 5
+
+§10.8/5 closed the sixth pass with a lead rather than a finding: *"The next one
+to try is **what a state change leaves behind**."* This pass takes that lead, on
+the one device in the fleet that no compact-layout finding has ever been measured
+on — the Pixel 5 — and re-audits every finding the last three passes fixed at a
+density and API level they were never measured at.
+
+Entries are appended as they happen, so an interrupted session resumes here.
+
+### 11.1 Run header
+
+| Field | Value |
+|---|---|
+| Run id | `20260822-pixel5-pass7` |
+| Date/time (UTC) | 2026-08-22 15:57 → 16:55 |
+| Repository commit at start | `d1eb45a` — *Audit the report a sixth time, and answer what the tooling could not see* |
+| Device | Google **Pixel 5** (`redfin`) |
+| Serial | `0A031FDD400365` |
+| Android release / API | **14 / 34** |
+| ABIs | `arm64-v8a, armeabi-v7a, armeabi` |
+| Build fingerprint | `google/redfin/redfin:14/UP1A.231105.001.B2/11260668:user/release-keys` |
+| Screen / density | 1080 × 2340 px, **440 dpi (2.75 px/dp)** |
+| Navigation mode | `2` — **gesture navigation** |
+| System locale | `cs-CZ` — a **non-English system locale by default** |
+| Theme / font scale | `night` (dark) / `1.0` |
+| Rotation | `accelerometer_rotation=1`, `user_rotation=0` |
+| Battery / thermal | 100 %, USB powered, `Thermal Status: 0` |
+| Artifact | `src/VisualCat.Android/bin/Release/net10.0-android36.0/com.barebit.visualcat-Signed.apk` |
+| Artifact SHA-256 (as found) | `b1b7293dc420dbc3cd017b091ce7f284c486e4b8f2f274461021729315fec414`, 31 144 106 bytes |
+| Artifact SHA-256 (this pass's fixes) | `92f33713b78a717eed7cea5c0fe463b66a2a1e4112e5f39aaecf879a0b015195` |
+| Build/artifact class | **Locally built Release**, debug-signed — §1.1 gap 2 unchanged |
+| Install mode | **clean** (`firstInstallTime` = `lastUpdateTime` = `2026-08-22 18:01:17`) |
+| Package at install | `versionName=2.0.5-dev`, `versionCode=20005`, `minSdk 31`, `targetSdk 36` |
+| `READ_LOGS` at install | `granted=false` |
+| Host regression before any change | `dotnet test VisualCat.slnx -c Debug` → **369/369 passed, 0 failed** (Domain 11, Core 88, App 221, Application 49) |
+| Evidence root | `artifacts/live-test/20260822-pixel5-pass7/evidence/` |
+
+### 11.2 Why this device, and why this lead
+
+| What the last three passes did | What this pass adds |
+|---|---|
+| F-31…F-39 were found and verified on the Motorola (450 dpi, API 36) and the Samsung (480 dpi, API 36) | **440 dpi, API 34**, a third dp viewport, and gesture navigation — the axis every compact-layout decision is taken on |
+| §10 swept *states*: panes, widths, viewports | §10.8/5's lead: **transitions** — rotate, change the text size, switch theme, close a tab, stop a capture *while something else is open* |
+| §7 (this device) ran before F-31…F-39 existed | Every fix since is unmeasured here |
+| §7/D-07 left F-19's process-death branch unrun on this device | It is in this pass's ledger |
+
+### 11.3 Step ledger
+
+Resume at the first row that is not **Done**.
+
+| Step | Status | Outcome / next action |
+|---|---|---|
+| K-01 Audit the tree against §5.1 | **Done** | 40 of 40 findings have a named artefact in the tree; host suite 369/369 |
+| K-02 Baseline and clean install of a Release build | **Done** | §11.1 |
+| K-03 Re-measure F-31…F-39 at 440 dpi / API 34 | **Done** | 0 sub-floor, 0 overlapping, 0 clipped in all five states swept |
+| K-04 The lead: what a state change leaves behind | **Done** | Found **F-40**, **F-41** and **F-42** |
+| K-05 F-37/F-39's capture halves, with a recording running | **Done** | One strip, one `Follow`, one `Stop capture` after three text-size changes |
+| K-06 F-19's process-death branch on this device | **Done** | Four surfaces agree on `Interrupted · 19 entries recovered`; §7/D-07's gap closed |
+| K-07 Fix what this pass finds, with host tests | **Done** | Three fixes, five tests, each proved to fail first; 374/374 |
+| K-08 Device verification on a Release build | **Done** | All three fixed and measured on the Pixel; §11.4/K-08 |
+| K-09 Hand-back, commit and push | **Done** | Device restored to a package-absent baseline (§11.5) |
+
+### 11.4 Continuous execution log
+
+#### K-01/K-02 — audit and baseline
+
+**Status: Done.** The tree at `d1eb45a` carries a named artefact for all 40
+findings (F-01…F-39 plus D-04.0); `dotnet test VisualCat.slnx -c Debug` →
+**369/369**. The Release build (`-p:EmbedAssembliesIntoApk=true`) produced
+**0 warnings, 0 errors** in 58.7 s and installed clean in 2 118 ms.
+Evidence `A01-baseline.txt`, `A02-artifact.txt`, `A03-package.txt`.
+
+#### K-03 — F-31…F-39 re-measured at 440 dpi, API 34, gesture navigation
+
+**Status: Done.** Every finding the last three passes fixed was measured on a
+device it had never been measured on. `audit_layout.py` over each dump:
+
+| State | Viewport | Clickable nodes | Sub-floor | Overlapping | Clipped |
+|---|---|---:|---:|---:|---:|
+| Cold empty state | 393 × 851 dp portrait | 6 | **0** | **0** | **0** |
+| Workspace, Split, session open | 393 × 851 dp portrait | 13 | **0** | **0** | **0** |
+| Workspace, Split, landscape | 851 × 393 dp | 11 | **0** | **0** | **0** |
+| Workspace at system text 1.3× | 393 × 851 dp portrait | 13 | **0** | **0** | **0** |
+| Filter drawer, after a text-size change | 393 × 851 dp portrait | 24 | **0** | **0** | **0** |
+
+F-38's compact-height controls measure **48.4 dp** here (`Copy`, `Show the full
+message…`, `Load 500 more`), F-34's shared command row has no overlapping pair at
+851 dp, and F-35's `Load 500 more` is inside the pane. Evidence
+`K03-cold-empty.*`, `K03-opened.*`, `K03-landscape.*`, `K04-workspace-fs13.*`,
+`K04-drawer-after-textsize.*`.
+
+Two sub-floor readings in this pass belong to **Android's own** surfaces, not to
+VisualCat, and are recorded here so the next pass does not file them: the Files
+app's preview toolbar (`Další možnosti`, 40.4 dp) and — as §10.6 already recorded
+— the system Save-file picker's filename field.
+
+#### K-04 — the lead: what a state change leaves behind
+
+**Status: Done — three findings.** §10.8/5 asked what a *transition* leaves
+behind rather than what a *state* looks like. Three transitions were run against
+an open sheet, and all three left it behind. A fourth reading, taken while
+setting up the third, is a separate defect in the same pane.
+
+##### F-40 · A sheet is built from the state it opened in, and no state change reaches it
+
+- **Severity** Minor · **Scenario** K-04 · **Device-independent** · **Found by** the seventh pass
+- **Reproducibility** deterministic, 3 of 3 transitions, both sheet kinds
+- **First suspicion** `MainView.Overlays.cs` — confirmed
+
+`BuildSheet` resolves everything from the moment it runs: the scrim's alpha and
+the panel's surface, border and heading colour from `dark`, the heading's size
+from `TextScale.Of(15)`, and the panel's height cap from
+`Math.Max(240, Bounds.Height * 0.82)`. `PushOverlay` then adds it to
+`_overlayHost` and nothing ever writes to it again. `ApplyThemeSurfaces` repaints
+the shell, the tab strip, the notice lane, the empty state and every open
+workspace — the overlay host is not in its list — and no size handler reaches it
+at all.
+
+Measured on the device, all three with *More actions* or *Appearance & timeline*
+open:
+
+| Transition | What the workspace did | What the sheet did |
+|---|---|---|
+| System theme dark → light | repainted fully | **stayed dark**, on a light workspace, with its `Close` button repainted light because that one is theme-resourced — half of one sheet in each variant |
+| Rotate landscape → portrait | recomposed | **kept the landscape height cap**: 317 dp of an available 698, less than half the screen it had, listing 3 of 9 commands where all 9 fit |
+| System text size 1.0 → 1.3 | rebuilt at 1.3× | **kept every 1.0× font**, so the sheet was the only surface on screen that ignored the reader's text size |
+
+Evidence `K04-sheet-portrait.png` (before), `K04-sheet-rotated-landscape.png`,
+`K04-sheet-rotated-portrait.png`, `K04-sheet-theme-flip.png`,
+`K04-sheet-fontscale.png`.
+
+Rotation the other way is safe — a cap larger than the window cannot force a
+sheet past it — so the defect is one-directional and the theme half is the one a
+reader sees first.
+
+##### F-41 · The analysis tab strip slices its own labels at any enlarged text size
+
+- **Severity** Minor · **Scenario** K-04 · **Device-only (measure differs headlessly)** · **Found by** the seventh pass
+- **Reproducibility** deterministic at every system text size ≥ 1.15 measured
+- **First suspicion** `SessionWorkspaceView.cs` `MobileDetailTab` — confirmed
+
+At system text 1.3× the analysis pane's three tabs read **`Entrie`**,
+**`Insigh`** and **`Entr`** — hard-clipped mid-glyph, with no ellipsis and no
+other cue that a word has been cut. `Insights` clipped to `Insigh` reads as a
+different word.
+
+The tabs do not grow with their text. Measured on the device, the three tab
+nodes are **byte-identical at font scale 0.85, 1.0, 1.15 and 1.3** —
+`[55,1107][308,1239]`, `[308,…]`, `[561,…]`, 253 px = **92.0 dp each**, which is
+exactly `MobileDetailTab`'s `MinWidth = 92`; in landscape they are 215 px =
+**78.2 dp**, exactly the compact `MinWidth = 78`. The same view measured
+headlessly *does* size to content (118 / 132 / 92 dp at 1.0, 148 / 166 / 111 at
+1.3), so the string header's desired width reaches the strip on the desktop and
+does not on Android.
+
+Two consequences, and the fix has to answer both: a label that is cut must say
+so, and the strip must use the width it actually has rather than a constant
+chosen at 1.0×.
+
+##### F-42 · `Load 500 more· 49,656 remaining` — the separator lost its space
+
+- **Severity** Polish · **Scenario** K-04 · **Device-independent** · **Found by** the seventh pass
+
+`SessionWorkspaceView.Interactions.cs` builds one label for the screen reader and
+one for the screen, and the screen's is `fullLabel.Replace(';', '·')` — a
+character-for-character swap, so `more; 49,656` becomes **`more· 49,656`**. Every
+other separator in the product is ` · ` with a space on both sides: `No filters ·
+showing everything in view`, `Ready · 50,156 entries`, `DENSITY · 2.03 h · 9.49
+s/px`. Visible in `K04-workspace-fs13.png` and every portrait screenshot in this
+pass.
+
+#### K-05 — F-37 and F-39's capture halves, with a recording running
+
+**Status: Done — no defect.** §10's declared limit was that no capture ran, so
+F-39's capture-row half was covered by the same seam but never exercised. It was
+here, on gesture navigation at 440 dpi.
+
+A P0 own-app capture was started (`On-device logcat 18h21m35` — F-16's naming
+holds), rotated to landscape, and then the **system text size was changed three
+times** (1.3 → 1.0 → 1.15) with the capture running and the command strip hosted
+in the shell's shared row:
+
+| After | Clickable nodes | Strips in the row | `Follow` | `Stop capture` | Overlapping |
+|---|---:|---:|---:|---:|---:|
+| capture started, portrait | 18 | — | 247.6 dp | 97.5 dp | 0 |
+| rotated to landscape | 18 | 1 | 360.0 dp | 97.5 dp | 0 |
+| three text-size changes | 18 | **1** | 317.8 dp | 109.5 dp | **0** |
+
+One of each control throughout, and 0 sub-floor / 0 clipped in every dump.
+Evidence `K05-live-start.*`, `K05-live-running.*`, `K05-live-landscape.*`,
+`K05-live-textsize-x3.*`.
+
+The P0 pre-capture explanation was read in full and is F-13's fixed text: own-app
+scope stated plainly, no promise of a consent sheet, and the exact `pm grant`
+command with the warning that it must be repeated after a reinstall.
+
+#### K-06 — F-19's process-death branch, on this device
+
+**Status: Done — no defect.** §7/D-07 left this unrun on the Pixel. A capture
+holding 19 entries was killed with `am force-stop` mid-recording (PID gone, no
+`logcat` child left behind), then the activity was launched cold.
+
+All four surfaces agree, and none of them says `Ready` or `Importing`:
+
+| Surface | What it says |
+|---|---|
+| Tab chip | `Show interrupted session On-device logcat 18h21m35` · *"This capture ended before it was finalized; open it to inspect the recovered data."* |
+| Notice lane | *"This capture was interrupted. Everything below reached disk and is exact; anything the source produced after the last save is not in the session."* + **Review** |
+| Status line | `Interrupted · 19 entries recovered · the capture ended before it was finished` |
+| Review sheet | `Recovered capture` · 19 entries · **Keep** / **Export recovered data** / **Delete**, each explained |
+
+19 recovered = the 19 that were in the session at the kill. Evidence
+`K06-before-kill.*`, `K06-capture-tab.*`, `K06-after-restore.*`, `K06-review.*`.
+
+#### K-07 — the fixes, and the host tests that guard them
+
+**Status: Code done.** Each test was run against the tree *before* the fix and
+**failed**, then against the tree after and passed — 5 of 5.
+
+| Finding | Files | Decision |
+|---|---|---|
+| F-40 | `MainView.Overlays.cs`, `MainView.cs` | `BuildSheet` now reports a `SheetSurface` — scrim, panel, heading, close, fade, body host — and `RefreshOverlays()` re-resolves all of it from the state the application is in *now*. It is called from the three transitions that walked past the overlay host: `ApplyThemeSurfaces`, `SizeChanged`, and the text-scale branch of `ApplyDisplayConfigurationChange`. A sheet whose body holds nothing half-finished (the command list, derived entirely from `_secondaryCommands`) is given a **new body**; a dialog body is left alone, because rebuilding one would discard the edit the reader opened it to make, and its own controls are theme-resourced and follow the variant on their own. |
+| F-41 | `SessionWorkspaceView.cs`, `.Mobile.cs` | Two halves, because the defect has two. The header is a `TextBlock` with `CharacterEllipsis` rather than a bare string, so a caption that cannot fit ends in an ellipsis instead of being cut through a glyph — and `AutomationProperties.SetName` keeps the whole word for a screen reader. And the tabs are given `Width = (pane − slack) / 3` rather than a constant chosen at 1.0×, decided where the pane's width is known instead of left to a measure that answers differently on each platform. `MoveSummaryIntoTabStrip` now takes the room *left beside* the tabs rather than re-deriving it from a hard-coded 78 dp tab. |
+| F-42 | `SessionWorkspaceView.Interactions.cs` | `Replace("; ", " · ")` rather than `Replace(';', '·')`, so the mark keeps its own spacing. |
+
+**Host regression:** `dotnet test VisualCat.slnx -c Debug` → **374/374 passed, 0
+failed** (Domain 11, Core 88, App 226, Application 49) — the 369 this pass started
+from plus its own 5.
+
+One regression was caught and fixed by the suite rather than by the device:
+three tabs sized to exactly the pane wrapped to a second row at 360 dp and took a
+band of the entries list with them (`TheEntriesListKeepsAFloorOnAShortViewport`).
+The strip pays for its own padding, so the share is taken from the pane *less a
+slack*, and one row stays one row at every width measured.
+
+#### K-08 — device verification, on a Release build
+
+**Status: Done.** All three fixes were built into a Release APK
+(`0 warnings, 0 errors`), installed with `adb install -r -t`, and measured on the
+Pixel 5.
+
+**F-41.** The analysis tabs, from the same dump position at two text sizes:
+
+| | Before (`K04-tabs-*`) | After (`V2-tabs-*`) |
+|---|---|---|
+| Tab bounds at 1.0× | `[55,1107][308,1239]` and the two beside it — 253 px, **92.0 dp** | `[55,1107][377,1239]`, `[377,…]`, `[699,…][1021,…]` — 322 px, **117.1 dp** |
+| Tab bounds at 1.3× | **byte-identical to 1.0×** | 117.1 dp, **contiguous and non-overlapping** |
+| Labels at 1.3× | `Entrie` · `Insigh` · `Entr` | **`Entries` · `Insights` · `Entry`** — whole, no ellipsis needed |
+| Strip width used | 276 dp of 393, with 79 dp standing empty | 351 dp of 393 |
+
+The 25 dp per tab the strip already had was enough to hold the whole word at
+1.3×; the ellipsis is what answers the scales beyond it.
+
+**A defect the fix created, and the check that caught it.** The first version set
+`Width` on each tab. On the device the tabs then reported 117.1 dp *at a 92 dp
+stride* — `[21,343]`, `[273,595]`, `[526,848]` — each drawing 25 dp over its
+neighbour and the first starting 16 dp off the pane's left edge, which is F-34's
+defect wearing F-41's clothes. It reproduced headlessly, and the probe that
+followed is what found the real root cause:
+
+> The strip's `WrapPanel` is arranged **once**. Every later change to a tab — its
+> font size, its minimum width, its padding — re-measures the tab and leaves the
+> row's slots exactly where the first pass put them. `ApplyMobileLayout` runs on
+> `SizeChanged`, which is *after* that first arrange, so **nothing it has ever
+> written to these tabs has reached their layout**.
+
+That is the whole of F-41, and it explains both halves of the evidence at once:
+on the device the first pass ran before the headers were templated, so all three
+were arranged at their bare `MinWidth` and no text size ever moved them; in a
+headless run the first pass ran after templating, so the same defect showed as
+tabs frozen at their 1.0× content. The fix is `RearrangeTabStrip`, which
+invalidates the panel's *arrange* — reaching it through the `ItemsPresenter`,
+because invalidating the `TabControl` re-measures the strip and leaves the slots
+where they were — and it is guarded so that it runs only when the share actually
+changes. `Bounds.X` non-overlap is now an assertion, not an observation.
+
+**F-40**, with *More actions* open throughout:
+
+| Transition | Before | After |
+|---|---|---|
+| System theme dark → light | sheet stayed dark on a light shell, with a light `Close` button on it | **the whole sheet is light** — panel, scrim, headings, labels and descriptions |
+| Rotate landscape → portrait | 317 dp of an available 698; 3 of 9 commands | **1 885 px ≈ 685 dp; all 9 commands under all 3 headings** |
+
+Evidence `V4-sheet-theme-flip.png`, `V4-sheet-landscape.*`,
+`V4-sheet-back-portrait.png`.
+
+**F-42.** `Load 500 more · 49,656 remaining` on screen, and the screen reader's
+sentence is unchanged (`content-desc="Load 500 more; 49,656 remaining"`).
+Evidence `V3-loadmore.png`.
+
+### 11.5 Mutation ledger and hand-back
+
+| Setting | Baseline (§11.1) | Changed to | Restored |
+|---|---|---|---|
+| Installed package | **absent** | clean install, then two in-place Release updates | **Yes — `adb uninstall` succeeded; package and process absent** |
+| System font scale | `1.0` | `1.3`, `0.85`, `1.15`, `1.0` — F-41's repro and F-39's | **Yes — `1.0`** |
+| Display rotation | `accelerometer_rotation=1`, `user_rotation=0` | locked landscape and portrait for the rotation transitions | **Yes — `1` / `0`** |
+| System theme | `night = yes` | `no`, for F-40's theme half | **Yes — `night = yes`** |
+| `READ_LOGS` | not granted | **untouched** — every capture in this pass was P0 own-app | **n/a** |
+| Shared storage | six pre-existing files in `/sdcard/Download/` | **nothing added** — the pass used the device's own `demo-small.txt` | **Yes — all six present, none added, none removed** |
+| App-private data | none | two sessions (one file import, one interrupted capture) | **Yes — removed with the package** |
+| Device dumps | — | `/sdcard/vc7.*` and `/sdcard/vct.xml`, deleted after every pull | **Yes** |
+
+**Hand-back**
+
+| | Baseline (§11.1) | At hand-back |
+|---|---|---|
+| Package | absent | **absent**, no process |
+| `wm size` / `wm density` | `1080x2340` / `440` | **identical** |
+| `accelerometer_rotation` / `user_rotation` | `1` / `0` | **`1` / `0`** |
+| System font scale | `1.0` | **`1.0`** |
+| Theme | `night = yes` | **`night = yes`** |
+| `/sdcard/Download/` | 6 files | **the same 6 files** |
+| Battery / thermal | 100 %, `Thermal Status: 0` | **100 %, `Thermal Status: 0`** |
+
+Evidence `HB-handback.txt`. Unlike §9.6 and §10.7, nothing is deliberately left
+behind: this device had no VisualCat package at baseline, so restoring it means
+removing the one this pass installed.
+
+### 11.6 Declared limits of this pass
+
+1. **One device, API 34, Release but debug-signed.** §1.1's gap 2 is unchanged.
+2. **P0 only.** `READ_LOGS` was never granted, so nothing here re-tests
+   full-device scope, F-12's buffer attribution, or the P1 consent sheet.
+3. **No TalkBack session.** §1.1's gap 6 stands, and §10.6's scrolled-bounds
+   observation is still where it would be judged.
+4. **F-40's text-size half is verified headlessly, not on the device.** The theme
+   and rotation halves were both measured on the Pixel; the text-size half has a
+   host test that was proved to fail first, and one `RefreshOverlays` call serves
+   all three.
+5. **A dialog body still does not re-resolve its own typography.** Deliberate,
+   and recorded in §5.4/5 rather than left implicit.
+6. **No upgrade, Play, endurance, destructive-storage or locale work.** The
+   device's `cs-CZ` system locale was observed — the Android file picker is
+   Czech, VisualCat's own strings are English as it ships — but no locale
+   assertion was made.
+
+### 11.7 What this pass changed about the report
+
+1. **§10.8/5's lead was right, and it was worth three findings.** Asking what a
+   *transition* leaves behind rather than what a *state* looks like found F-40 in
+   the first three transitions tried, and F-41 turned out to be the same shape:
+   not a wrong number, but **a number written after the only pass that would have
+   read it**.
+2. **The two are one sentence about different owners.** A sheet is built from the
+   state it opened in and no state change reaches it; a tab strip is arranged
+   from the state it was built in and no later write reaches it. §10.8/2 said the
+   question that finds F-39's class is *who is holding it, and what happens when
+   they leave*. This pass's is **when was this decided, and what has changed
+   since**.
+3. **The instrument caught a defect the fix introduced.** The first F-41 fix
+   produced overlapping touch targets — F-34's exact defect — and the overlap
+   check plus a headless bounds probe found it before the device did. §10.8/1's
+   lesson about the audit's instrument applies to the remediation's: a layout fix
+   needs the overlap check run against it, not only the size check it was written
+   for.
+4. **A stale arrange is invisible to every check this report has.** Both sweeps
+   read the *rendered* tree; a control whose measure is right and whose row is
+   stale passes the size check, passes the overlap check for as long as it stays
+   under-sized, and only fails once something makes it grow. The question that
+   finds this class is **does the parent know?**
+5. **The panes really have run out; the transitions have not.** §10 swept six
+   panes and found nothing in any of them. This pass opened one sheet and rotated
+   the phone.

@@ -21,8 +21,60 @@ public sealed partial class MainView : IDialogHost
     private readonly Grid _overlayHost = new() { IsVisible = false, ZIndex = 30 };
     private readonly List<OverlayEntry> _overlays = [];
 
-    /// <summary>One overlay on the stack, and how the system Back gesture takes it down.</summary>
-    private sealed record OverlayEntry(Control Root, Action Dismiss);
+    /// <summary>
+    /// One overlay on the stack: how the system Back gesture takes it down, the parts of it
+    /// that answer a state change, and — for a sheet whose body holds nothing the reader has
+    /// half-finished — how to build that body again.
+    /// </summary>
+    private sealed record OverlayEntry(
+        Control Root,
+        Action Dismiss,
+        SheetSurface? Surface = null,
+        Func<bool, Control>? RebuildBody = null);
+
+    /// <summary>
+    /// The parts of a sheet that were decided by the state it opened in.
+    /// </summary>
+    /// <remarks>
+    /// Everything <see cref="BuildSheet"/> resolves is resolved once: the scrim's alpha and
+    /// the panel's surface, border and heading from the theme variant, the heading's size from
+    /// <see cref="TextScale"/>, and the panel's height cap from the bounds at that instant.
+    /// Nothing wrote to a sheet again, so a theme change repainted the whole shell around one
+    /// that stayed dark, a rotation left it capped at the height of the orientation it opened
+    /// in — 317 dp of an available 698, listing three of nine commands where all nine fit —
+    /// and a text-size change left it the only surface on screen still at 1.0x (finding F-40).
+    /// A sheet is on screen for as long as the reader keeps it there, which is long enough for
+    /// any of the three.
+    /// </remarks>
+    private sealed record SheetSurface(
+        Border Scrim,
+        Border Panel,
+        TextBlock Heading,
+        Button? Close,
+        FadingScrollHost? Fade,
+        ContentControl BodyHost)
+    {
+        /// <summary>Re-resolves everything the sheet was given when it opened.</summary>
+        internal void Apply(bool dark, double viewportHeight)
+        {
+            Scrim.Background = new SolidColorBrush(Color.FromArgb(dark ? (byte)170 : (byte)120, 0, 0, 0));
+            Panel.Background = new SolidColorBrush(WorkspacePalette.SurfaceRaised(dark));
+            Panel.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
+            Panel.MaxHeight = SheetHeightCap(viewportHeight);
+            Heading.Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
+            Heading.FontSize = TextScale.Of(15);
+            if (Close is { } close)
+            {
+                close.MinHeight = TouchTarget.Minimum;
+            }
+
+            Fade?.ApplyTheme(dark);
+        }
+    }
+
+    /// <summary>How much of the window a bottom sheet may take.</summary>
+    private static double SheetHeightCap(double viewportHeight) =>
+        Math.Max(240, viewportHeight * 0.82);
 
     /// <summary>
     /// A secondary command, independent of the control that presents it.
@@ -74,6 +126,33 @@ public sealed partial class MainView : IDialogHost
     internal void OpenCommandSheet()
     {
         var dark = ActualThemeVariant != ThemeVariant.Light;
+        Control? sheet = null;
+        sheet = BuildSheet(
+            "More actions",
+            BuildCommandList(dark),
+            dark,
+            () =>
+            {
+                if (sheet is { } root)
+                {
+                    RemoveOverlay(root);
+                }
+            },
+            out var surface);
+        PushOverlay(sheet, () => RemoveOverlay(sheet), surface, BuildCommandList);
+    }
+
+    /// <summary>
+    /// The command sheet's body: every secondary command under its heading.
+    /// </summary>
+    /// <remarks>
+    /// Separated from <see cref="OpenCommandSheet"/> so the sheet can be given a new one while
+    /// it is open. This list is derived entirely from <c>_secondaryCommands</c> and the theme —
+    /// it holds no state of the reader's — so rebuilding it costs nothing and is what makes the
+    /// menu answer a theme or text-size change instead of sitting through it (F-40).
+    /// </remarks>
+    private Control BuildCommandList(bool dark)
+    {
         var items = new StackPanel { Spacing = 2 };
         CommandGroup? heading = null;
         foreach (var command in _secondaryCommands.OrderBy(static command => command.Group))
@@ -87,19 +166,7 @@ public sealed partial class MainView : IDialogHost
             items.Children.Add(BuildSheetItem(command, dark));
         }
 
-        Control? sheet = null;
-        sheet = BuildSheet(
-            "More actions",
-            items,
-            dark,
-            () =>
-            {
-                if (sheet is { } root)
-                {
-                    RemoveOverlay(root);
-                }
-            });
-        PushOverlay(sheet, () => RemoveOverlay(sheet));
+        return items;
     }
 
     private static string GroupLabel(CommandGroup group) => group switch
@@ -186,7 +253,14 @@ public sealed partial class MainView : IDialogHost
     /// Close saved or discarded (finding 21.4), so a body that carries its own Cancel does not
     /// get a second, differently-worded one above it.
     /// </remarks>
-    private Grid BuildSheet(string title, Control body, bool dark, Action dismiss, bool scrolls = true, bool showClose = true)
+    private Grid BuildSheet(
+        string title,
+        Control body,
+        bool dark,
+        Action dismiss,
+        out SheetSurface surface,
+        bool scrolls = true,
+        bool showClose = true)
     {
         var scrim = new Border
         {
@@ -212,9 +286,10 @@ public sealed partial class MainView : IDialogHost
             Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark)),
         };
         header.Children.Add(heading);
+        Button? closeButton = null;
         if (showClose)
         {
-            var close = new Button
+            var close = closeButton = new Button
             {
                 Content = "Close",
                 MinHeight = TouchTarget.Minimum,
@@ -234,16 +309,21 @@ public sealed partial class MainView : IDialogHost
         // when the body is taller than the sheet — Appearance & timeline lost the bottom third
         // of a checkbox and Session cache the whole second line of its last session, both
         // against a hard edge with nothing saying anything was below it (audit 3, D2).
+        // The body is held rather than nested directly, so a sheet whose body can be built
+        // again — a command list, which holds nothing half-finished — can be given a new one
+        // in place when the theme or the text size changes under it (F-40).
+        var bodyHost = new ContentControl { Content = body };
+        FadingScrollHost? fade = null;
         Control inner = scrolls
-            ? new FadingScrollHost(
+            ? fade = new FadingScrollHost(
                 new ScrollViewer
                 {
-                    Content = body,
+                    Content = bodyHost,
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                     VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 },
                 dark)
-            : body;
+            : bodyHost;
         Grid.SetRow(inner, 1);
         content.Children.Add(inner);
 
@@ -260,7 +340,7 @@ public sealed partial class MainView : IDialogHost
             Padding = new Thickness(12, 12, 12, 18),
             VerticalAlignment = VerticalAlignment.Bottom,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            MaxHeight = Math.Max(240, Bounds.Height * 0.82),
+            MaxHeight = SheetHeightCap(Bounds.Height),
             MaxWidth = 620,
             Child = content,
         };
@@ -270,6 +350,7 @@ public sealed partial class MainView : IDialogHost
         panel.PointerPressed += (_, eventArgs) => eventArgs.Handled = true;
         AutomationProperties.SetName(panel, title);
 
+        surface = new SheetSurface(scrim, panel, heading, closeButton, fade, bodyHost);
         var host = new Grid();
         host.Children.Add(scrim);
         host.Children.Add(panel);
@@ -279,12 +360,52 @@ public sealed partial class MainView : IDialogHost
     /// <summary>States the workspace band's accessibility view before any sheet exists.</summary>
     private void InitializeOverlayModality() => ApplyOverlayModality();
 
-    private void PushOverlay(Control root, Action dismiss)
+    private void PushOverlay(
+        Control root,
+        Action dismiss,
+        SheetSurface? surface = null,
+        Func<bool, Control>? rebuildBody = null)
     {
-        _overlays.Add(new OverlayEntry(root, dismiss));
+        _overlays.Add(new OverlayEntry(root, dismiss, surface, rebuildBody));
         _overlayHost.Children.Add(root);
         _overlayHost.IsVisible = true;
         ApplyOverlayModality();
+    }
+
+    /// <summary>
+    /// Re-states every open sheet against the state the application is in now.
+    /// </summary>
+    /// <remarks>
+    /// Called from the three transitions that used to walk past the overlay host: the theme
+    /// change that repaints every other surface, the size change that recomposes the shell,
+    /// and the text-size change that rebuilds every workspace. A sheet that can be built again
+    /// is (a command list holds nothing the reader has half-typed); a dialog body is left
+    /// alone, because rebuilding one would discard exactly the edit the reader opened it to
+    /// make — its own controls are theme-resourced and follow the variant on their own, and
+    /// what it needed from here was the panel around it (F-40).
+    /// </remarks>
+    private void RefreshOverlays()
+    {
+        if (_overlays.Count == 0)
+        {
+            return;
+        }
+
+        var dark = ActualThemeVariant != ThemeVariant.Light;
+        var height = Bounds.Height;
+        foreach (var entry in _overlays)
+        {
+            if (entry.Surface is not { } surface)
+            {
+                continue;
+            }
+
+            surface.Apply(dark, height);
+            if (entry.RebuildBody is { } rebuild)
+            {
+                surface.BodyHost.Content = rebuild(dark);
+            }
+        }
     }
 
     private void RemoveOverlay(Control root)
@@ -382,9 +503,10 @@ public sealed partial class MainView : IDialogHost
             host,
             dark,
             body.Dismiss,
+            out var surface,
             scrolls: !body.ScrollsInternally,
             showClose: false);
-        PushOverlay(card, body.Dismiss);
+        PushOverlay(card, body.Dismiss, surface);
         body.NotifyPresented();
         try
         {

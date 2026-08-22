@@ -273,6 +273,9 @@ public sealed partial class SessionWorkspaceView : UserControl
     private readonly Dictionary<MobileWorkspaceDisplayMode, Button> _mobileModeButtons = [];
     private Border? _minimapFrame;
     private TabControl? _mobileAnalysisTabs;
+
+    /// <summary>The analysis tabs' header captions, so the strip can size them to the room it has.</summary>
+    private readonly List<TextBlock> _mobileTabCaptions = [];
     private Grid? _mobileSummaryHost;
     private bool _summaryInTabStrip;
     private Grid? _entryHeader;
@@ -1876,15 +1879,34 @@ public sealed partial class SessionWorkspaceView : UserControl
         var rawPane = BuildEntryInspectorPane();
         if (_mobile)
         {
-            TabItem MobileDetailTab(string header, Control content) => new()
+            // The header is a control rather than a string so that a label too wide for the
+            // tab ends in an ellipsis instead of being sliced through a glyph: at the
+            // device's 1.3x text size the three tabs read `Entrie`, `Insigh` and `Entr`, and
+            // `Insights` cut to `Insigh` reads as a different word (F-41). The name stays the
+            // whole word, so nothing a screen reader announces is trimmed with it.
+            TabItem MobileDetailTab(string header, Control content)
             {
-                Header = header,
-                Content = content,
-                MinWidth = 92,
-                MinHeight = 48,
-                Padding = new Thickness(10, 0),
-                HorizontalContentAlignment = HorizontalAlignment.Center,
-            };
+                var caption = new TextBlock
+                {
+                    Text = header,
+                    TextAlignment = TextAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                var item = new TabItem
+                {
+                    Header = caption,
+                    Content = content,
+                    MinWidth = 92,
+                    MinHeight = 48,
+                    Padding = new Thickness(10, 0),
+                    HorizontalContentAlignment = HorizontalAlignment.Center,
+                };
+                AutomationProperties.SetName(item, header);
+                ToolTip.SetTip(item, header);
+                _mobileTabCaptions.Add(caption);
+                return item;
+            }
 
             // "Source" named the lower half of this pane and hid the half people actually
             // come for. It is the selected entry's inspector: message first, bytes below.

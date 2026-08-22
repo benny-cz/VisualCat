@@ -1360,9 +1360,13 @@ public sealed partial class SessionWorkspaceView : UserControl
                 : remaining > 0
                     ? $"Load {Math.Min(remaining, SessionTabViewModel.EntryPageSize):N0} more; {remaining:N0} remaining"
                     : $"Load next {SessionTabViewModel.EntryPageSize:N0}";
+            // The screen reader's sentence and the button's label are the same words with a
+            // different separator, and swapping the character in place left `more· 49,656`
+            // — the semicolon's own spacing, on a mark that carries its own (F-42). Every
+            // other separator in the product is ` · `.
             _loadMore.Content = _loadMoreInHeader == true && !loading
                 ? $"+{Math.Min(Math.Max(remaining, 1), SessionTabViewModel.EntryPageSize):N0}"
-                : fullLabel.Replace(';', '·');
+                : fullLabel.Replace("; ", " · ", StringComparison.Ordinal);
             AutomationProperties.SetName(_loadMore, fullLabel);
             AutomationProperties.SetHelpText(_loadMore, fullLabel);
             ToolTip.SetTip(_loadMore, fullLabel);

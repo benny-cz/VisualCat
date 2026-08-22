@@ -137,7 +137,14 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         PlatformSourceRegistry.AppPaused += _appPausedHandler;
         PlatformSourceRegistry.DisplayConfigurationChanged += _displayConfigurationHandler;
         Content = Build();
-        SizeChanged += (_, eventArgs) => UpdateMobileChrome(eventArgs.NewSize);
+        SizeChanged += (_, eventArgs) =>
+        {
+            UpdateMobileChrome(eventArgs.NewSize);
+
+            // A sheet's height cap was decided by the bounds it opened in, so rotating with
+            // one open left it capped for the orientation it is no longer in (F-40).
+            RefreshOverlays();
+        };
         ActualThemeVariantChanged += (_, _) => ApplyThemeSurfaces();
         ApplyThemeSurfaces();
         _viewModel.TabAdded += (_, tab) => Dispatcher.UIThread.Post(() => AddTab(tab));
@@ -212,6 +219,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         if (Math.Abs(TextScale.Effective - before) > 0.001)
         {
             RebuildWorkspaceViews();
+
+            // Every workspace is rebuilt at the new scale; a sheet over them was left at the
+            // old one, and it is the surface in front (F-40).
+            RefreshOverlays();
         }
 
         UpdateMobileChrome(Bounds.Size);
@@ -319,6 +330,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         _emptyState.Child = BuildEmptyState(dark);
         ApplyNoticeTheme();
         UpdateSessionStrip();
+
+        // A sheet is a surface painted in code like any other, and it is the one the reader is
+        // looking at while this runs (F-40).
+        RefreshOverlays();
     }
 
     /// <summary>Paints the command bar, its wordmark and its actions for the variant.</summary>

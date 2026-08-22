@@ -7,8 +7,11 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.LogicalTree;
+using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 using VisualCat.App.Views;
@@ -1347,6 +1350,246 @@ public sealed partial class LiveTestRemediationTests
             TouchTarget.TouchOverride = null;
             SessionWorkspaceView.PhoneCompositionOverride = null;
         }
+    }
+
+    // --------------------------------------------------------------- F-40 ---
+
+    /// <summary>
+    /// F-40 — a sheet was built from the state it opened in and nothing wrote to it again, so
+    /// a theme change repainted the whole shell around one that stayed dark.
+    /// </summary>
+    /// <remarks>
+    /// The command sheet is the one a reader is most likely to have open, and it holds nothing
+    /// half-finished, so the fix gives it a new body rather than repainting the old one in
+    /// place. Device evidence for all three transitions is in §11.4/K-04.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task AnOpenSheetFollowsTheThemeItIsNoLongerIn()
+    {
+        await using var view = new MainView();
+        var window = new Window { Content = view, Width = 420, Height = 900 };
+        window.RequestedThemeVariant = ThemeVariant.Dark;
+        window.Show();
+        window.UpdateLayout();
+        try
+        {
+            view.OpenCommandSheet();
+            window.UpdateLayout();
+
+            var darkFill = Assert.IsType<SolidColorBrush>(SheetPanel(view).Background).Color;
+            var darkLabel = Assert.IsType<SolidColorBrush>(SheetLabel(view).Foreground).Color;
+
+            window.RequestedThemeVariant = ThemeVariant.Light;
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var lightFill = Assert.IsType<SolidColorBrush>(SheetPanel(view).Background).Color;
+            var lightLabel = Assert.IsType<SolidColorBrush>(SheetLabel(view).Foreground).Color;
+
+            Assert.NotEqual(darkFill, lightFill);
+            Assert.NotEqual(darkLabel, lightLabel);
+            Assert.Equal(WorkspacePalette.SurfaceRaised(dark: false), lightFill);
+            Assert.Equal(WorkspacePalette.TextPrimary(dark: false), lightLabel);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>
+    /// F-40 — the panel's height cap was the bounds at the instant it opened, so a sheet
+    /// opened in landscape and rotated to portrait kept less than half the screen it had.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AnOpenSheetIsRecappedWhenTheWindowChangesShape()
+    {
+        await using var view = new MainView();
+        var window = new Window { Content = view, Width = 840, Height = 400 };
+        window.Show();
+        window.UpdateLayout();
+        try
+        {
+            view.OpenCommandSheet();
+            window.UpdateLayout();
+
+            var shortCap = SheetPanel(view).MaxHeight;
+
+            window.Height = 900;
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var tallCap = SheetPanel(view).MaxHeight;
+            Assert.True(
+                tallCap > shortCap * 1.5,
+                FormattableString.Invariant($"the sheet kept the cap of the shape it opened in: {shortCap} to {tallCap}"));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>
+    /// F-40 — the sheet was the only surface on screen that ignored the reader's text size.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AnOpenSheetFollowsAChangeOfTextSize()
+    {
+        var platform = PlatformSourceRegistry.PlatformFontScale;
+        await using var view = new MainView();
+        var window = new Window { Content = view, Width = 420, Height = 900 };
+        window.Show();
+        window.UpdateLayout();
+        try
+        {
+            view.OpenCommandSheet();
+            window.UpdateLayout();
+            var before = SheetLabel(view).FontSize;
+
+            // The device's own route: Android publishes the configuration change and the
+            // shell re-reads the scale from it.
+            PlatformSourceRegistry.PlatformFontScale = 1.5;
+            PlatformSourceRegistry.PublishDisplayConfigurationChanged();
+            Dispatcher.UIThread.RunJobs();
+            window.UpdateLayout();
+
+            var after = SheetLabel(view).FontSize;
+            Assert.True(
+                after > before * 1.4,
+                FormattableString.Invariant($"the sheet stayed at {before} while the reader asked for 1.5x"));
+        }
+        finally
+        {
+            PlatformSourceRegistry.PlatformFontScale = platform;
+            PlatformSourceRegistry.PublishDisplayConfigurationChanged();
+            Dispatcher.UIThread.RunJobs();
+            window.Close();
+        }
+    }
+
+    private static Border SheetPanel(MainView view) =>
+        view.GetLogicalDescendants()
+            .OfType<Border>()
+            .Single(border => AutomationProperties.GetName(border) == "More actions");
+
+    private static TextBlock SheetLabel(MainView view) =>
+        view.GetLogicalDescendants()
+            .OfType<TextBlock>()
+            .First(block => block.Text == "Recent sessions…");
+
+    // --------------------------------------------------------------- F-41 ---
+
+    /// <summary>
+    /// F-41 — the analysis pane's three tabs were laid out at exactly <c>MinWidth</c> on the
+    /// device at every text size measured, so 1.3× sliced <c>Insights</c> to <c>Insigh</c>
+    /// with 79 dp of the pane standing empty beside it.
+    /// </summary>
+    /// <remarks>
+    /// Two halves, and both are pinned here: the tabs take the width of the pane they are in
+    /// rather than a constant chosen at 1.0×, and a caption that still does not fit ends in an
+    /// ellipsis instead of being cut through a glyph.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task TheAnalysisTabsShareTheWidthOfThePaneTheyAreIn()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(FourEntryLog, 393, 777);
+            fixture.Window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var tabs = fixture.View.GetLogicalDescendants()
+                .OfType<TabControl>()
+                .Single(control => AutomationProperties.GetName(control) == "Session detail views")
+                .Items
+                .OfType<TabItem>()
+                .ToList();
+            Assert.Equal(3, tabs.Count);
+
+            // One share each, and the share is the pane's, not a literal.
+            var share = Assert.Single(tabs.Select(static tab => tab.Bounds.Width).Distinct());
+            Assert.True(share > 92, FormattableString.Invariant($"the tabs kept the 1.0x constant: {share}"));
+            Assert.True(3 * share <= 393, FormattableString.Invariant($"three tabs of {share} do not fit a 393 dp pane"));
+
+            // And the row they are arranged in is the row they were measured for. Writing a
+            // width without re-arranging the strip left each tab 25 dp over its neighbour and
+            // the first one 16 dp off the left edge, which is F-34's defect wearing F-41's
+            // clothes.
+            for (var index = 0; index < tabs.Count; index++)
+            {
+                Assert.True(
+                    tabs[index].Bounds.X >= -0.5,
+                    FormattableString.Invariant($"tab {index} starts at {tabs[index].Bounds.X}"));
+                if (index > 0)
+                {
+                    Assert.True(
+                        tabs[index].Bounds.X >= tabs[index - 1].Bounds.Right - 0.5,
+                        FormattableString.Invariant(
+                            $"tab {index} at {tabs[index].Bounds.X} overlaps the one ending at {tabs[index - 1].Bounds.Right}"));
+                }
+            }
+
+            foreach (var tab in tabs)
+            {
+                var caption = Assert.IsType<TextBlock>(tab.Header);
+                Assert.Equal(TextTrimming.CharacterEllipsis, caption.TextTrimming);
+
+                // Whatever is drawn, what is announced is the whole word.
+                Assert.Equal(caption.Text, AutomationProperties.GetName(tab));
+            }
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    // --------------------------------------------------------------- F-42 ---
+
+    /// <summary>
+    /// F-42 — the button's label is the screen reader's sentence with a different separator,
+    /// and the swap was one character for one character, so <c>more; 49,656</c> became
+    /// <c>more· 49,656</c>: the semicolon's spacing on a mark that carries its own.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task TheLoadMoreLabelSpacesItsSeparatorLikeEveryOtherOne()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(ManyEntryLog(600), 393, 777);
+            fixture.Window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var loadMore = fixture.View.GetLogicalDescendants()
+                .OfType<Button>()
+                .First(button => AutomationProperties.GetName(button) is { } name &&
+                    name.StartsWith("Load ", StringComparison.Ordinal));
+            var label = Assert.IsType<string>(loadMore.Content);
+
+            Assert.Contains(" · ", label, StringComparison.Ordinal);
+            Assert.DoesNotContain(";", label, StringComparison.Ordinal);
+            Assert.DoesNotContain("more·", label, StringComparison.Ordinal);
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    private static string ManyEntryLog(int lines)
+    {
+        var log = new System.Text.StringBuilder();
+        for (var index = 0; index < lines; index++)
+        {
+            log.Append(FormattableString.Invariant(
+                $"01-01 00:00:{index % 60:00}.{index:000000}   100   101 I Worker         : line {index}"));
+            log.Append('\n');
+        }
+
+        return log.ToString();
     }
 
     /// <summary>Whatever the control calls itself, for a failure message.</summary>
