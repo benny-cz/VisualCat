@@ -1384,7 +1384,7 @@ already taken. Then continue.
 | F-10 Landscape drawer ignores the IME | Major | Layout | Done | Yes (Samsung) |
 | F-12 Wrong buffer attribution | Major | Source/parse | Done | Yes |
 | F-13 P0 promises a sheet that cannot appear | Major | Copy | Done | Yes (P0+P1) |
-| F-15 Bursty live-refresh CPU | Major | Render loop | Code done | partial |
+| F-15 Bursty live-refresh CPU | Major | Render loop | **Done** | **Yes — Samsung, Release, screen-off soak, both legs (§8.5)** |
 | F-19 Interrupted capture reads `Ready` | Major | State mapping | **Done** | **Yes — Samsung process kill, durable state, and all three recovery routes** |
 | F-22 Two live captures, one Stop | Major | Shell | Done | Yes |
 | F-25 Follow clears the selected entry | Major | View | **Done** | **Yes — Samsung identity, off-page explanation, and Show-it restoration** |
@@ -1412,6 +1412,14 @@ Found by the third-device run (§7); same vocabulary, same rules.
 | F-30 A landscape keyboard slices the query field it was raised for | Major | Layout | **Done** | **Yes — Pixel 5, 341 dp landscape and 777 dp portrait** |
 | F-29 Drawer `Clear the query` is 30.5 dp wide | Minor | Layout | **Done** | **Yes — 0 of 24 clickable nodes under 48 dp** |
 | F-16 (second half) Tab strip cuts the word out of every generated capture name | Polish | Layout | **Done** | **Yes — Pixel 5** |
+
+Found by the fourth pass (§8); same vocabulary, same rules.
+
+| Finding | Severity | Area | Status | Device-verified |
+|---|---|---|---|---|
+| F-31 Every number field’s spin buttons are 34 × 46 dp | Minor | Layout | **Done** | **Yes — Samsung Release build, both settings sheets** |
+| F-32 A tall notice makes a portrait workspace compact, and the merged row clips `Stop capture` to 15 dp | Major | Layout | **Done** | **Yes — Samsung Release, the exact state reproduced from a cold launch** |
+| F-33 The notice drops the sentence it exists to deliver | Major | Layout + copy | **Done** | **Yes — Samsung Release, the remedy now reads in full** |
 
 ### 5.2 Per-finding remediation record
 
@@ -1528,7 +1536,7 @@ being the report's requested "no user-facing failure string matches
 
 **Device evidence — verified (Debug build).** `(unclosed` under *Regex* produces “Not a valid regular expression: there are more "(" than ")" (position 9).” beside the field, the chip bar still reads `No active filters`, and the list still shows 49,994. No resource key anywhere. See §5.3.
 
-**Still owed.** The `UseSystemResourceKeys` half is Release-only by construction, so it wants one Release build on the device to confirm framework sentences are legible in a diagnostic bundle. The product-facing path is configuration-independent and is verified.
+**Closed since this entry was written.** The `UseSystemResourceKeys` half is Release-only by construction, so it wanted one Release build on the device. §6/C-06 supplied it (trimmed Release, SHA-256 `43CF819C…`, `(unclosed` under *Regex* producing the product sentence with zero `MakeException` / `InsufficientClosingParentheses` / `ResourceKey` matches in the tree), and §7/D-04.0 closed the wider half by routing the five call sites that had never used `FriendlyMessage` through it and adding the source guard that keeps them there. Nothing is owed.
 
 #### F-05 · Five routes wrote the status line behind `ApplyStatusText`
 
@@ -1703,7 +1711,7 @@ work. It re-tests the findings; it does not re-run the plan.
 
 | Finding | Measured | Still owed |
 |---|---|---|
-| **F-15** | Comparable `/proc` deltas on one PID, screen on, USB powered. **Idle, no capture: 1.00 % over 15 s. Untouched P0 capture: 6.93 % and 7.00 % over 15 s.** `Surface::disconnect` in 10 s: **0** during a P0 capture and **0** during a full-device capture — §3 measured **≈50 per 10 s** during a quieter P0 capture. A full-device capture at 163 lines/s measured 49.85 % over 20 s, which is ingest work rather than refresh work. | The soak (X-05/X-06) the report says is required. This is a rate-of-work result, not an endurance verdict. |
+| **F-15** | Comparable `/proc` deltas on one PID, screen on, USB powered. **Idle, no capture: 1.00 % over 15 s. Untouched P0 capture: 6.93 % and 7.00 % over 15 s.** `Surface::disconnect` in 10 s: **0** during a P0 capture and **0** during a full-device capture — §3 measured **≈50 per 10 s** during a quieter P0 capture. A full-device capture at 163 lines/s measured 49.85 % over 20 s, which is ingest work rather than refresh work. | Nothing — **§8.5 ran the soak** and F-15 is `Done`. This row stays as the screen-**on** half of the picture. |
 | **F-02** | Verified on the **host**, which is where the CLI runs: `vcat generate-test-log --help` prints its usage, exits 0, and **writes no file**; `vcat generate-test-log --lines1000` prints `error: 'generate-test-log' does not take '--lines1000'.` and exits 2. | Nothing — there is no device surface for this. |
 
 #### Closed by the Samsung continuation run
@@ -1758,9 +1766,12 @@ them or assume they were missed.
    report offers it as optional and flags the risk itself: two mutable documents
    that momentarily hash alike would be wrongly merged. The strict exact-URI
    oracle passes, and that is the contract A-06 actually states.
-4. **F-15 — no soak.** X-05/X-06 are not run here. §5.3 records a rate-of-work
+4. **F-15 — no soak.** ~~X-05/X-06 are not run here. §5.3 records a rate-of-work
    improvement, not an endurance verdict, and §3 is right that a screen-off,
-   hours-long budget is what would close it.
+   hours-long budget is what would close it.~~ **Discharged by §8.5**, which ran
+   both legs on a Release build: idle 0.04 % / 0.11 %, capture **1.29 % mean over
+   six 600-second windows** with the screen off. The hours-long half is honest
+   about what it is — one hour of flat, non-drifting samples, not twelve.
 
 ---
 
@@ -2914,3 +2925,691 @@ Five defects, four of them invisible to the two earlier devices:
 The two device-independent ones are the useful lesson: a third device found them
 not because it is different but because it was a fresh pair of eyes over panes the
 earlier sweeps had not opened.
+
+---
+
+## 8. Fourth pass — audit of the remediation, and the F-15 soak (Samsung SM-G990B)
+
+This section is the live handoff for the fourth pass. Its brief was different from
+§6's and §7's: not "run the plan on a new device" but **"check whether every
+finding in this report has actually been addressed, and fix what has not."**
+It therefore starts with a code audit of all 32 findings and only then goes to a
+device, for the one item the audit could not close on the host.
+
+Update the ledger in §8.3 after every material action and resume at the first row
+that is not **Done**.
+
+### 8.1 Which device, and why this one
+
+§7 ended with the Pixel 5 locked behind an after-boot credential prompt, which is
+where F-15's soak stopped. At the start of this pass the Pixel was not connected
+at all; the only device answering ADB was the Samsung **SM-G990B**
+(`RFCRC0A9GND`) — §6's device. The choice was put to the operator, who chose the
+connected Samsung.
+
+That is a better artifact than it first looks, for the one measurement this pass
+owes:
+
+| | §5.3 (Motorola) | §7/D-08 (Pixel 5) | This pass (Samsung) |
+|---|---|---|---|
+| Build class | Debug | Debug | **Release, non-debuggable** (`run-as` refuses it) |
+| F-15 idle control | screen **on**, 1.00 % | screen **off**, 0.13 % / 0.00 % | screen off, Release |
+| F-15 capture leg | not run | **blocked** on the credential prompt | the deliverable of this pass |
+
+F-15 asks for "a screen-off ≤10-lines/s CPU/battery soak budget against the same
+idle baseline". A Debug build is not the endurance answer that ships; this device
+is already carrying a Release build, so the soak is measured on the artifact class
+a user would actually run.
+
+### 8.2 Run header and baseline
+
+| Field | Value |
+|---|---|
+| Date/time (UTC) | 2026-08-22 09:25 → (device local is UTC+2, so device clocks read 11:25) |
+| Repository commit at start | `c74fee3` — *Answer the Android live-test report, and let a third phone answer back* |
+| Working tree at start | clean |
+| Device | Samsung **SM-G990B** (`r9q`) |
+| Serial | `RFCRC0A9GND` |
+| Android release / API | 16 / 36 |
+| ABIs | `arm64-v8a, armeabi-v7a, armeabi` |
+| Build fingerprint | `samsung/r9qxeea/r9q:16/BP2A.250605.031.A3/G990BXXSKIZF1:user/release-keys` |
+| Screen / density | 1080 × 2340 px, 480 dpi (**3.0 px/dp**) |
+| Configuration at baseline | `mcc230-mnc3-cs-rCZ-ldltr-sw360dp-w360dp-h780dp-normal-long-port-night-xxhdpi-finger-navhidden-nonav` |
+| Navigation mode | `0` — three-button |
+| Locale | `cs-CZ` (system), LTR |
+| Theme / font scale | `night` (dark) / `1.0` |
+| Rotation | `accelerometer_rotation=1`, `user_rotation=0` |
+| Thermal status | `0` |
+| Battery / power | 100 %, USB powered |
+| Free space | 91 GiB |
+| Package at baseline | `com.barebit.visualcat` `versionName=2.0.5-dev`, `versionCode=20005`, `firstInstallTime=2026-08-21 13:06:36`, `lastUpdateTime=2026-08-22 02:01:35` |
+| Build class at baseline | **Release** — `pkgFlags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]`, no `DEBUGGABLE`; `run-as` answers *"package not debuggable"* |
+| `READ_LOGS` | **granted** (pre-existing, not a mutation by this run) |
+| App state at baseline | not running; device on the launcher |
+| Evidence root | `artifacts/live-test/20260822-samsung-audit/evidence/` |
+
+**Host regression before any change:** `dotnet test VisualCat.slnx -c Debug` →
+**354/354 passed, 0 failed** (Domain 11, Core 88, App 206, Application 49) — the
+same total §7 handed back, so the tree is unmodified since D-10.
+
+### 8.3 Step ledger
+
+| Step | Status | Outcome / next action |
+|---|---|---|
+| E-01 Audit every §5.1 finding against the code | **Done** | All 32 findings have an artefact in the tree. F-15 is the only one whose status is evidence rather than code. §8.4/E-01. |
+| E-02 Record the device baseline | **Done** | §8.2. Release (non-debuggable) build, `READ_LOGS` granted, 100 % battery, thermal 0. |
+| E-03 Put the current commit's Release build on the device | **Done** | In-place update, `firstInstallTime` preserved, cold launch 1 554 ms. F-01 verified on a **Release** build for the first time. §8.4/E-03. |
+| E-04 F-15 — the screen-off soak, both legs | **Done** | Idle 0.04 % / 0.11 %; capture **1.29 % mean over six 600 s windows** (range 1.21–1.39 %), one hour, same PID, one child, thermal 0 throughout. F-15 moves to `Done`. §8.5. |
+| E-05 Fresh-eyes sweep over panes no earlier pass measured | **Done** | Ten panes opened; eight clean, two failed. Found **F-31**. §8.4/E-05. |
+| E-06 Fix whatever this pass finds, with host tests | **Done** | **F-31**, **F-32** and **F-33** fixed, each with a host test proved to fail first — two of them reproducing the device's exact numbers (34 dp wide; `Stop capture ends at 659 dp in a 360 dp workspace`). Also closed a non-device gap: `c74fee3` carried the whole remediation and never updated `CHANGELOG.md`. §8.4/E-05, §8.4/E-06, §8.5. |
+| E-07 Regression, hand-back, commit and push | **Done** | Full solution **359/359** (Domain 11, Core 88, App 211, Application 49 — five new tests over §7’s 354); `git diff --check` clean; `verify-docs.ps1` consistent; device restored to its baseline (§8.6); committed and pushed to `main`. |
+
+### 8.4 Continuous execution log
+
+Entries are appended as they happen, so an interrupted session resumes here.
+
+#### E-01/E-02 — audit of all 32 findings, and the baseline
+
+**Status: Done.** The audit was run against the code at `c74fee3`, not against
+§5.1's own claims, because a status table can only be trusted as far as the tree
+agrees with it. Each row was checked by locating the named artefact.
+
+| Finding | Claimed in §5.1 | Found in the tree at `c74fee3` |
+|---|---|---|
+| F-20 | Done | `TimelineControl.ZoomBounds`/`ZoomViewport` at `:1164`/`:1170`; all six zoom routes (`:124`, `:288`, `:850`, `:950`, `:995`, `:996`) go through `ZoomViewport` — **no raw `MaximumSpan` call site survives** |
+| F-01 | Done | `Directory.Build.props:27` — `VersionSuffix` = `dev` unless `ReleaseChannel == stable`; `ProductInfo.BuildVersion` |
+| F-04 | Done | `src/VisualCat.Core/Query/SearchPattern.cs` present; `UseSystemResourceKeys=false` at `VisualCat.Android.csproj:21`; `WorkspaceViewModel.Presentable`/`Detail`/`IsPresentable`/`ErrorCode` |
+| F-05 | Done | `src/VisualCat.App/Views/StatusLine.cs` present; no writable text property on it |
+| F-07 | Done | `SessionWorkspaceView.cs:896`/`:912` — `Previous search match`, `Search match navigation` |
+| F-09/F-10/F-11 | Done | compact-height path in `SessionWorkspaceView.Mobile.cs`; `ApplyTightDrawerChrome` |
+| F-12 | Done | `OnDeviceLogSource.cs:145–156` — `-D` divider tracking, `buffers=all` |
+| F-13 | Done | `MainView.cs:1628` verbatim remedy; `OnDeviceLogSource.cs:61` the exact `pm grant` line |
+| F-14 | Done | `SessionCompletionText.State(...)`; `SessionCoordinator` branches on `Metadata.IsFinite` |
+| F-15 | **Code done** | `WorkspaceViewModel.cs:41`/`:181` Android refresh ceiling 6/s; `SuspendLiveViews`/`ResumeLiveViews` at `:146`/`:153`, wired to `OnPause`/`OnResume` in `MainView.cs:117`/`:124`; `LiveViewerPresence` threaded to `SessionStoreWriter`. **The code is there; the endurance evidence is not.** |
+| F-19 | Done | `SessionCompletion.cs`; `SessionActivity.RecoverablePartial`; `ReportOpened` |
+| F-22 | Done | `MainView.cs:1097` — `Go to the running capture, {title}` |
+| F-25 | Done | `_entryOffPageBanner` + `Show it` at `SessionWorkspaceView.cs:936`/`:950` |
+| F-02 | Done | `Program.cs:62` comment and the early-help path |
+| F-03 | Done | hero links at `TouchTarget.Minimum` |
+| F-06 | Done | `SessionWorkspaceView.Presentation.cs:479` — `No entry matches these filters` |
+| F-08 | Done | `SessionWorkspaceView.RawContext.cs:392` — the gutter is documented and drawn 1-based |
+| F-16 | Done | `SourceMetadata.NameCaptureStartedNow`; `TabTitle.MobileBudget = 26` |
+| F-17 | Done | `MainView.cs:807` — `Double tap to reopen this capture.` |
+| F-18 | Done | `LoadSnapshotAsync` resolves the tense in a `finally` |
+| F-21 | Done | `src/VisualCat.Domain/Counted.cs` |
+| F-23 | Done | `SessionDialogs.cs:970` — the zero-eligible sentence; protected open paths |
+| F-24 | Done | `SessionWorkspaceView.Interactions.cs:925–971` — `ObserveEntriesPosition` / `EntriesJustMoved`, 400 ms |
+| F-26 | Done | `TouchTarget.For(mobile, …)` in `MainView.TabStrip.cs:215/238/239` |
+| F-27 | Done | `MainActivity.QueryDisplayName` via `OpenableColumns.DisplayName`, `?? "shared-log.txt"` |
+| D-04.0 | Done | `RefreshAsync` guards the pre-lock `WaitAsync`; `NoViewComposesUserTextFromAFrameworkException` guard test |
+| F-28 | Done | `src/VisualCat.App/Platform/EdgeGestureGuard.cs`; `MainActivity.cs:369` sets `SystemGestureExclusionRects` |
+| F-29 | Done | `SessionWorkspaceView.cs:1063` — `MinWidth = _mobile ? 48 : 0` |
+| F-30 | Done | the query band is built outside `_mobileFilterBody`; `ApplyTightDrawerChrome` |
+| F-16 (2nd half) | Done | `TabTitle.cs:18` — `MobileBudget = 26`, named |
+
+**Audit verdict.** §5.1 is honest. Every finding it calls `Done` has an artefact
+in the tree, and the one it calls `Code done` — **F-15** — is exactly that: the
+implementation is complete and the *evidence* is missing. F-15 is therefore the
+whole of this pass's outstanding work, and §8.5 is what it produced.
+
+Two things the audit noticed that are not defects but are worth stating, because
+neither is written down anywhere a later session would find it:
+
+1. **The framework-exception source guard walks only `src/VisualCat.App/Views`.**
+   A sweep of `Presentation/`, `src/VisualCat.Android/` and `src/VisualCat.Desktop/`
+   for the same pattern finds nothing user-facing: the `Presentation` hits are
+   inside `FriendlyMessage` itself (which is the helper), the `IsResourceExhaustion`
+   / `IsDiskFull` hits are classification rather than display, and the four Android
+   hits are `Android.Util.Log` calls that go to logcat, not to a reader. The guard's
+   scope is correct; it was simply never justified.
+2. **Compact-height landscape deliberately runs some chrome at 42 dp** —
+   `SessionWorkspaceView.Mobile.cs:845/910/915/920` (analysis tabs, `_order`,
+   `_loadMore`, `_fitMatches`, `_clearScope`, `Copy`, the inspector button). Entry
+   rows keep 48 dp, which is what F-09's oracle measures. F-26's own suggested fix
+   permits "an inline exception" that is *explicitly documented*; it is documented
+   in the code and was not in this report. §8.6 records it.
+
+**Baseline** is §8.2. Host suite **354/354** before any change.
+
+#### E-03 — the current commit's Release build on the device
+
+**Status: Done.** `dotnet build src\VisualCat.Android\VisualCat.Android.csproj -c Release
+-p:EmbedAssembliesIntoApk=true` → **0 warnings, 0 errors**, 66 s. Installed in
+place with `adb install -r -t` (the memory note's Fast-Deployment trap does not
+apply to a Release build with embedded assemblies).
+
+| | Value |
+|---|---|
+| Artifact | `src/VisualCat.Android/bin/Release/net10.0-android36.0/com.barebit.visualcat-Signed.apk` |
+| SHA-256 | `6baba4226ca1e0ebc70fcfad75dbedb8813de10bfa4b07907b8e97456371112e` |
+| Bytes | 30 815 675 |
+| Install | incremental, `Success` in 1 447 ms |
+| `firstInstallTime` | `2026-08-21 13:06:36` — **preserved**, so app data survived |
+| `lastUpdateTime` | advanced to `2026-08-22 11:32:15` |
+| `READ_LOGS` | still `granted=true` |
+| Cold launch | `LaunchState: COLD`, **1 554 ms** |
+
+**F-01 verified on a Release build, which §5.3 could not do.** The empty state
+reads **`VisualCat 2.0.5-dev+c74fee3 · local-first · no telemetry`** — the running
+commit, named by a Release artifact, which is exactly the confusion F-01 was
+about. §5.3's evidence was a Debug build; this closes that half.
+
+**F-03 re-measured at a third density** (480 dpi, 3.0 px/dp): **11 clickable nodes
+on the cold empty state, 0 under 48 dp.** Evidence: `E03-cold.xml`.
+
+#### E-05 — fresh-eyes sweep over panes no earlier pass measured
+
+§7.6's lesson was that two of the third device's five findings were
+device-independent and had simply never been looked at: *"a floor is only as good
+as the panes it was measured on."* This step took that literally and opened every
+pane the three earlier passes did not.
+
+| Pane | Clickable nodes | Under 48 dp |
+|---|---:|---:|
+| Cold empty state | 11 | **0** |
+| *More actions* sheet | 9 | **0** |
+| *Recent sessions* | 2 buttons + 6 rows at 70.3 dp | **0** |
+| **Appearance & timeline** | 18 (top) / 14 (scrolled) | **8 spinner buttons** |
+| **Session cache** | 8 | **4 spinner buttons** |
+
+Two of the five panes fail, in the same way, for the same reason.
+
+##### F-31 · Every number field's spinner buttons are 34 × 46 dp
+
+- **Severity** Minor · **Scenario** E-05 · **Device-independent** · **Found by** the fourth pass
+- **Reproducibility** deterministic; every `NumericUpDown` in the product, both dialogs, both scroll positions
+
+`measure_targets.py` at 480 dpi on the *Appearance & timeline* sheet and the
+*Session cache* sheet:
+
+| Control | Bounds (px) | dp |
+|---|---|---|
+| `Increase` / `Decrease text scale` | `102 × 138` | **34.0 × 46.0** |
+| `Increase` / `Decrease live UI refresh limit in hertz` | `102 × 138` | **34.0 × 46.0** |
+| `Increase` / `Decrease maximum zoom precision` | `102 × 138` | **34.0 × 46.0** |
+| `Increase` / `Decrease minimum bar width` | `102 × 138` | **34.0 × 46.0** |
+| `Increase` / `Decrease Maximum age (days)` | `102 × 138` | **34.0 × 46.0** |
+| `Increase` / `Decrease Maximum total size (GiB, 0 = unlimited)` | `102 × 138` | **34.0 × 46.0** |
+
+Twelve controls, all of them under the floor on **both** axes, and 34 dp wide is
+narrower than F-29's 30.5 dp button was tall.
+
+**Why every earlier sweep missed it.** `StretchForTouch` (`SessionDialogs.cs:674`)
+does the right thing to the `NumericUpDown` *container* — `MinHeight = 48`, full
+width — and the container measures exactly 48 dp (`[87,925][753,1069]` = 144 px).
+The spinners are **template parts inside it**, inset by the control's border, so
+they measure to 46 dp tall and to their own glyph's 34 dp wide. A sweep that reads
+the container passes; only a sweep that reads the accessibility tree's leaf nodes
+— which is what `measure_targets.py` does — sees them, and nobody had pointed it
+at these two sheets.
+
+This is F-29 exactly one level down: F-29 was a one-glyph button left to measure
+to its glyph, and so is this, twelve times over.
+
+**Not a defect, recorded so the next reader does not chase it.** In the same dump,
+`Snap timeline cells to device pixels` first measured `733 × 82 px` = 244.3 ×
+**27.3 dp**. That is a scroll artifact, not a target: the node sat at
+`[87,2258][820,2340]`, below the dialog card's own bottom edge at `y=2196` and
+clipped by the 2340 px screen. Scrolling the sheet down showed the same control at
+`733 × 144 px` = **48.0 dp**. Every checkbox in both sheets is 48 dp.
+
+**Fixed — at the seam, not at the twelve sites.** `SheetForm.NameSpinButtons` was
+already the one place every numeric field goes through: it waits for the first
+layout pass that realises the buttons (they are three templates deep, so
+`TemplateApplied` is too early) and names them. That pass is also the only moment
+their size can be set, so it is now `SheetForm.PrepareSpinButtons` and does both.
+An eighth numeric field cannot omit it, because there is no other route.
+
+```csharp
+// Zero on the desktop, where a pointer is not a thumb.
+var floor = TouchTarget.Here();
+…
+button.MinWidth = Math.Max(floor, button.MinWidth);
+button.MinHeight = Math.Max(floor, button.MinHeight);
+```
+
+The width comes out of the field's text column, which is stretched to the sheet on
+a phone and has about 222 dp for values like `1.00×` and `30`; the container grows
+from 48 dp to 50 dp to hold 48 dp buttons inside its own border. The desktop is
+untouched — `TouchTarget.Here()` is `0` there, and `Math.Max` leaves the theme's
+own metrics alone.
+
+**Files** `src/VisualCat.App/Views/SessionDialogs.cs`,
+`src/VisualCat.App/Theme/TouchTarget.cs`.
+
+**Host test — proved to fail first.**
+`LiveTestRemediationTests.ANumberFieldsSpinButtonsMeetTheTouchFloor`. With the two
+assignments removed it fails with
+
+```text
+Increase live UI refresh limit in hertz is 34 dp wide
+```
+
+— **the same 34 dp the device measured**, which is the point: this was headlessly
+reproducible all along and no headless test had ever asked. That needed one new
+seam, `TouchTarget.TouchOverride`, for the same reason
+`SessionWorkspaceView.PhoneCompositionOverride` exists: the floor is zero on a
+desktop, so a headless run measures every control against nothing and proves
+nothing. Null means "ask the platform", which is what every shipping build does.
+
+**Other panes re-verified on this device, at 480 dpi.**
+
+| Pane | Result |
+|---|---|
+| Workspace, session open | **13 clickable nodes, 0 under 48 dp** |
+| *Insights → Templates* | **13 nodes, 0 under 48 dp**; `Filter to` / `Mute` / `Copy selected template` all ≥ 48 dp |
+| **Filter drawer (F-29's pane)** | **24 clickable nodes, 0 under 48 dp**; `Clear the query` **144 × 144 px = 48.0 × 48.0 dp** — §7's Pixel result reproduced exactly on a second device and a Release build |
+| Analysis tabs (portrait) | `Entries` / `Insights` / `Entry` each **92.0 × 48.0 dp** |
+| **F-16 (both halves)** | the tab reads **`On-device logcat 01h46m04`** — whole, no ellipsis, the word `logcat` present |
+| **F-05 / F-18** | status line settles on **`Ready · 4,603 entries`** with rows bound; no `Opening` |
+
+**Device verification — Pass, on the Release build.** Rebuilt (0 warnings/0
+errors), installed in place, cold-launched. SHA-256
+`ec5a62cbc02e6129b9f6f2cedfd1ae517b9657bb4a7faffa49e6de629bea46a8`,
+31 144 106 bytes.
+
+| Sheet | Before | After |
+|---|---|---|
+| Appearance & timeline (top) | 18 nodes, **7 under 48 dp** | 18 nodes, **0 under 48 dp** |
+| Appearance & timeline (scrolled) | 14 nodes, **4 under 48 dp** | 14 nodes, **0 under 48 dp** |
+| Session cache | 8 nodes, **4 under 48 dp** | 8 nodes, **0 under 48 dp** |
+
+Every spin button now measures **144 × 144 px = 48.0 × 48.0 dp**. The field around
+it grew from 48 dp to **50.0 dp** as designed (48 plus its own 1 px border on each
+side) and its text column is **210.0 dp** — `30`, `0` and `1.00×` are as legible as
+they were.
+
+**And the new area is a hit area, not just a reported bound.** The `Increase text
+scale` button used to occupy `x ∈ [750, 852]`; it now starts at `x = 666`. Two
+taps at **x = 672** — 6 px inside the *new* left edge, and 78 px outside the old
+button entirely — moved the value `1.00× → 1.05×`. *Cancel* then put it back to
+`1.00×`, so this run changed no stored setting. Evidence:
+`E06-appearance-fixed.xml`, `E06-appearance-fixed-scrolled.xml`,
+`E06-cache-fixed.xml`, `E06-spin-works.xml`, `E06-cancel-restored.xml`.
+
+**One thing that is not a defect, checked rather than assumed.** In the cache
+sheet the two number fields did not respond to the enlarged buttons at all. They
+report `enabled=false`, because *Enable automatic temporary-session cleanup* is
+unchecked — the safe stored default §6/C-04.4 verified. A disabled control not
+answering a tap is the correct behaviour, and the enabled field above proves the
+mechanism.
+
+**Two more panes swept while the fix built, both clean.**
+
+| Pane | Clickable nodes | Under 48 dp |
+|---|---:|---:|
+| *Diagnostic bundle* confirmation | 2 | **0** |
+| *Export CSV* | — | hands straight to Android's own Storage Access Framework picker; the one sub-floor node in that dump (`On-device logcat 01h46m04.csv`, 32.0 dp) is the **system picker's** filename field, not a VisualCat control |
+
+The export was backed out with Back rather than completed;
+`ls /sdcard/Download` confirms **no file was written**, so shared storage is
+unchanged by this run.
+
+#### E-06 — the remediation was never written down where a release would read it
+
+**Status: Done.** Not a device finding, and not in §5.1, but squarely inside this pass’s brief. `CONTRIBUTING.md` item 3 requires `CHANGELOG.md` to be updated *"when you change behavior or the public surface"*, and `docs/RELEASE-CHECKLIST.md` gates a release on a changelog section for the version being released.
+
+Commit `c74fee3` — the one carrying the whole remediation of §5, §6 and §7, 56 files and 10 390 insertions — **did not touch `CHANGELOG.md`.** `[Unreleased]` held exactly one entry, from the commit before it. So a release cut from this tree would have shipped a changelog that mentioned none of it: not the zoom crash, not the touch targets, not the gesture-navigation fix, not the buffer attribution, none of about thirty user-visible changes.
+
+The fixes were real and tested; the record of them was missing, which is its own kind of not-addressed. `[Unreleased] → Fixed` now carries fifteen entries covering the whole remediation and this pass’s F-31, in the file’s established voice — what went wrong, then what changed — without finding IDs, which mean nothing to a reader of a changelog. `tools/verify-docs.ps1` passes: *"Checked 92 relative links across 43 Markdown files, required files, and version metadata. All consistent."*
+
+#### E-04.1 — stopping the capture found two more defects, in the state the soak left behind
+
+**Status: Found, root-caused, reproduced, causality proved.** The soak ended with
+a notice on screen — the one F-13 added for a capture whose consent was declined
+— and in that state the capture could not be stopped.
+
+This was not a measurement. Two synthetic taps at the centre of *Stop capture*
+did nothing, twice, which is exactly what a thumb would have experienced.
+Measuring the tree explained why.
+
+##### F-32 · A tall notice makes a portrait workspace compact, and the merged row clips *Stop capture* to 15 dp
+
+- **Severity** Major · **Scenario** E-04 · **Device-independent** · **Found by** the fourth pass
+- **Reproducibility** deterministic; 2 of 2 failed taps, and dismissing the notice restores it every time
+
+Same session, same orientation, 360 dp portrait, minutes apart:
+
+| Control | Capture just started (no notice) | After the notice appeared | Notice dismissed |
+|---|---|---|---|
+| **`Stop capture`** | `292 × 144 px` = **97.3 × 48.0 dp** | `45 × 144 px` = **15.0 × 48.0 dp** | `292 × 144 px` = **97.3 dp** |
+| `Copy raw` | 75.7 × 48.0 dp | `Copy`, **49.7 × 42.0 dp** | 75.7 × 47.7 dp |
+| `Show the full message of the selected entry` | 64.0 × 48.0 dp | **12.3 × 42.0 dp** | 64.0 × 47.7 dp |
+| Clickable nodes under 48 dp | 0 | **4** | 1 (the scrolled tab chip, F-26's known behaviour) |
+
+The screenshot shows what the numbers mean: the command strip reads
+`Filters | Plot | Split | Details | Fit |` and then a bare sliver against the
+right edge of the screen. That sliver is *Stop capture* — the one control that
+ends a running recording.
+
+**Root cause, and it is written in the code's own comment.**
+`SessionWorkspaceView.Mobile.cs` merges the capture controls into the shell row
+whenever compact height is selected:
+
+```csharp
+// A short viewport has width to spare and no height at all, so the capture
+// controls move up beside the mode selector instead of taking a band of their
+// own; a portrait phone keeps them on their own full-width row.
+filterShell.ColumnDefinitions = new ColumnDefinitions(enabled ? "Auto,*" : "*");
+```
+
+*"A short viewport has width to spare"* is true of the viewport the compact
+layout was built for — §6's Samsung landscape at 780 dp and §7's Pixel landscape
+at 801 dp — and false here. The chain is:
+
+1. the notice lane participates in the workspace's height (§5.4's deferral 2, deliberately);
+2. this notice is tall, so the workspace drops under the compact-height threshold;
+3. compact height merges `quickActions` **and** `captureActions` into one row;
+4. that row needs roughly 500 dp and has **360**, so its last control is clipped off the screen.
+
+"A portrait phone keeps them on their own full-width row" is the intent, and it
+is keyed on the wrong thing: height, when the constraint is width.
+
+**The same bug was already found and fixed one control over.** Twenty lines
+below, the query row carries this gate and this comment:
+
+```csharp
+// Regex and Case-sensitive move beside the field only when the whole drawer is
+// actually wide. A short 360 dp portrait workspace can select compact-height
+// composition too; there the options stay directly below the editor so its
+// width never collapses.
+var beside = enabled && availableWidth >= 600;
+```
+
+That is §6's C-06.2. The lesson was drawn for the query row and not carried to
+the row beside it.
+
+##### F-33 · The notice drops the sentence it exists to deliver
+
+- **Severity** Major · **Scenario** E-04 · **Device-independent** · **Found by** the fourth pass
+
+The notice's accessible name carries the whole message. What is *drawn* is
+`MaxLines = 6` with no trimming, and on a 360 dp phone the message needs about
+eleven lines. The screenshot ends mid-clause:
+
+> Only VisualCat's own log lines are being captured — log access was not allowed.
+>
+> Android asks for permission to read the device log on every capture, and this
+> one was not allowed, so the capture can only see
+
+— and the next words, which never appear, are **"Tap Live again and choose the
+option that allows access."**
+
+That sentence is F-13's fix. §3 recorded the defect as *"the notice omits the
+required 'Tap Live again and allow' remedy"*; the copy was written, verified in
+the accessibility tree, and is then cut off before a sighted reader reaches it —
+with no ellipsis to say anything is missing and no way to scroll to it. A screen
+reader hears the remedy; the eye does not. The fix was correct and the layout
+defeats it.
+
+##### Both fixed, at the place each one is actually decided
+
+**F-32 — merge the capture row on width, not on height.** The decision now reads
+the constraint that binds it, using the gate and the threshold C-06.2 already
+established twenty lines below for the query options:
+
+```csharp
+var mergeCaptureRow = enabled && availableWidth >= 600;
+```
+
+The merged row needs roughly 500 dp: `Filters` 76 + three mode buttons 168 +
+`Fit` 56 + `Follow` (which stretches, but wants ~90) + `Stop capture` 97, plus
+spacing. 600 dp clears that with room and sits far below the 780 dp and 801 dp
+landscape viewports §6 and §7 built the compact layout for, so **landscape keeps
+exactly the composition it had.** Only a short *and narrow* workspace — the case
+that was never designed for — gives the capture controls their own full-width row
+back.
+
+**F-33 — stop buying height by throwing the message away.** `MaxLines = 6` is
+gone; the text sits in a `ScrollViewer` bounded to `NoticeTextMaximumHeight`
+(108 logical px, about the six lines the cap used to draw). The lane therefore
+takes **the same height as before** — so this does not undo F-32 — and the part
+that does not fit is a scroll away instead of absent. The bound is applied on
+both platforms rather than behind an `IsAndroid()` check: the lane is hidden on
+the desktop anyway, so one behaviour is simpler than two and this one can be
+asserted without a device.
+
+**Files** `src/VisualCat.App/Views/SessionWorkspaceView.Mobile.cs` (F-32),
+`src/VisualCat.App/Views/MainView.Notice.cs` (F-33).
+
+**Host tests — both proved to fail first.**
+
+| Test | Without the fix |
+|---|---|
+| `StopCaptureStaysOnScreenInAShortNarrowWorkspace` | **`Stop capture ends at 659 dp in a 360 dp workspace`** — 299 dp past the right edge, which is the device's clipping reproduced headlessly |
+| `AWideShortWorkspaceStillMergesTheCaptureRow` | passes before *and* after — it exists to prove the fix costs landscape nothing, and it would fail if the merge had simply been removed |
+| `ALongNoticeKeepsItsWholeMessageInABoundedLane` | `Assert.Equal() Failure: Values differ` on the message text |
+
+**A test-shape note worth keeping.** The first attempt at F-33's test forced the
+Android-only notice lane visible in a desktop composition, through a new
+`MainView.NoticeLaneOverride` seam. That **hangs the headless layout** — the run
+was killed at ten minutes against a normal suite time of about ninety seconds.
+The seam was removed rather than worked around, and the test now asserts the
+shape of the fix (no line cap, a bounded scroller) while how the lane *looks* at
+360 dp stays device-verified. It is recorded here because the next person to
+reach for that seam should know what it costs.
+
+##### A third half the first device check exposed
+
+Installing the first fix and reproducing the exact state showed `Stop capture`
+back at **97.3 dp** — and **two controls still clipped**: `Copy` at 49.7 dp and
+`Show the full message of the selected entry` at **12.3 dp**. Switching to
+*Details* on the same screen, with the same notice, measured the same button at
+**64.0 dp**. So the remainder was specific to **Split**.
+
+`splitTimeline` had the identical defect one level up:
+
+```csharp
+var splitTimeline = enabled && timelineVisible && analysisVisible;
+```
+
+Two columns of a 360 dp portrait workspace leave the analysis pane about
+**131 dp** (`(360 × 0.58) - 78`), and its actions are clipped with it. The same
+gate closes it, and below the threshold the plot and the pane stack the way an
+ordinary portrait workspace already does. The compact row structure and its
+shorter chrome still apply, because those save *height*, and height is what is
+actually short.
+
+**Host test** `AShortNarrowWorkspaceStacksThePlotAndThePane` — one column at
+360 × 340, **two** at 801 × 341, so the landscape composition §6 and §7 built is
+asserted unchanged. Without the fix: `Assert.Single() Failure: The collection
+contained 2 items`.
+
+##### Device verification — Pass, on the Release build, in the exact state
+
+Rebuilt (0 warnings/0 errors), installed in place, and the failing state
+reproduced from scratch: cold launch, start a capture, decline Android's consent
+sheet, so the same notice is on screen.
+
+| | Before | After |
+|---|---|---|
+| `Stop capture` | **15.0 × 48.0 dp** | **97.3 × 48.0 dp** |
+| `Follow` | not reachable in the merged row | **214.7 × 48.0 dp**, own full-width row |
+| `Show the full message` (Split) | **12.3 × 42.0 dp** | **64.0 × 42.0 dp** |
+| `Copy` (Split) | 49.7 × 42.0 dp | 49.7 × 42.0 dp |
+| Clickable nodes under 48 dp | **4** | **1** — the horizontally scrolled tab chip, which is F-26's known and documented behaviour |
+| The notice's last sentence | never drawn | **drawn**, after a scroll, with a visible scrollbar |
+
+The screenshots are the clearest evidence: `E04-stop-clipped.png` shows the
+command strip ending in a bare sliver against the right edge;
+`E06-f32-fixed.png` shows `Follow ✓` and `Stop capture` on a row of their own,
+whole; and `E06-f33-scrolled.png` shows the notice scrolled to
+*"…Tap Live again and choose the option that allows access."* — the sentence
+F-13 wrote and the layout had been eating.
+
+The two remaining 42 dp heights are the compact-height chrome exception §6
+introduced deliberately and §8.6 records; they are a height trade in a short
+viewport, and this pass did not disturb it.
+
+### 8.5 F-15 — the screen-off soak, both legs
+
+This is the measurement §5.4/4 deferred, §3 asked for in these words —
+
+> Add a screen-off ≤10-lines/s CPU/battery soak budget against the same idle
+> baseline
+
+— and §7/D-08 got half of before the Pixel locked itself behind a credential
+prompt. It is the last thing standing between F-15 and `Done`.
+
+**Conditions, identical across both legs.** Same device, same app process, same
+Release build, screen **off**, USB powered, `Thermal Status: 0`, battery 100 %,
+sampled from `utime + stime` in `/proc/<pid>/stat` (USER_HZ 100) on **one** PID
+whose identity is checked before and after every window. The app is open on a
+retained session throughout. Nothing touches the UI between the first sample and
+the last, because being untouched is the condition under test.
+
+#### Leg 1 — idle control (no capture)
+
+| Window | Ticks | CPU |
+|---|---:|---:|
+| idle-1, 300 s | 13 | **0.04 %** |
+| idle-2, 300 s | 33 | **0.11 %** |
+
+PID 5252 before and after; zero `logcat` children throughout; thermal 0; battery
+100 %. This is a **Release** build's idle floor with the screen off, and it is
+lower than §7's Debug measurement on the Pixel (0.13 % / 0.00 %) and two orders
+of magnitude below §5.3's screen-**on** control (1.00 %).
+
+#### Leg 2 — an untouched own-app capture
+
+**Scope.** `READ_LOGS` is granted on this device, so Android's own sheet appeared
+on the capture press — *"Povolit aplikaci VisualCat přístup ke všem protokolům
+zařízení?"* with *Povolit jednorázový přístup* / *Nepovolovat*. This run pressed
+**Nepovolovat**, which is what makes the capture own-app and puts it under
+F-15's ≤10 lines/s budget. Three findings answered for free on a Release build
+while doing it:
+
+| | Observed |
+|---|---|
+| **F-13 (P1)** | the sheet the copy promises **does** appear, on the press, with the permission held |
+| **F-22** | exactly **one** `logcat` child, PID 6961, `logcat -b all -D -T 1 -v threadtime,year,UTC,usec`; the command band reads *"Go to the running capture, On-device logcat 12h01m03"* / *"…is capturing. Tap to go to it; stop it there."* |
+| **F-14 / F-16 / F-21 / R-22** | `Capturing · 2 lines received · no source lines for 6s · On-device logcat` — the live tense is *Capturing* and not *Importing*, the name is an unambiguous start time, the counted noun agrees, and the quiet interval is stated rather than implied |
+
+Capture started 2026-08-22 12:01:03 device-local. Six consecutive 600-second
+windows, screen off, untouched:
+
+| Window | Seconds | Ticks | CPU |
+|---|---:|---:|---:|
+| capture-1 | 601 | 783 | **1.30 %** |
+| capture-2 | 601 | 727 | **1.21 %** |
+| capture-3 | 600 | 747 | **1.24 %** |
+| capture-4 | 600 | 814 | **1.36 %** |
+| capture-5 | 600 | 834 | **1.39 %** |
+| capture-6 | 600 | 749 | **1.25 %** |
+
+**One hour, mean 1.29 %, range 1.21 - 1.39 %.** PID 5252 before the first window
+and after the last; the capture child (PID 6961) alive at every checkpoint and
+`01:03:03` old at the end; `Thermal Status: 0` at every checkpoint; battery 100 %
+throughout.
+
+#### What this settles
+
+| F-15 asked | Answer |
+|---|---|
+| Is the refresh cost **bursty**? | **No, not any more.** §3's screen-on samples were 17.8, 17.8, 25.0, 17.8, 21.4 % and the finding's own word for them was "bursty"; a later quiet run gave 3.4 % and 11.1 % in the same state, which is what made it a *risk* rather than a *number*. Six hourly-scale windows here span **0.18 percentage points**. The distribution is flat, which is the thing that could not be claimed before. |
+| Is it **within budget against the same idle baseline**? | **Yes.** Idle floor on the same device, same build, same conditions: 0.04 % / 0.11 %. An untouched own-app capture costs about **1.2 percentage points over idle**, with the screen off. |
+| Does it **survive** four to twelve hours? | **One hour, measured, with nothing degrading**: no process death, no child death, no thermal rise, no upward drift across windows (the highest window is the fifth, the sixth is back down). §3 feared "battery drain, heat, and process death over four to twelve hours". Heat and process death are answered for an hour and show no trend; twelve hours is still an extrapolation from a flat line rather than a measurement. |
+| **Battery?** | **Not measurable in this run, and it would be dishonest to claim it.** The device was USB-powered at 100 % for every window, which is what keeps the CPU comparison clean, and it is also what makes the battery figure meaningless. What is measured is the thing battery drain is a function of: CPU time. |
+
+#### Against the two earlier passes
+
+| | Build | Screen | Idle control | Untouched capture |
+|---|---|---|---|---|
+| §5.3, Motorola | Debug | **on** | 1.00 % | 6.93 % / 7.00 % (15 s windows) |
+| §7/D-08, Pixel 5 | Debug | off | 0.13 % / 0.00 % | **blocked** |
+| **§8.5, Samsung** | **Release** | **off** | **0.04 % / 0.11 %** | **1.29 % over 6 x 600 s** |
+
+§5.3's screen-on capture numbers and this leg's screen-off numbers are not the
+same measurement and are not presented as one: the difference between them is
+exactly what `SuspendLiveViews` buys, and it is about **5.5 percentage points**.
+
+**F-15's status changes from `Code done` to `Done`,** and §5.4's fourth deferral
+- "F-15 - no soak" - is discharged. The scripts are checked in and parameterised
+by `ANDROID_SERIAL`, so the same measurement can be repeated on any device:
+
+```sh
+ANDROID_SERIAL=<serial> sh tools/scripts/f15-soak-samsung.sh idle
+ANDROID_SERIAL=<serial> sh tools/scripts/f15-soak-samsung.sh capture
+```
+
+Evidence: `evidence/F15-soak.log`, `E04-precapture.xml`, `E04-capturing.xml`.
+
+### 8.6 Hand-back
+
+| | Baseline (§8.2) | At hand-back |
+|---|---|---|
+| `accelerometer_rotation` / `user_rotation` | `1` / `0` | **`1` / `0`** — this run never rotated the device |
+| System font scale | `1.0` | **`1.0`** |
+| Configuration | `sw360dp w360dp h780dp port night` | **identical** |
+| `READ_LOGS` | `granted=true` | **`granted=true`** — never revoked or granted by this run |
+| Package | `20005` / `2.0.5-dev`, Release | `20005` / `2.0.5-dev`, Release, **`firstInstallTime=2026-08-21 13:06:36` preserved** — every install was in place |
+| Capture children | 0 | **0** |
+| IME | hidden | **`mInputShown=false`** |
+| Battery / thermal | 100 %, `Thermal Status: 0` | **100 %, `Thermal Status: 0`** |
+| Files added to shared storage | — | **none** — the two `uiautomator` dumps this run wrote to `/sdcard` (`d.xml`, `e03.xml`) were deleted; the export was backed out before writing and `/sdcard/Download` still holds its original 4 entries |
+| Stored settings | text scale `1.00×`, cleanup disabled | **unchanged** — every settings sheet this run opened was left with *Cancel*; the one value it changed to prove a hit area (`1.00× → 1.05×`) was cancelled back |
+
+**Deliberate deviations, recorded rather than reverted.**
+
+1. **The package is newer than the baseline artifact**, three times over: this
+   pass built and installed the current commit, then the F-31 fix, then the
+   F-32/F-33 fixes. All in place; `firstInstallTime` never moved.
+2. **App-private data holds three more sessions than the baseline** — the
+   soak's own capture (`12h01m03`, 218 entries, complete), the capture that was
+   live when the app was force-stopped to install the fixed build
+   (`13h47m50`, interrupted), and the verification capture (`13h54m06`,
+   45 entries, complete). They are the evidence for §8.5 and for F-32's
+   before/after, so they are kept rather than deleted.
+3. **Two files from §6's run remain on `/sdcard`** (`C-04-F19-tab-semantic-final.png`
+   and `.xml`, both timestamped 2026-08-22 01:45). They are not this run's, and
+   deleting another run's evidence is not this run's call. Noted so the next
+   pass does not attribute them here.
+
+**One thing verified for free at hand-back.** The restore brought both sessions
+back, and the interrupted one carried F-19's notice verbatim — *"This capture was
+interrupted. Everything below reached disk and is exact; anything the source
+produced after the last save is not in the session."* — with its **Review**
+action, and the tab read *"Show interrupted session On-device logcat 13h47m50"*.
+That is §6/C-04.7's work holding on a Release build, on a process death this pass
+caused by accident rather than by design.
+
+### 8.7 What this pass changed about the report
+
+Four things, and only one of them was on the brief.
+
+1. **F-15 is `Done`.** The soak ran, both legs, on a Release build. §5.4's
+   fourth deferral is discharged and §5.1 has no `Code done` row left.
+2. **Three new findings**, all device-independent, all in panes or states no
+   earlier pass had looked at: **F-31** (twelve spin buttons at 34 × 46 dp),
+   **F-32** (a tall notice clips `Stop capture` to 15 dp in a narrow workspace)
+   and **F-33** (the notice drops the remedy sentence it exists to deliver).
+3. **A record that was missing.** The commit carrying the entire remediation
+   never updated `CHANGELOG.md`, which `CONTRIBUTING.md` requires and the release
+   checklist gates on (§8.4/E-06).
+4. **Two stale statements corrected**: F-04's §5.2 entry still said a Release
+   check was "Still owed" after §6 had supplied it, and §5.3's F-15 row still
+   said a soak was owed.
+
+**The pattern, for whoever runs the fifth pass.** §7.6 concluded that its two
+device-independent findings were found "not because it is different but because
+it was a fresh pair of eyes over panes the earlier sweeps had not opened." All
+three of this pass's findings are the same shape, and they sharpen the lesson:
+
+- **F-31** was invisible to every sweep because the sweeps measured **containers**
+  and the defect was in **template parts** inside them. A control that passes at
+  its own bounds can still fail at the bounds of the thing a thumb lands on.
+- **F-32** and **F-33** were invisible because no sweep had been run **while a
+  notice was on screen**. Every measurement in §5, §6 and §7 was taken in a
+  quiet state. The states a product is *in trouble* in are exactly the states
+  its controls matter most in, and they had never been measured.
+- F-32 in particular is the third instance of one root cause: a compact layout
+  chosen by **height** that assumes **width**. C-06.2 found it on the query
+  options, this pass found it on the capture row and again on the split
+  composition. Anything else in that method still keyed on `enabled` alone is
+  worth a look.
+
+**Declared limits of this pass.** One device, API 36, Release but **debug-signed**
+(`CN=Android Debug`), so §1.1's gap 2 is narrowed and not closed. The soak is one
+hour, not the four-to-twelve §3 speculates about, and it is USB-powered so it
+measures CPU rather than battery. No TalkBack, no upgrade/Play, no
+destructive-storage and no locale work was attempted.

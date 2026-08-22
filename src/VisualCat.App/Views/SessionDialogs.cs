@@ -231,16 +231,27 @@ internal static class SheetForm
     }
 
     /// <summary>
-    /// Names a numeric field's own spin buttons.
+    /// Names a numeric field's own spin buttons and gives them a thumb to land on.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Every increment and decrement button in the product announced itself as
     /// <c>Avalonia.Controls.PathIcon</c> — eight of them across two sheets — because a
     /// templated button with an icon and no text has nothing else to fall back on
     /// (audit 2, B3). The names are attached once the template exists, which is the first
     /// moment the buttons do.
+    /// </para>
+    /// <para>
+    /// The same pass is where the touch floor has to be applied, and for the same reason.
+    /// <c>StretchForTouch</c> gives the <see cref="NumericUpDown"/> <em>container</em> its
+    /// 48 dp, and the container duly measured 48 dp — but the spin buttons are template
+    /// parts inside it, inset by its border, so they measured 46 dp tall and to their own
+    /// glyph's 34 dp wide: twelve controls under the floor across two sheets, and the only
+    /// ones left in the product (finding F-31). A container is not what a thumb lands on.
+    /// Doing it here rather than at each field means an eighth numeric field cannot omit it.
+    /// </para>
     /// </remarks>
-    internal static void NameSpinButtons(NumericUpDown field, string label)
+    internal static void PrepareSpinButtons(NumericUpDown field, string label)
     {
         // Not on TemplateApplied. The spin buttons are three templates deep — the field's own,
         // a validation content presenter's, and the ButtonSpinner's — and a content presenter
@@ -249,7 +260,7 @@ internal static class SheetForm
         // them named, and the handler retires itself.
         void OnLayoutUpdated(object? sender, EventArgs eventArgs)
         {
-            if (Name(field, label))
+            if (Prepare(field, label))
             {
                 field.LayoutUpdated -= OnLayoutUpdated;
             }
@@ -258,17 +269,26 @@ internal static class SheetForm
         field.LayoutUpdated += OnLayoutUpdated;
     }
 
-    private static bool Name(NumericUpDown field, string label)
+    private static bool Prepare(NumericUpDown field, string label)
     {
-        var named = 0;
+        // Zero on the desktop, where a pointer is not a thumb and the spinners are the size
+        // the theme drew them.
+        var floor = TouchTarget.Here();
+        var prepared = 0;
         foreach (var button in field.GetVisualDescendants().OfType<Button>())
         {
             var increases = button.Name is { } name && name.Contains("Increase", StringComparison.OrdinalIgnoreCase);
             AutomationProperties.SetName(button, increases ? $"Increase {label}" : $"Decrease {label}");
-            named++;
+
+            // Both axes. 34 dp wide was the worse half — narrower than the 30.5 dp button
+            // F-29 fixed — and on a stretched field the width the spinners take comes out of
+            // a text column that has about 222 dp to spare.
+            button.MinWidth = Math.Max(floor, button.MinWidth);
+            button.MinHeight = Math.Max(floor, button.MinHeight);
+            prepared++;
         }
 
-        return named >= 2;
+        return prepared >= 2;
     }
 }
 
@@ -587,11 +607,11 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
             StretchForTouch(control);
         }
 
-        SheetForm.NameSpinButtons(_textScale, "text scale");
-        SheetForm.NameSpinButtons(_preRollSeconds, "default ADB pre-roll in seconds");
-        SheetForm.NameSpinButtons(_uiRefresh, "live UI refresh limit in hertz");
-        SheetForm.NameSpinButtons(_minimumUsPerPixel, "maximum zoom precision");
-        SheetForm.NameSpinButtons(_minimumBarWidth, "minimum bar width");
+        SheetForm.PrepareSpinButtons(_textScale, "text scale");
+        SheetForm.PrepareSpinButtons(_preRollSeconds, "default ADB pre-roll in seconds");
+        SheetForm.PrepareSpinButtons(_uiRefresh, "live UI refresh limit in hertz");
+        SheetForm.PrepareSpinButtons(_minimumUsPerPixel, "maximum zoom precision");
+        SheetForm.PrepareSpinButtons(_minimumBarWidth, "minimum bar width");
 
         var buttons = new StackPanel
         {
@@ -892,7 +912,7 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
         };
         _policyFields.Add(label);
         _policyFields.Add(field);
-        SheetForm.NameSpinButtons(field, text);
+        SheetForm.PrepareSpinButtons(field, text);
         Grid.SetRow(label, firstRow);
         policy.Children.Add(label);
         Grid.SetRow(field, Mobile ? firstRow + 1 : firstRow);

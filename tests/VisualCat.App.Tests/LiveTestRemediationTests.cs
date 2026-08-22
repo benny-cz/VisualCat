@@ -2,11 +2,13 @@ using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.LogicalTree;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 using VisualCat.App.Views;
@@ -619,6 +621,271 @@ public sealed partial class LiveTestRemediationTests
 
             Assert.True(clear.Bounds.Width >= 48, $"Clear is {clear.Bounds.Width:0.#} dp wide");
             Assert.True(clear.Bounds.Height >= 48, $"Clear is {clear.Bounds.Height:0.#} dp tall");
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    /// <summary>
+    /// F-31 — a number field's spin buttons meet the same 48 dp floor as everything else a
+    /// thumb lands on, on every field in the product.
+    /// </summary>
+    /// <remarks>
+    /// <c>StretchForTouch</c> gave the <see cref="NumericUpDown"/> container its 48 dp and the
+    /// container measured 48 dp, so a sweep that read the container passed. The spin buttons
+    /// are template parts inside it, inset by its border: twelve of them across the Appearance
+    /// and Session cache sheets measured 34.0 × 46.0 dp on the fourth device pass — the last
+    /// controls in the product under the floor, and 34 dp is narrower than the 30.5 dp button
+    /// F-29 fixed. The assertion is on the shared seam every numeric field already goes
+    /// through, so an eighth field cannot omit it.
+    /// </remarks>
+    [AvaloniaFact]
+    public void ANumberFieldsSpinButtonsMeetTheTouchFloor()
+    {
+        TouchTarget.TouchOverride = true;
+        try
+        {
+            var field = new NumericUpDown { Minimum = 0, Maximum = 60, Value = 30, Width = 180 };
+            var window = new Window { Width = 393, Height = 777, Content = field };
+            window.Show();
+            SheetForm.PrepareSpinButtons(field, "live UI refresh limit in hertz");
+
+            // The buttons are three templates deep and appear on a layout pass, not on
+            // TemplateApplied — which is the whole reason PrepareSpinButtons waits for one.
+            for (var pass = 0; pass < 4; pass++)
+            {
+                window.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+            }
+
+            var spinners = field.GetVisualDescendants()
+                .OfType<Button>()
+                .Where(button => AutomationProperties.GetName(button) is { Length: > 0 } name &&
+                                 name.EndsWith("live UI refresh limit in hertz", StringComparison.Ordinal))
+                .ToArray();
+
+            Assert.Equal(2, spinners.Length);
+            foreach (var spinner in spinners)
+            {
+                var name = AutomationProperties.GetName(spinner);
+                Assert.True(spinner.Bounds.Width >= 48, $"{name} is {spinner.Bounds.Width:0.#} dp wide");
+                Assert.True(spinner.Bounds.Height >= 48, $"{name} is {spinner.Bounds.Height:0.#} dp tall");
+            }
+        }
+        finally
+        {
+            TouchTarget.TouchOverride = null;
+        }
+    }
+
+    /// <summary>
+    /// F-32 - a compact-height workspace only merges the capture controls into the shell row
+    /// where the width can actually hold them, so Stop capture is never laid out past the
+    /// edge of a narrow screen.
+    /// </summary>
+    /// <remarks>
+    /// Compact height is chosen by height alone, and the merge it performed assumed - in its
+    /// own comment - that "a short viewport has width to spare". That is true of the 780 and
+    /// 801 dp landscape viewports it was built for and false of a 360 dp portrait workspace,
+    /// which reaches compact height too whenever something above it is tall: a notice, or
+    /// split-screen. On the device, Stop capture measured 15.0 dp there against 97.3 dp with
+    /// the notice dismissed, and two taps at its centre did nothing.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task StopCaptureStaysOnScreenInAShortNarrowWorkspace()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            await using var tab = new SessionTabViewModel("Live", root) { IsLiveCaptureActive = true };
+            tab.ReportActivity(SessionActivity.Capturing, "Capturing · 218 entries");
+
+            var view = new SessionWorkspaceView(tab);
+
+            // Short enough to select compact height, and as narrow as a portrait phone.
+            var window = new Window { Content = view, Width = 360, Height = 340 };
+            window.Show();
+            try
+            {
+                window.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+
+                var stop = view.GetLogicalDescendants()
+                    .OfType<Button>()
+                    .Single(button => Equals(button.Content, "Stop capture"));
+
+                Assert.True(stop.IsVisible);
+                Assert.True(
+                    stop.Bounds.Width >= 48,
+                    $"Stop capture is {stop.Bounds.Width:0.#} dp wide in a 360 dp workspace");
+
+                // And it is inside the workspace, not laid out past its right edge.
+                var right = stop.TranslatePoint(new Point(stop.Bounds.Width, 0), view);
+                Assert.NotNull(right);
+                Assert.True(
+                    right!.Value.X <= view.Bounds.Width + 0.5,
+                    $"Stop capture ends at {right.Value.X:0.#} dp in a {view.Bounds.Width:0.#} dp workspace");
+            }
+            finally
+            {
+                window.Close();
+                Directory.Delete(root, recursive: true);
+            }
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    /// <summary>
+    /// F-32, the other half - a short viewport that really is wide keeps the merged row that
+    /// §6's compact-height work built for it, so this fix costs landscape nothing.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AWideShortWorkspaceStillMergesTheCaptureRow()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            await using var tab = new SessionTabViewModel("Live", root) { IsLiveCaptureActive = true };
+            tab.ReportActivity(SessionActivity.Capturing, "Capturing · 218 entries");
+
+            var view = new SessionWorkspaceView(tab);
+            var window = new Window { Content = view, Width = 801, Height = 341 };
+            window.Show();
+            try
+            {
+                window.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+
+                var captureRow = view.GetLogicalDescendants()
+                    .OfType<Grid>()
+                    .Single(grid => AutomationProperties.GetName(grid) == "Live capture controls");
+                var quickActions = view.GetLogicalDescendants()
+                    .OfType<Grid>()
+                    .Single(grid => AutomationProperties.GetName(grid) == "Filters and workspace mode");
+
+                // Merged means "beside", which is the same row and a later column.
+                Assert.Equal(Grid.GetRow(quickActions), Grid.GetRow(captureRow));
+                Assert.True(Grid.GetColumn(captureRow) > Grid.GetColumn(quickActions));
+
+                var stop = view.GetLogicalDescendants()
+                    .OfType<Button>()
+                    .Single(button => Equals(button.Content, "Stop capture"));
+                Assert.True(stop.Bounds.Width >= 48, $"Stop capture is {stop.Bounds.Width:0.#} dp wide");
+            }
+            finally
+            {
+                window.Close();
+                Directory.Delete(root, recursive: true);
+            }
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    /// <summary>
+    /// F-33 - a notice too long for its lane keeps its whole message, in a lane whose height
+    /// is bounded, so what does not fit is a scroll away rather than gone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The lane has to stay short, because its height comes out of the workspace's (F-32). It
+    /// bought that with <c>MaxLines = 6</c> and no trimming, so on a 360 dp phone the
+    /// declined-consent notice was cut mid-clause and the words that never appeared were the
+    /// remedy it exists to deliver - "Tap Live again and choose the option that allows
+    /// access." The accessible name always carried the whole string, so a screen reader heard
+    /// what the eye could not reach.
+    /// </para>
+    /// <para>
+    /// This asserts the shape of the fix, which is the part that regressed: no line cap on
+    /// the text, and a height-bounded scroller around it. The lane itself is Android-only and
+    /// stays hidden in a headless desktop run, so how it looks at 360 dp is verified on the
+    /// device. Forcing the lane visible in a desktop composition instead hangs the layout -
+    /// worth a comment here rather than rediscovering it.
+    /// </para>
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task ALongNoticeKeepsItsWholeMessageInABoundedLane()
+    {
+        const string message =
+            "Only VisualCat's own log lines are being captured - log access was not allowed." +
+            "\n\nAndroid asks for permission to read the device log on every capture, and this " +
+            "one was not allowed, so the capture can only see VisualCat's own log lines. " +
+            "Tap Live again and choose the option that allows access.";
+
+        await using var view = new MainView();
+        view.ShowNotice(message);
+
+        var text = view.GetLogicalDescendants()
+            .OfType<TextBlock>()
+            .Single(block => AutomationProperties.GetName(block) == "Application status message");
+
+        // The whole message, and no cap that would draw only the start of it.
+        Assert.Equal(message, text.Text);
+        Assert.EndsWith("allows access.", text.Text, StringComparison.Ordinal);
+        Assert.Equal(0, text.MaxLines);
+
+        // Inside a scroller, so the overflow is reachable; bounded, so the lane cannot take
+        // the workspace's height in order to show it.
+        var scroller = text.GetLogicalAncestors().OfType<ScrollViewer>().FirstOrDefault();
+        Assert.NotNull(scroller);
+        Assert.True(
+            double.IsFinite(scroller!.MaxHeight) && scroller.MaxHeight > 0,
+            $"the notice scroller's MaxHeight is {scroller.MaxHeight}");
+        Assert.Equal(ScrollBarVisibility.Auto, scroller.VerticalScrollBarVisibility);
+    }
+
+    /// <summary>
+    /// F-32, the third half - a short workspace only lays the plot and the analysis pane out
+    /// side by side where the width can hold two of them.
+    /// </summary>
+    /// <remarks>
+    /// Two columns of a 360 dp portrait workspace left the analysis pane about 131 dp, and
+    /// its actions were clipped with it: "Show the full message of the selected entry"
+    /// measured 12.3 dp there against 64.0 dp in Details on the same screen and the same
+    /// notice. Below the threshold the two stack, which is what an ordinary portrait
+    /// workspace already does.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task AShortNarrowWorkspaceStacksThePlotAndThePane()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            await using var narrow = await LiveTestWorkspaceFixture.CreateAsync(
+                FourEntryLog,
+                width: 360,
+                height: 340);
+            narrow.Window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var narrowRoot = narrow.View.GetVisualDescendants()
+                .OfType<Grid>()
+                .First(grid => grid.ColumnDefinitions.Count > 0);
+            Assert.Single(narrowRoot.ColumnDefinitions);
+
+            await using var wide = await LiveTestWorkspaceFixture.CreateAsync(
+                FourEntryLog,
+                width: 801,
+                height: 341);
+            wide.Window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            // The landscape composition §6 and §7 built is untouched.
+            var wideRoot = wide.View.GetVisualDescendants()
+                .OfType<Grid>()
+                .First(grid => grid.ColumnDefinitions.Count > 0);
+            Assert.Equal(2, wideRoot.ColumnDefinitions.Count);
         }
         finally
         {

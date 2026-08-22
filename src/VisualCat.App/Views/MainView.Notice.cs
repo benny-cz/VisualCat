@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -66,6 +67,18 @@ public sealed partial class MainView
     /// workspace's rapidly changing capture status so confirmations and failures remain
     /// readable while a live session updates several times per second.
     /// </summary>
+    /// <summary>
+    /// How tall the notice's own text may get on a phone, in logical pixels.
+    /// </summary>
+    /// <remarks>
+    /// About six wrapped lines at this lane's type size, which is the height the lane used to
+    /// take before the message was allowed to scroll. The lane spends this out of the
+    /// workspace's own height, so it is a budget rather than a preference. It is applied on
+    /// both platforms: the lane is hidden on the desktop, so one behaviour is simpler than
+    /// two and this one can be asserted without a device.
+    /// </remarks>
+    private const double NoticeTextMaximumHeight = 108;
+
     private Border BuildNotice()
     {
         var text = _noticeText = new TextBlock
@@ -75,7 +88,25 @@ public sealed partial class MainView
             FontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 12.5 : 12),
         };
         AutomationProperties.SetName(text, "Application status message");
-        text.MaxLines = 6;
+
+        // Not MaxLines. The lane has to stay short - it takes its height out of the
+        // workspace, and a tall one clips the workspace's own controls (finding F-32) - but
+        // "short" was being bought by throwing the end of the message away. On a 360 dp
+        // phone the declined-consent notice needs about eleven lines, so six of them were
+        // drawn, with no ellipsis, and the sentence that fell off the end was the remedy the
+        // notice exists to deliver: "Tap Live again and choose the option that allows
+        // access." A screen reader heard it, because the accessible name carries the whole
+        // string; the eye never reached it (finding F-33). The height is the same as six
+        // lines bought before, and now the rest of the message is a scroll away instead of
+        // gone.
+        var scroller = new ScrollViewer
+        {
+            Content = text,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            MaxHeight = NoticeTextMaximumHeight,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
 
         var dismiss = _noticeDismiss = new Button
         {
@@ -111,7 +142,7 @@ public sealed partial class MainView
             ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
             ColumnSpacing = 8,
         };
-        content.Children.Add(text);
+        content.Children.Add(scroller);
         Grid.SetColumn(action, 1);
         content.Children.Add(action);
         Grid.SetColumn(dismiss, 2);

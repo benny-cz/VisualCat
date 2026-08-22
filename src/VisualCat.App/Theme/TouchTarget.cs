@@ -23,6 +23,19 @@ internal static class TouchTarget
     /// <summary>The floor on this platform: <see cref="Minimum"/> on touch, or <paramref name="desktop"/>.</summary>
     internal static double For(bool touch, double desktop = 0) => touch ? Minimum : desktop;
 
+    /// <summary>
+    /// Forces the touch floor on or off, for tests that need to exercise it.
+    /// </summary>
+    /// <remarks>
+    /// The floor only exists on a touch platform, so a headless desktop run measures every
+    /// control against zero and proves nothing. That is how twelve spin buttons stayed
+    /// 34 dp wide through three device passes (finding F-31): the only thing that had ever
+    /// measured them was a phone. Null means "ask the platform", which is what every
+    /// shipping build does.
+    /// </remarks>
+    internal static bool? TouchOverride { get; set; }
+
     /// <summary>The floor on the platform the app is actually running on.</summary>
-    internal static double Here(double desktop = 0) => For(OperatingSystem.IsAndroid(), desktop);
+    internal static double Here(double desktop = 0) =>
+        For(TouchOverride ?? OperatingSystem.IsAndroid(), desktop);
 }

@@ -700,7 +700,15 @@ public sealed partial class SessionWorkspaceView : UserControl
         bool minimapVisible,
         double availableWidth)
     {
-        var splitTimeline = enabled && timelineVisible && analysisVisible;
+        // Side by side needs width, not just a short viewport. Compact height is chosen by
+        // height alone, so a 360 dp portrait workspace under a tall notice reached this too -
+        // and two columns of 360 dp left the analysis pane about 131 dp, which clipped "Show
+        // the full message" to 12.3 dp while the same control measured 64.0 dp in Details on
+        // the same screen (finding F-32). Below the threshold the plot and the pane stack, as
+        // they do in an ordinary portrait workspace, and the pane gets the whole width; the
+        // compact row structure and its shorter chrome still apply, because those save height
+        // and height is what is actually short.
+        var splitTimeline = enabled && timelineVisible && analysisVisible && availableWidth >= 600;
         _root.ColumnDefinitions = new ColumnDefinitions(splitTimeline ? "21*,29*" : "*");
 
         if (_mobileFilterShell is { } topStrip)
@@ -752,20 +760,32 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_mobileFilterShell is { } filterShell &&
             _mobileQuickActions is { } quickActions)
         {
-            // A short viewport has width to spare and no height at all, so the capture
-            // controls move up beside the mode selector instead of taking a band of their
-            // own; a portrait phone keeps them on their own full-width row.
+            // A short viewport usually has width to spare and no height at all, so the
+            // capture controls move up beside the mode selector instead of taking a band of
+            // their own; otherwise they keep their own full-width row.
+            //
+            // "Usually" is the whole of it. Compact height is selected by height alone, and a
+            // 360 dp portrait workspace reaches it too - under a tall notice, or in
+            // split-screen - where the merged row needs about 500 dp and has 360. Its last
+            // control is then laid out past the right edge of the screen: Stop capture
+            // measured 15.0 dp and the entry actions 12.3 dp, while the same controls in the
+            // same session measured 97.3 dp and 64.0 dp with the notice dismissed
+            // (finding F-32). Stop capture is the one control that ends a running recording,
+            // so this is gated on the thing that actually constrains it. It is the same gate,
+            // and the same 600 dp, that the query options below already use for the same
+            // reason (C-06.2).
+            var mergeCaptureRow = enabled && availableWidth >= 600;
             filterShell.RowDefinitions = new RowDefinitions("Auto,Auto,Auto");
-            filterShell.ColumnDefinitions = new ColumnDefinitions(enabled ? "Auto,*" : "*");
+            filterShell.ColumnDefinitions = new ColumnDefinitions(mergeCaptureRow ? "Auto,*" : "*");
             Grid.SetRow(quickActions, 0);
             Grid.SetColumn(quickActions, 0);
-            quickActions.Margin = enabled ? new Thickness(6, 3, 3, 3) : new Thickness(6, 3);
+            quickActions.Margin = mergeCaptureRow ? new Thickness(6, 3, 3, 3) : new Thickness(6, 3);
             quickActions.HorizontalAlignment = HorizontalAlignment.Stretch;
             if (_mobileCaptureActions is { } captureActions)
             {
-                Grid.SetRow(captureActions, enabled ? 0 : 1);
-                Grid.SetColumn(captureActions, enabled ? 1 : 0);
-                captureActions.Margin = enabled
+                Grid.SetRow(captureActions, mergeCaptureRow ? 0 : 1);
+                Grid.SetColumn(captureActions, mergeCaptureRow ? 1 : 0);
+                captureActions.Margin = mergeCaptureRow
                     ? new Thickness(0, 3, 6, 3)
                     : new Thickness(6, 0, 6, 3);
             }

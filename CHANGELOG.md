@@ -14,6 +14,134 @@ screenshot says which build it came from.
 ## [Unreleased]
 
 ### Fixed
+- A capture can be stopped while the app is telling you something. A notice takes
+  its height out of the workspace, and a long one - the notice shown when Android's
+  log-access consent is declined, for instance - made the workspace short enough to
+  select the compact layout built for landscape. That layout packs control rows
+  side by side, which is right on an 800 dp landscape screen and wrong on a 360 dp
+  portrait one: the packed row ran off the edge of the screen and left Stop
+  capture 15 dp wide, a sliver against the right edge that would not answer a tap.
+  The same squeeze put the plot and the entry list into two columns of a 360 dp
+  screen, leaving the list about 131 dp and clipping its actions to 12 dp.
+  Whether to pack rows side by side is now decided by the width available rather
+  than by the height, which is what it always depended on. A landscape phone keeps
+  the layout it had; a short, narrow workspace gives the capture controls their own
+  full-width row back and stacks the plot above the list, the way an ordinary
+  portrait workspace already did.
+- A notice no longer drops the sentence it exists to deliver. It was capped at six
+  drawn lines with nothing to say more had been cut, and the declined-consent
+  notice needs about eleven on a phone - so the words that never appeared were
+  "Tap Live again and choose the option that allows access.", which is the entire
+  point of showing it. A screen reader had always been given the whole message; now
+  the eye can reach it too, by scrolling, and the notice still takes no more of the
+  screen than it did before.
+- Zooming into a session that holds a single entry no longer takes the whole app
+  down with it. A one-entry session has no duration, so the plot opened with the
+  same instant at both ends of its axis, and the next zoom asked for a viewport
+  narrower than nothing, which the transform could not build. It was reachable two
+  ways: a large import whose first progressive snapshot held one row, and a
+  one-line file opened directly. Both are closed at once now. A fitted viewport is
+  widened to a drawable span before it is ever shown, so the degenerate state is
+  not reachable on open; and every route that zooms - double-tap, pinch, the
+  wheel, the keyboard, Fit - goes through one bounds check instead of five, so a
+  sixth route cannot be added without it. Zooming in on a session too short to
+  zoom into now simply stops, which is what it should always have done.
+- A development build no longer calls itself the released version. Release-ness
+  was inferred from the build configuration, which made the one configuration a
+  release candidate has to be tested in the only one that claimed to be the
+  release - so a screenshot of a build made from unreleased code was
+  indistinguishable from a screenshot of the release itself. It is an explicit
+  signal now, one that only the release pipeline passes; everything else, Release
+  builds included, is a development build and says so. The empty state also names
+  the build rather than only the version, so a screenshot answers "which build is
+  this?" on its own.
+- Failures no longer show the reader the framework's own words - or, in a trimmed
+  Release build, its untranslated resource keys. An invalid search pattern
+  produced "MakeException, (unclosed, 9, InsufficientClosingParentheses" on the
+  phone, and the same class of text could reach the screen from any action that
+  failed. Search patterns are validated where they are typed now, and a pattern
+  that cannot compile is refused with a sentence - there are more "(" than ")"
+  (position 9) - shown beside the field, in error ink, with the previous results,
+  the filter chips and the status line all left exactly as they were, because none
+  of them has stopped being true. Everywhere else, a message that still looks like
+  a resource key is replaced by a product sentence and a stable code, and the raw
+  text goes to the diagnostic bundle, where it is useful.
+- Restoring a session at startup no longer paints a cancellation as a failure. Two
+  refreshes racing at launch could leave one of them cancelled while it was still
+  queued, and that cancellation escaped as far as the shell, which showed "Startup
+  settings: The operation was canceled." over a workspace that had in fact
+  restored perfectly - and left the tab reading "Opening" for the rest of its life,
+  with every row already on screen. A superseded refresh is silent for its whole
+  life now rather than only most of it, a caller who genuinely cancels still hears
+  about it, and no route can leave a session stuck in the opening tense.
+- The status line, the session tab, Session info and Recent captures now agree
+  with each other about what a session is. A live capture reported itself as
+  Importing; a capture killed mid-recording reported Ready in the workspace,
+  interrupted in the list, and Importing in the details. Completion is one derived
+  fact now that every surface phrases from, so an interrupted session says so
+  everywhere and opens with what it actually recovered - and offers to keep it,
+  export it, or delete it. Transient messages travel one route now too, so what is
+  on screen and what a screen reader is told are the same string, and a message
+  about a query that has been superseded goes away instead of standing over
+  results it no longer describes.
+- Every control a thumb lands on is at least 48 dp. The empty state's three hero
+  links measured 18.8 dp - on the first screen anyone sees - and session tabs,
+  their close buttons, the filter drawer's clear action and, most recently, the
+  spin buttons on every number field in Settings were all under the floor. The
+  glyphs are unchanged; the hit areas are not. The floor can be measured in a
+  headless test now, which is what let the last twelve of them be found at all.
+- A landscape phone no longer hides the rows and the controls it was asked for.
+  The entries list dropped below its own row floor and let the status line clip
+  its last row; the soft keyboard covered the whole filter drawer, including Reset
+  and Done; and on a short landscape screen the keyboard sliced the query field it
+  had just been raised for, across the middle. The workspace keeps three whole
+  rows and a visible gap above the status line now, at heights down to 341 dp, and
+  the query row is the drawer's own first band in every state - so it is never the
+  thing that gets cut, and never reparented, which is what silently withdrew the
+  keyboard from a field the reader was trying to type into.
+- On a phone using gesture navigation, dragging the plot near either edge no
+  longer leaves the app. The heat map runs to within 12 dp of both edges and its
+  main gesture is a horizontal drag, which put it underneath the system's Back
+  gesture: a pan begun in the plot's outer strip went Back, to the home screen.
+  The plot and the minimap brush claim those two rectangles for themselves now,
+  and Back keeps working everywhere else on the screen.
+- An on-device capture labels each record with the buffer it actually came from.
+  About four records in five were attributed to a buffer they had never been in,
+  which made the buffer facet worse than useless for narrowing a capture down.
+- The pre-capture explanation no longer promises a consent sheet that cannot
+  appear. Without the log-read permission no sheet is coming - it is not one an
+  app can ask for - and the dialog says so now, gives the exact adb command that
+  grants it, and offers to copy it; with the permission held, the sheet appears
+  exactly when the copy says it will.
+- A live capture costs much less while nobody is watching it. Publication cadence
+  was the same whether or not the screen was on, so a capture left running
+  overnight spent hours redrawing a plot, re-running its queries and rewriting its
+  manifest for nobody. Refreshing stops now when the workspace leaves the screen,
+  and resumes immediately - and up to date - when it comes back. The capture
+  itself never pauses and no record is lost either way.
+- Pressing the capture control while a capture is already running no longer starts
+  a second one. Two captures could be running with only one of them visible, so
+  stopping the one on screen left the other recording invisibly; the control takes
+  you to the running capture now, and says that is what it will do.
+- Follow no longer clears the entry you are reading when its window moves past it.
+  A selected row ageing out of the live 30-second window is not a deselection, and
+  the entry, its source bytes and the timeline caret survive it now - with a line
+  saying where the entry went, and an action to go back to it.
+- Deleting cached sessions says how much it will delete before it does anything,
+  protects every session that is open, and no longer runs its automatic pass
+  before the sessions it must protect have been restored.
+- Smaller things: captures are named by an unambiguous start time rather than one
+  that reads as a date, and that name fits a phone tab whole; counted nouns agree
+  with their number, so a one-entry capture no longer says "1 entries kept"; a
+  filter that matches nothing explains itself and offers to clear itself instead
+  of rendering a blank pane; search-match navigation is reachable by touch and by
+  a screen reader, not only by keyboard; the source-context gutter counts from 1,
+  like every other tool that numbers lines; files opened from another app show the
+  provider's own display name rather than an internal cache filename;
+  stored-capture cards no longer expose an app-private path to accessibility
+  services; a notice arriving under a thumb no longer turns a second tap into an
+  unrelated action; and "vcat generate-test-log --help" prints its help instead of
+  writing a 90 MB file.
 - Stop capture now answers the press, keeps answering it, and says what became
   of the recording. On a capture large enough to matter — four hours and 543,767
   lines, on the phone this was found on — the button appeared to do nothing at
