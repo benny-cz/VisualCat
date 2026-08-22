@@ -191,7 +191,7 @@ description states before install.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version: `2.0.5` → `20005` |
+| versionCode | Derived from the release version: `2.0.6` → `20006` |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
 | ABIs | `arm64-v8a`, `x86_64` |
@@ -247,4 +247,16 @@ own logs. It no longer mistakes UTC timezone offsets for process IDs or claims
 full-device access without READ_LOGS. Full-device captures still detect records
 from other processes, while restricted captures keep the useful permission
 guidance visible.
+```
+
+Release notes for `2.0.6`:
+
+```text
+Live capture now stops reliably even after very long sessions, shows each
+finalization phase and elapsed time, preserves selected entries when Follow
+moves, and reduces work while the app is in the background. Phone layouts keep
+filters, analysis tabs, Load more, Follow and Stop capture fully reachable,
+adapt to narrow or landscape windows and larger text, and retain readable
+notices. Capture scope, buffer labels, session status, errors, one-line zoom,
+command sheets and startup restore are more accurate and resilient.
 ```

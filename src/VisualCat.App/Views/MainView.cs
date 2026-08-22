@@ -131,7 +131,19 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             PersistOpenWorkspaceOnPause();
         };
         _displayConfigurationHandler = () =>
-            Dispatcher.UIThread.Post(ApplyDisplayConfigurationChange);
+        {
+            // Android reports configuration changes on the UI thread. Apply those changes
+            // in that same turn so an open sheet and workspace cannot render one stale frame;
+            // retain the post for hosts that publish from another thread.
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                ApplyDisplayConfigurationChange();
+            }
+            else
+            {
+                Dispatcher.UIThread.Post(ApplyDisplayConfigurationChange);
+            }
+        };
         PlatformSourceRegistry.LaunchFilesReceived += _launchFilesHandler;
         PlatformSourceRegistry.AppResumed += _appResumedHandler;
         PlatformSourceRegistry.AppPaused += _appPausedHandler;

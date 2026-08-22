@@ -58,6 +58,30 @@ be published from an unmerged commit or one that would fail a pull request:
 
 ## Release records
 
+### v2.0.6 — 2026-08-22
+
+- The release-signed APK was installed on a Google Pixel 5 running Android
+  14/API 34 and reported application ID `com.barebit.visualcat`, version
+  `2.0.6`, and version code `20006`.
+- Without `READ_LOGS`, the clean-install explanation accurately said that the
+  capture would contain only VisualCat's own records. The capture stayed in
+  own-app scope through its quiet heartbeat and finalized cleanly with four
+  entries.
+- With the adb grant and Android's one-time consent, the same APK resolved to
+  full-device scope, initially reported 117 lines/s, and finalized cleanly at
+  1,303 entries. Rotation kept the same process and running capture alive.
+- In portrait and landscape, Filters, Plot, Split, Details, Fit, Follow and Stop
+  capture remained vertically centred, fully labelled and at least 48 dp tall.
+  Stop removed the live-only controls, both completed sessions returned after a
+  forced process restart, and no crash or ANR was logged.
+- The AAB and APK passed the release packager's application ID, API level, ABI,
+  16 KB alignment, version, signature-scheme, and pinned Google Play upload
+  certificate checks. The temporary `READ_LOGS` grant was revoked after testing.
+- The accessibility review, macOS hardware validation, and Windows/macOS code
+  signing remain intentionally deferred. The four-hour ADB soak was completed
+  during the 2.0.6 development cycle and is recorded in the Android live-test
+  report.
+
 ### v2.0.5 — 2026-08-21
 
 - The release-signed APK was clean-installed on a Samsung SM-G990B running

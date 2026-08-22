@@ -84,12 +84,13 @@ adb install VisualCat-Android-*.apk
 
 Normal Android applications can usually read only their own logs. See the
 [support matrix](https://github.com/benny-cz/VisualCat/blob/main/docs/SUPPORT.md)
-for the optional `READ_LOGS` grant and current capture limitations. The v2.0.5
-APK was validated on Android 16 physical hardware in both own-app and granted
-full-device modes. Restricted capture stayed honestly restricted beyond its
-scope-decision window and retained the permission guidance; granted capture
-resolved to full-device and finalized cleanly at 1,970 entries. No persistent
-`READ_LOGS` grant remained after testing. Long-running ADB soak testing remains
-a manual release gate.
+for the optional `READ_LOGS` grant and current capture limitations. The v2.0.6
+APK was validated on Android 14 physical hardware in both own-app and granted
+full-device modes. Restricted capture stayed honestly restricted through its
+quiet heartbeat; granted capture survived rotation in the same process and
+finalized cleanly at 1,303 entries. Both completed sessions returned after a
+forced process restart, no crash or ANR was logged, and no persistent
+`READ_LOGS` grant remained after testing. The four-hour ADB soak completed
+during the 2.0.6 development cycle is recorded in the Android live-test report.
 
 No VisualCat build sends telemetry or uploads log content.
