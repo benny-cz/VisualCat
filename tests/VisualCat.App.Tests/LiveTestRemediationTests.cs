@@ -1209,6 +1209,156 @@ public sealed partial class LiveTestRemediationTests
         return log.ToString();
     }
 
+    // --------------------------------------------------------------- F-39 ---
+
+    /// <summary>
+    /// F-39 - the shell's shared command row holds exactly one workspace command strip: the
+    /// selected workspace's. It used to accumulate one more on every system text-size change.
+    /// </summary>
+    /// <remarks>
+    /// A workspace view is replaced rather than mutated when the reader changes the device's
+    /// text size, because every font size in it is resolved while it is being built. In a
+    /// compact-height viewport its command strip has been reparented into
+    /// <c>MainView</c>'s row, so the replaced view no longer owns it - and nothing gave it
+    /// back. On the device the strip stayed in the row and the new one was added beside it,
+    /// in the same cell: `Filters`, `Plot`, `Split`, `Details` and `Fit` each appeared twice
+    /// after one change and three times after two, at byte-identical bounds, with the stale
+    /// copies belonging to a detached view.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task TheSharedRowNeverHoldsTwoWorkspacesCommandStrips()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            await using var first = await LiveTestWorkspaceFixture.CreateAsync(FourEntryLog, 964, 434);
+            await using var second = await LiveTestWorkspaceFixture.CreateAsync(FourEntryLog, 964, 434);
+            first.Window.UpdateLayout();
+            second.Window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var row = new Grid();
+            first.View.HostCompactCommands(row);
+            var strip = Assert.Single(row.Children);
+
+            // The replacement arrives; the view it replaces is never asked for the strip back.
+            second.View.HostCompactCommands(row);
+
+            var only = Assert.Single(row.Children);
+            Assert.False(
+                ReferenceEquals(only, strip),
+                "the row kept the replaced workspace's strip instead of the selected one's");
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    /// <summary>
+    /// F-39, the other half - a workspace that has stopped answering its session has also
+    /// stopped occupying the shell, so no later path has to notice that it is still there.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task ADetachedWorkspaceGivesBackTheRowItWasHostedIn()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(FourEntryLog, 964, 434);
+            fixture.Window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var row = new Grid();
+            fixture.View.HostCompactCommands(row);
+            Assert.Single(row.Children);
+
+            fixture.View.DetachViewModel();
+
+            Assert.Empty(row.Children);
+
+            // And it went home rather than nowhere: the strip is the workspace's again, so a
+            // view that is detached and then drawn is not missing its commands.
+            Assert.Contains(
+                fixture.View.GetLogicalDescendants().OfType<Button>(),
+                button => AutomationProperties.GetName(button) == "Open search and timeline filters");
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    // --------------------------------------------------------------- F-38 ---
+
+    /// <summary>
+    /// F-38 - a compact-height workspace gives every control it owns the same 48 dp floor a
+    /// tall one gives them. It used to hand nine of them a literal <c>42</c>.
+    /// </summary>
+    /// <remarks>
+    /// The floor is not a per-composition preference: <c>TouchTarget</c> exists because the
+    /// product had "two sizes and a lot of zeroes", and its own remarks name the analysis tabs
+    /// among the controls that "measured 135 px = 48 dp ... and were right". In the compact
+    /// composition they measured 42.3 dp on the device, together with <c>Copy</c>,
+    /// <c>Entry</c>, the sort selector and load-more/fit/clear - in ordinary landscape, which
+    /// is the orientation a reader turns a phone to in order to read a log.
+    /// <para>
+    /// Asserted by measuring every actionable control the pane actually shows, not by reading
+    /// the constants back: F-31 is the precedent for a floor that was set at one seam and
+    /// missed at another, and this is the same rule <c>tools/scripts/audit_layout.py</c>
+    /// applies to a device dump.
+    /// </para>
+    /// </remarks>
+    [AvaloniaTheory]
+    [InlineData(964, 434)]
+    [InlineData(434, 498)]
+    public async Task ACompactWorkspaceKeepsTheTouchFloorForEveryControlItShows(double width, double height)
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        TouchTarget.TouchOverride = true;
+        try
+        {
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(
+                PagedLog(650),
+                width,
+                height);
+            fixture.Window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var shown = fixture.View.GetLogicalDescendants()
+                .OfType<TemplatedControl>()
+                .Where(static control => control is Button or TabItem or ComboBox)
+                .Where(static control => control.IsEffectivelyVisible && control.Bounds.Height > 0)
+                .Distinct()
+                .ToArray();
+
+            // The pane is on screen at all: its tabs, its sort control and its actions.
+            Assert.True(shown.Length >= 6, $"only {shown.Length} controls were shown");
+
+            var under = shown
+                .Where(control => control.Bounds.Height < TouchTarget.Minimum - 0.5)
+                .Select(control => $"{Named(control)} {control.Bounds.Height:0.#} dp tall")
+                .ToArray();
+
+            Assert.True(under.Length == 0, string.Join("; ", under));
+        }
+        finally
+        {
+            TouchTarget.TouchOverride = null;
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    /// <summary>Whatever the control calls itself, for a failure message.</summary>
+    private static string Named(TemplatedControl control) =>
+        AutomationProperties.GetName(control) is { Length: > 0 } name
+            ? name
+            : control switch
+            {
+                ContentControl { Content: string text } when text.Length > 0 => text,
+                _ => control.GetType().Name,
+            };
+
     /// <summary>The signature of a trimmed framework resource string.</summary>
     [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*,(\s|$)")]
     private static partial Regex ResourceKeyShaped();

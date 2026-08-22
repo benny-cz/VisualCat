@@ -1951,6 +1951,17 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
         viewModel.SnapshotChanged -= OnSessionSnapshotChanged;
         viewModel.PropertyChanged -= OnSessionTabPropertyChanged;
+
+        // The view goes with the tab, and so does everything it is holding. A closed session's
+        // workspace stayed subscribed to the session it no longer draws, and — in a
+        // compact-height viewport — kept the command strip it had handed to the shell's shared
+        // row, so closing three tabs left three strips stacked in one cell (finding F-39).
+        // This is the same release RebuildWorkspaceViews performs for the same reason.
+        if (item.Content is SessionWorkspaceView closing)
+        {
+            closing.DetachViewModel();
+        }
+
         _tabs.Items.Remove(item);
         RemoveSessionChip(viewModel);
         _emptyState.IsVisible = _tabs.Items.Count == 0;

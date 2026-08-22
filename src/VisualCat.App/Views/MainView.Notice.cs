@@ -108,24 +108,24 @@ public sealed partial class MainView
             VerticalAlignment = VerticalAlignment.Center,
         };
 
+        // 48 dp, like every other actionable control on this platform. Both of these were
+        // written as the below-plan literal 44 the touch-target audit named (finding F-26);
+        // the dismiss target kept its 44 as a dead initialiser that a later edit could have
+        // resurrected, so it goes through the same seam as everything else.
         var dismiss = _noticeDismiss = new Button
         {
             Content = "Dismiss",
-            MinHeight = OperatingSystem.IsAndroid() ? 44 : 0,
+            MinHeight = TouchTarget.Here(),
             Padding = new Thickness(10, 0),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
         AutomationProperties.SetName(dismiss, "Dismiss application status message");
         dismiss.Click += (_, _) => ShowNotice(string.Empty);
-        dismiss.MinHeight = OperatingSystem.IsAndroid() ? 48 : 0;
 
-        // 48 dp, like every other actionable control on this platform. The dismiss target
-        // beside it is one of the below-plan 44 dp constants the touch-target audit named
-        // (finding F-26).
         var action = _noticeAction = new Button
         {
             IsVisible = false,
-            MinHeight = OperatingSystem.IsAndroid() ? 48 : 0,
+            MinHeight = TouchTarget.Here(),
             Padding = new Thickness(10, 0),
             VerticalContentAlignment = VerticalAlignment.Center,
         };

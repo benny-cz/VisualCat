@@ -586,6 +586,18 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// restores it to row zero of this workspace. A control has one visual parent, so the move
     /// is explicit and symmetric rather than duplicated UI with drifting enabled states.
     /// </summary>
+    /// <remarks>
+    /// The row holds one strip — the selected workspace's — and this is where that is enforced,
+    /// because the move out of the workspace is the only thing that can put one there. A
+    /// workspace view is <em>replaced</em> whenever the reader changes the device's text size
+    /// (every font size in it is resolved while it is built), and a replaced view has already
+    /// handed its strip to the shell, so nothing it does afterwards can take it back. Each
+    /// change therefore left one more strip in the row, in the same cell, at byte-identical
+    /// bounds: `Filters`, `Plot`, `Split`, `Details` and `Fit` twice after one change and three
+    /// times after two, the stale copies belonging to a view that had stopped answering its
+    /// session (finding F-39). Adopting clears whatever else is in the row; the only strip that
+    /// can be there is one no live workspace is still hosting.
+    /// </remarks>
     internal void HostCompactCommands(Panel? externalHost)
     {
         if (!_mobile || _mobileFilterShell is not { } strip)
@@ -607,6 +619,7 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         if (externalHost is not null)
         {
+            externalHost.Children.Clear();
             externalHost.Children.Add(strip);
         }
         else

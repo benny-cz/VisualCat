@@ -7,6 +7,11 @@ against a physical Android device.
 across an interrupted test process, and the final device hand-back is recorded
 below. Declared gaps remain gaps rather than implied passes.
 
+**Six passes have now run over this report.** §1–§5 are the original run and its
+remediation; §6, §7, §8, §9 and §10 are re-audits on three devices, each of which
+found defects the ones before it did not. §5.1 remains the single status table for
+every finding, and the newest pass is always the last section.
+
 This report is context-agnostic. Device identity, artifact provenance, oracles,
 and observations are all recorded here; nothing depends on a previous session.
 
@@ -1429,6 +1434,13 @@ Found by the fifth pass (§9); same vocabulary, same rules.
 | F-35 `Load 500 more` is laid out past the right edge of the pane | Major | Layout | **Done** | **Yes — Motorola Release, 34.1 dp → 49.4 dp; also failed headlessly at 801 dp** |
 | F-36 A short, narrow filter drawer draws two captions and none of its controls | Major | Layout | **Done** | **Yes — Motorola Release, 7 of 7 severity chips, body 28.8 dp → 67.9 dp** |
 | F-37 The merged capture row is decided on a width the row does not have; `Follow` is 23.5 dp | Major | Layout | **Done** | **Yes — Motorola Release, 780 dp landscape with a capture running, 23.5 dp → 339.2 dp** |
+
+Found by the sixth pass (§10); same vocabulary, same rules.
+
+| Finding | Severity | Area | Status | Device-verified |
+|---|---|---|---|---|
+| F-38 Every compact-height pane opts nine controls out of the 48 dp floor | Minor | Layout | **Done** | **Yes — Motorola Release, landscape; 42.3 dp → 48.0 dp on all five measurable controls** |
+| F-39 Each system text-size change, and each session close, leaves another copy of the command strip in the shell row | Major | Shell | **Done** | **Yes — Motorola Release, four text-size changes and two tab closes; 1 strip and 0 overlapping pairs throughout** |
 
 ### 5.2 Per-finding remediation record
 
@@ -4222,3 +4234,488 @@ attempted. The capture-row half of the shared row was the one thing this pass ha
 only reasoned about; G-08 put it on the device rather than leaving it, and it was
 wrong — see F-37. Two own-app captures were started and stopped to do that, and
 the sessions they produced are kept (§9.6/3).
+
+---
+
+## 10. Sixth pass — a full re-audit of every finding, on the Motorola
+
+This section is the live handoff for the sixth pass. The brief is the standing
+one — **"check whether every issue in this report has actually been addressed,
+and implement or fix what has not"** — with the device the operator named again:
+the Motorola **edge 60 pro** (`ZY22M4T2Z4`).
+
+It differs from §9 in where it starts. §9 began from a named lead (§8.7). This
+pass begins with **no lead**: §9.7 closed its own thread by turning four
+scattered `>= 600` literals into one tested invariant, and left three *lessons*
+rather than a next site. So this pass re-derives the audit from scratch against
+the tree at `81bb56b`, and then goes looking in the places §7.6, §8.7 and §9.7
+each said findings hide: panes nobody opened, states nobody measured, and **the
+size the thing under test is actually given**.
+
+Update the ledger in §10.3 after every material action and resume at the first
+row that is not **Done**. Every entry in §10.4 is written when it happens, not at
+the end, so an interrupted session resumes from the last one.
+
+### 10.1 Run header
+
+| Field | Value |
+|---|---|
+| Date/time (UTC) | 2026-08-22 14:57 → (device clock identical to the host to the second: `Sat Aug 22 14:57:51 UTC 2026`) |
+| Repository commit at start | `81bb56b` — *Pull the lead the fourth pass left open, and answer what it found* |
+| Working tree at start | clean |
+| Device | motorola **edge 60 pro** (`cybert`) |
+| Serial | `ZY22M4T2Z4` |
+| Android release / API | 16 / 36 |
+| ABIs | `arm64-v8a` |
+| Screen / density | 1220 × 2712 px, 450 dpi (**2.8125 px/dp**) |
+| Configuration at baseline | `mcc230-mnc1-en-rUS-ldltr-sw434dp-w434dp-h964dp-normal-long-notround-widecg-highdr-port-night-450dpi-finger-navhidden-nonav-2712x1220-v36` |
+| Navigation mode | `0` — three-button |
+| Locale | `en-US`, LTR; app override `[]` |
+| Theme / font scale | `night` (dark) / `1.0` |
+| Rotation | `accelerometer_rotation=1`, `user_rotation=0` |
+| Thermal / battery | `Thermal Status: 0`, USB powered, 100 % |
+| Package at baseline | `2.0.5-dev` / `20005`, `firstInstallTime=2026-08-21 23:33:16`, `lastUpdateTime=2026-08-22 16:24:15`, `pkgFlags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]` — the **Release** build §9.6/1 deliberately left |
+| `READ_LOGS` | **granted** (pre-existing, from §1.3; §9 neither granted nor revoked it) |
+| App process at baseline | PID 11761 alive, 0 `logcat` children |
+| Evidence root | `artifacts/live-test/20260822-motorola-pass6/evidence/` |
+
+### 10.2 Which device, and why
+
+The Motorola **edge 60 pro** (`ZY22M4T2Z4`) — the device the operator named, §1's
+device, and §9's. It is also the right device for a brief with no lead, because it
+is the one this report knows best: §1 ran the whole standard schedule on it, §5.3
+verified twenty-seven findings on it, and §9 left it carrying a Release build. Two
+findings landed on it in the last pass, so a state it has not been measured in is
+a state four passes have failed to reach rather than a state one device happens
+not to have.
+
+Its portrait width, **433.8 dp**, remains the third of the three this report has
+(360 dp Samsung, 393 dp Pixel), and this pass added two more viewports it had
+never been measured at: **601 × 400 dp**, the `SharesARow` threshold itself, and
+its own **964 × 434 dp** natural landscape — which, it turns out, is where F-38
+had been living in plain sight since §6.
+
+### 10.3 Step ledger
+
+| Step | Status | Outcome / next action |
+|---|---|---|
+| H-01 Record the device baseline | **Done** | §10.4/H-01. 434 dp portrait, 450 dpi, three-button, en-US, thermal 0, Release build present. |
+| H-02 Re-audit all 39 findings against the tree at `81bb56b` | **Done** | All 39 have a named artefact in the tree; the two that read as missing in §9's audit are still where §9 said. §10.4/H-02. |
+| H-03 Host regression baseline | **Done** | `dotnet test VisualCat.slnx -c Debug` → **365/365**, 0 failed (Domain 11, Core 88, App 217, Application 49). Matches §9/G-07. |
+| H-04 Fresh-eyes sweep for what no pass has measured | **Done** | Found **F-38** and **F-39**. Panes swept clean: Insights, Details, Session cache, Recent sessions, the filter drawer at a third width, and the Export picker (the one sub-floor control there is Android's own). §10.4/H-04. |
+| H-05 Fix what this pass finds, host tests red first | **Done** | **F-38** and **F-39** fixed; four host tests, all four proved red first. Full solution **369/369**. |
+| H-06 Device verification of both fixes on a Release build | **Done** | Both fixed on the device: F-38 42.3 dp → 48.0 dp on five controls, F-39 one strip through four text-size changes and two tab closes. §10.5. |
+| H-07 Regression, hand-back, commit and push | **Done** | Full solution **369/369**; `git diff --check` clean; `verify-docs.ps1` consistent; `CHANGELOG.md` updated; device restored (§10.7); committed and pushed to `main`. |
+
+### 10.4 Continuous execution log
+
+Entries are appended as they happen.
+
+#### H-01 — device baseline
+
+**Status: Done.** Recorded in §10.1 above, evidence
+`artifacts/live-test/20260822-motorola-pass6/evidence/H01-baseline.txt`. The
+device is exactly as §9.6 handed it back: Release build of the F-37 fix, two
+extra own-app captures in app-private data, nothing on shared storage,
+`READ_LOGS` granted, thermal 0, battery 100 %.
+
+#### H-02/H-03 — the audit, and the tool the audit needed
+
+**Status: Done.** The audit was run against the tree at `81bb56b`. All **39**
+findings (F-01…F-37, D-04.0, F-16 second half) have a named artefact in the tree.
+No regression against §9's own audit; the two entries §9 recorded as its own
+error (`TabTitle.cs` under `Views/`, and the `MaxLines` token that lives inside
+the comment explaining F-33) are still exactly where §9 left them.
+
+Host regression before touching anything: `dotnet test VisualCat.slnx -c Debug`
+→ **365/365 passed, 0 failed** (Domain 11, Core 88, App 217, Application 49) —
+identical to §9/G-07.
+
+**The audit needed a better instrument, and building it found the first defect.**
+`tools/scripts/measure_targets.py` answers exactly one question — *is a clickable
+node under 48 dp* — and four passes have now found defects it cannot see: F-34
+was an **overlap** (every control measured 48 dp; two of them were painted on top
+of a third), and F-35 was a **clip** (the control measured 49.4 dp and 34.1 of
+them were past the right edge of the screen). So this pass wrote
+`tools/scripts/audit_layout.py`, which answers all three — sub-floor, overlapping
+pairs, clipped-past-the-edge — from the same `uiautomator dump`.
+
+Running it over **§9's own 29 evidence dumps** was the fastest audit in this
+report. It reproduces every defect §9 found, in the dumps §9 took before its
+fixes, and it also reports a sub-floor control in **eleven** dumps that §9 took
+*after* them — including its two hand-back dumps' predecessors and both G-08
+Release-build captures. That is F-38.
+
+#### H-04 — the sweep, and what it found first
+
+##### F-38 · Every compact-height pane opts nine of its controls out of the 48 dp floor, with a literal `42`
+
+- **Severity** Minor · **Scenario** H-04 · **Device-independent** · **Found by** the sixth pass
+- **Reproducibility** deterministic, in every compact-height viewport measured: natural landscape 964 × 434 dp, the 780 × 434 dp viewport §6–§9 built this layout for, and 601 × 400 dp
+- **First suspicion** `SessionWorkspaceView.Mobile.cs` — confirmed
+
+`ConfigureWideMobileComposition` ends with three blocks that give the compact
+composition its own, lower floor:
+
+```csharp
+item.MinHeight = enabled ? 42 : 48;                 // the three analysis tabs
+…
+foreach (var control in new Control[] { _order, _loadMore, _fitMatches, _clearScope })
+{
+    control.MinHeight = enabled ? 42 : 48;
+}
+if (_copyRaw is { } compactCopy)     { compactCopy.MinHeight = enabled ? 42 : 48; }
+if (_openInspector is { } compactIns) { compactIns.MinHeight = enabled ? 42 : 48; }
+```
+
+Measured on the device, in the ordinary landscape workspace (`w964dp-h434dp`,
+450 dpi):
+
+| Control | Bounds (px) | dp | 48 dp? |
+|---|---|---:|---|
+| `Copy` | `[2139,557][2278,676]` | 49.4 × **42.3** | ❌ |
+| `Show the full message of the selected entry` | `[2295,557][2474,676]` | 63.6 × **42.3** | ❌ |
+| `Entries` (TabItem) | — | 78.2 × **42.3** | ❌ |
+| `Insights` (TabItem) | — | 78.2 × **42.3** | ❌ |
+| `Entry` (TabItem) | — | 78.2 × **42.3** | ❌ |
+| every control in the row above the toolbar | — | 48.0 | ✅ |
+
+`_order`, `_loadMore`, `_fitMatches` and `_clearScope` are the same 42 dp when
+they are on screen: §9's own `G04-landscape.xml`, `G06-*.xml` and `G08-*.xml`
+dumps record `Load 500 more; 812 remaining` at **49.4 × 42.3 dp** on a Release
+build, and `G08-780-fixed.xml` — the dump §9 took to *prove* F-37 fixed — records
+`Show the full message of the selected entry` at **63.3 × 42.3 dp** in the same
+frame.
+
+**Why four passes missed it.** Two independent blind spots, and it needed both.
+
+1. `measure_targets.py` was run on the dumps that were about a specific finding,
+   and each time the finding's own control was the one being read. The tool prints
+   every node, so the 42.3 dp rows were on screen — in §9's own terminal — under a
+   headline that said the thing being measured had passed.
+2. The three analysis tabs are `clickable="false"` in Android's accessibility
+   tree (Avalonia's `TabItem` exposes selection, not click), so **no** sub-floor
+   tool has ever counted them. They are the primary navigation of the analysis
+   pane and a finger is what taps them.
+
+**Why it matters.** `TouchTarget`'s own remarks name "toolbar buttons, workspace
+modes, Fit and the analysis tabs" as the controls that "measured 135 px = 48 dp
+… and were right". In the compact composition they are not: the compact
+composition is *landscape*, which is the orientation a reader turns the phone to
+in order to read a log, and `Copy`, `Entry ⤢` and the three analysis tabs are the
+pane's whole command set. 42 dp is 6 dp under the platform floor and under this
+report's own U-08 gate — the same gate F-03 (18.8 dp), F-26 (43.7 dp), F-29
+(30.5 dp) and F-31 (34 dp) were each raised for.
+
+**What it costs to fix, honestly.** 6 dp per band, and at most two of these bands
+are on screen at once (the tab strip, plus whichever pane's action row is
+showing). In the 434 dp-tall landscape workspace that is 12 dp of 434 — under 3 %,
+about a quarter of one entry row — bought for five controls that a finger can
+actually hit. The alternative the code chose is 6 dp of log.
+
+##### F-39 · Every system text-size change leaves another copy of the workspace command strip in the shell's shared row
+
+- **Severity** Major · **Scenario** H-04 · **Device-independent** · **Found by** the sixth pass
+- **Reproducibility** deterministic — one change is enough, in any compact-height viewport with a session open; the copies accumulate
+- **First suspicion** `MainView.RebuildWorkspaceViews` — confirmed, and the invariant belongs one level down
+
+**How it was found.** Not by looking for it. The sweep changed the system text
+size to measure the layout at 1.3×, and `audit_layout.py` reported **5
+overlapping pairs** where there had been none. After a second change it reported
+**15** — which is C(3,2) × 5: the same five controls, three times each.
+
+**Measured**, on the Release build, `w964dp-h434dp`, a session open:
+
+| System text size | `Filters` nodes | `Plot` / `Split` / `Details` / `Fit` nodes | Overlapping pairs |
+|---|---:|---:|---:|
+| cold at 1.0 | 1 | 1 each | 0 |
+| after → 1.3 | **2** | **2 each** | **5** |
+| after → 1.0 | **3** | **3 each** | **15** |
+
+Every copy reports **byte-identical bounds** — `[1057,97][1271,232]` for
+`Filters` — and every copy says `enabled="true"`.
+
+**Root cause.** In a compact-height viewport the workspace's command strip is
+*reparented* into `MainView`'s own command row: `HostCompactCommands(host)` takes
+it out of the workspace and adds it to `_compactWorkspaceCommands`, so that
+`Open log · Live · More` and `Filters · Plot · Split · Details · Fit` share one
+48 dp band (§6, and F-34's threshold). That move is what makes the leak possible.
+
+A workspace view is **replaced** whenever the reader changes the device's text
+size, because every font size in it is resolved while it is being built —
+`RebuildWorkspaceViews` builds a new `SessionWorkspaceView` and drops the old
+one. The old one had already given its strip to the shell, so dropping it drops
+nothing: the strip is a child of `MainView`'s grid, not of the view. Nothing
+asked for it back, and `UpdateCompactCommandComposition` then adds the new
+workspace's strip to the same cell.
+
+`DetachViewModel` — whose own comment says a replaced view "would answer every
+change that session makes for as long as the tab is open" — took the *event* half
+off and left the *visual* half on.
+
+**What it costs the reader.**
+
+1. **The accessibility tree doubles, then triples.** TalkBack walks `Filters`,
+   `Plot`, `Split`, `Details`, `Fit` once per copy. The stale copies belong to a
+   view that has stopped answering its session, and screen-reader activation goes
+   to the focused node rather than through hit-testing, so they are reachable.
+2. **It is unbounded.** Five changes leave six strips and 75 overlapping pairs.
+3. **It is a retention leak.** Each stale strip holds a detached workspace
+   subtree alive for as long as the session is open.
+4. **The reader who pays is the one the feature exists for.** `TextScale` exists
+   so that "somebody who has already told the operating system they need larger
+   text" gets it without finding a second switch. That is the exact gesture that
+   triggers this.
+
+Touch still works: the new strip is added last and so paints on top, and a
+synthetic tap at `Filters`' centre after one change did open the drawer (one copy
+then read `Close filters` while the other still read `Open search and timeline
+filters` — the clearest possible proof that both are live).
+
+**Why five passes missed it.** Every pass that changed the system text size did it
+to measure something *at* the new size, and both a stale strip and a live one
+measure 48 dp. `measure_targets.py` prints duplicate rows without comment; the
+defect is only visible if you count them, or if you ask — as `audit_layout.py`
+does — whether two touch targets overlap. §5's U-04/U-05 row records that the app
+*survived* system scales 1.3 → 0.85 → 1.15 → 1.0. Four scale changes: on the
+build under test that state ends with **five** copies of the strip.
+
+**Fixed at the seam that creates the situation, and at the moment that ends it.**
+
+1. `HostCompactCommands(host)` clears the row before it adopts. The row holds
+   exactly one strip — the selected workspace's — and the only thing that can put
+   one there is this method. A strip already in it is, by construction, one no
+   live workspace is hosting: `UpdateCompactCommandComposition` gives the host to
+   the selected workspace alone and `null` to every other tab, and a workspace
+   that finds its strip gone re-inserts it into its own row zero on the next pass.
+2. `DetachViewModel` gives the strip back, beside the subscriptions it already
+   dropped, so "replaced" means one thing rather than two halves.
+
+**Host tests** `LiveTestRemediationTests.TheSharedRowNeverHoldsTwoWorkspacesCommandStrips`
+(host one workspace's strip, then another's, without detaching in between — the
+row holds one, and it is the second) and
+`.ADetachedWorkspaceGivesBackTheRowItWasHostedIn` (the row empties, and the strip
+goes home rather than nowhere). Both were **proved red first**, with the failure
+message the device produced: *"Assert.Single() Failure: The collection contained
+2 items"*.
+
+**A second route into the same defect, found while looking for something else.**
+Closing session tabs duplicates the strip too, and it needs no text-size change at
+all: with four sessions open in landscape, closing three left **5 overlapping
+pairs** — one extra strip — and the one remaining session's own strip on top of
+it. `RemoveTab` removed the tab and its item but never told the view it was
+finished, so a closed session's workspace stayed subscribed to the session it no
+longer draws *and* kept the strip it had handed to the shell.
+
+That half is fixed in the same place the first half is: `RemoveTab` now detaches
+the view it is dropping, which is the release `RebuildWorkspaceViews` already
+performs, for the same reason. The row-clears-before-it-adopts invariant covers
+it either way — this is the belt to that brace, and it also stops a closed
+session's view from answering a disposed view model.
+
+**Honest about the test.** The two host tests pin the seam
+(`HostCompactCommands` / `DetachViewModel`). The `RemoveTab` half has **no**
+headless test: `MainView`'s compact composition is gated on
+`OperatingSystem.IsAndroid()` with no override, and it has no seam for opening a
+session, so a desktop run cannot reach the state. Adding one purely to observe a
+one-line release would be a worse trade than saying this plainly and verifying it
+on the device, which §10.5 does.
+
+### 10.5 Device verification, on a Release build
+
+Both fixes were put on the device as a **Release** build and measured there. The
+device carried the Release build of `81bb56b` at the start of this pass (§9.6/1),
+so this is Release-against-Release.
+
+| Field | Value |
+|---|---|
+| Artifact | `src/VisualCat.Android/bin/Release/net10.0-android36.0/com.barebit.visualcat-Signed.apk` |
+| SHA-256 | `d17794aed5ad925ad4778259d5c62d34d423758ff85093d67b9f78520be403ca` |
+| Bytes | 30 815 675 |
+| Build | 0 warnings, 0 errors, 55 s |
+| Install | `adb install -r -t` → `Success` in 1 599 ms, **in place** — `firstInstallTime=2026-08-21 23:33:16` preserved, `pkgFlags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]` (no `DEBUGGABLE`) |
+| Cold launch | `LaunchState: COLD`, **1 760 ms** |
+
+#### F-38 — verified
+
+Landscape workspace, `w964dp-h434dp`, 450 dpi, session open. Evidence
+`V2-f38-landscape.xml/.png`.
+
+| Control | Before (§10.4) | After |
+|---|---:|---:|
+| `Copy` | 49.4 × **42.3** dp | 49.4 × **48.0** dp |
+| `Show the full message of the selected entry` | 63.6 × **42.3** dp | 63.6 × **48.0** dp |
+| `Entries` (TabItem) | 78.2 × **42.3** dp | 78.2 × **48.0** dp |
+| `Insights` (TabItem) | 78.2 × **42.3** dp | 78.2 × **48.0** dp |
+| `Entry` (TabItem) | 78.2 × **42.3** dp | 78.2 × **48.0** dp |
+| Whole workspace | 2 under 48 dp | **0 under 48 dp, 0 overlapping, 0 clipped** |
+
+#### F-39 — verified, both routes
+
+**The text-size route**, run as §5's U-04/U-05 sequence — four changes, the exact
+gesture that produced five stacked strips on the build under test:
+
+| Step | `Filters` nodes | Overlapping pairs |
+|---|---:|---:|
+| baseline, system scale 1.0 | 1 | 0 |
+| → 1.3 | **1** | **0** |
+| → 1.0 | **1** | **0** |
+| → 1.15 | **1** | **0** |
+| → 1.0 | **1** | **0** |
+
+Evidence `V3-f39-a…e.xml`. Before the fix the same sequence measured 2, 3, 4, 5
+copies and 5, 15, 30, 50 overlapping pairs.
+
+**The tab-close route.** Three sessions opened from *Recent sessions*
+(`00h13m13`, `16h24m26`, `14h44m19`; 16 nodes, 0 overlapping), then closed one at
+a time from the right:
+
+| After closing | `Filters` nodes | Overlapping pairs |
+|---|---:|---:|
+| `14h44m19` | **1** | **0** |
+| `16h24m26` | **1** | **0** |
+
+Evidence `V5-close1/2.xml`. Before the fix, closing three tabs left **5**
+overlapping pairs — one whole extra strip — with no text-size change involved.
+
+**Still a live strip, not a surviving corpse.** After all of the above:
+`Filters` opened the drawer (`Close filters`, 22 nodes, 0 under 48 dp, 0
+overlapping), `Plot` and `Details` both switched the workspace, and each state
+measured clean. Evidence `V6-drawer/plot/details.xml`.
+
+#### Regression check — the viewports §9 fixed
+
+F-38 spends 6 dp per band, and the band it spends it in is the one §9's F-32,
+F-35 and F-36 were about. Both of §9's short viewports were re-measured on this
+build:
+
+| Viewport | Result |
+|---|---|
+| `w434dp-h498dp` workspace (F-34/F-35's state) | 10 clickable nodes, **0 under 48 dp, 0 overlapping, 0 clipped** |
+| `w434dp-h498dp` filter drawer (F-36's state) | 22 clickable nodes, **0 under 48 dp, 0 overlapping, 0 clipped** |
+| `w964dp-h434dp` landscape, Plot / Split / Details | 8 / 10 / 10 nodes, **0 / 0 / 0** in every column |
+
+Evidence `V7-narrow-compact.xml`, `V7-narrow-drawer.xml`, `V6-*.xml`.
+
+### 10.6 Two things measured and deliberately not turned into findings
+
+Recorded so the next pass does not spend its budget re-deriving them.
+
+**1. A node scrolled out of a scroller still reports on-screen coordinates.**
+This is Avalonia's automation peer reporting a control's layout bounds without
+intersecting them with its ancestors' clips, and Android then clamps them to the
+screen. It is not a VisualCat layout defect, and it is what three earlier
+"sub-floor" readings actually were:
+
+| Reading | Where | What it was |
+|---|---|---|
+| `Close On-device logcat 00h13m13` **42.3 dp** | §9.4/G-08, four sessions open | the leftmost tab chip, horizontally scrolled half out of the strip |
+| `Close … 00h13m13` **15.3 dp** | §5.1/A-05 | the same thing, before §6's trailing-margin fix |
+| `Case-sensitive` × `Info level` overlap | §9's `G06-f36-fresh.xml` | drawer rows scrolled above the viewport |
+
+Measured directly this pass: in the landscape *More* sheet, scrolling down moves
+`Share…` out of view above the fold, and its reported bounds `[518,278][2153,436]`
+then sit **on top of the sheet's own header**, overlapping `Close this sheet` by
+49.1 × 40.2 dp. The screenshot of the same frame shows the header drawn correctly
+and `Share…` nowhere — the pixels are right and the tree is wrong. A synthetic tap
+at a scrolled-out chip's reported centre does nothing, which is the same fact from
+the other side.
+
+It has one real cost — TalkBack's touch exploration and node bounds — and no
+app-level lever short of custom automation peers for every scroller. §1.1's gap 6
+(no hands-on assistive-technology session) is where it belongs, and this entry is
+so the *next* sweep reads a duplicate or an overlap in a scrolled pane correctly
+instead of filing it.
+
+**One consequence for the tooling.** `audit_layout.py` reports overlaps and
+sub-floor nodes from any dump, so a dump taken while a pane is scrolled will show
+both. Read it on an unscrolled pane, or read the screenshot beside it.
+
+**2. Panes swept clean.** Measured this pass, on the current build, and free of
+sub-floor, overlapping and clipped controls: the **Insights** pane and its
+template actions (19 nodes), **Details** mode (19), **Session cache** in landscape
+(8 — F-31's spin buttons measure 48.0 dp there), **Recent sessions** in landscape
+(the list scrolls and Cancel/Open stay pinned — finding 16's fix holds in a short
+viewport), the **filter drawer** at a fourth width (601 dp, 26 nodes), and the
+shared command row at the **601 dp boundary** of `SharesARow` (0 overlapping —
+the arithmetic in `MobileWorkspaceLayout`'s remarks is conservative, and measured
+here the toolbar takes 258.7 dp and the strip 307.2 dp of the 601 available).
+
+The one sub-floor control found in a sheet is **Android's own**: the filename
+field in the system Save-file picker, 692.6 × 44.8 dp.
+
+### 10.7 Mutation ledger and hand-back
+
+| Setting | Original (§10.1) | Changed to | Restored |
+|---|---|---|---|
+| System font scale | `1.0` | `1.3`, `1.0`, `1.15`, `1.0` — F-39's own repro, which is §5's U-04/U-05 sequence | **Yes — `1.0`** |
+| Display rotation | `accelerometer_rotation=1`, `user_rotation=0` | locked landscape (`user_rotation=1`) for every compact-height measurement, and portrait for the paired ones | **Yes — `1` / `0`, config back to `w434dp-h964dp port`** |
+| `wm size` | `1220x2712` (physical) | `1690x1125` — 601 × 400 dp, the `SharesARow` boundary; `1220x1400` — 434 × 498 dp, §9's F-34/F-35/F-36 viewport, for the regression check | **Yes — `wm size reset`; `Physical size: 1220x2712`** |
+| Installed package | Release build of `81bb56b` | Release build of this pass's fixes, `adb install -r -t`, in place | **Not reverted, deliberately** — see below |
+| Open session tabs | four (`00h13m13`, `00h25m52`, `14h44m19`, `16h24m26`), `16h24m26` selected, Split | closed to one and reopened, as F-39's tab-close repro | **Yes — four open again, the tab strip byte-identical to §10.1's dump (`[0,291][332,426]` and `[497,291][997,426]`), Split mode restored** |
+| Workspace display mode | Split | Plot and Details, to sweep those panes | **Yes — Split** |
+| Shared storage | — | `uiautomator` dumps and screenshots at `/sdcard/vc6.xml` / `.png`, deleted after every pull | **Yes — `ls /sdcard/vc6.*` → no such file** |
+| `READ_LOGS` | granted | untouched — this pass started no capture | **n/a** |
+| Stored settings | text scale `1.00×`, cleanup disabled | untouched — *Session cache* was opened and cancelled, *Appearance & timeline* opened and dismissed; neither was saved | **n/a** |
+
+**Hand-back**
+
+| | Baseline (§10.1) | At hand-back |
+|---|---|---|
+| Configuration | `sw434dp w434dp h964dp port night` | **identical** |
+| `wm size` / `wm density` | `1220x2712` / `450` | **`1220x2712` / `450`** |
+| `accelerometer_rotation` / `user_rotation` | `1` / `0` | **`1` / `0`** |
+| System font scale | `1.0` | **`1.0`** |
+| System / app locale | `en-US` / `[]` | **`en-US` / `[]`** |
+| `READ_LOGS` | `granted=true` | **`granted=true`** — neither granted nor revoked by this run |
+| `firstInstallTime` | `2026-08-21 23:33:16` | **preserved** — the install was in place |
+| `pkgFlags` | `[ HAS_CODE ALLOW_CLEAR_USER_DATA ]` | **identical** — still a Release build |
+| Capture children | 0 | **0** — no capture was started |
+| Files added to shared storage | — | **none** |
+| Battery / thermal | USB powered, `Thermal Status: 0` | **100 %, `Thermal Status: 0`** |
+| Workspace at hand-back | 14 clickable nodes, 0 under 48 dp | **14 clickable nodes, 0 under 48 dp, 0 overlapping, 0 clipped** |
+
+**Deliberate deviation, recorded rather than reverted.** The device carries the
+Release build of this pass's fixes rather than the Release build of `81bb56b`.
+Reverting would put a build with F-38 and F-39 in it back on the phone, which is
+strictly worse; §9.6/1 made the same call for the same reason.
+
+### 10.8 What this pass changed about the report
+
+1. **The audit's instrument was the bottleneck, not the audit.** Four passes ran
+   a tool that answers one of the three questions a touch layout can fail. Writing
+   `audit_layout.py` — sub-floor, overlapping, clipped — and running it over §9's
+   own 29 evidence dumps found F-38 in **eleven dumps that had already been taken,
+   read, and filed as passes**. The cheapest place to look for the next finding was
+   the evidence already on disk.
+2. **F-39 is the first finding in this report that is not about a size.** Every
+   layout defect from F-32 to F-37 was a decision taken against the wrong number.
+   F-39 is about **ownership**: a control was moved out of the view that made it,
+   and then that view was replaced without anyone asking for the control back. The
+   move itself was §6's fix for a real problem, and it has been correct in every
+   viewport ever measured — it just had no symmetric half for "the owner is gone".
+   The question that finds this class is not *how big is it* but **who is holding
+   it, and what happens when they leave**.
+3. **A defect can hide inside the act of measuring.** F-39 is triggered by changing
+   the system text size, which is exactly what a pass does to measure a layout at
+   1.3×. Five passes performed the trigger and none saw the effect, because both
+   the stale strip and the live one measure 48 dp and neither an eye nor a
+   sub-floor tool counts duplicates.
+4. **Three earlier sub-floor readings were never layout defects.** §10.6 documents
+   what they were — Avalonia reporting a scrolled-out node's unclipped bounds — so
+   the next sweep spends its budget somewhere else.
+5. **The panes are running out.** This pass swept Insights, Details, Session cache,
+   Recent sessions, the drawer at a fourth width, and the shared row at its
+   threshold, and found **nothing** in any of them. The two findings it did make
+   came from a *transition* (a text-size change, a tab close), not from a state.
+   §7.6 said findings hide in panes nobody opened; §8.7 said states nobody
+   measured; §9.7 said the size the thing is actually given. The next one to try is
+   **what a state change leaves behind**.
+
+**Declared limits of this pass.** One device, API 36, Release but debug-signed, so
+§1.1's gap 2 is unchanged. No capture was started, so nothing here re-tests the
+live path — F-39's capture-row half is covered by the same seam but was not
+exercised with a recording running. No TalkBack session, which is where §10.6's
+scrolled-bounds observation would actually be judged. No upgrade, Play, endurance,
+destructive-storage or locale work. The `RemoveTab` half of F-39's fix has no
+headless test and says so in §10.4.

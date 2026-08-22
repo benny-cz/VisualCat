@@ -880,12 +880,20 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// <summary>
     /// Stops this view from answering its session. Called when the view is replaced.
     /// </summary>
+    /// <remarks>
+    /// Its place in the shell goes back with its subscriptions. In a compact-height viewport
+    /// the command strip has been reparented into the application's own row, so a view that is
+    /// dropped without giving it back leaves it there — and the replacement adds its strip
+    /// beside it rather than instead of it (finding F-39). Taking the visual half off at the
+    /// same moment as the event half is what makes "replaced" mean one thing.
+    /// </remarks>
     internal void DetachViewModel()
     {
         _viewModel.EntriesReloading -= OnEntriesReloading;
         _viewModel.EntriesReloaded -= OnEntriesReloaded;
         _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _viewModel.SnapshotChanged -= OnViewModelSnapshotChanged;
+        HostCompactCommands(null);
     }
 
     /// <summary>Whether this view has already said that its session is a partial recovery.</summary>

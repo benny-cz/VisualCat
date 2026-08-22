@@ -916,10 +916,15 @@ public sealed partial class SessionWorkspaceView : UserControl
                 item.FontSize = TextScale.Of(enabled ? 12.5 : 14);
                 item.Padding = enabled ? new Thickness(7, 0) : new Thickness(10, 0);
 
-                // A short viewport pays for every dp of chrome twice: once here and once in
-                // the header row below. 42 dp still exceeds the 40 dp Material floor for a
-                // tab and buys back a whole entry row (finding 2).
-                item.MinHeight = enabled ? 42 : 48;
+                // The floor is the platform's, in every composition. A short viewport pays
+                // for every dp of chrome twice - once here and once in the header row below -
+                // so this row was given a literal 42, which cleared the 40 dp Material floor
+                // for a tab and missed the 48 dp floor for the thing a finger lands on. These
+                // three tabs are the analysis pane's whole navigation, they are
+                // `clickable="false"` in Android's tree so no sub-floor sweep has ever counted
+                // them, and they measured 78.2 x 42.3 dp on the device in ordinary landscape
+                // (finding F-38). 6 dp of one band is what the reach costs.
+                item.MinHeight = TouchTarget.Minimum;
             }
         }
 
@@ -986,19 +991,19 @@ public sealed partial class SessionWorkspaceView : UserControl
         // A short viewport still has to clear the 48 dp touch floor, which it does; the
         // 64 dp portrait row exists for comfort, not for reach.
         ApplyEntryRowHeight(enabled ? 48 : 64);
-        foreach (var control in new Control[] { _order, _loadMore, _fitMatches, _clearScope })
-        {
-            control.MinHeight = enabled ? 42 : 48;
-        }
 
-        if (_copyRaw is { } compactCopy)
+        // Every control this pane owns, through one seam and one floor. They were three
+        // separate assignments of the same literal 42, and on the device that is 42.3 dp:
+        // `Copy`, `Entry`, the sort selector and `Load 500 more` all measured it in ordinary
+        // landscape, in Release, in §9's own evidence (finding F-38). A control is not less of
+        // a touch target for being in a short viewport, and one list of them cannot acquire a
+        // seventh member with a different answer.
+        foreach (var control in new Control?[] { _order, _loadMore, _fitMatches, _clearScope, _copyRaw, _openInspector })
         {
-            compactCopy.MinHeight = enabled ? 42 : 48;
-        }
-
-        if (_openInspector is { } compactInspector)
-        {
-            compactInspector.MinHeight = enabled ? 42 : 48;
+            if (control is not null)
+            {
+                control.MinHeight = TouchTarget.Minimum;
+            }
         }
 
         // Spacing is the panels' own (column and item spacing), so the labels change with

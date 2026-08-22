@@ -14,6 +14,25 @@ screenshot says which build it came from.
 ## [Unreleased]
 
 ### Fixed
+- Every button in the analysis pane is a full touch target on a landscape phone.
+  The compact layout a short screen uses gave its own controls a lower floor than
+  the rest of the app: the Entries, Insights and Entry tabs, Copy, the entry
+  inspector, the sort selector and "Load more" were all 42 dp tall against the
+  48 dp the platform asks for and every other control in the product already met.
+  Landscape is the orientation you turn a phone to in order to read a log, and
+  those are the whole command set of the pane you read it in. They now meet the
+  same floor as everything else, which costs the list about a quarter of one row.
+- Changing the device's text size, or closing a session, no longer leaves a copy
+  of the workspace's command row behind. On a short screen the workspace's
+  buttons - Filters, Plot, Split, Details, Fit - move up beside the app's own, into
+  a row the app owns. Changing the system text size rebuilds the workspace, because
+  every text size in it is settled while it is being built, and the rebuilt one
+  added its buttons beside the old ones instead of in place of them: one extra copy
+  per change, stacked exactly on top, each belonging to a workspace that had stopped
+  listening to its session. Four changes left five copies, and a screen reader
+  walked all of them. Closing a session did the same thing for the same reason. The
+  row now holds one set of buttons - the selected session's - and a workspace that
+  is finished with hands back everything it was holding.
 - The workspace commands are reachable on a short, narrow screen. On a screen that
   is short but wide - a phone in landscape - the app's own buttons and the
   workspace's own buttons share one row, which saves a band of height worth having.
