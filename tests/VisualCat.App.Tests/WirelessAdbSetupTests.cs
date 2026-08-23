@@ -159,7 +159,8 @@ public sealed class WirelessAdbSetupTests
 
             var portPanel = Assert.IsType<StackPanel>(port.Parent);
             Assert.Same(portPanel, portValidation.Parent);
-            Assert.Equal(portPanel.Children.IndexOf(port) + 1, portPanel.Children.IndexOf(portValidation));
+            Assert.Equal(2, portPanel.Children.Count);
+            Assert.Equal(portPanel.Children.IndexOf(port) - 1, portPanel.Children.IndexOf(portValidation));
             Assert.True(portValidation.IsVisible);
             Assert.Contains("1 to 65535", portValidation.Text, StringComparison.Ordinal);
             Assert.False(codeValidation.IsVisible);
@@ -172,7 +173,8 @@ public sealed class WirelessAdbSetupTests
 
             var codePanel = Assert.IsType<StackPanel>(code.Parent);
             Assert.Same(codePanel, codeValidation.Parent);
-            Assert.Equal(codePanel.Children.IndexOf(code) + 1, codePanel.Children.IndexOf(codeValidation));
+            Assert.Equal(2, codePanel.Children.Count);
+            Assert.Equal(codePanel.Children.IndexOf(code) - 1, codePanel.Children.IndexOf(codeValidation));
             Assert.True(codeValidation.IsVisible);
             Assert.Contains("exactly as Android shows", codeValidation.Text, StringComparison.Ordinal);
 

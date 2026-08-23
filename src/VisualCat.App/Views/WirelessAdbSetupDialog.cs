@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input.TextInput;
 using Avalonia.Layout;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
 
@@ -205,6 +206,14 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
 
     private readonly TextBlock _portValidation = BuildFieldValidation("Pairing port validation");
     private readonly TextBlock _codeValidation = BuildFieldValidation("Pairing code validation");
+    private readonly StackPanel _portFieldGroup;
+    private readonly StackPanel _codeFieldGroup;
+    private readonly Border _imeScrollReserve = new()
+    {
+        Height = 120,
+        IsHitTestVisible = false,
+        IsVisible = false,
+    };
 
     private readonly Button _openDeveloperOptions;
     private readonly Button _connectSavedPairing;
@@ -213,6 +222,11 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
     private readonly Border _savedPairingPanel;
     private readonly StackPanel _newPairingPanel;
     private readonly Button _cancel;
+    private readonly DispatcherTimer _validationScrollTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(400),
+    };
+    private Control? _validationScrollTarget;
     private CancellationTokenSource? _operationCancellation;
     private bool _dismissWhenOperationEnds;
     private readonly bool _connectSavedImmediately;
@@ -245,6 +259,9 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
         AutomationProperties.SetHelpText(_code, "Enter the six digits shown in Android's pairing-code panel.");
         _port.TextChanged += (_, _) => ClearFieldValidation(_portValidation);
         _code.TextChanged += (_, _) => ClearFieldValidation(_codeValidation);
+        _portFieldGroup = BuildFieldGroup(_portValidation, _port);
+        _codeFieldGroup = BuildFieldGroup(_codeValidation, _code);
+        _validationScrollTimer.Tick += ValidationScrollTimerTick;
 
         _openDeveloperOptions = new Button
         {
@@ -344,15 +361,13 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
                     Text = "Pairing port",
                     FontWeight = Avalonia.Media.FontWeight.SemiBold,
                 },
-                _port,
-                _portValidation,
+                _portFieldGroup,
                 new TextBlock
                 {
                     Text = "Pairing code",
                     FontWeight = Avalonia.Media.FontWeight.SemiBold,
                 },
-                _code,
-                _codeValidation,
+                _codeFieldGroup,
                 new TextBlock
                 {
                     Text = "The 6-digit pairing code is used only for this attempt and is not saved or written to logs. " +
@@ -411,6 +426,7 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
                 _showNewPairing,
                 _newPairingPanel,
                 _status,
+                _imeScrollReserve,
             },
         };
 
@@ -421,9 +437,9 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
     }
 
     /// <summary>
-    /// Keeps a field error beside the field it explains. A single form-level status after the
-    /// privacy note was scrolled behind the pinned footer on a Pixel 5 at 130% Android text,
-    /// leaving only the focused empty field visible after validation failed.
+    /// Keeps a field error beside the field it explains. It precedes the editor so Android's
+    /// focus scrolling keeps both visible even above Samsung's taller numeric keyboard. A
+    /// single form-level status after the privacy note was previously hidden by the footer.
     /// </summary>
     private static TextBlock BuildFieldValidation(string accessibleName)
     {
@@ -440,6 +456,16 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
         return validation;
     }
 
+    private static StackPanel BuildFieldGroup(TextBlock validation, TextBox editor) => new()
+    {
+        Spacing = 10,
+        Children =
+        {
+            validation,
+            editor,
+        },
+    };
+
     private static void ClearFieldValidation(TextBlock validation)
     {
         validation.Text = string.Empty;
@@ -451,12 +477,36 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
         _status.Text = string.Empty;
         validation.Text = message;
         validation.IsVisible = true;
-        field.Focus();
 
-        // Focus asks Android to reveal the editor as its keyboard opens. Follow it with the
-        // adjacent explanation after layout so the error, not only the empty editor, stays in
-        // the visible part of the internally scrolling form.
-        Dispatcher.UIThread.Post(validation.BringIntoView, DispatcherPriority.Loaded);
+        // The explanation precedes the editor so Android's native focus reveal naturally keeps
+        // it near the field. Samsung's overlay keyboard is not part of Avalonia's viewport, so
+        // schedule one bounded scroll nudge after the IME animation to expose the complete pair.
+        field.Focus();
+        if (OperatingSystem.IsAndroid())
+        {
+            // The overlay IME does not reduce Avalonia's reported viewport. Add temporary extent
+            // so even the final field can move above it, then nudge by the measured pair height.
+            _imeScrollReserve.IsVisible = true;
+            _validationScrollTarget = validation.Parent as Control ?? field;
+            _validationScrollTimer.Stop();
+            _validationScrollTimer.Start();
+        }
+    }
+
+    private void ValidationScrollTimerTick(object? sender, EventArgs eventArgs)
+    {
+        _validationScrollTimer.Stop();
+        var target = _validationScrollTarget;
+        _validationScrollTarget = null;
+        var scroller = target?.GetVisualAncestors().OfType<ScrollViewer>().FirstOrDefault();
+        if (target is null || scroller is null)
+        {
+            return;
+        }
+
+        var maximum = Math.Max(0, scroller.Extent.Height - scroller.Viewport.Height);
+        var nudge = Math.Max(target.Bounds.Height, 48) + 8;
+        scroller.Offset = new Vector(scroller.Offset.X, Math.Min(maximum, scroller.Offset.Y + nudge));
     }
 
     private async void AutomaticConnectOnAttach(object? sender, Avalonia.VisualTreeAttachmentEventArgs eventArgs)
@@ -541,6 +591,7 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
 
         ClearFieldValidation(_portValidation);
         ClearFieldValidation(_codeValidation);
+        _imeScrollReserve.IsVisible = false;
 
         var request = new WirelessAdbPairingRequest(port, code);
         await RunConnectionAsync(
@@ -657,6 +708,8 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
 
     public void Dispose()
     {
+        _validationScrollTimer.Stop();
+        _validationScrollTarget = null;
         CancelOperation();
         GC.SuppressFinalize(this);
     }

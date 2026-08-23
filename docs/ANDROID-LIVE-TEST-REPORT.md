@@ -5353,11 +5353,11 @@ retaining §12 as the pairing/reconnect oracle.
 | Finding | Remediation and Pixel proof |
 |---|---|
 | At 130% Android text, the home headline's accessibility node still contained `SEE THE SHAPE OF YOUR LOG`, but the visible single line ended after `YOUR L` | The headline now wraps and remains center-aligned. Its rendered height changed from 93 px (`[66,921][1014,1014]`) to 185 px (`[77,874][1003,1059]`), showing the complete final word on a second centered line. Evidence `22-large-text-home-observed.png` and `23-fixed-large-text-home.png`. |
-| Empty Wireless-ADB submission focused the port, but the only validation line was after the entire form and appeared behind the pinned footer at 130% text | Port and code validations now live immediately after their corresponding editor, clear as the reader edits, use assertive accessibility announcements, and receive a post-layout bring-into-view request. The final port error was fully visible at `[102,1504][945,1597]` between the port and code controls rather than intersecting the footer beginning at y=2023. Evidence `17-large-text-wireless-validation.png` and `24-final-validation.png`. |
+| Empty Wireless-ADB submission focused the port, but the only validation line was after the entire form and appeared behind the pinned footer at 130% text | The first remediation kept port and code validation adjacent to their editor, cleared it as the reader edited, and used assertive accessibility announcements. The final Pixel port error was fully visible at `[102,1504][945,1597]` rather than intersecting the footer beginning at y=2023. §16 subsequently refines the adjacent ordering and IME scrolling for Samsung's taller keyboard. Evidence `17-large-text-wireless-validation.png` and `24-final-validation.png`. |
 
 Two headless contracts preserve these results: the home headline must wrap and
-center, while each field validation must be the editor's next sibling, appear on
-invalid submission, and clear on edit.
+center, while each field validation must remain grouped directly with its
+editor, appear on invalid submission, and clear on edit.
 
 ### 15.3 Regression and interaction results
 
@@ -5385,3 +5385,74 @@ At hand-back the test installation/data and device-side XML dumps are removed,
 font scale is restored to 1.0, automatic rotation and portrait user rotation are
 restored, Wireless debugging is off, and the final corrected Release package is
 installed cleanly and open on the home screen.
+
+---
+
+## 16. Samsung API-36 quick UX/UI follow-up
+
+### 16.1 Run header and scope
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-23 |
+| Repository baseline | `ed02669`; working-tree remediation under review |
+| Device | Samsung Galaxy S21 FE / SM-G990B (`r9q`), Android 16 / API 36, `arm64-v8a` |
+| Serial | `RFCRC0A9GND` |
+| Display | 1080 × 2340 at density 480 (360 × 780 dp portrait); Samsung three-button navigation and Samsung keyboard |
+| Final test package | Optimized, non-debuggable Release 2.0.6 APK, locally debug-signed, SHA-256 `0E8E12150234A2193517668D9A883A680FE619CC8164DF6D676AAEA3A63594B2` |
+| Install state | The previously installed Release and all of its app data were removed before testing; each corrected package was installed with clean app data |
+| Scope | 100% and 130% Android text; home hero; portrait and landscape sheets; both invalid pairing fields with the Samsung IME; own-app capture; Time/Copy/Entry; inspector; compact warning; rotation and crash logs |
+
+### 16.2 Finding and final remediation
+
+The Pixel correction in §15 exposed one remaining OEM-keyboard edge case. At
+130% text, Samsung's numeric keyboard began around y=1310. When port validation
+followed its editor, the editor was fully visible at `[111,1144][933,1288]` but
+the explanation began at `[111,1306][933,1407]` and was covered by the IME.
+Simply moving the explanation first reversed the problem: the explanation was
+visible, but only the top of the editor remained above the keyboard.
+
+The final implementation treats each validation/editor pair as one field group,
+places the assertive explanation immediately before its editor, and adds a
+temporary non-interactive bottom scroll reserve only after Android validation
+opens the IME. Once the IME animation settles, the internal form receives a
+bounded nudge derived from the measured group height and remaining scroll range;
+there are no device-resolution coordinates in product code. The timer and target
+are released when the dialog is disposed, and valid submission removes the
+temporary reserve.
+
+Final Samsung measurements at 130% text:
+
+| Field | Validation bounds | Editor bounds | Result |
+|---|---:|---:|---|
+| Pairing port | `[111,1007][933,1108]` | `[111,1144][933,1288]` | **Pass:** both are complete above the numeric IME |
+| Pairing code | `[111,878][933,979]` | `[111,1016][933,1160]` | **Pass:** both are complete above the larger alphanumeric IME |
+
+The headless contract now also requires the explanation and editor to be the two
+members of the same field group in that order. Evidence is preserved as
+`06-large-validation.png` (original failure), `11-nudged-validation.png` and
+`13-reserved-code.png` under the ignored Samsung recheck artifact directory.
+
+### 16.3 Focused UX/UI and functional results
+
+| Scenario | Result |
+|---|---|
+| Clean launch / enlarged home | **Pass.** The old package was uninstalled first. The complete hero headline rendered on one line at 100% and two centered lines at 130%, with all severity and action controls intact. |
+| Popup frame and pinned actions | **Pass.** Scope and pairing sheets remained rounded and inset in portrait and landscape; body content scrolled independently while all footer buttons remained full targets. |
+| Own-app Live | **Pass.** Live started from the explicit VisualCat-only choice, updated density/timeline/counters, and retained 22 entries after Stop. |
+| Time / Copy / Entry | **Pass.** In Samsung landscape Time was `[1031,435][1367,579]`, Copy `[1385,435][1728,579]`, and Entry `[1746,435][2088,579]`: separate complete 144 px / 48 dp targets. A retained row enabled both actions. |
+| Clipboard and inspector | **Pass.** Copy produced `Copied the raw text of 1 entry.` and Samsung clipboard feedback. Entry opened the scroll-owned inspector with a complete Copy message action. |
+| Compact warning | **Pass.** The lower border remained visible at y=1079, the body owned its overflow, and Dismiss stayed a complete 144 px / 48 dp target at `[1947,933][2163,1077]`. |
+| Stability | **Pass.** The process remained alive and logcat contained no VisualCat fatal exception or ANR. |
+
+### 16.4 Package limit and hand-back
+
+The packaging verifier accepted APK structure, manifest, target SDK and local
+signature, then correctly rejected the debug certificate because it is not the
+configured Google Play upload key. This quick follow-up did not create a new
+Wireless-ADB pairing; real pairing/reconnect remains covered by §12.
+
+At hand-back the test installation and data are removed, font scale is restored
+to 1.0, automatic rotation with portrait user rotation is restored, Wireless
+debugging remains off, device-side test dumps are removed, and the final
+corrected Release APK is installed cleanly and opened on the home screen.

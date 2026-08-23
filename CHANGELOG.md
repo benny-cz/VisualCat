@@ -67,9 +67,10 @@ screenshot says which build it came from.
   OEM density and font differences cannot leave orphaned or partially visible
   controls. Its hero headline also wraps at enlarged Android text instead of
   retaining the full accessible name while visibly clipping its last word.
-- Wireless-debugging pairing errors now appear directly beneath the port or
-  code field they explain and scroll into view with that field. On narrow phones
-  at enlarged text, validation no longer lands after the whole form where the
+- Wireless-debugging pairing errors now appear directly beside the port or code
+  field they explain and scroll into view with that field. They precede the
+  editor so both remain visible above taller OEM keyboards; on narrow phones at
+  enlarged text, validation no longer lands after the whole form where the
   pinned action footer can hide it.
 
 ### Security
