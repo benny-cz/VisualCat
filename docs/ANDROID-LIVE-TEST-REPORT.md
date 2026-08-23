@@ -5456,3 +5456,54 @@ At hand-back the test installation and data are removed, font scale is restored
 to 1.0, automatic rotation with portrait user rotation is restored, Wireless
 debugging remains off, device-side test dumps are removed, and the final
 corrected Release APK is installed cleanly and opened on the home screen.
+
+---
+
+## 17. Version 2.0.7 production-signed Samsung release smoke
+
+### 17.1 Run header and package gate
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-23 |
+| Repository baseline / candidate tree | `5085b87`; release-metadata, Linux-formatting and deterministic double-tap-test changes under review |
+| Device | Samsung Galaxy S21 FE / SM-G990B (`r9q`), Android 16 / API 36, `arm64-v8a` |
+| Serial | `RFCRC0A9GND` |
+| Display | 1080 × 2340 at density 480 (360 × 780 dp portrait), font scale 1.0 |
+| Signed APK | 35,224,959 bytes, SHA-256 `CF69FC8FBFE41955A6C0941241B736E3D7A5B6A8C82242034614A0252BD360DB` |
+| Signed AAB | 35,090,117 bytes, SHA-256 `48624DA3C861A2BDB6D00D24D85DE67663AA17BED12FE227E674B8C086B49137` |
+| Upload certificate | SHA-1 `37:5C:8D:64:4F:BF:BD:07:DE:4C:1A:71:95:10:6C:94:4B:C6:B8:14` |
+
+The release packager accepted both artifacts as VisualCat 2.0.7. The APK reports
+version code 20007, API 31–36, `arm64-v8a` and `x86_64`, APK Signature Scheme v3,
+and 188 native libraries aligned for 16 KB pages. The Play/Release manifest
+contains `INTERNET`, `CHANGE_WIFI_MULTICAST_STATE`, and AndroidX's package-scoped
+dynamic-receiver permission; it contains no `READ_LOGS` declaration. The AAB's
+certificate matches the pinned Google Play upload key through both SHA-1 and
+SHA-256.
+
+### 17.2 Physical-device results
+
+| Scenario | Result |
+|---|---|
+| Clean install / launch | **Pass.** The previous installation and data were removed. The production-signed, non-debuggable APK reported 2.0.7 / 20007, cold-started in 1.3 seconds, stayed alive, and logged no fatal exception or ANR. |
+| Live scope chooser | **Pass.** The fully framed sheet explained recommended full-device Wireless ADB and immediate VisualCat-only capture, local-only processing, connection shutdown, setup state and restricted-scope behavior without promising a normal `READ_LOGS` grant. |
+| Own-app capture | **Pass.** VisualCat-only capture started immediately, showed a truthful own-app notice and quiet-state guidance, received 12 entries, and retained all 12 after Stop. |
+| Capture controls | **Pass.** Filters, Plot, Split, Details, Fit, Follow and Stop capture rendered as complete, vertically centred phone touch targets. Entries, timeline, minimap, status and the scroll-owned scope notice remained readable. |
+| Stability and cleanup | **Pass.** Stop finalized normally and left the process healthy. The tested app/data were then uninstalled, the same signed APK was installed cleanly, and a second cold launch logged no fatal exception or ANR. |
+
+### 17.3 Scope and hand-back
+
+This final release smoke did not repeat a real Wireless ADB pairing because the
+clean uninstall deliberately removed the reusable encrypted identity and no
+pairing-code panel was available during the unattended pass. Section 12 remains
+the physical transport oracle for real pairing, saved reconnect, interruption
+recovery, external records and disconnect; sections 13–16 cover the current
+API-36 OEM layouts and pairing validation. This pass adds the exact production
+upload-key package, manifest and own-app fallback evidence rather than claiming
+another transport pairing.
+
+At hand-back, the Samsung retains its original font scale and rotation settings.
+The production-signed 2.0.7 candidate is installed cleanly and open on the home
+screen, with no saved pairing identity, capture/session data or granted log
+permission.

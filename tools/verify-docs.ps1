@@ -13,7 +13,8 @@
         link definitions reference tags that exist, except for the one declared
         VersionPrefix that may be staged immediately before its tag;
       * README, changelog, and Directory.Build.props agree about the release
-        state; and
+        state;
+      * Google Play listing fields and release notes fit their form limits; and
       * the README does not advertise badges that cannot report real data yet.
 
     External URLs are deliberately not fetched: an intermittent third-party
@@ -285,6 +286,50 @@ if (Test-Path -LiteralPath $playPath -PathType Leaf) {
         }
         else {
             Write-Host ("Play listing '$($budget.Heading)': $($value.Length)/$($budget.Limit) characters.")
+        }
+    }
+
+    # Play's per-release "What's new" field accepts at most 500 characters.
+    # Check every preserved version so a copy/paste-ready note cannot silently
+    # overflow even when an older note is reused for a staged rollout.
+    $releaseNoteLimit = 500
+    for ($headingIndex = 0; $headingIndex -lt $playLines.Count; $headingIndex++) {
+        if ($playLines[$headingIndex] -notmatch '^Release notes for .+:$') {
+            continue
+        }
+
+        $heading = $playLines[$headingIndex]
+        $openIndex = -1
+        for ($index = $headingIndex + 1; $index -lt $playLines.Count; $index++) {
+            if ($playLines[$index] -match '^Release notes for .+:$') { break }
+            if ($playLines[$index] -match '^```text\s*$') { $openIndex = $index; break }
+        }
+
+        if ($openIndex -lt 0) {
+            Add-Problem "docs/PLAY-LISTING.md '$heading' contains no text fence."
+            continue
+        }
+
+        $closeIndex = -1
+        for ($index = $openIndex + 1; $index -lt $playLines.Count; $index++) {
+            if ($playLines[$index] -match '^```\s*$') { $closeIndex = $index; break }
+        }
+
+        if ($closeIndex -lt 0) {
+            Add-Problem "docs/PLAY-LISTING.md '$heading' has an unterminated value block."
+            continue
+        }
+
+        $value = ($playLines[($openIndex + 1)..($closeIndex - 1)] -join "`n")
+        if ($value.Length -gt $releaseNoteLimit) {
+            Add-Problem ("docs/PLAY-LISTING.md '$heading' is $($value.Length) characters; " +
+                "Google Play allows $releaseNoteLimit.")
+        }
+        elseif ($value.Length -eq 0) {
+            Add-Problem "docs/PLAY-LISTING.md '$heading' is empty."
+        }
+        else {
+            Write-Host ("Play release notes '$heading': $($value.Length)/$releaseNoteLimit characters.")
         }
     }
 }

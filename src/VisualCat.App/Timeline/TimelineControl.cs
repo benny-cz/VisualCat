@@ -843,18 +843,8 @@ public sealed class TimelineControl : Control
         }
         else if (properties.IsLeftButtonPressed)
         {
-            if (e.ClickCount >= 2 && _sessionRange is { } session && Geometry() is { } geometry)
+            if (TryHandleDoubleTap(point, e.ClickCount))
             {
-                ViewportChanged?.Invoke(
-                    this,
-                    ZoomViewport(_result.Viewport.Range, geometry, session, point.X, 0.5));
-
-                // The release that ends this tap still arrives, and a release that did not
-                // move used to be read as "select this cell" — so one double-tap both zoomed
-                // and silently re-scoped the entry list to a single bar, complete with a
-                // "× Cell" chip the reader never asked for. One gesture, one meaning
-                // (finding 4).
-                _suppressCellSelection = true;
                 e.Handled = true;
                 return;
             }
@@ -863,6 +853,34 @@ public sealed class TimelineControl : Control
             _dragViewport = _result.Viewport.Range;
             e.Pointer.Capture(this);
         }
+    }
+
+    /// <summary>
+    /// Applies the double-tap gesture independently of the platform's wall-clock click detector.
+    /// Keeping the state transition here lets headless tests supply the recognized click count
+    /// directly; a busy test host must not turn the gesture contract into a timing lottery.
+    /// </summary>
+    internal bool TryHandleDoubleTap(Point point, int clickCount)
+    {
+        if (clickCount < 2 ||
+            _result is null ||
+            _sessionRange is not { } session ||
+            Geometry() is not { } geometry)
+        {
+            return false;
+        }
+
+        ViewportChanged?.Invoke(
+            this,
+            ZoomViewport(_result.Viewport.Range, geometry, session, point.X, 0.5));
+
+        // The release that ends this tap still arrives, and a release that did not
+        // move used to be read as "select this cell" — so one double-tap both zoomed
+        // and silently re-scoped the entry list to a single bar, complete with a
+        // "× Cell" chip the reader never asked for. One gesture, one meaning
+        // (finding 4).
+        _suppressCellSelection = true;
+        return true;
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)

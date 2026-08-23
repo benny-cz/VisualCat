@@ -1,7 +1,7 @@
 using Avalonia.Automation;
 using Avalonia.Controls;
-using Avalonia.LogicalTree;
 using Avalonia.Headless.XUnit;
+using Avalonia.LogicalTree;
 using Avalonia.Threading;
 using VisualCat.App.Platform;
 using VisualCat.App.Views;

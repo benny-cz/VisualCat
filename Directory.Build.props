@@ -4,7 +4,7 @@
     <LangVersion>14.0</LangVersion>
     <Authors>Marek Strihavka</Authors>
     <Product>VisualCat</Product>
-    <VersionPrefix>2.0.6</VersionPrefix>
+    <VersionPrefix>2.0.7</VersionPrefix>
 
     <!-- The empty state prints the assembly's informational version, which is exactly what
          it should do — but the number it printed was 2.0.3 on a build made long after 2.0.3
@@ -22,7 +22,7 @@
 
              dotnet build -c Release -p:ReleaseChannel=stable
 
-         Anything else is "2.0.6-dev+<commit>", which a screenshot can carry and a tester can
+         Anything else is "2.0.7-dev+<commit>", which a screenshot can carry and a tester can
          read off the device. -->
     <VersionSuffix Condition="'$(VersionSuffix)' == '' And '$(ReleaseChannel)' != 'stable'">dev</VersionSuffix>
     <Description>Interactive, local-first Android logcat analysis with a severity-by-time heat map.</Description>

@@ -199,7 +199,7 @@ do not add it to the current API-36 build pre-emptively.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version: `2.0.6` → `20006` |
+| versionCode | Derived from the release version: `2.0.7` → `20007` |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
 | ABIs | `arm64-v8a`, `x86_64` |
@@ -217,14 +217,10 @@ with Android Wireless debugging; VisualCat-only capture works without setup.
 Everything is processed on the device.
 ```
 
-Release notes for the Wireless ADB update (unreleased):
+Release notes for `2.0.7` (448/500 characters):
 
 ```text
-Full-device Live capture can now use Android Wireless debugging without a computer,
-root, or a READ_LOGS grant. Pair once with Android's six-digit code, reconnect with
-the saved encrypted identity on later captures, and keep Wireless debugging on only
-while Live is running. VisualCat disconnects when capture stops and still offers an
-immediate VisualCat-only fallback.
+Capture full-device logs directly on Android over Wireless ADB: pair with the six-digit code and analyze the live stream without a computer or root. Pairing guidance and validation now stay visible above Android keyboards, while large-text phone layouts keep filters, entries, status notices and actions readable. Connections recover after brief interruptions, sensitive pairing details are not stored, and VisualCat-only capture remains available.
 ```
 
 Release notes for `2.0.2`:
@@ -271,11 +267,10 @@ guidance visible.
 Release notes for `2.0.6`:
 
 ```text
-Live capture now stops reliably even after very long sessions, shows each
-finalization phase and elapsed time, preserves selected entries when Follow
-moves, and reduces work while the app is in the background. Phone layouts keep
-filters, analysis tabs, Load more, Follow and Stop capture fully reachable,
-adapt to narrow or landscape windows and larger text, and retain readable
-notices. Capture scope, buffer labels, session status, errors, one-line zoom,
-command sheets and startup restore are more accurate and resilient.
+Live capture now stops reliably after long sessions, shows finalization progress,
+preserves selected entries when Follow moves, and reduces background work. Phone
+layouts keep filters, analysis tabs, Load more, Follow and Stop capture reachable
+across narrow, landscape and large-text displays. Capture scope, buffer labels,
+session status, errors, zoom, command sheets and startup restore are more accurate
+and resilient.
 ```

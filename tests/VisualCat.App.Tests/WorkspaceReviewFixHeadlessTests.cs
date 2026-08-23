@@ -266,8 +266,14 @@ public sealed class WorkspaceReviewFixHeadlessTests
         fixture.Window.MouseUp(point, MouseButton.Left);
         Assert.Equal(1, selections);
 
-        // The second tap of a double-tap zooms. Its release must not also scope the list.
-        fixture.Window.MouseDown(point, MouseButton.Left);
+        // Supply the platform-recognized click count directly. The headless MouseDown helper
+        // derives it from wall-clock time, so a busy parallel test run can exceed the desktop's
+        // double-click interval between two otherwise adjacent statements.
+        Assert.True(timeline.TryHandleDoubleTap(
+            new Point(timeline.Bounds.Width / 2, timeline.Bounds.Height / 2),
+            clickCount: 2));
+
+        // The release that completes the recognized double-tap must not also scope the list.
         fixture.Window.MouseUp(point, MouseButton.Left);
 
         Assert.Equal(1, selections);

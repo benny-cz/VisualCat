@@ -72,6 +72,30 @@ be published from an unmerged commit or one that would fail a pull request:
 > candidate must satisfy the manual Wireless ADB gates above and record a new
 > physical-device run before Play publication.
 
+### v2.0.7 — 2026-08-23
+
+- The production-upload-key-signed APK was clean-installed on a Samsung
+  SM-G990B running Android 16/API 36 and reported application ID
+  `com.barebit.visualcat`, version `2.0.7`, and version code `20007`. It was
+  non-debuggable, cold-started in 1.3 seconds, remained alive, and emitted no
+  fatal exception or ANR.
+- The first-use Live chooser clearly distinguished recommended Wireless-ADB
+  full-device capture from immediate VisualCat-only capture. The latter started
+  without setup, received 12 own-app entries, reported its restricted scope and
+  quiet behavior accurately, and retained all 12 entries after Stop.
+- On the physical phone, Filters, Plot, Split, Details, Follow, and Stop capture
+  were complete, vertically centred touch targets. The full-device chooser and
+  its pinned actions were fully framed and reachable. Earlier API-34 transport
+  evidence in the Android live-test report covers real first pairing, encrypted
+  saved reconnect, interruption recovery, external-log ingestion, and disconnect.
+- The AAB and APK passed the release packager's application ID, API level, ABI,
+  16 KB alignment, version, signature-scheme, permission, and pinned Google Play
+  upload-certificate checks. The Release manifest contains the required local
+  Wireless ADB permissions and no `READ_LOGS` declaration.
+- After testing, the app and its capture data were removed; the same signed APK
+  was installed cleanly and opened for hand-back. No log permission was granted,
+  and the device remained at its original font scale and rotation settings.
+
 ### v2.0.6 — 2026-08-22
 
 - The release-signed APK was installed on a Google Pixel 5 running Android

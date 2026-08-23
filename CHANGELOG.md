@@ -7,11 +7,13 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Version numbers correspond to git tags and the GitHub [Releases](https://github.com/benny-cz/VisualCat/releases)
 page.
 
-The current stable release is `2.0.6`. Ongoing work is recorded under
+The current stable release is `2.0.7`. Ongoing work is recorded under
 `[Unreleased]`, and development builds carry a `-dev` version suffix so a
 screenshot says which build it came from.
 
 ## [Unreleased]
+
+## [2.0.7] - 2026-08-23
 
 ### Added
 - Android full-device Live capture can now use the device's own **Wireless
@@ -835,7 +837,8 @@ Initial public baseline — the greenfield .NET 10 rewrite described in
   archive, a CycloneDX SBOM, build provenance attestations, and the
   `tools/verify-public-release.ps1` one-command local preflight.
 
-[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.6...HEAD
+[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.7...HEAD
+[2.0.7]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.7
 [2.0.6]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.6
 [2.0.5]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.5
 [2.0.4]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.4

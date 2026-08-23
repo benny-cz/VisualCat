@@ -93,14 +93,16 @@ public static class PlatformSourceRegistry
     /// a log transport and does not grant privileged permissions to the VisualCat package.
     /// </remarks>
     public static Func<WirelessAdbPairingRequest, CancellationToken, Task<WirelessAdbConnectionResult>>?
-        PairWirelessAdbAsync { get; set; }
+        PairWirelessAdbAsync
+    { get; set; }
 
     /// <summary>
     /// Reuses a Wireless debugging identity Android has already paired and leaves the authenticated
     /// connection ready for a full-device logcat capture.
     /// </summary>
     public static Func<CancellationToken, Task<WirelessAdbConnectionResult>>?
-        ConnectSavedWirelessAdbAsync { get; set; }
+        ConnectSavedWirelessAdbAsync
+    { get; set; }
 
     /// <summary>
     /// Creates a full-device log source from the authenticated Wireless ADB connection prepared by
