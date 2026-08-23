@@ -30,49 +30,48 @@ See the shape of your log — a severity-by-time heat map for Android logcat.
 ```text
 VisualCat turns a wall of Android logcat text into a picture you can navigate.
 
-Instead of scrolling through thousands of lines hunting for the moment something went wrong, you get a severity-by-time heat map: six log levels stacked across the session's timeline, so crash storms, error bursts, retry loops and suspicious quiet gaps are visible at a glance. Zoom into any spike and drill straight down to the exact records that produced it.
+Instead of scrolling through thousands of lines hunting for the moment something went wrong, you get a severity-by-time heat map: six log levels stacked across the session timeline, so crash storms, error bursts, retry loops and suspicious quiet gaps are visible at a glance. Zoom into any spike and drill down to the exact records that produced it.
 
-Everything happens on your device. No account, no telemetry, no cloud upload, and no network permission at all.
+Everything is processed on your device. No account, no telemetry and no cloud upload. VisualCat uses local network access only when you explicitly choose full-device Live capture through Android Wireless debugging; it does not connect to a VisualCat internet service.
 
 WHAT YOU CAN DO
 
-• Open a logcat file you captured earlier, or a portable .vcat.zip session shared from VisualCat on the desktop.
-• Capture this device's log live and watch the heat map build as it streams in.
-• Zoom and pan the timeline from the whole session down to individual records, with a full-session minimap that always shows where you are.
-• Filter by severity, time range and text or regular expression. Counts update across the entire session, not just the visible page.
-• Switch between Plot, Split and Details views to give the timeline or the records as much of the screen as you need.
-• Read ranked message templates under Insights, where repetitive log spam collapses into the handful of patterns actually generating it.
-• Inspect byte-faithful source context around any entry under Source — what the log really said, not a reformatted approximation.
-• Share a verified, portable session archive through the normal Android share sheet and reopen it on Windows, Linux or macOS.
+• Open a logcat file captured earlier, or a portable .vcat.zip session shared from VisualCat on the desktop.
+• Capture this device live and watch the heat map build as records arrive.
+• Zoom and pan from the whole session down to individual records, with a full-session minimap for orientation.
+• Filter by severity, time and text or regular expression.
+• Switch between Plot, Split and Details views.
+• Inspect ranked message templates under Insights to collapse repetitive spam into useful patterns.
+• Inspect byte-faithful source context around any entry.
+• Share a verified portable session through Android's normal share sheet and reopen it on Windows, Linux or macOS.
 
-BEFORE YOU INSTALL: WHAT ANDROID LETS AN APP READ
+FULL-DEVICE LIVE CAPTURE
 
-Since Android 4.1 an ordinary app can only read its own log output. VisualCat is an ordinary app, so live on-device capture shows VisualCat's own process unless you deliberately grant it more. That is a platform restriction rather than a missing feature, and no app on Google Play can work around it. VisualCat always shows you which mode a capture is running in.
+Android does not give ordinary Play apps a normal READ_LOGS permission prompt. VisualCat does not bypass that permission model or grant itself READ_LOGS.
 
-To read the whole device log, grant the permission over ADB from a computer, once per install:
+For full-device Live capture, VisualCat can pair with Android's built-in Wireless debugging service. You explicitly enable Developer options and Wireless debugging, choose “Pair device with pairing code”, and enter the pairing port and six-digit code in VisualCat. No computer or root is required. Pairing is normally one-time; Wireless debugging must remain on while Live runs, and VisualCat disconnects when capture stops.
 
-adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS
-
-If you cannot do that, VisualCat is still fully useful for what it is best at: opening logcat files and sessions captured elsewhere — by Android Studio, by adb logcat, by a bug report, or by VisualCat on the desktop — and exploring them on a phone or tablet.
-
-BUILT FOR BIG LOGS
-
-VisualCat was designed around multi-gigabyte captures. Entries are indexed into a compact, checksummed columnar session store, and every view — heat map, filters, facets, statistics, search, templates — is a query over an immutable snapshot. Reopening a session you already indexed is fast, and nothing is silently recomputed behind your back.
-
-Supported logcat formats: threadtime, time, brief, long and epoch, including year and microsecond timestamps.
+If you do not want to enable Wireless debugging, choose “Capture VisualCat only”. Android then exposes only this app's own log lines. File and portable-session analysis do not require Wireless debugging.
 
 PRIVACY
 
-Logs contain secrets: tokens, identifiers, file paths, personal data. VisualCat treats them that way.
+Logs can contain tokens, identifiers, file paths and personal data, so VisualCat keeps processing local.
 
-• All processing is local. There is no network code and no telemetry.
-• Nothing is uploaded, synced or analysed remotely.
-• Sharing a session is always an explicit action you take through the Android share sheet.
-• Exports are byte-faithful, which means they can contain every secret the original log contained. Review them before sending them anywhere.
+• There is no analytics, advertising or telemetry backend.
+• The Wireless debugging connection is authenticated and used only for the local full-device logcat stream you explicitly start.
+• The six-digit pairing code is not saved or written to logs. The reusable ADB identity is encrypted at rest with a key protected by Android Keystore.
+• Sharing is always an explicit action through Android's share sheet.
+• Exports are byte-faithful and can contain every secret present in the original log, so review them before sharing.
+
+BUILT FOR BIG LOGS
+
+VisualCat indexes large captures into a compact checksummed session store. Heat maps, filters, facets, statistics, search and templates query immutable snapshots, so reopening an indexed session is fast and analysis stays deterministic.
+
+Supported logcat formats include threadtime, time, brief, long and epoch, including year and microsecond timestamps.
 
 OPEN SOURCE
 
-VisualCat is MIT-licensed and developed in the open. The desktop application and the vcat command-line indexer are available for Windows, Linux and macOS.
+VisualCat is MIT-licensed and developed in the open. Desktop and command-line tools are available for Windows, Linux and macOS.
 
 https://github.com/benny-cz/VisualCat
 ```
@@ -134,7 +133,7 @@ omitting them only costs the "designed for tablets" badge.
 | Question | Answer |
 |---|---|
 | Privacy policy | The URL above |
-| App access | All functionality is available without special access. No login, no access-restricted areas. |
+| App access | No login or account is required. File/session analysis and VisualCat-only Live capture are immediately available. Full-device Live capture is optional and requires the reviewer to explicitly enable Android Developer options and Wireless debugging, then pair with the code Android displays. |
 | Ads | The app contains no ads. |
 | Content rating | Utility, Productivity, Communication, or Other. Answer "no" to every content question; there is no user-generated content, no communication between users, no purchases, and no location sharing. Expected outcome: Everyone / PEGI 3. |
 | Target audience | 18 and over. VisualCat is a developer diagnostic tool; declaring a child audience would pull it into the Families policy programme for no benefit. |
@@ -150,40 +149,49 @@ omitting them only costs the "designed for tablets" badge.
 ### Data safety
 
 Answer **"No"** to *Does your app collect or share any of the required user data
-types?*
+types?* only while the audited release continues to have no analytics, telemetry,
+advertising, remote backend, or other off-device collection path.
 
-That answer is verifiable rather than merely asserted: the app declares no
-network permission, so it cannot transmit anything. Two exclusions in Play's own
-data-safety guidance cover what the app does do:
+The Android app does declare normal network capabilities because full-device Live
+capture uses an authenticated connection to Android's Wireless debugging daemon.
+That connection is device-local functionality initiated by the user; log content is
+processed on-device and is not sent to VisualCat or another remote service. The
+other user-controlled transfer is the Android share sheet, which VisualCat opens
+only after an explicit Share action.
 
-- data processed only on the device and never sent off it is out of scope; and
-- data the user transfers themselves, through a system share sheet they invoked,
-  is out of scope.
-
-Log data that VisualCat indexes never leaves the device except through that
-explicit share action.
+Do not justify the Data Safety answer from manifest permissions alone. Re-audit the
+resolved release package and network behavior for every Play submission.
 
 Also answer:
 
 | Question | Answer |
 |---|---|
-| Is all of the user data collected by your app encrypted in transit? | Not applicable — no data is transmitted. |
+| Is all of the user data collected by your app encrypted in transit? | Not applicable — VisualCat does not collect user data to a remote service. Wireless debugging uses Android's authenticated local ADB/TLS transport. |
 | Do you provide a way for users to request that their data is deleted? | Not applicable — no account and no server-side data. Sessions are deleted from within the app. |
 
 ### Permissions
 
-`READ_LOGS` is the only permission declared, and the store listing's permission
-disclosure should say so.
+The Play/Release build does **not** declare `READ_LOGS`. Android classifies it as
+a privileged/development permission that Google Play cannot grant to an ordinary
+application, and VisualCat's production full-device path does not depend on it.
 
-It is a `signature|privileged|development` permission that Google Play cannot
-grant to an ordinary app, and VisualCat is written to expect exactly that: it
-detects the ungranted case, reports the capture as "own-app", and never presents
-device-wide capture as available when it is not. Declaring it is what allows an
-ADB grant to take effect for users who want device-wide capture.
+The Release manifest declares these normal permissions for the explicit local
+Wireless debugging transport:
 
-If a Play reviewer questions the declaration, the answer is that the app
-functions fully without it and degrades to its own process logs, which the full
-description states before install.
+- `INTERNET` — opens the authenticated local ADB/TLS socket;
+- `CHANGE_WIFI_MULTICAST_STATE` — permits the short-lived multicast lock used
+  while discovering Android's Wireless debugging service over mDNS.
+
+VisualCat does not expose a general ADB shell UI. The application adapter opens
+only its fixed `logcat` stream and disconnects when Live capture ends.
+
+Debug or explicitly opted-in non-Play builds may still declare `READ_LOGS` for
+the established developer workflow. That declaration must be absent from the
+AAB uploaded to Play. The release checklist verifies the final manifest.
+
+When VisualCat eventually targets Android 17 / API 37, re-evaluate Android's
+`ACCESS_LOCAL_NETWORK` runtime-permission requirement before shipping that target;
+do not add it to the current API-36 build pre-emptively.
 
 ## Release
 
@@ -202,10 +210,21 @@ Release notes for the first upload:
 ```text
 First Google Play release of the VisualCat Android companion.
 
-Open a logcat file or a portable session from the desktop app, capture this
-device's log live, and explore it as a zoomable severity-by-time heat map with
-filters, ranked message templates and byte-faithful source context. Everything
-is processed on the device.
+Open a logcat file or portable desktop session, or capture this device live and
+explore it as a zoomable severity-by-time heat map with filters, ranked message
+templates and byte-faithful source context. Full-device Live capture can pair
+with Android Wireless debugging; VisualCat-only capture works without setup.
+Everything is processed on the device.
+```
+
+Release notes for the Wireless ADB update (unreleased):
+
+```text
+Full-device Live capture can now use Android Wireless debugging without a computer,
+root, or a READ_LOGS grant. Pair once with Android's six-digit code, reconnect with
+the saved encrypted identity on later captures, and keep Wireless debugging on only
+while Live is running. VisualCat disconnects when capture stops and still offers an
+immediate VisualCat-only fallback.
 ```
 
 Release notes for `2.0.2`:

@@ -45,7 +45,8 @@ CLI → Application + Infrastructure
 | `VisualCat.Infrastructure` | File/growing-file/ADB sources plus settings, retention, diagnostics, and the process-backed ADB client. It implements application ports. |
 | `VisualCat.App` | Shared code-only Avalonia presentation, view models, dialogs, timeline/minimap controls, platform bridges, and workspace composition. |
 | `VisualCat.Desktop` | Desktop composition root and native Avalonia lifetime. |
-| `VisualCat.Android` | Android composition root, on-device source, intent/file-provider integration, permissions, and the reduced mobile layout. |
+| `VisualCat.Android` | Android composition root, direct and Wireless-ADB on-device sources, encrypted pairing identity, intent/file-provider integration, permissions, and the reduced mobile layout. |
+| `VisualCat.Android.AdbBinding` | Narrow .NET Android binding for the pinned LibADB Android BC transport used only by the guided Wireless-debugging capture path. |
 | `VisualCat.Cli` | Scriptable composition root for index, query, search, export, verify, generation, and ADB commands. |
 
 `tests/` mirrors the testable layers. `bench/VisualCat.Benchmarks` runs the real
@@ -78,6 +79,33 @@ offsets, original timestamp text, provenance, confidence, continuations,
 unknown lines, and ordering defects instead of silently normalizing evidence.
 See [ADR 0008](docs/adr/0008-time-policy.md) and
 [ADR 0009](docs/adr/0009-continuations.md).
+
+### Android full-device capture
+
+Android has two full-device transports and one restricted fallback. If the app
+already holds `READ_LOGS` (for example after an explicit developer-side ADB
+grant), `OnDeviceLogSource` runs the direct local `logcat` process. A normal
+Play-style install does not try to self-grant that privileged permission:
+`WirelessAdbService` instead connects to Android's user-enabled Wireless
+debugging daemon and `WirelessAdbLogSource` reads one fixed full-device
+`logcat -b all` service as the authenticated ADB `shell` identity. If the user
+does not enable that capability, the direct source can still capture VisualCat's
+own UID only.
+
+The Wireless ADB boundary is deliberately smaller than the underlying library.
+The shared UI can pair/reconnect and request an `ILogSource`; it cannot submit a
+shell command. Pairing ports and six-digit codes are validated and passed only to
+the pairing handshake. The logcat destination is generated from a fixed command;
+the only variable is a strictly validated timestamp used to resume after a
+transport interruption. The pairing code is neither persisted nor logged.
+
+Android remembers the ADB public identity across captures. VisualCat stores the
+corresponding RSA private identity encrypted in `NoBackupFilesDir` with
+AES-256-GCM; the wrapping key is non-exportable in Android Keystore. Wireless
+debugging must remain enabled during Live capture, the ADB connection is closed
+on Stop/Dispose, and reconnect gaps are counted as source defects. The transport
+uses short-lived Wi-Fi multicast access only while discovering Android's ADB TLS
+service. See [ADR 0016](docs/adr/0016-android.md).
 
 The commit stage assigns deterministic template identities through tag-sharded
 Drain miners, appends entries to `SessionStoreWriter`, and periodically publishes

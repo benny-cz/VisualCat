@@ -27,9 +27,11 @@ public sealed record ApplicationSettings(
     double? WindowHeight = null,
     bool WindowMaximized = false,
 
-    // Whether the reader has already been told what an on-device capture does before Android
-    // asks them to allow it. Android's own prompt appears on every capture and says nothing
-    // about where the data goes; this records that the app has explained itself once.
+    // Whether the reader has already been told what an on-device capture does before any
+    // platform-specific access step. Android 13+ can show a per-use consent sheet for direct
+    // READ_LOGS capture, while Play builds use VisualCat's explicit Wireless-debugging setup;
+    // neither surface explains where VisualCat stores the data. This records that the app has
+    // explained its local-only data handling once.
     bool LiveCaptureNoticeAcknowledged = false,
 
     // The sessions that were open when the workspace was last on screen, and which of them

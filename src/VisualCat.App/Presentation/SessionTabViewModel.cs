@@ -170,6 +170,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private string? _lastCaptureWarning;
     private string? _captureFailure;
     private string? _refreshFailure;
+    private string? _captureConnectionSummary;
+    private string? _captureConnectionDetail;
     private int _liveSegmentCount;
 
     // A stop is not an instant: the pipeline still has to drain what it has read, compact
@@ -1883,6 +1885,18 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         UpdateCaptureHealth(null, keepCaptureWarning: true);
     }
 
+    /// <summary>Shows or clears a recoverable source-transport operation such as reconnecting.</summary>
+    public void ReportCaptureConnectionStatus(string? summary, string? detail)
+    {
+        _captureConnectionSummary = summary;
+        _captureConnectionDetail = detail;
+        UpdateCaptureHealth(null, keepCaptureWarning: true);
+        if (IsLiveCaptureActive && !_stopping)
+        {
+            ReportActivity(SessionActivity.Capturing, DescribeCapture());
+        }
+    }
+
     private void UpdateCaptureHealth(string? captureWarning, bool keepCaptureWarning = false)
     {
         if (!keepCaptureWarning)
@@ -1893,6 +1907,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         // A capture that has already ended outranks anything it was working through on
         // the way there: that is the state the reader is now in.
         CaptureHealthWarning = _captureFailure
+                               ?? _captureConnectionDetail
                                ?? _lastCaptureWarning
                                ?? (_refreshFailure is { Length: > 0 } refresh
                                    ? $"The capture is still running, but the view stopped updating: {refresh}"
@@ -1919,6 +1934,11 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         var health = CaptureHealthWarning is { Length: > 0 } ? " · ⚠ see session details" : string.Empty;
         var pendingLines = Math.Max(0, _captureLines - _captureCommittedLines);
         var pending = pendingLines > 0 ? $" · {pendingLines:N0} pending" : string.Empty;
+        if (_captureConnectionSummary is { Length: > 0 } connection)
+        {
+            return $"{connection}{health} · {_captureLines:N0} lines received{pending} · Stop remains available · {_captureScope}";
+        }
+
         var quiet = TimeSpan.FromMilliseconds(Math.Max(0, Environment.TickCount64 - _captureLastAdvanceMs));
         if (quiet.TotalSeconds < 3)
         {

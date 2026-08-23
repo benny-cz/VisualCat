@@ -596,6 +596,35 @@ public sealed class SessionWorkspaceHeadlessTests
         }
     }
 
+    [AvaloniaFact]
+    public async Task RecoverableConnectionStateReplacesAStaleThroughputClaimAndCanClear()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await using var tab = new SessionTabViewModel("Live", root) { IsLiveCaptureActive = true };
+        try
+        {
+            _ = tab.DescribeCaptureProgress("On-device full-device logcat", 42);
+            tab.ReportCaptureConnectionStatus(
+                "Wireless debugging interrupted · reconnecting 2/5",
+                "The captured session remains safe and Stop remains available.");
+
+            Assert.Contains("reconnecting 2/5", tab.Status, StringComparison.Ordinal);
+            Assert.Contains("42 lines received", tab.Status, StringComparison.Ordinal);
+            Assert.Contains("Stop remains available", tab.Status, StringComparison.Ordinal);
+            Assert.Contains("captured session remains safe", tab.CaptureHealthWarning!, StringComparison.Ordinal);
+
+            tab.ReportCaptureConnectionStatus(null, null);
+
+            Assert.DoesNotContain("reconnecting", tab.Status, StringComparison.OrdinalIgnoreCase);
+            Assert.Null(tab.CaptureHealthWarning);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     /// <summary>
     /// The framework's text for a descriptor limit is an errno phrase and whichever path
     /// happened to be unlucky. That is what a user saw when a long capture died, and it

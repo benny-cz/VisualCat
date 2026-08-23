@@ -113,8 +113,8 @@ model popularity.
 
 | Gate | Minimum physical coverage | Important dimensions |
 |---|---|---|
-| Change smoke | One supported phone | Candidate build, one navigation mode, one permission state |
-| Release candidate | Two devices where available | Lowest supported API available and target/latest API; different OEMs; restricted and granted log scope |
+| Change smoke | One supported phone | Candidate build, one navigation mode, one applicable W-state |
+| Release candidate | Two devices where available | Lowest supported API available and target/latest API; different OEMs; W0 restricted plus W1/W2/W3/W4/W5 Wireless-debugging coverage |
 | UI/accessibility release gate | Phone plus a materially different form factor where supported | Small/large viewport, cutout/no cutout, gesture/three-button navigation, 60 Hz/high-refresh, light/dark, maximum font scale |
 | New platform or OEM support | A physical representative of that platform/OEM | B + U + X-01 + X-05, plus vendor power-management behaviour |
 
@@ -257,48 +257,40 @@ candidate's signature, manifest, API levels, ABIs, and 16 KB native alignment
 with `tools/package-android.ps1 -SkipBuild` when the signing credentials are
 available; otherwise attach the release workflow's verification output.
 
-### 2.4 Permission states — a test dimension, not a setup step
+### 2.4 Android capture-capability states — a test dimension, not a setup step
 
-`READ_LOGS` is `signature|privileged|development`. Android never prompts to grant
-that permission and the app cannot request it. Separately, Android 13 and later
-normally put a **one-time log-access confirmation sheet** in front of a capture that
-holds the grant. Its presence and exact presentation can vary with API level,
-OEM build, policy, and current platform state. Record whether it appeared on
-every capture; never infer consent from the grant or infer the grant from the sheet.
-The two mechanisms are independent, and every reachable combination is a
-distinct product state.
-
-Start P1–P3 while the activity is visibly foreground. The
-[AOSP device-log policy](https://source.android.com/docs/core/tests/debug/understanding-logging#device-logs)
-applies a stricter rule when an app requests all-device logs from the background;
-a lifecycle case that triggers a new background request is a separate platform
-policy branch, not evidence that the user declined a foreground sheet. In all
-cases, a successful `pm grant` and package dump are only preconditions: a record
-from another UID is the positive oracle for full-device reach.
+The **Play/Release** candidate does not declare `READ_LOGS`. Its production
+full-device path is Android Wireless debugging, which the user explicitly enables
+and pairs. Treat pairing, saved identity, Wireless-debugging availability, and
+transport continuity as first-class test states. Do not use a host-side
+`pm grant READ_LOGS` to make a Play candidate pass a production full-device test.
 
 | State | How to produce | Expected product behaviour |
 |---|---|---|
-| **P0 — no grant** | Fresh install, or `<ADB> shell pm revoke <PKG> android.permission.READ_LOGS` | Own-app-only from the first byte. The capture title includes its start time; source description/status says "On-device own-app logcat". The notice states the `adb` grant command. |
-| **P1 — granted, consent allowed** | `pm grant`; if the platform sheet appears, tap *Allow one-time access* promptly; otherwise record that no sheet appeared | Resolves to full-device as soon as a foreign PID arrives. The time-stamped capture's source description/status says "On-device full-device logcat". |
-| **P2 — granted, consent declined** | On a device/API that presents the sheet, hold the grant and tap *Don't allow* | Restricted, with the *declined* remedy — "Tap Live again and choose the option that allows access". The capture continues; it does not fail. |
-| **P3 — granted, consent answered slowly** | On a device/API that presents the sheet, hold the grant and wait ≥ 30 s before allowing | Must still resolve to **full-device**. The scope clock starts at the first byte, not at process spawn. |
-| **P4 — grant revoked mid-run** | Revoke it through the selected transport while a capture runs | Behaviour is recorded, not assumed. Note exactly what the status line, session name, and manifest say. |
+| **W0 — restricted, no Wireless setup** | Clean Release install; choose **Capture VisualCat only** | Starts immediately in own-app scope after the scope chooser, with no redundant legacy confirmation. No claim that Android will show a `READ_LOGS` prompt. The chooser explains that full-device capture is available through explicit Wireless debugging setup. |
+| **W1 — first pairing** | Clean Release install; choose **Full-device capture**, enable Developer options + Wireless debugging; open **Pair device with pairing code**; enter the displayed port/code | The first scope chooser explains local-only handling without privileged-permission jargon. Pairing code is accepted only as six ASCII digits, is never persisted/logged, and successful setup starts Live without a redundant third confirmation. Cancel setup once as well: Back, scrim, and Cancel must keep the sheet visibly on **Cancelling…** until an in-flight low-level pairing handshake returns; Live must not start afterward and no authenticated ADB connection may remain. |
+| **W2 — saved pairing connected** | Pair once, stop capture, keep/re-enable Wireless debugging, then start Live, choose **Full-device capture**, and use **Connect saved pairing** | No new code is required. Saved reconnect is the only primary connection action; the new-code form stays hidden behind **Pair again with a new code**. Full-device capture starts through Wireless ADB and every scope-bearing UI/manifest surface agrees. |
+| **W3 — saved pairing, Wireless debugging off/unreachable** | Saved identity exists; disable Wireless debugging or make discovery unavailable | Reconnect fails with actionable guidance, no crash/ANR, no silent fallback claiming full-device, and own-app capture remains available. |
+| **W4 — stale/revoked pairing** | Remove VisualCat from Android Wireless debugging paired devices while the encrypted local identity remains | Saved reconnect fails as untrusted/stale and guides the user to pair again. A new pairing replaces/reuses local identity safely without exposing the code. |
+| **W5 — transport interrupted mid-capture** | Start W2, then temporarily disable/re-enable Wireless debugging or otherwise break the local ADB transport | Capture records a reconnect gap, performs bounded reconnect attempts, resumes from the last complete timestamp without silent byte loss claims, and either continues or fails explicitly while preserving committed data. |
 
-```shell
-<ADB> shell pm grant <PKG> android.permission.READ_LOGS
-<ADB> shell dumpsys package <PKG>
-```
+The direct `READ_LOGS` path is now a **developer-only compatibility dimension**.
+Debug or explicitly opted-in non-Play builds may declare the development
+permission, and an external host may grant/revoke it for D-state regression tests.
+Those results must be labelled developer-path evidence and cannot substitute for
+W1–W5 on a Play candidate. Android 13+ may additionally present its per-use
+log-access confirmation for such already-granted direct capture; record its
+actual appearance rather than assuming it.
 
-Verify the command exit status **and** the package dump. The grant may survive
-an in-place reinstall; it does not survive uninstall. Revoke it at final cleanup
-unless the device owner explicitly wants it retained.
+| State | How to produce | Expected product behaviour |
+|---|---|---|
+| **D0 — developer direct, no grant** | Debug/custom build with `READ_LOGS` declared but not granted | Direct source remains restricted and identifies own-app scope. |
+| **D1 — developer direct, externally granted** | External `<ADB> shell pm grant <PKG> android.permission.READ_LOGS`; allow any platform per-use consent that actually appears | Direct source can resolve full-device scope after foreign records appear. |
+| **D2 — developer direct consent declined/revoked** | On a platform that exposes the per-use sheet, decline it; or revoke the external grant | Direct source remains/reverts restricted and reports an accurate remedy without pretending the Play app can request the permission. |
 
-P2 and P3 are N/A on a specific device only when evidence proves that its
-platform does not present the sheet. That does not satisfy release coverage for
-platforms that do present it: the release matrix must include at least one such
-physical device or carry an explicit coverage gap. In every state, the product's
-pre-capture explanation must match what the current platform actually does; copy
-that promises a sheet which never appears is a UX failure, not a platform pass.
+For every state, package state and the product's own source metadata are evidence;
+a line from another UID/PID is the positive oracle for actual full-device reach.
+The Release AAB must be separately inspected to prove that `READ_LOGS` is absent.
 
 ### 2.5 State profiles and destructive clean state
 
@@ -306,7 +298,7 @@ Use three named starting profiles rather than clearing between every scenario:
 
 | Profile | State | Use |
 |---|---|---|
-| **CLEAN** | Candidate clean-installed; no app data; permission state set explicitly | First-run, permission, and release-install scenarios |
+| **CLEAN** | Candidate clean-installed; no app data; Wireless pairing state set explicitly for the scenario | First-run, capability, privacy, and release-install scenarios |
 | **WARM** | Process or activity previously used; sessions/settings retained | Resume, reopen, and ordinary regression scenarios |
 | **CONTINUED** | Deliberately carries state from the named preceding scenario | Multi-stage, endurance, upgrade, and recovery scenarios |
 
@@ -317,8 +309,8 @@ needed sessions, and use it only when a scenario requires **CLEAN**:
 <ADB> get-state
 <ADB> shell getprop ro.serialno
 <ADB> shell am force-stop <PKG>
-<ADB> shell pm clear <PKG>                    # wipes sessions, settings, and grants
-<ADB> shell pm grant <PKG> android.permission.READ_LOGS   # only for P1–P4
+<ADB> shell pm clear <PKG>                    # wipes sessions/settings and VisualCat's saved pairing identity
+# Developer-only D-state tests may grant READ_LOGS externally; never do this for W-state Play validation.
 ```
 
 Do not clear global log buffers as routine setup; they belong to the whole
@@ -694,27 +686,30 @@ rotation.
 *Fail if* The entries list collapses below its floor, or rotation silently
 changes the mode.
 
-**B-10 · On-device live capture, own-app (state P0)**
-*Risk* The restricted path must be honest.
-*Pre* No `READ_LOGS` grant (§2.4).
-*Steps* Tap *Live* · read the product explanation · record whether this OS/OEM
-shows its log-access sheet in P0 and answer it if shown · let it run 60 s · stop.
-*Expect* The pre-prompt explains what is captured and where it goes. The session
-is named for the capture start time and reports **own-app** scope. The notice
-gives the `adb shell pm grant …` remedy verbatim. Line count is small (order of
-tens to hundreds) and that is presented as expected, not as an error.
-*Fail if* The product claims full-device scope, or the remedy text is absent.
+**B-10 · On-device live capture, own-app (state W0)**
+*Risk* The restricted path must be honest and immediately usable.
+*Pre* Release candidate clean-installed; do not configure Wireless debugging.
+*Steps* Tap *Live* · read the scope choice · choose *Capture VisualCat only* ·
+let it run 60 s · stop.
+*Expect* The disclosure says nothing is uploaded and does not promise a normal
+`READ_LOGS` prompt. The session reports **own-app** scope, stays usable even when
+quiet, and offers Wireless debugging setup only as an optional full-device path.
+*Fail if* The product claims full-device scope, asks the user to grant `READ_LOGS`
+from inside the Play build, or makes the restricted path look like an error.
 
-**B-11 · On-device live capture, full-device (state P1)**
-*Pre* `READ_LOGS` granted; if the platform sheet appears, consent allowed
-promptly.
-*Steps* Start capture · generate traffic (§3.3) · run 3 minutes · stop.
-*Expect* Scope resolves to **full-device** within seconds of the first foreign
-record; the status line, source description, notice, session details, and stored
-manifest agree. The capture title remains a time-stamped discriminator rather
-than a scope claim. Throughput is orders of magnitude above B-10. Stop finalizes
-and the session reopens.
-*Fail if* Any scope-bearing surface disagrees with the others.
+**B-11 · On-device live capture, full-device (states W1/W2)**
+*Pre* Release candidate with Wireless debugging available. Run W1 on first use and
+W2 after Stop to prove saved reconnect.
+*Steps* Pair with Android's current port/code · start capture · generate traffic
+(§3.3) · run 3 minutes · stop · start Live again with Wireless debugging on and
+use *Connect saved pairing* without generating a new code.
+*Expect* Pairing code never appears in VisualCat logs/evidence. Scope is
+**full-device**; source description/status/manifest agree that the transport is
+Wireless ADB. The second capture reuses the saved encrypted identity. Stop closes
+the local debugging connection, both sessions finalize, and both reopen.
+*Fail if* a host `READ_LOGS` grant is required, a new code is required for the
+second capture without Android revoking the pairing, scope-bearing surfaces
+disagree, or the connection persists after Stop.
 
 **B-12 · Stop capture is answered and sticky**
 *Risk* The single most user-visible past failure.
@@ -759,13 +754,13 @@ all once every layer is closed.
 **B-16 · Live capture start states and the first batch**
 *Risk* The seconds between tapping *Live* and the first visible entries — where
 the product looks broken if it says nothing.
-*Pre* Run the direct start once in P0 (own-app, deliberately low volume) and once
-in P1. For a third pass, start known long imports one at a time until a probe
+*Pre* Run the direct start once in W0 (own-app, deliberately low volume) and once
+in W2 (Wireless full-device). For a third pass, start known long imports one at a time until a probe
 import visibly queues; cancel only that queued probe while leaving every active
 reader running, then tap *Live*, so the live operation must queue without prior
 knowledge of the build's concurrency limit.
 *Steps* For each direct pass, tap *Live* and watch the status line and empty plot
-until the first entries are drawn · in P0, then leave it idle with almost no
+until the first entries are drawn · in W0, then leave it idle with almost no
 traffic for two minutes · for the queued pass, watch it until the preceding
 operation releases the slot and capture begins.
 *Expect* A direct on-device start progresses from a named *starting* state to a
@@ -963,17 +958,17 @@ clearing data · launch normally · open and exercise every retained item.
 *Expect* Android accepts the signature/version upgrade. Sessions, settings,
 saved views, recents, and portable exports remain correct or are migrated with
 an explicit one-time message. Migration is idempotent across a second launch.
-No temporary `READ_LOGS` grant is mistaken for a user-facing app permission.
+A preserved developer-only `READ_LOGS` grant from an older/debug install is never mistaken for a capability of the Play/Release candidate, and the candidate manifest is re-checked to prove it does not request that permission.
 *Fail if* install requires data loss, retained data silently disappears, counts
 change, or a failed migration prevents reaching cleanup/export.
 *Note* An application-ID change is not an upgrade path. A build published under a
 previous application ID is a different app to Android: it is not upgraded in
-place, and its `READ_LOGS` grant does not carry over. Choose the newest previous
+place, and its saved Wireless ADB identity and any developer-only `READ_LOGS` state do not carry over. Choose the newest previous
 release sharing the candidate's application ID, or record N/A with that reason.
 
 **A-20 · Cancellation and refusal paths**
 *Steps* Cancel each system picker, export destination picker, share chooser,
-product confirmation, Android log-access sheet, long search/load-all operation,
+product confirmation, Wireless ADB setup/reconnect, developer-only Android log-access sheet when present, long search/load-all operation,
 and capture stop/finalize path at every offered cancellation point.
 *Expect* Each returns to the prior usable state, performs no unintended action,
 and leaves no duplicate tab, empty export, stuck scrim, orphan process, or
@@ -1042,10 +1037,10 @@ while the capture is still writing it. An interrupted read says so and offers
 the source bytes…" with no timeout and no way to ask again, or a resumed app
 cannot read bytes it read a minute earlier.
 
-**A-25 · A restricted verdict is corrected when the device finally speaks**
+**A-25 · Developer direct scope verdict is corrected when the device finally speaks (D1 only)**
 *Risk* The absence of a foreign record is evidence, never proof, so the verdict
 must stay revisable for the life of the capture.
-*Pre* P1 — grant held and, when shown, consent allowed. Make the device as quiet
+*Pre* Developer-only D1 — external grant held and, when shown, per-use consent allowed. Make the device as quiet
 as normal user-visible controls permit: no traffic generator and no deliberate
 app activity. Do not change permissions, suppress buffers, or filter the product's
 input merely to force this branch.
@@ -1123,13 +1118,21 @@ surfaced to the user, not smoothed over. The capture continues.
 
 **X-05 · Four-hour capture (endurance)**
 *Steps* Full-device capture, screen off, device on charge, left for 4 hours with
-the device in normal use for part of it · then stop from the UI · then reopen.
+the device in normal use for part of it · include at least one sustained high-log
+interval capable of exercising Wireless ADB downstream backpressure · then stop
+from the UI · then reopen.
 *Expect* The capture runs to the end. Stop behaves exactly as B-12 describes at
 this scale — this is the size at which the stop defect appeared. The finished
-session reopens with a complete, verifiable manifest.
+session reopens with a complete, verifiable manifest. If the Wireless ADB bounded
+receive queue saturates, diagnostics record a transport recycle/reconnect gap and
+the source resumes from its last complete timestamp instead of showing sustained
+unbounded memory growth or silently claiming perfect continuity.
 *Instrument* `dumpsys thermalservice` and `batterystats` at the end; record
-throttling and battery attribution. Take `meminfo` hourly.
-*Fail if* Memory grows without bound, the process is killed, or stop does not
+throttling and battery attribution. Take `meminfo` hourly and every 1–2 minutes
+during the high-log interval until memory has visibly stabilized again. Retain
+redacted `VisualCat.WirelessAdb` diagnostics around any backpressure recycle.
+*Fail if* Memory grows without bound, the process is killed, a known transport
+recycle is not represented by a reconnect-gap defect/diagnostic, or stop does not
 resolve.
 
 **X-06 · Overnight capture (soak)**
@@ -1348,7 +1351,7 @@ cannot be reopened or verified.
 **X-25 · Buffer coverage and live-tail start**
 *Risk* A narrower buffer set and a ring-buffer replay both look like a working
 capture.
-*Pre* P1, on a device whose ring buffers already hold substantial history —
+*Pre* W2, on a device whose ring buffers already hold substantial history —
 record `<ADB> logcat -g` and save a bounded timestamped tail with
 `<ADB> logcat -b all -d -v epoch -t 200`. Probe `events` and `radio` separately
 with `-d -t 1`; record unsupported, empty, or access-denied buffers rather than
@@ -1752,11 +1755,15 @@ outside its own row, and no RTL override flips surrounding UI.
 *Fail if* A control character alters the layout of anything outside its own row,
 or a direction override flips the surrounding interface.
 
-**P-06 · Permission revocation mid-capture**
-Covered as state P4 in §2.4 — record the behaviour precisely; it is a security
-boundary as well as a UX one.
-*Fail if* The product goes on claiming a scope it no longer holds, or the
-revocation loses data already committed.
+**P-06 · Wireless-debugging authority/transport loss mid-capture**
+Exercise W5 by interrupting the authenticated Wireless debugging transport, and
+exercise W4 by revoking the saved pairing before a later reconnect. Record the
+behaviour precisely; this is a security boundary as well as a UX one. Optional
+D-state testing may additionally revoke an externally granted developer
+`READ_LOGS` permission.
+*Fail if* The product continues claiming an active full-device transport after it
+is definitively gone, silently discards already committed data, leaks a connection,
+or converts the failure into an undeclared privilege escalation path.
 
 **P-07 · Another app's files**
 *Steps* Attempt to open a `content://` URI whose permission has already been
@@ -1771,7 +1778,9 @@ had closed.
 any shared directory the app touched.
 *Expect* App-private data is gone with the package. Anything the user
 deliberately exported to shared storage remains — that is correct — and nothing
-else does. Re-check that `READ_LOGS` is gone.
+else does. Re-check that VisualCat's encrypted Wireless ADB identity is gone;
+Android may retain its paired-device entry until the user removes it, so record
+that state explicitly. The Play/Release package must not request `READ_LOGS`.
 *Fail if* App-private data survives uninstall, or an undeclared file is left in
 shared storage.
 
@@ -1855,8 +1864,8 @@ regression pack that stops growing stops protecting.
 | ID | Guard | Procedure | Pass condition | First fixed in |
 |---|---|---|---|---|
 | **R-01** | Stop capture is answered and sticky | B-12 at ≥ 4 hours and ≥ 500 000 lines (X-05) | The button never springs back; the status never returns to "Capturing"; the ending is accounted for and the controls disappear | Unreleased |
-| **R-02** | Scope is not claimed falsely | B-10 (P0) and B-11 (P1), inspecting the status line, source description, notice, session details, **and** the stored manifest | All five agree; the time-stamped capture title makes no false scope claim, and an own-app source is never called full-device | 2.0.5 |
-| **R-03** | Slow consent still yields full-device | On a supported device/API that presents the sheet, state P3 — wait ≥ 30 s | Resolves to full-device; the scope clock starts at the first byte. No sheet means N/A for this device plus a release-matrix gap, never a Pass | 2.0.5 |
+| **R-02** | Scope is not claimed falsely | B-10 (W0) and B-11 (W1/W2), inspecting the status line, source description, notice, session details, **and** the stored manifest | All five agree; the time-stamped capture title makes no false scope claim, and an own-app source is never called full-device | 2.0.5 |
+| **R-03** | Developer direct slow consent still yields full-device | Optional D1 regression on a supported device/API that actually presents the per-use log sheet; wait ≥ 30 s before allowing | Direct developer capture resolves to full-device; absence of the sheet is N/A for this developer-only row and does not affect the Play W-state gate | 2.0.5 |
 | **R-04** | PID parsing under `-v threadtime,UTC` | Any full-device capture | The zone offset is never read as a PID; the app's own records are not counted as foreign | 2.0.5 |
 | **R-05** | Text-size change does not kill a capture | U-05 | The capture continues; Follow and Stop remain; no ten-second blank reload | 2.0.4 |
 | **R-06** | Entries list keeps its floor | B-09 in Split and Details, with a notice showing | ≥ 4 rows in Split, ≥ 6 in Details, even with a notice | 2.0.4 |
@@ -1875,7 +1884,7 @@ regression pack that stops growing stops protecting.
 | **R-19** | The Back gesture falls through when nothing is open | B-15, with every layer closed | Back leaves the app; the workspace never claims a press it cannot answer | 2.0.4 |
 | **R-20** | A live capture is read in the device's own clock | A-23 on a device at ≥ ±2 h offset | The newest entry sits at about *now*, Follow tracks the live edge, and the session pane names both zones | 2.0.4 |
 | **R-21** | A live capture finalizes, short ones included | X-24 | Every duration in the sweep finalizes; no manifest write fails the ingest | 2.0.4 |
-| **R-22** | The status stops claiming arrivals after silence | B-16 in P0, left idle for two minutes | The rate is measured over the last second, and a heartbeat says how long the source has been quiet | 2.0.4 |
+| **R-22** | The status stops claiming arrivals after silence | B-16 in W0, left idle for two minutes | The rate is measured over the last second, and a heartbeat says how long the source has been quiet | 2.0.4 |
 | **R-23** | Follow belongs to a running capture | A-14, then stop the capture | *Follow* and *↓ New data* go when the source closes; re-engaging Follow opens a window on the live edge instead of keeping a whole-session span | 2.0.4 |
 | **R-24** | Session-dependent commands are disabled without a session | B-01, then the More sheet with nothing open | Share, Export CSV, and Save are disabled and say why; the empty state offers no share link that cannot work | 2.0.4 |
 | **R-25** | A screen reader hears entries, not record dumps | U-09 over entry rows, Insights, and both stored-session lists | Rows announce level, tag, time, and message; no session guid, raw span, or private storage path is read aloud | 2.0.4 |
@@ -1890,7 +1899,7 @@ regression pack that stops growing stops protecting.
 | **R-34** | Contextual action slots are stable | X-13, as *Load next 500* appears | *Copy raw* does not move; two taps in the same place hit the same control | 2.0.4 |
 | **R-35** | Numbers and dates use the interface's own culture | U-11 on a locale with different separators | ISO dates and interface-culture numbers throughout, not the device's conventions mixed into an English UI | 2.0.4 |
 | **R-36** | Counts state their scope in visible text | A-02 with a search active | Facet and template counts name their scope on screen, not only in a tooltip a touch device never shows | 2.0.4 |
-| **R-37** | A nearly empty capture does not over-claim precision | B-16 in P0 with one or two entries | *Fit* is clamped to the resolution the plot has pixels for; the axis does not print one instant as two labels | 2.0.4 |
+| **R-37** | A nearly empty capture does not over-claim precision | B-16 in W0 with one or two entries | *Fit* is clamped to the resolution the plot has pixels for; the axis does not print one instant as two labels | 2.0.4 |
 | **R-38** | The displayed version tracks the build | B-01 | The identity line's version matches the installed `versionName`, and a non-release build says so in the version itself | 2.0.4 |
 | **R-39** | A live refresh does not deselect the entry being read | A-24 | Selection and timeline caret are restored by entry id across every refresh | 2.0.3 |
 | **R-40** | Android source context survives resume and reattachment | A-24, backgrounding during a capture | Reads survive reattachment, retry when interrupted, and can read a live sidecar the capture is still writing | 2.0.2 |
@@ -1904,7 +1913,7 @@ regression pack that stops growing stops protecting.
 | **Smoke** | Every device build | B-01, B-03, B-04, B-10 or B-11, B-12, B-13, B-16 direct-start pass | ~45–60 min |
 | **Standard** | Before a candidate build is shared | All B; R except the four-hour R-01/R-18 procedures; U-01, U-03, U-04, U-06, U-19; X-01; X-24 | ~8–12 attended h |
 | **Upgrade** | Every schema/settings/storage change and every release candidate | A-19 and, where applicable, A-22; then B-03, B-13, B-14, H-06 on migrated data | ~3–5 attended h |
-| **Full** | Before a release tag | Every applicable tier except X-06; reachable P0–P4; exact signed candidate is authoritative, with a separate Debug diagnostic subset where private evidence is required | ~5–8 person-days plus unattended machine time |
+| **Full** | Before a release tag | Every applicable tier except X-06; W0–W5 as applicable; exact signed candidate is authoritative, with a separate optional D-state Debug diagnostic subset where direct-permission evidence is required | ~5–8 person-days plus unattended machine time |
 | **Soak** | Before a release tag, on a dedicated device | X-05, X-06, X-07, X-16, X-22; do not overlap workloads on one device | ~20–30 elapsed h/device, including ~6–10 attended h and review |
 | **Parity** | Whenever the engine, store, or parser changes | All H, plus X-25 and A-23 | ~4–6 attended h |
 | **Accessibility** | Before a release tag, and after any layout change | All U, including a fresh participant for U-14 | ~6–10 attended h plus participant availability |
@@ -1954,8 +1963,9 @@ Network state / proxy / VPN:
 App versionName / versionCode:    dumpsys package
 Build type:                       Debug (-t:Install) | Release APK | Play build
 Install mode:                     clean | upgrade-preserving-data
-READ_LOGS / consent state:        P0 | P1 | P2 | P3 | P4
-Consent sheet:                    shown/allowed | shown/declined | not shown | N/A
+Android capture state:            W0 | W1 | W2 | W3 | W4 | W5 | developer D0/D1/D2
+Wireless debugging / pairing:     off | pairing-code panel | paired/connected | stale/revoked
+Developer direct consent sheet:   shown/allowed | shown/declined | not shown | N/A
 Resolved activity / PID at start:
 ADB absolute path and version:
 Host OS and .NET SDK:
@@ -2010,13 +2020,12 @@ yet a finding.
 
 ### 13.4 Exit criteria for a release
 
-1. Every **B** and every **R** scenario passes on at least one physical device,
-   with each scenario's applicable permission state, on the exact signed artifact
-   being released. B-10/R-02 cover P0; B-11/R-02 cover P1; P2/P3 are explicit
-   permission gates rather than being applied nonsensically to every B scenario.
-   P-06 covers P4. P2, P3, and R-03 must pass on at least one supported physical
-   platform that actually presents the consent sheet; absence of such a device is
-   a recorded release-coverage gap, not a substitute Pass.
+1. Every **B** and every **R** scenario passes on at least one physical device
+   on the exact signed artifact being released. B-10 covers W0; B-11 covers W1/W2;
+   explicit negative/recovery scenarios cover W3/W4; and the reconnect/soak pack
+   covers W5. Developer D-states are compatibility regressions only and never
+   substitute for production Wireless-ADB coverage. The exact Release AAB must
+   also prove that `READ_LOGS` is absent.
    Tier-R rows that carry a device precondition — a non-UTC clock (R-20), a loud
    device accent (R-27, R-28), an active screen reader (R-25, R-26), a populated
    ring buffer (via X-25) — are satisfied by **creating that precondition**, not
@@ -2044,7 +2053,7 @@ yet a finding.
    settings, session format, application ID, or signing configuration changed.
    A-22 also passes when Play is the intended release channel.
 11. Every mutation-ledger entry is restored and §13.5 passes. An otherwise green
-    run that leaves global state, filler data, or a development permission behind
+    run that leaves global state, filler data, or an unexpected development permission/debugging connection behind
     is incomplete.
 
 ### 13.5 Mandatory final cleanup and device hand-back
@@ -2064,9 +2073,11 @@ ledger rather than restoring guessed defaults.
    when its recorded user id, creation evidence, and owner-approved deletion are
    all present; never remove or weaken a pre-existing managed/work profile.
    Remove test-only per-profile installs and grants as the run record requires.
-5. Revoke the temporary development grant and prove the result:
-   `<ADB> shell pm revoke <PKG> android.permission.READ_LOGS`, followed by the
-   package dump. Preserve it only with explicit device-owner approval.
+5. For a Play-candidate W-state run, disconnect/stop Wireless debugging and remove
+   the VisualCat paired-device entry if the device owner does not want it retained;
+   clear VisualCat data/uninstall when the run requires removal of the local encrypted
+   identity. For optional D-state developer testing only, revoke any temporary
+   external `READ_LOGS` grant and prove the result with the package dump.
 6. Remove test corpora and public evidence copies if the device owner does not
    want them. Preserve deliberately exported user-visible files only when the
    run record says so.
@@ -2090,10 +2101,11 @@ adb devices -l                              # discovery only
 <ADB> shell am kill <PKG>                  # background first; prove PID ended
 <ADB> shell pm clear <PKG>                 # DESTRUCTIVE: app data and grants
 
-# --- permission ---------------------------------------------------------
+# --- developer-only direct READ_LOGS regression ------------------------
+# Never use these commands to validate the Play/Release Wireless ADB path.
 <ADB> shell pm grant <PKG> android.permission.READ_LOGS
 <ADB> shell pm revoke <PKG> android.permission.READ_LOGS
-<ADB> shell dumpsys package <PKG>          # inspect requested/granted permissions
+<ADB> shell dumpsys package <PKG>          # prove Release does not request READ_LOGS
 
 # --- time-bounded logs --------------------------------------------------
 <ADB> shell pidof <PKG>
@@ -2221,20 +2233,20 @@ Check every finding against this list before filing it.
 7. **`run-as` refuses a non-debuggable build** with "package not debuggable".
    A release or Play build cannot be inspected this way. Use the product's
    portable share for release evidence. Installing Debug creates a different
-   test condition and its deploy target attempts to re-grant `READ_LOGS`.
-8. **A clean-installed release build has no automatic `READ_LOGS` grant**, so its
-   on-device capture is own-app-only — often a scale difference of orders of
-   magnitude — until the grant is issued explicitly. An in-place install may
-   preserve a previous development grant; prove package state every time.
-9. **The consent sheet is separate from the grant.** Android 13+ can present it
-   for each capture while the grant is held; API level, OEM, policy, and current
-   state can affect whether it appears. Declining narrows the capture without
-   failing it. Record observation instead of assuming either outcome.
-10. **Uninstalling can pop the Play Store into split-screen**, which changes the
-    size class of the next launch. Force-stop `com.android.vending` and restart
-    the launcher activity before measuring layout.
-11. **`pm clear` drops the `READ_LOGS` grant** along with app data. Re-grant it
-    if the scenario calls for it, or the next capture is silently restricted.
+   test condition and may declare/grant developer-only `READ_LOGS`.
+8. **A clean-installed Play/Release build intentionally has no `READ_LOGS`
+   declaration.** Full-device production capture requires W1/W2 Wireless debugging;
+   a host-side development grant is not a valid workaround for a release gate.
+9. **Wireless debugging pairing and connection are separate.** Android shows a
+   pairing port/code for W1, then advertises a separate TLS-connect service. Pairing
+   can succeed while discovery/connect still fails; preserve the saved pairing and
+   test W2/W3 rather than misreporting pairing as capture success.
+10. **The Wireless debugging port can change while the reusable key remains
+    paired.** Never persist the discovered connect port. Discover it for each Live
+    connection and keep the six-digit pairing code ephemeral.
+11. **`pm clear` removes VisualCat's encrypted saved ADB identity** along with app
+    data. Android can still list the old public key under Wireless debugging paired
+    devices; that stale Android-side entry is expected until the user removes it.
 12. **An orphan `adb … logcat` on the host** usually means an app instance was
     force-killed, bypassing disposal — not a teardown defect. Check the process
     list and how the app was terminated before filing.

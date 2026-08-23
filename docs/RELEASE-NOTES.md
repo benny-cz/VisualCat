@@ -76,21 +76,32 @@ bug report.
 ## Android (when included)
 
 The Android asset is a release-key-signed APK for Android 12 or newer. Install
-it from the device's file manager after allowing installs from that source, or:
+it from the device's file manager after allowing installs from that source, or
+with the Android SDK platform tools.
 
-```shell
-adb install VisualCat-Android-*.apk
-```
+Normal Android applications can usually read only their own logs. The current
+Play-oriented VisualCat build therefore offers two explicit Live modes:
 
-Normal Android applications can usually read only their own logs. See the
+- **VisualCat only** starts immediately and uses Android's ordinary restricted
+  app log scope.
+- **Full-device** pairs with Android's built-in Wireless debugging service.
+  Enable Developer options and Wireless debugging, choose **Pair device with
+  pairing code**, enter the displayed pairing port and six-digit code in
+  VisualCat, and keep Wireless debugging on while Live runs. Pairing is normally
+  reusable; VisualCat disconnects when capture stops.
+
+The Play/Release build does not declare or self-grant `READ_LOGS`. Debug and
+controlled non-Play builds may still use the older externally granted direct
+path for developer testing. See the
 [support matrix](https://github.com/benny-cz/VisualCat/blob/main/docs/SUPPORT.md)
-for the optional `READ_LOGS` grant and current capture limitations. The v2.0.6
-APK was validated on Android 14 physical hardware in both own-app and granted
-full-device modes. Restricted capture stayed honestly restricted through its
-quiet heartbeat; granted capture survived rotation in the same process and
-finalized cleanly at 1,303 entries. Both completed sessions returned after a
-forced process restart, no crash or ANR was logged, and no persistent
-`READ_LOGS` grant remained after testing. The four-hour ADB soak completed
-during the 2.0.6 development cycle is recorded in the Android live-test report.
+for the exact current behavior.
+
+The historical v2.0.6 device evidence predates the Wireless ADB production
+path. The current unreleased implementation has a newer physical-device record
+in `docs/ANDROID-LIVE-TEST-REPORT.md`: real first pairing, saved reconnect,
+interruption recovery and full-device capture on a Pixel 5, followed by API-36
+Samsung and Motorola layout/own-app checks. A release containing this path must
+still satisfy the production-signed candidate and remaining manual gates in the
+release checklist; historical external-`READ_LOGS` evidence is not a substitute.
 
 No VisualCat build sends telemetry or uploads log content.

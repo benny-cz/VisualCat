@@ -1,6 +1,7 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <XamarinAndroidXAnnotationVersion>1.9.1.7</XamarinAndroidXAnnotationVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Avalonia" Version="12.1.0" />
@@ -13,6 +14,7 @@
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.301" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageVersion Include="Xamarin.AndroidX.Annotation" Version="$(XamarinAndroidXAnnotationVersion)" />
     <PackageVersion Include="Xamarin.AndroidX.Core" Version="1.17.0.2" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />

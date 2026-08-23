@@ -47,16 +47,30 @@ be published from an unmerged commit or one that would fail a pull request:
 - [ ] Sanitized golden corpus and sample scripts reconcile reviewed counts.
 - [ ] Corruption checks reject altered manifest, column, bitmap, and raw data.
 - [ ] Reference ingest, reopen, heat-map, search, cancellation, and memory measurements are recorded.
-- [ ] Four-hour ADB soak and reconnect/disconnect matrix complete without an orphan process.
+- [ ] Four-hour host-ADB soak and Android Wireless-ADB soak/reconnect/disconnect matrices complete without an orphan process, leaked stream, persistent debugging connection, or sustained post-warm-up memory growth. Exercise enough log traffic to prove the bounded Wireless-ADB receive pump recycles/reconnects rather than allowing the third-party queue to grow without limit.
 - [ ] File, portable, growing-file, partial, degraded, and incompatible sessions are manually exercised.
 - [ ] Keyboard, contrast, text scaling, focus, and screen-reader labels are reviewed.
 - [ ] Windows package is signed; macOS package is signed/notarized; Linux packages are validated.
-- [ ] Android own-app and granted full-device modes are tested on physical hardware.
+- [ ] Android own-app and Wireless-debugging full-device modes are tested on physical hardware, including first pairing, saved reconnect, Stop/disconnect, background/resume, rotation, and revoked/stale pairing recovery.
+- [ ] Cancel is exercised during Wireless-ADB discovery/connection and during the low-level pairing handshake. Discovery/connection must unwind promptly; pairing may remain visibly `Cancelling…` until LibADB's local socket handshake returns, but Live must not start afterward and no authenticated ADB connection may remain.
+- [ ] Android Live warning/setup UX matches the Release transport: the scope chooser contains no normal-Play `READ_LOGS` promise/jargon, choosing a scope does not trigger a redundant second disclosure before capture, saved pairing hides the new-code form until explicit recovery, and Back/scrim dismissal during pairing follows the same visible `Cancelling…` lifecycle as the Cancel button.
 - [ ] Privacy, support matrix, known limits, migration policy, and third-party notices are current.
 - [ ] Components the SBOM reports without license metadata have been resolved by
       hand and explained in `docs/THIRD-PARTY-NOTICES.md`.
+- [ ] The exact Play AAB manifest has `INTERNET` and `CHANGE_WIFI_MULTICAST_STATE`, does **not** contain `android.permission.READ_LOGS`, and has no unexpected sensitive permission.
+- [ ] The exact Play AAB is inspected for Android-only Maven/JNI dependencies and licenses, including `libadb-android-bc`, Bouncy Castle, and every bundled/transitive pairing component.
+- [ ] Wireless ADB pairing code is absent from logs, diagnostics, persisted files, backups, and crash artifacts; the saved ADB identity is encrypted in `NoBackupFilesDir` and removal/clear-data behavior is verified.
+- [ ] Play Console Data Safety, App access, permissions, privacy policy, and store description match the audited AAB rather than an older direct-`READ_LOGS` build.
+- [ ] If targetSdk is ever raised to 37+, Android 17 local-network permission behavior is re-designed and physically tested before release.
 
 ## Release records
+
+> **Historical transport note:** the records through v2.0.6 below predate the
+> unreleased Wireless ADB production transport. Their full-device results validate
+> the old externally granted `READ_LOGS` path only. They remain immutable release
+> evidence, but they do **not** sign off the current Wireless debugging path. A new
+> candidate must satisfy the manual Wireless ADB gates above and record a new
+> physical-device run before Play publication.
 
 ### v2.0.6 — 2026-08-22
 
@@ -325,6 +339,9 @@ some tools but does not remove addresses from commit objects.
 ## Google Play
 
 The Android companion is published to Google Play as `com.barebit.visualcat`.
+The Play AAB uses Wireless debugging for full-device Live capture and must not
+declare `READ_LOGS`. Debug and controlled non-Play builds can opt into the old
+direct permission path, so never infer the Play manifest from a Debug APK.
 `docs/PLAY-LISTING.md` is the source of truth for every field of the store
 listing and every app-content answer; Play Console is where it is pasted, not
 where it is decided.

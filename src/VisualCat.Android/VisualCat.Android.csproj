@@ -19,6 +19,15 @@
          reader (WorkspaceViewModel.Presentable), so this is a safety net rather than the fix:
          it keeps a diagnostic bundle and a stack trace legible when one is needed. -->
     <UseSystemResourceKeys>false</UseSystemResourceKeys>
+
+    <!-- Google Play cannot grant READ_LOGS to an ordinary application and the production
+         Wireless-debugging transport no longer needs it. Keep the privileged declaration out
+         of Release/Play manifests by default, while preserving the established direct-capture
+         developer loop in Debug. A controlled non-Play build may explicitly opt in with
+         -p:VisualCatEnableReadLogsPermission=true. -->
+    <VisualCatEnableReadLogsPermission Condition="'$(VisualCatEnableReadLogsPermission)' == '' And '$(Configuration)' == 'Debug'">true</VisualCatEnableReadLogsPermission>
+    <VisualCatEnableReadLogsPermission Condition="'$(VisualCatEnableReadLogsPermission)' == ''">false</VisualCatEnableReadLogsPermission>
+    <DefineConstants Condition="'$(VisualCatEnableReadLogsPermission)' == 'true'">$(DefineConstants);VISUALCAT_READ_LOGS</DefineConstants>
   </PropertyGroup>
   <PropertyGroup>
     <!-- Google Play orders uploads by versionCode alone and refuses to accept the
@@ -35,6 +44,7 @@
     <PackageReference Include="Avalonia.Skia" />
     <PackageReference Include="Xamarin.AndroidX.Core" />
     <ProjectReference Include="../VisualCat.App/VisualCat.App.csproj" />
+    <ProjectReference Include="../VisualCat.Android.AdbBinding/VisualCat.Android.AdbBinding.csproj" />
   </ItemGroup>
   <PropertyGroup>
     <!-- READ_LOGS is signature|privileged|development, so Android never prompts for it and
@@ -43,11 +53,12 @@
          app's own log lines — a capture of an idle app then looks broken rather than
          limited. Re-granting it as part of a debug deploy keeps the debug loop usable.
          Debug only: a Release or Play build must never assume the permission is held. -->
-    <GrantReadLogsOnDeploy Condition="'$(GrantReadLogsOnDeploy)' == '' And '$(Configuration)' == 'Debug'">true</GrantReadLogsOnDeploy>
+    <GrantReadLogsOnDeploy Condition="'$(GrantReadLogsOnDeploy)' == '' And '$(Configuration)' == 'Debug' And '$(VisualCatEnableReadLogsPermission)' == 'true'">true</GrantReadLogsOnDeploy>
+    <GrantReadLogsOnDeploy Condition="'$(GrantReadLogsOnDeploy)' == ''">false</GrantReadLogsOnDeploy>
   </PropertyGroup>
   <Target Name="_GrantDebugLogPermission"
           AfterTargets="Install"
-          Condition="'$(GrantReadLogsOnDeploy)' == 'true'">
+          Condition="'$(GrantReadLogsOnDeploy)' == 'true' And '$(VisualCatEnableReadLogsPermission)' == 'true'">
     <PropertyGroup>
       <_VisualCatAdbExe Condition="'$(AdbToolExe)' != ''">$(AdbToolExe)</_VisualCatAdbExe>
       <_VisualCatAdbExe Condition="'$(_VisualCatAdbExe)' == ''">adb</_VisualCatAdbExe>

@@ -1784,14 +1784,21 @@ public sealed partial class SessionWorkspaceView : UserControl
             // second line — two taps in the same place hit different controls (finding 26).
             var primaryActions = _entryPrimaryActions = new Grid
             {
-                ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"),
+                // The sort selector owns its measured width; the two stable actions divide
+                // everything left. Auto-sized action columns can demand more than a narrow
+                // large-text viewport owns and are then arranged beyond the pane's edge.
+                ColumnDefinitions = new ColumnDefinitions("Auto,*,*"),
                 ColumnSpacing = 6,
             };
             _order.HorizontalAlignment = HorizontalAlignment.Left;
             primaryActions.Children.Add(_order);
-            Grid.SetColumn(copyRaw, 2);
+            copyRaw.HorizontalAlignment = HorizontalAlignment.Stretch;
+            copyRaw.MinWidth = TouchTarget.Minimum;
+            Grid.SetColumn(copyRaw, 1);
             primaryActions.Children.Add(copyRaw);
-            Grid.SetColumn(openInspector, 3);
+            openInspector.HorizontalAlignment = HorizontalAlignment.Stretch;
+            openInspector.MinWidth = TouchTarget.Minimum;
+            Grid.SetColumn(openInspector, 2);
             primaryActions.Children.Add(openInspector);
 
             // Contextual actions get their own row below, so what they push is the table

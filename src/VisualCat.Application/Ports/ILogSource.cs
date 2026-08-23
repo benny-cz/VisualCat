@@ -93,11 +93,12 @@ public sealed record SourceScopeReport(
 /// A source whose real reach cannot be known before it starts producing data.
 /// </summary>
 /// <remarks>
-/// Android 13 and later put a consent dialog in front of the device log even for an app that
-/// holds <c>READ_LOGS</c>, and its only affirmative answer grants one-time access — so the
-/// dialog appears on every capture, and declining it does not fail. <c>logcat</c> starts, the
-/// app receives its own process's records and nothing else, and every permission check the app
-/// can make still says the permission is held. A capture that had been declined therefore went
+/// Android 13 and later can put a per-use consent dialog in front of direct device-log access
+/// even for an app that holds <c>READ_LOGS</c>. Declining that consent does not necessarily fail
+/// <c>logcat</c>: the app can receive its own process's records and nothing else while every
+/// permission check the app can make still says <c>READ_LOGS</c> is held. The platform may cache
+/// a recent consent briefly, so the dialog must never be treated as a guaranteed every-capture
+/// signal. A capture that had been declined therefore went
 /// on describing itself as full-device while delivering 24 lines in 40 seconds
 /// (audit 2, C1).
 ///
@@ -120,6 +121,23 @@ public interface ISourceScopeReporter
     /// full-device capture as own-app-only, which is the defect this replaces (audit 3, A1).
     /// </remarks>
     event Action<SourceScopeReport>? ScopeResolved;
+}
+
+/// <summary>A temporary, recoverable transport condition that should be visible during capture.</summary>
+/// <param name="Summary">Short status-line wording, such as a numbered reconnect attempt.</param>
+/// <param name="Detail">A complete explanation suitable for the session health pane.</param>
+public sealed record SourceConnectionStatus(string Summary, string Detail);
+
+/// <summary>
+/// A live source that can temporarily stop delivering bytes while it repairs its transport.
+/// </summary>
+public interface ISourceConnectionStatusReporter
+{
+    /// <summary>
+    /// Raised from any thread. A non-null value replaces the current connection status; null
+    /// clears it as soon as the transport is healthy again.
+    /// </summary>
+    event Action<SourceConnectionStatus?>? ConnectionStatusChanged;
 }
 
 public interface IProcessNameSource

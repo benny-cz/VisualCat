@@ -85,6 +85,16 @@ $expectedApplicationId = 'com.barebit.visualcat'
 # 31 August 2026. The project pins it; this is the independent assertion.
 $requiredTargetSdk = 36
 $requiredPageAlignment = 16384
+$requiredReleasePermissions = @(
+    'android.permission.INTERNET',
+    'android.permission.CHANGE_WIFI_MULTICAST_STATE'
+)
+$forbiddenReleasePermissions = @(
+    'android.permission.READ_LOGS',
+    'android.permission.READ_PHONE_STATE',
+    'android.permission.READ_EXTERNAL_STORAGE',
+    'android.permission.WRITE_EXTERNAL_STORAGE'
+)
 # Public fingerprint of VisualCat's Google Play upload certificate. A valid
 # signature from any other keystore is still an invalid Play upload.
 $requiredUploadCertificateSha256 = 'a715b0309589aa83dd21548d1959af4bb97b8df06d97fdae32715fbd6530e184'
@@ -147,6 +157,7 @@ function Get-AndroidBuildEnvironment {
     $sdk = $values['androidsdkpath']
     $buildTools = Join-Path $sdk "build-tools/$($values['androidsdkbuildtoolsversion'])"
     $jdk = $values['javasdkpath']
+    $androidNetSdkVersion = $values['androidnetsdkversion']
     $extension = if ($IsWindows -or $env:OS -eq 'Windows_NT') { '.exe' } else { '' }
     $batch = if ($IsWindows -or $env:OS -eq 'Windows_NT') { '.bat' } else { '' }
 
@@ -154,7 +165,19 @@ function Get-AndroidBuildEnvironment {
         Aapt2     = Join-Path $buildTools "aapt2$extension"
         ApkSigner = Join-Path $buildTools "apksigner$batch"
         JarSigner = Join-Path $jdk "bin/jarsigner$extension"
+        Java       = Join-Path $jdk "bin/java$extension"
     }
+
+    # bundletool is shipped by the exact .NET Android workload that produced the package. Use
+    # that copy to decode an AAB's protobuf manifest instead of treating protobuf bytes as UTF-8.
+    $dotnetRoot = Split-Path -Parent (Get-Command dotnet -ErrorAction Stop).Source
+    $bundleTool = Get-ChildItem -LiteralPath (Join-Path $dotnetRoot 'packs') -Filter 'bundletool.jar' -Recurse |
+        Where-Object { $_.FullName -match [regex]::Escape("$androidNetSdkVersion") } |
+        Select-Object -First 1
+    if (-not $bundleTool) {
+        throw "Could not find bundletool.jar for .NET Android workload $androidNetSdkVersion."
+    }
+    $tools.BundleTool = $bundleTool.FullName
     foreach ($tool in $tools.Keys) {
         if (-not (Test-Path -LiteralPath $tools[$tool])) {
             throw "Required tool '$tool' was not found at '$($tools[$tool])'."
@@ -453,6 +476,25 @@ foreach ($result in $results) {
         $permissions = @([regex]::Matches($badging, "uses-permission: name='(?<permission>[^']+)'") |
                 ForEach-Object { $_.Groups['permission'].Value })
 
+        foreach ($permission in $requiredReleasePermissions) {
+            if ($permissions -notcontains $permission) {
+                throw "$name is missing required Play/Release permission '$permission'."
+            }
+        }
+        foreach ($permission in $forbiddenReleasePermissions) {
+            if ($permissions -contains $permission) {
+                throw "$name unexpectedly declares forbidden Play/Release permission '$permission'. Release must use Wireless debugging instead of READ_LOGS."
+            }
+        }
+        $allowedReleasePermissions = @(
+            $requiredReleasePermissions
+            "$applicationId.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        )
+        $unexpectedPermissions = @($permissions | Where-Object { $allowedReleasePermissions -notcontains $_ })
+        if ($unexpectedPermissions.Count -gt 0) {
+            throw "$name declares unexpected permissions: $($unexpectedPermissions -join ', '). Update the explicit Release allowlist only after reviewing their product and Play impact."
+        }
+
         if ($applicationId -ne $expectedApplicationId) {
             throw "$name declares application ID '$applicationId' but '$expectedApplicationId' is required."
         }
@@ -497,18 +539,41 @@ foreach ($result in $results) {
         $summary.Add("  - permissions: $($permissions -join ', ')")
     }
     else {
-        # An App Bundle is a signed JAR whose manifest is protobuf rather than
-        # binary XML, so aapt2 cannot read it. Its identity is asserted against
-        # the raw manifest bytes and its structure against the entries Play
-        # requires.
+        # An App Bundle is a signed JAR whose manifest is protobuf rather than binary XML.
+        # Decode it with the workload's bundletool so permission verification is semantic and
+        # exhaustive instead of searching arbitrary protobuf bytes for a few known strings.
         $manifest = Get-PackageEntry -Package $result.Path -EntryName 'base/manifest/AndroidManifest.xml'
         if (-not $manifest) { throw "$name has no base/manifest/AndroidManifest.xml." }
-        $manifestText = [Text.Encoding]::UTF8.GetString($manifest)
+        $manifestText = Invoke-Tool -Path $tools.Java -Arguments @(
+            '-jar', $tools.BundleTool, 'dump', 'manifest', "--bundle=$($result.Path)", '--module=base'
+        ) -Description 'bundletool dump manifest'
         if ($manifestText -notmatch [regex]::Escape($expectedApplicationId)) {
             throw "$name does not declare application ID '$expectedApplicationId'."
         }
         if ($manifestText -notmatch [regex]::Escape($Version)) {
             throw "$name does not declare versionName '$Version'."
+        }
+        foreach ($permission in $requiredReleasePermissions) {
+            if ($manifestText -notmatch [regex]::Escape($permission)) {
+                throw "$name is missing required Play/Release permission '$permission' in its base manifest."
+            }
+        }
+        foreach ($permission in $forbiddenReleasePermissions) {
+            if ($manifestText -match [regex]::Escape($permission)) {
+                throw "$name unexpectedly contains forbidden Play/Release permission '$permission' in its base manifest. Release must use Wireless debugging instead of READ_LOGS."
+            }
+        }
+        $bundlePermissions = @([regex]::Matches(
+                $manifestText,
+                '<uses-permission\b[^>]*\bandroid:name="(?<permission>[^"]+)"') |
+            ForEach-Object { $_.Groups['permission'].Value })
+        $allowedBundlePermissions = @(
+            $requiredReleasePermissions
+            "$expectedApplicationId.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        )
+        $unexpectedBundlePermissions = @($bundlePermissions | Where-Object { $allowedBundlePermissions -notcontains $_ })
+        if ($unexpectedBundlePermissions.Count -gt 0) {
+            throw "$name declares unexpected permissions: $($unexpectedBundlePermissions -join ', '). Update the explicit Release allowlist only after reviewing their product and Play impact."
         }
         if (-not (Get-PackageEntry -Package $result.Path -EntryName 'BundleConfig.pb')) {
             throw "$name has no BundleConfig.pb and is not a valid App Bundle."
@@ -534,6 +599,7 @@ foreach ($result in $results) {
         $summary.Add("- ``$name`` ($size): signed App Bundle for $expectedApplicationId $Version, " +
             "$libraries native libraries 16 KB aligned")
         $summary.Add("  - signed by $($signer.Subject), valid until $($signer.Expires.ToString('yyyy-MM-dd'))")
+        $summary.Add("  - Play/Release permissions verified: required local Wireless ADB permissions present; READ_LOGS absent")
     }
 }
 

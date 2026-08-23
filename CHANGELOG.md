@@ -13,6 +13,74 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Added
+- Android full-device Live capture can now use the device's own **Wireless
+  debugging** connection on clean Play-style installs. The guided setup normally
+  pairs once with Android's pairing-code panel, stores the reusable ADB identity
+  encrypted with an Android-Keystore-protected AES-GCM key, and reconnects with
+  the saved pairing on later captures.
+- The Android capture transport now has an explicit full-device / VisualCat-only
+  choice, accessible pairing fields, a returning-user **Connect saved pairing**
+  default action, Developer-options shortcut, and detailed failure/re-pairing
+  guidance.
+- Wireless ADB live streams record reconnect gaps and resume from the latest
+  validated logcat timestamp after a transport interruption instead of silently
+  presenting a discontinuous stream as complete.
+
+### Changed
+- A normal Android install no longer depends on obtaining `READ_LOGS` for
+  full-device capture. VisualCat never self-grants that privileged permission;
+  Wireless debugging runs the fixed `logcat` stream as Android's authenticated
+  ADB shell. An externally granted `READ_LOGS` remains supported as an advanced
+  developer shortcut and continues to select the direct on-device source.
+- Wireless ADB capture disconnects when Live stops. Pairing is reusable, but
+  Wireless debugging must remain enabled only while a Wireless ADB capture is
+  active. A dedicated transport pump continuously drains LibADB into VisualCat's
+  own bounded 16 × 64 KiB receive queue; queue pressure recycles the stream and
+  resumes from the last complete timestamp instead of allowing LibADB's internal
+  receive queue to grow without bound. Connection/discovery operations are
+  serialized, and cancellation interrupts the Java waits that the upstream API
+  exposes. The upstream pairing socket itself has no cancellable timeout, so its
+  local handshake is treated as a short operation and remains a physical-device
+  release-test gate.
+- Direct `READ_LOGS` copy now distinguishes Android 12 from Android 13+: only
+  newer Android versions may show the separate one-time device-log consent, and
+  the UI no longer promises that a consent sheet appears on every capture.
+- Android Live access sheets now match the Wireless-debugging transport end to
+  end: the scope chooser uses plain language instead of privileged-permission
+  jargon, a completed scope/setup disclosure no longer triggers a redundant
+  third confirmation, saved-pairing users see re-pairing only as an explicit
+  recovery action, and Back/scrim dismissal waits for an in-flight pairing
+  attempt to return before the sheet closes.
+
+### Fixed
+- Phone sheets and status notices now show a complete lower edge instead of
+  looking clipped against the gesture-navigation boundary. Sheets are fully
+  bordered and rounded with a small screen-edge inset; long notices retain all
+  of their text in an internal scroller while preserving the compact workspace.
+- The landscape analysis actions now keep the Time picker and equal-width Copy
+  and Entry buttons wholly inside their pane, including at 130% Android text.
+  The entry inspector owns its clipping and scrolling boundaries, and narrow
+  short layouts stack plot and analysis content rather than painting them into
+  the same row.
+- Phone home content now uses stable 3 × 2 severity and 2 + 1 action grids so
+  OEM density and font differences cannot leave orphaned or partially visible
+  controls.
+
+### Security
+- The runtime Wireless ADB API exposes no general-purpose shell execution.
+  Pairing codes are transient and never logged or persisted; the only command
+  destination is a fixed `logcat` invocation with a shape-validated resume
+  timestamp. The ADB dependency is version-pinned and its final Release AAB is a
+  mandatory dependency/license/native-artifact audit item.
+
+### Tests
+- Added headless UX contracts for first-use disclosure, saved-pairing behavior,
+  default reconnect action, and accessible Wireless-debugging pairing fields.
+- Added physical-device release gates for first pairing, saved reconnect,
+  transport interruption/recovery, revoke-and-repair, high-volume soak, own-app
+  fallback, externally granted direct capture, and sensitive-data logging checks.
+
 ## [2.0.6] - 2026-08-22
 
 ### Fixed
@@ -418,8 +486,8 @@ screenshot says which build it came from.
 
 ### Fixed
 - An on-device capture no longer claims to be reading the whole device when it is
-  not. On Android 13 and later the system asks for consent on every capture and
-  its only affirmative grants one-time access; declining does not fail — `logcat`
+  not. On Android 13 and later the system can require separate per-use consent for
+  direct device-log access; declining does not fail — `logcat`
   starts, the app receives its own process's records and nothing else, and every
   permission check the app can make still reports success. A declined capture
   went on describing its source as "On-device full-device logcat" while

@@ -394,6 +394,8 @@ public sealed partial class SessionWorkspaceView : UserControl
                               _mobileWorkspaceState.DisplayMode is not MobileWorkspaceDisplayMode.Details;
         var analysisVisible = !filtersOpen &&
                               _mobileWorkspaceState.DisplayMode is not MobileWorkspaceDisplayMode.Plot;
+        var stackedCompact = wideComposition && timelineVisible && analysisVisible &&
+                             !MobileWorkspaceLayout.SharesARow(settled.Width);
 
         // The drawer, the plot and the analysis pane all live in rows 2..5. Exactly one
         // composition of that band is in force at a time.
@@ -403,7 +405,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             _root.RowDefinitions[3].Height = new GridLength(0);
             _root.RowDefinitions[5].Height = new GridLength(0);
         }
-        else if (wideComposition)
+        else if (wideComposition && !stackedCompact)
         {
             _root.RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
             _root.RowDefinitions[3].Height = new GridLength(0);
@@ -643,14 +645,14 @@ public sealed partial class SessionWorkspaceView : UserControl
             // In the footer it stretched across the pane; here it sizes to its own label, so
             // the count line beside it keeps the rest of the row.
             _loadMore.HorizontalAlignment = HorizontalAlignment.Right;
-            Grid.SetColumn(_loadMore, 4);
-            header.ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto,Auto");
+            Grid.SetColumn(_loadMore, 3);
+            header.ColumnDefinitions = new ColumnDefinitions("Auto,*,*,Auto");
             header.Children.Add(_loadMore);
         }
         else
         {
             header.Children.Remove(_loadMore);
-            header.ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto");
+            header.ColumnDefinitions = new ColumnDefinitions("Auto,*,*");
             _loadMore.Margin = new Thickness(0);
             _loadMore.HorizontalAlignment = HorizontalAlignment.Stretch;
             footer.Child = _loadMore;
@@ -809,6 +811,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         // and height is what is actually short.
         var splitTimeline = enabled && timelineVisible && analysisVisible &&
                             MobileWorkspaceLayout.SharesARow(availableWidth);
+        var stackedCompact = enabled && timelineVisible && analysisVisible && !splitTimeline;
         _root.ColumnDefinitions = new ColumnDefinitions(splitTimeline ? "21*,29*" : "*");
 
         if (_mobileFilterShell is { } topStrip)
@@ -836,13 +839,13 @@ public sealed partial class SessionWorkspaceView : UserControl
         // rows beside it.
         var wideMinimap = enabled && timelineVisible && minimapVisible;
         Grid.SetRow(_timeline, 2);
-        Grid.SetRowSpan(_timeline, enabled ? wideMinimap ? 3 : 4 : 1);
+        Grid.SetRowSpan(_timeline, enabled && !stackedCompact ? wideMinimap ? 3 : 4 : 1);
         Grid.SetColumn(_timeline, 0);
         Grid.SetColumnSpan(_timeline, 1);
 
         if (_minimapFrame is { } wideMinimapFrame)
         {
-            Grid.SetRow(wideMinimapFrame, enabled ? 5 : 3);
+            Grid.SetRow(wideMinimapFrame, enabled && !stackedCompact ? 5 : 3);
             Grid.SetColumn(wideMinimapFrame, 0);
             wideMinimapFrame.Margin = enabled
                 ? new Thickness(6, 0, 3, 3)
@@ -851,8 +854,8 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         if (_analysisGrid is { } analysis)
         {
-            Grid.SetRow(analysis, enabled ? 2 : 5);
-            Grid.SetRowSpan(analysis, enabled ? 4 : 1);
+            Grid.SetRow(analysis, enabled && !stackedCompact ? 2 : 5);
+            Grid.SetRowSpan(analysis, enabled && !stackedCompact ? 4 : 1);
             Grid.SetColumn(analysis, splitTimeline ? 1 : 0);
             Grid.SetColumnSpan(analysis, 1);
         }
@@ -966,6 +969,15 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         var analysisWidth = splitTimeline ? (availableWidth * 0.58) - 78 : availableWidth - (enabled ? 78 : 0);
+
+        // At Android's 1.3x text setting a 360 dp phone leaves each mode segment about
+        // 52 dp wide. "Details" needs more than that and Avalonia clips the last glyphs
+        // instead of signalling that the label continues. The full accessible name remains
+        // "Show details workspace"; the compact visible label says what that mode presents.
+        if (_mobileModeButtons.TryGetValue(MobileWorkspaceDisplayMode.Details, out var detailsMode))
+        {
+            detailsMode.Content = availableWidth < 300 * TextScale.Effective ? "Logs" : "Details";
+        }
 
         // What the three tabs may take of the analysis pane. In the compact composition the
         // count line shares their row, so it keeps its own floor out of the budget first.
@@ -1091,11 +1103,19 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         // Spacing is the panels' own (column and item spacing), so the labels change with
-        // the available width and nothing else moves.
-        _order.Width = enabled ? 112 : 126;
+        // the available width and nothing else moves. Width alone is not the constraint:
+        // 360 dp held the ordinary labels at 1.0x, but not at Samsung's 1.3x system text
+        // setting. Comparing the pane with the effective text scale gives both viewports the
+        // same readable-content budget and preserves the full accessible names/tooltips.
+        var compactActionLabels = enabled || analysisWidth < 320 * TextScale.Effective;
+        _order.Width = compactActionLabels ? 112 : 126;
+        var actionLabelsChanged = false;
         if (_copyRaw is { } copyRaw)
         {
-            copyRaw.Content = enabled ? "Copy" : "Copy raw";
+            var label = compactActionLabels ? "Copy" : "Copy raw";
+            actionLabelsChanged |= !Equals(copyRaw.Content, label);
+            copyRaw.Content = label;
+            copyRaw.Padding = compactActionLabels ? new Thickness(8, 0) : new Thickness(12, 0);
         }
 
         if (_openInspector is { } openInspector)
@@ -1103,7 +1123,19 @@ public sealed partial class SessionWorkspaceView : UserControl
             // Always the word. "⤢" on its own is not identifiable on a touch device — there
             // is no pointer to hover for the tooltip — and the label was collapsing to the
             // bare glyph while about 200 px of the row sat unused beside it (audit 2, D10).
-            openInspector.Content = "Entry ⤢";
+            var label = compactActionLabels ? "Entry" : "Entry ⤢";
+            actionLabelsChanged |= !Equals(openInspector.Content, label);
+            openInspector.Content = label;
+            openInspector.Padding = compactActionLabels ? new Thickness(8, 0) : new Thickness(12, 0);
+        }
+
+        if (actionLabelsChanged && _entryPrimaryActions is { } primaryActions)
+        {
+            // These labels are selected after the first arranged size is known. Re-measure
+            // their star columns now; otherwise a column can retain the wider initial label's
+            // demand until another resize and leave the two stable actions visibly lopsided.
+            primaryActions.InvalidateMeasure();
+            primaryActions.InvalidateArrange();
         }
 
         _timeline.Margin = splitTimeline ? new Thickness(6, 2, 3, 2) : new Thickness(0);

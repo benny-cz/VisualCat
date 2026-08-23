@@ -331,8 +331,12 @@ public sealed partial class MainView : IDialogHost
         {
             Background = new SolidColorBrush(WorkspacePalette.SurfaceRaised(dark)),
             BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark)),
-            BorderThickness = new Thickness(1, 1, 1, 0),
-            CornerRadius = new CornerRadius(16, 16, 0, 0),
+            // Keep the whole sheet visibly framed. A flush, open lower edge reads as clipped
+            // on gesture-navigation phones (confirmed on Motorola and Samsung), especially
+            // when the dialog fills its height cap.
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(16),
+            Margin = new Thickness(8, 0, 8, 8),
 
             // MainView uses Avalonia's automatic safe-area padding on Android, so the sheet
             // is already inside the cutout/navigation-safe content rectangle. Keeping the

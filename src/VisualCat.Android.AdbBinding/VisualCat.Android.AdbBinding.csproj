@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android36.0</TargetFramework>
+    <SupportedOSPlatformVersion>31</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- BouncyCastle contains Java-SE PrivilegedAction specialisations that are unavailable on
+         Android. They live entirely in the org.bouncycastle API removed by Metadata.xml; all
+         callable LibADB types resolve successfully once the BC jars participate in parsing. -->
+    <NoWarn>$(NoWarn);BG8605;BG8606</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--
+      Java dependency verification inspects every PackageReference in a binding project. The
+      Android workload currently sees the centrally managed SourceLink reference without its
+      resolved version and fails before it can validate the Java graph. SourceLink is useful for
+      VisualCat's managed assemblies but this private, generated binding has no authored source to
+      map, so exclude it here rather than disabling Java dependency verification.
+    -->
+    <PackageReference Remove="Microsoft.SourceLink.GitHub" />
+
+    <!-- Microsoft's binding advertises the exact androidx.annotation Maven artifact and brings
+         its annotation-jvm and Kotlin dependencies transitively. This lets the verifier prove the
+         full graph while avoiding duplicate Java classes in the final APK. -->
+    <PackageReference Include="Xamarin.AndroidX.Annotation" />
+  </ItemGroup>
+  <!--
+    .NET for Android 36.1.69 passes PackageReference items to Java dependency verification
+    before it has copied centrally managed versions onto their item metadata. Materialize the
+    one binding-project reference immediately before that task. NuGet restore still gets the same
+    value from Directory.Packages.props, so there is a single version source of truth.
+  -->
+  <Target Name="_VisualCatMaterializeJavaDependencyPackageVersions"
+          BeforeTargets="_VerifyJavaDependencies">
+    <ItemGroup>
+      <PackageReference Update="Xamarin.AndroidX.Annotation"
+                        Version="$(XamarinAndroidXAnnotationVersion)" />
+    </ItemGroup>
+  </Target>
+  <ItemGroup>
+    <!--
+      LibADB Android BC is pinned to one tagged release. Only this AAR is bound; its
+      supporting Java artifacts are packaged without generating managed APIs. .NET for Android
+      does not add Maven transitive dependencies automatically, so every runtime dependency is
+      declared explicitly and Java dependency verification stays enabled. The final Release AAB
+      must still be audited for licenses and native artifacts before publication.
+    -->
+    <AndroidMavenLibrary Include="com.github.osservatorionessuno:libadb-android-bc"
+                         Version="3.2.0"
+                         Repository="https://jitpack.io" />
+    <AndroidMavenLibrary Include="org.bouncycastle:bcprov-jdk15to18"
+                         Version="1.84" />
+    <AndroidMavenLibrary Include="org.bouncycastle:bctls-jdk15to18"
+                         Version="1.84" />
+    <AndroidMavenLibrary Include="org.bouncycastle:bcutil-jdk15to18"
+                         Version="1.84" />
+  </ItemGroup>
+</Project>

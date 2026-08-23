@@ -16,6 +16,7 @@ public sealed partial class MainView
 {
     private Border? _noticeHost;
     private TextBlock? _noticeText;
+    private ScrollViewer? _noticeScroller;
     private Button? _noticeDismiss;
     private Button? _noticeAction;
     private DispatcherTimer? _noticeTimer;
@@ -99,7 +100,7 @@ public sealed partial class MainView
         // string; the eye never reached it (finding F-33). The height is the same as six
         // lines bought before, and now the rest of the message is a scroll away instead of
         // gone.
-        var scroller = new ScrollViewer
+        var scroller = _noticeScroller = new ScrollViewer
         {
             Content = text,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -151,7 +152,12 @@ public sealed partial class MainView
         var host = _noticeHost = new Border
         {
             IsVisible = false,
-            BorderThickness = new Thickness(1, 1, 1, 0),
+            // The lane is docked at the application edge, but it is still a card the reader
+            // has to recognise as scrollable. Omitting its bottom edge made the Motorola
+            // landscape rendering look physically cut off even though every control was in
+            // bounds. Draw the complete boundary; the border is inside the same height and
+            // costs the workspace no additional row.
+            BorderThickness = new Thickness(1),
             Padding = new Thickness(10, 6),
             Child = content,
         };
@@ -163,6 +169,28 @@ public sealed partial class MainView
         AutomationProperties.SetLiveSetting(host, AutomationLiveSetting.Polite);
         ApplyNoticeTheme();
         return host;
+    }
+
+    /// <summary>
+    /// Gives a compact-height workspace back enough vertical room for its analysis controls
+    /// and at least one log row, while keeping every word of the notice scroll-reachable.
+    /// </summary>
+    /// <remarks>
+    /// On the 360 dp-tall Samsung landscape viewport, the ordinary notice consumed 86 dp.
+    /// The Entries pane was left 106 dp: 48 for its tabs, 48 for Time/Copy/Entry, and only
+    /// 10 for the log. The first entry was consequently painted through the controls above
+    /// it. In compact height the notice uses the same 48 dp floor as its buttons and removes
+    /// only exterior vertical padding; the text remains uncapped inside its scroller.
+    /// </remarks>
+    internal void ApplyNoticeLayout(bool compactHeight)
+    {
+        if (_noticeHost is not { } host || _noticeScroller is not { } scroller)
+        {
+            return;
+        }
+
+        scroller.MaxHeight = compactHeight ? TouchTarget.Minimum : NoticeTextMaximumHeight;
+        host.Padding = compactHeight ? new Thickness(10, 0) : new Thickness(10, 6);
     }
 
     /// <summary>

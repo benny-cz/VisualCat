@@ -16,6 +16,8 @@ stack or self-contained runtime.
 | [Tmds.DBus.Protocol](https://github.com/tmds/Tmds.DBus) | Transitive through Avalonia.FreeDesktop | D-Bus protocol support on Linux | MIT |
 | [System.IO.Hashing](https://github.com/dotnet/runtime) | Direct | Non-cryptographic checksums for the column store | MIT |
 | [AndroidX Core](https://github.com/dotnet/android-libraries) | Direct on Android | Android compatibility APIs | Apache-2.0 |
+| [libadb-android-bc](https://github.com/osservatorionessuno/libadb-android-bc) | Direct on Android (`3.2.0`) | Explicitly paired Android Wireless debugging transport used only for the fixed full-device `logcat` stream | Apache-2.0 option of the upstream dual GPL-3.0-or-later / Apache-2.0 license |
+| [Bouncy Castle Java](https://github.com/bcgit/bc-java) | Android dependency (`1.84`) | RSA/X.509, TLS 1.3, and cryptographic support required by the Wireless ADB library | MIT |
 | [.NET](https://github.com/dotnet/runtime) | Platform/runtime | Managed runtime and base class libraries included in self-contained packages | MIT |
 
 ## Build and test
@@ -32,9 +34,9 @@ automated inventory cannot express; the license text distributed with each
 component is authoritative.
 
 The machine-generated inventory of resolved desktop-solution packages for a
-given build is the CycloneDX SBOM attached to each release. It does not enumerate
-the embedded self-contained .NET runtime or Android-only dependencies. Reproduce
-it with:
+given build is the CycloneDX SBOM attached to each release. It does not currently
+enumerate the embedded self-contained .NET runtime or the complete Android Maven/
+AAR/JNI dependency graph. Reproduce the desktop inventory with:
 
 ```shell
 pwsh ./tools/generate-sbom.ps1
@@ -46,3 +48,22 @@ metadata declares no license, so they can be resolved by hand.
 `Avalonia.Angle.Windows.Natives` is the current example: the NuGet package
 carries no license expression, and the redistributed ANGLE binaries are
 BSD-3-Clause from the upstream Chromium project.
+
+## Android dependency release gate
+
+The Wireless ADB integration makes an Android-specific dependency audit mandatory
+for every release candidate. The source project pins `libadb-android-bc` 3.2.0 and
+Bouncy Castle 1.84, but the **resolved AAB** is authoritative for what is actually
+redistributed. Before publishing, inventory every Maven/AAR/JAR/native artifact,
+record its version and license, and inspect the packaged ABIs. Do not infer the
+final graph solely from this hand-maintained table.
+
+The `libadb-android-bc` upstream README explicitly says the library has not had a
+security audit and still carries an inherited historical warning about an LGPL
+dependency. The tagged 3.2.0 module itself declares only AndroidX Annotation,
+`bcprov-jdk15to18` 1.84, and `bctls-jdk15to18` 1.84; its SPAKE2 implementation is
+Java source backed by Bouncy Castle rather than the original project's packaged
+SPAKE2 dependency. VisualCat nevertheless treats the **resolved AAB** as the
+authoritative dependency graph. Any unexpected LGPL/GPL/native dependency is a
+release blocker until its redistribution obligations and product-policy impact
+are reviewed and documented here.

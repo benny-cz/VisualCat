@@ -70,11 +70,16 @@ Drive the UI with `adb shell input tap` so the timing is repeatable, then pull t
 recording. `android-demo.mp4` composites that capture onto the product background
 with captions; `android-demo.gif` is a 15-second window of the same cut.
 
-Full-device live capture additionally needs the §4.4 log permission:
+For screenshots or recordings that claim the **Play/Release full-device Live**
+experience, exercise the same Wireless debugging flow a user sees: start Live,
+choose full-device access, pair with Android's pairing-code panel if necessary,
+and keep Wireless debugging enabled for the recording. Do not use a host-side
+`READ_LOGS` grant to produce store imagery for the production flow; that would
+show a capability path the Play build does not declare.
 
-```shell
-adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS
-```
+A Debug or explicitly opted-in non-Play build may still use the external
+`READ_LOGS` grant as a developer convenience when the asset is specifically
+intended to document that developer path. Label such evidence accordingly.
 
 Regenerate all of the derived assets whenever the application chrome changes
 materially.

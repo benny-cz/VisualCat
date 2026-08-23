@@ -1,0 +1,21 @@
+<metadata>
+  <!--
+    These three Java abstract getters are implementation hooks, not .NET properties. Keeping
+    them as methods makes the concrete C# connection manager override the Java contract
+    explicitly and avoids protected abstract property-name collisions in generated bindings.
+  -->
+  <attr path="/api/package[@name='io.github.muntashirakon.adb']/class[@name='AbsAdbConnectionManager']/method[@name='getPrivateKey' and count(parameter)=0]" name="propertyName"></attr>
+  <attr path="/api/package[@name='io.github.muntashirakon.adb']/class[@name='AbsAdbConnectionManager']/method[@name='getCertificate' and count(parameter)=0]" name="propertyName"></attr>
+  <attr path="/api/package[@name='io.github.muntashirakon.adb']/class[@name='AbsAdbConnectionManager']/method[@name='getDeviceName' and count(parameter)=0]" name="propertyName"></attr>
+
+  <!-- The BouncyCastle jars must participate in class parsing so LibADB's internal TLS subclass
+       is not discarded. They are runtime implementation details, however, and VisualCat never
+       calls their Java APIs from managed code, so do not generate a second, enormous public API. -->
+  <remove-node path="/api/package[starts-with(@name, 'org.bouncycastle')]" />
+
+  <!-- These two Java source-retention annotation interfaces inherit java.lang.annotation methods
+       that produce invalid Object-member invokers in current .NET Android code generation. They
+       are not runtime types or part of VisualCat's callable surface. -->
+  <remove-node path="/api/package[@name='io.github.muntashirakon.adb']/interface[@name='LocalServices.Services']" />
+  <remove-node path="/api/package[@name='io.github.muntashirakon.adb.android']/interface[@name='AdbMdns.ServiceType']" />
+</metadata>

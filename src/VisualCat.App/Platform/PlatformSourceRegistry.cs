@@ -17,6 +17,26 @@ namespace VisualCat.App.Platform;
 /// <param name="DisplayName">What to call it on screen.</param>
 public sealed record IncomingFile(string Path, string DisplayName);
 
+/// <summary>
+/// The two values Android shows in its Wireless debugging pairing-code panel.
+/// </summary>
+/// <remarks>
+/// The pairing code is deliberately carried only for the duration of one explicit setup
+/// attempt. Platform implementations must not persist or log it.
+/// </remarks>
+/// <param name="PairingPort">The TCP port shown after the colon in Android Settings.</param>
+/// <param name="PairingCode">The six ASCII digits shown by Android Settings.</param>
+public sealed record WirelessAdbPairingRequest(int PairingPort, string PairingCode);
+
+/// <summary>The result of connecting VisualCat to Android Wireless debugging.</summary>
+/// <param name="Connected">Whether an authenticated ADB connection is ready for capture.</param>
+/// <param name="PairingSucceeded">Whether this attempt completed a new Wireless ADB pairing.</param>
+/// <param name="Message">A short, safe explanation suitable for the setup sheet.</param>
+public sealed record WirelessAdbConnectionResult(
+    bool Connected,
+    bool PairingSucceeded,
+    string Message);
+
 public static class PlatformSourceRegistry
 {
     /// <summary>
@@ -32,9 +52,9 @@ public static class PlatformSourceRegistry
     /// the platform has no such distinction.
     /// </summary>
     /// <remarks>
-    /// The pre-capture explanation was unconditional: it promised that "Android will now ask
-    /// you to allow access to device logs" on every capture, and on a clean install — where
-    /// READ_LOGS is not held — no sheet can appear at all, because READ_LOGS is not a runtime
+    /// The old pre-capture explanation was unconditional: it promised that Android would ask
+    /// for device-log access even when the platform could not do so. On a clean install — where
+    /// READ_LOGS is not held — no direct log-access sheet can appear at all, because READ_LOGS is not a runtime
     /// permission and an app cannot request it. The product then contradicted itself, since
     /// Session info correctly explained the same state and gave the exact grant command
     /// (finding F-13). The shell has to be able to ask before it writes the sentence.
@@ -42,10 +62,55 @@ public static class PlatformSourceRegistry
     public static Func<bool>? HasFullDeviceLogPermission { get; set; }
 
     /// <summary>
-    /// The exact command a person runs to grant full-device log access on this platform, or
-    /// null where nothing of the sort applies.
+    /// The exact command an advanced user can run from an external ADB host to grant the
+    /// development-only READ_LOGS permission, or null where nothing of the sort applies.
     /// </summary>
+    /// <remarks>
+    /// VisualCat never executes this command itself. Google Play builds use Wireless debugging
+    /// as the log transport instead of using ADB to elevate the app's own permission state.
+    /// Keeping the command available preserves the established developer/debug workflow for
+    /// people who explicitly configure it from a separate trusted ADB host.
+    /// </remarks>
     public static string? FullDeviceLogGrantCommand { get; set; }
+
+    /// <summary>
+    /// Whether VisualCat has a reusable identity and a successful previous explicit pairing.
+    /// </summary>
+    /// <remarks>
+    /// The platform must not return true for an identity merely generated during a failed
+    /// attempt. Android may still have forgotten the completed pairing, Wireless debugging may
+    /// be off, or the current network may be unavailable.
+    /// </remarks>
+    public static Func<bool>? HasSavedWirelessAdbIdentity { get; set; }
+
+    /// <summary>
+    /// Pairs with Android's Wireless debugging daemon and leaves an authenticated connection
+    /// ready for a full-device logcat capture. Null on platforms that cannot offer this path.
+    /// </summary>
+    /// <remarks>
+    /// The app layer can provide only Android's pairing port and six-digit code. It cannot send
+    /// an arbitrary ADB command. The Android implementation uses the resulting shell strictly as
+    /// a log transport and does not grant privileged permissions to the VisualCat package.
+    /// </remarks>
+    public static Func<WirelessAdbPairingRequest, CancellationToken, Task<WirelessAdbConnectionResult>>?
+        PairWirelessAdbAsync { get; set; }
+
+    /// <summary>
+    /// Reuses a Wireless debugging identity Android has already paired and leaves the authenticated
+    /// connection ready for a full-device logcat capture.
+    /// </summary>
+    public static Func<CancellationToken, Task<WirelessAdbConnectionResult>>?
+        ConnectSavedWirelessAdbAsync { get; set; }
+
+    /// <summary>
+    /// Creates a full-device log source from the authenticated Wireless ADB connection prepared by
+    /// <see cref="PairWirelessAdbAsync"/> or <see cref="ConnectSavedWirelessAdbAsync"/>.
+    /// </summary>
+    public static Func<ILogSource?>? CreateWirelessAdbSource { get; set; }
+
+    /// <summary>Opens Android's Developer options so the reader can reach Wireless debugging.</summary>
+    public static Func<CancellationToken, Task>? OpenDeveloperOptionsAsync { get; set; }
+
     public static Func<string, CancellationToken, Task>? ShareFileAsync { get; set; }
     public static Func<CancellationToken, Task<IReadOnlyList<IncomingFile>>>? ConsumeLaunchFilesAsync { get; set; }
 

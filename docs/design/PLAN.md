@@ -249,13 +249,14 @@ The parser architecture may later support additional formats, but all of the abo
 
 ### 4.4 On-device constraints
 
-A normal Android application can usually read only its own logs. Full-device access may require a development-time permission grant and restart:
+A normal Android application can usually read only its own logs, and Google Play cannot turn `READ_LOGS` into an ordinary runtime permission. The production Android companion therefore has two explicit capture paths:
 
-```text
-adb shell pm grant <application-id> android.permission.READ_LOGS
-```
+1. restricted on-device capture for VisualCat's own process, available immediately; and
+2. full-device `logcat` through Android's user-enabled, authenticated Wireless debugging service.
 
-The Android companion must detect and state whether it is showing own-app or full-device data. This is a platform limitation, not a recoverable parser problem.
+The Play/Release build does not declare or self-grant `READ_LOGS`. Debug or explicitly opted-in non-Play builds may retain the direct permission path for developer testing when the permission has already been granted externally.
+
+Wireless debugging pairing is an explicit user action. The pairing code is ephemeral and must not be persisted or logged; the reusable ADB identity is encrypted at rest in app-private no-backup storage. The production adapter exposes only the fixed `logcat` service, not a general shell API, and disconnects when capture stops. The Android companion must detect and state whether it is showing own-app or full-device data. These are platform/security constraints, not parser failures.
 
 ---
 
@@ -1248,8 +1249,13 @@ For files:
 
 ### 13.9 Android source
 
-- start the platform-supported logcat process with negotiated explicit format;
-- state own-app versus full-device scope;
+- choose the source from real device capability rather than assuming a permission prompt exists;
+- use the direct platform `logcat` process for own-app scope and for explicitly opted-in developer builds that already hold `READ_LOGS`;
+- use an explicitly paired Wireless ADB `shell:logcat` stream for Play/Release full-device capture;
+- keep the Wireless ADB command surface fixed to logcat, validate every resume timestamp before command construction, and never interpolate pairing input into shell text;
+- persist no pairing code; encrypt the reusable ADB identity in app-private no-backup storage with Android Keystore protection;
+- state own-app versus full-device scope and the active transport;
+- close the Wireless ADB stream/connection on Stop and use bounded reconnect with timestamp resume on transient transport loss;
 - respect application lifecycle and cancellation;
 - use app-private session storage;
 - provide share/export through the Android platform;
@@ -1941,7 +1947,7 @@ A crash, out-of-bounds read, uncontrolled allocation, or unexplained byte drop i
 - multiple devices;
 - disconnect/reconnect;
 - old device with missing logcat modifiers;
-- Android own-app and granted full-device modes.
+- Android own-app and Wireless-debugging full-device modes, plus an opted-in direct-`READ_LOGS` developer smoke test where supported.
 
 ---
 
@@ -2170,7 +2176,7 @@ Deliver:
 
 - Android head over shared application/core capabilities where practical;
 - simplified single-session layout;
-- on-device source and permission-mode detection;
+- on-device source capability detection plus guided Wireless debugging pairing/reconnect;
 - app-private storage;
 - touch/pinch interaction;
 - share/export;
@@ -2179,7 +2185,7 @@ Deliver:
 Exit:
 
 - own-app capture works on a physical device;
-- granted full-device mode is correctly identified and works where the platform permits;
+- Wireless-debugging full-device mode pairs, reconnects, resumes boundedly, disconnects on Stop, and is correctly identified;
 - session can be shared to and opened by desktop;
 - background/foreground/termination behavior is documented and tested.
 

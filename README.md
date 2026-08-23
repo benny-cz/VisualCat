@@ -152,13 +152,31 @@ dotnet workload install android
 dotnet build src/VisualCat.Android/VisualCat.Android.csproj --configuration Release
 ```
 
-Full-device live capture needs Android's log-access permission. The system asks
-for it at the start of every capture, because what it grants is one-time access;
-over ADB it can be granted for good:
+On a normal Play-style install, **full-device Live capture uses Android Wireless
+debugging** instead of trying to request the privileged `READ_LOGS` permission.
+Tap **Live → Full-device**, open Developer options, enable Wireless debugging,
+and pair VisualCat with Android's six-digit pairing code. The pairing is normally
+one-time: later captures can reconnect with the saved identity, but Wireless
+debugging must stay enabled while Live is running. VisualCat opens only its fixed
+`logcat` stream, closes the connection and discards decrypted key material when
+capture stops, does not upload logs, and never grants itself `READ_LOGS`. Android
+leaves its Wireless debugging toggle enabled until you turn it off in Settings.
+
+If full-device setup is not wanted, **VisualCat only** captures this app's own
+log lines without Wireless debugging. Developers who already control the device
+from a computer can optionally grant `READ_LOGS` externally; VisualCat detects
+that grant and uses its faster direct on-device source. On Android 13 and later,
+Android may still show its separate one-time device-log consent for that direct
+path:
 
 ```shell
 adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS
 ```
+
+The external grant is a developer convenience, not the Play installation flow,
+and must be repeated after uninstall/reinstall. See
+[`docs/PRIVACY.md`](docs/PRIVACY.md) and [`docs/SUPPORT.md`](docs/SUPPORT.md) for
+the data-flow and troubleshooting details.
 
 ## Why not just Android Studio, grep, pidcat, or lnav?
 

@@ -878,6 +878,19 @@ public sealed partial class LiveTestRemediationTests
                 .First(grid => grid.ColumnDefinitions.Count > 0);
             Assert.Single(narrowRoot.ColumnDefinitions);
 
+            // One column is only half the invariant. The compact composer formerly put both
+            // panes in row 2 after deciding they could not share columns, so they painted
+            // through each other on a narrow Samsung viewport below a long notice.
+            var narrowTimeline = narrow.View.GetVisualDescendants().OfType<TimelineControl>().Single();
+            var narrowTabs = narrow.View.GetVisualDescendants()
+                .OfType<TabControl>()
+                .Single(control => AutomationProperties.GetName(control) == "Session detail views");
+            var narrowAnalysis = narrowTabs.GetVisualAncestors().OfType<Grid>().First();
+            Assert.Equal(2, Grid.GetRow(narrowTimeline));
+            Assert.Equal(5, Grid.GetRow(narrowAnalysis));
+            Assert.Equal(1, Grid.GetRowSpan(narrowTimeline));
+            Assert.Equal(1, Grid.GetRowSpan(narrowAnalysis));
+
             await using var wide = await LiveTestWorkspaceFixture.CreateAsync(
                 FourEntryLog,
                 width: 801,

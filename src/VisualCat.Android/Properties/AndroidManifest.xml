@@ -1,6 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <uses-permission android:name="android.permission.READ_LOGS" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+  <!-- Normal install-time permissions used by explicit Wireless debugging capture. INTERNET
+       permits the local ADB socket; the multicast permission lets Android 12-era devices
+       receive mDNS while discovering adbd. READ_LOGS is added only by opted-in developer
+       builds through AssemblyInfo.cs and is absent from Release/Play by default. -->
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+  <!-- Some Java/AndroidX dependencies carry legacy assembly-level permission declarations.
+       VisualCat never reads phone state or shared storage, and its minimum Android version does
+       not use the legacy external-storage model. Remove them at the final manifest merge rather
+       than relying on transitive package metadata to remain minimal. -->
+  <uses-permission android:name="android.permission.READ_PHONE_STATE" tools:node="remove" />
+  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove" />
   <application
     android:allowBackup="false"
     android:icon="@mipmap/ic_launcher"

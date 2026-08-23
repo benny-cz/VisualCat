@@ -8,6 +8,7 @@
     <Project Path="src/VisualCat.App/VisualCat.App.csproj" />
     <Project Path="src/VisualCat.Desktop/VisualCat.Desktop.csproj" />
     <Project Path="src/VisualCat.Android/VisualCat.Android.csproj" />
+    <Project Path="src/VisualCat.Android.AdbBinding/VisualCat.Android.AdbBinding.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/VisualCat.Domain.Tests/VisualCat.Domain.Tests.csproj" />

@@ -71,7 +71,9 @@ public sealed partial class SessionWorkspaceView : UserControl
         _rawDataSurface = inspector;
         inspector.IsVisible = false;
 
-        var content = new Grid();
+        // A selected-entry column can be much taller than its tab. On mobile the tab is the
+        // viewport, so neither drawing nor hit testing may escape it while the column scrolls.
+        var content = new Grid { ClipToBounds = _mobile };
         if (_mobile)
         {
             _inspectScroll = new ScrollViewer
@@ -79,13 +81,18 @@ public sealed partial class SessionWorkspaceView : UserControl
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 Content = inspector,
+                ClipToBounds = true,
             };
             // Which entry this is stays on screen while the column scrolls. Expanding SOURCE
             // CONTEXT scrolls the column 1,628 px to land on the selected source line —
             // which is right — and that took the entry's severity, tag, timestamp and
             // message off the top with it, leaving a dump with nothing saying what it was a
             // dump of (audit 3, D5).
-            var pinned = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
+            var pinned = new Grid
+            {
+                RowDefinitions = new RowDefinitions("Auto,*"),
+                ClipToBounds = true,
+            };
             if (_inspectIdentity is { } identityLine)
             {
                 pinned.Children.Add(identityLine);
@@ -100,7 +107,9 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Padding = new Thickness(10, 8),
                 Child = pinned,
                 IsVisible = false,
+                ClipToBounds = true,
             };
+            AutomationProperties.SetName(_rawCodeSurface, "Selected entry inspector");
             _rawDataSurface = _rawCodeSurface;
             inspector.IsVisible = true;
             content.Children.Add(_rawCodeSurface);
@@ -190,6 +199,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             CornerRadius = new CornerRadius(4),
             Padding = _mobile ? new Thickness(0) : new Thickness(8, 6),
             Child = content,
+            ClipToBounds = _mobile,
         };
 
         if (_mobile)

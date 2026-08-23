@@ -3,6 +3,13 @@
 Live execution of [`ANDROID-LIVE-TEST-PLAN.md`](ANDROID-LIVE-TEST-PLAN.md)
 against a physical Android device.
 
+> **Transport scope:** sections 1–11 predate the Play-oriented Wireless ADB
+> transport and exercised the older direct path with externally granted `READ_LOGS`
+> where noted. Their evidence remains authoritative for those builds. Section 12
+> is the first physical-device pass for Wireless debugging pairing, encrypted
+> identity storage, saved reconnect, transport resume, Stop cleanup, and the
+> Release manifest's removal of `READ_LOGS`.
+
 **Status: COMPLETED AS EXECUTED.** Results were written continuously, including
 across an interrupted test process, and the final device hand-back is recorded
 below. Declared gaps remain gaps rather than implied passes.
@@ -5107,3 +5114,213 @@ removing the one this pass installed.
 5. **The panes really have run out; the transitions have not.** §10 swept six
    panes and found nothing in any of them. This pass opened one sheet and rotated
    the phone.
+
+---
+
+## 12. Play-style Wireless ADB transport — Pixel 5, API 34
+
+### 12.1 Run header and scope
+
+| Field | Value |
+|---|---|
+| Date/time (UTC) | 2026-08-23 18:27–18:56 |
+| Repository commit / tree | `479beab8`; working-tree implementation under review |
+| Device | Google Pixel 5 (`redfin`), Android 14 / API 34, `arm64-v8a` |
+| Serial | `0A031FDD400365` |
+| Test artifact | Debug-signed, Play-like build with `VisualCatEnableReadLogsPermission=false`, embedded assemblies, 77,709,717 bytes, SHA-256 `c6ab8336c6c3ffea9fab938a56f4596bd055d093877e7d94d4117239735e8dde` |
+| Package state | clean uninstall/install before first-use tests; data retained for restart tests |
+| Permission oracle | packaged APK declared only `INTERNET`, `CHANGE_WIFI_MULTICAST_STATE`, and AndroidX's package-scoped `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; no log, phone-state, or storage permission |
+| Test constraint | Android 14 closes the pairing-code socket when its Settings dialog loses the foreground. A temporary DEBUG-only activity invoked the same `WirelessAdbService.PairAndConnectAsync` while Settings remained visible in split screen. It was deleted immediately after pairing and is absent from the final source/build. All saved reconnect, capture, interruption, recovery, Stop, and restart checks used the normal product UI. |
+
+This is a focused transport/UX pass, not a replacement for the broader OEM,
+accessibility, endurance, signing, or Play-delivery matrix in the release plan.
+
+### 12.2 Results
+
+| Scenario | Result and evidence |
+|---|---|
+| Clean first use | **Pass.** Live showed **Recommended · setup required**, the full-device/own-app scope distinction, no `READ_LOGS` promise, and explicit text that Android leaves Wireless debugging enabled after VisualCat closes its connection. |
+| Invalid first pairing | **Pass.** Pairing to loopback port 1 failed with actionable UI; the six-digit field was cleared; an encrypted identity file existed but no success marker did. Reopening Live still showed setup required rather than “already paired.” |
+| Pairing secret handling | **Pass for app-owned surfaces.** VisualCat's logs contained no six-digit code and explicitly logged that it was neither stored nor logged. The test harness necessarily supplied the ephemeral code through an ADB command, so host/adbd command-history confidentiality is not claimed by this test mechanism. |
+| Real pairing and persisted state | **Pass.** Android accepted the app's RSA identity, mDNS found the separate TLS service, authenticated connection succeeded, and `no_backup` contained the 2,019-byte AES-GCM identity plus the 12-byte non-secret `wireless-adb-paired-v1` marker. |
+| Returning-user UX | **Pass.** Live changed to **Recommended · already paired** and **Connect full-device**. Selecting it automatically attempted the saved connection, eliminating the previous second manual connect press. |
+| Full-device scope | **Pass.** The normal UI reached `Wireless debugging full-device logcat`; externally generated `VC_EXTERNAL` error/warn records were present in the finalized `raw.log`. |
+| Transport interruption UX | **Pass.** Turning Wireless debugging off changed the status to `Wireless debugging interrupted · reconnecting 1/5`, retained the received-line count, stated that Stop remained available, and kept the session open. |
+| Resume | **Pass.** Re-enabling Wireless debugging during the retry window recovered on attempt 5 and returned the status to normal capturing. The bounded receive queue also recycled once under load, exercising the same reconnect path. |
+| Reconnect record integrity | **Pass.** The finalized manifest recorded 15,668 source lines = 14,040 parsed entries + 1,628 meta records, with 0 unknown lines, 0 rejected candidates, 0 continuations, 0 long-line overflows, and 2 reconnect gaps. Timestamp replay deliberately duplicated some complete records and produced out-of-order entries; no partial old/new transport line was observed or parsed. |
+| Stop and key lifecycle | **Pass.** Stop kept 14,040 entries, closed the stream and connection, disposed the manager, and logged that decrypted key material was discarded. UI explained that Android's Wireless debugging toggle remained enabled and offered **Open settings**, which opened Developer options successfully. |
+| Process-death saved reconnect | **Pass.** After force-stopping and relaunching VisualCat, Live still recognized the completed pairing, automatically reconnected without a new code, captured 511 entries, and stopped cleanly. |
+
+### 12.3 Finalized-session oracle
+
+The first Wireless capture finalized normally (`degraded=false`) with SHA-256
+`2AFCAC5C71DAAC6E0ECDBFEA4A9CB3D871A4913FFE0670EDAA7D5947B8526532`
+over its embedded 2,449,564-byte raw source. Its defect record contains
+`reconnectGaps=2` and no parser-corruption indicators. The raw source contains
+both externally injected proof records twice because timestamp-based reconnect
+replays the boundary intentionally; this is complete-record overlap, not byte
+concatenation.
+
+### 12.4 Remaining limits
+
+1. The transport was exercised on one API-34 Google device and one Wi-Fi network.
+2. The locally built test APK was debug-signed, not the Play upload-key artifact.
+3. First pairing needed the explicitly documented temporary harness because the
+   Android 14 Settings pairing socket closes on app switch; the product setup UI
+   itself was inspected and its validation/failure path was exercised live.
+4. No TalkBack, API 31–33, OEM skin, network-roaming, or multi-hour Wireless ADB
+   soak is claimed by this focused pass.
+
+### 12.5 Final release-package smoke and hand-back
+
+After removing the temporary test installation and its app-private pairing data,
+the final harness-free Release APK was installed cleanly on the same Pixel. The
+installed package reports version `2.0.6` / code `20006`, is not debuggable,
+launches to the expected first-use home screen, remains alive after startup, and
+produced no fatal or unhandled exception in its process log. Its decoded manifest
+contains no test activity and requests only `INTERNET`,
+`CHANGE_WIFI_MULTICAST_STATE`, and AndroidX's package-scoped dynamic-receiver
+permission.
+
+The packaging verifier accepted both the 35,216,767-byte APK (SHA-256
+`70D1F44531741237E4220631B98AA549337786F2DAB2D0D282CA28CA2C26C800`) and the
+35,086,056-byte AAB (SHA-256
+`6B63D950D214ACDB8C61826837386144A1185C8EB8136913CFDBDB08E71152A9`) through
+their structural, manifest, and signing checks, then correctly rejected the
+locally supplied debug certificate because it is not the configured Google Play
+upload certificate. This is an intentional release gate, not a package defect.
+
+At hand-back, the Release app is installed and open, its data is clean (no saved
+test identity or pairing marker), and Android's Wireless debugging toggle is off.
+
+---
+
+## 13. Samsung API-36 responsive-layout recheck
+
+### 13.1 Run header and scope
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-23 |
+| Repository commit / tree | `479beab8`; working-tree implementation under review |
+| Device | Samsung Galaxy S21 FE / SM-G990B, Android 16 / API 36, `arm64-v8a` |
+| Display | 1080 × 2340, density 480 (360 × 780 dp application viewport in portrait) |
+| Package | Optimized, non-debuggable Release 2.0.6 APK, locally debug-signed |
+| Install state | Existing 2.0.5-dev removed; every decisive pass began from an uninstall/install or the freshly rebuilt in-place Release update |
+| Capture scope | On-device own-app logcat. The already device-verified Wireless ADB transport in §12 was not re-paired on this OEM device. |
+
+The trigger for this pass was a visible Samsung landscape defect: the Time
+picker and Copy and Entry actions were only partly usable and appeared to run
+into the list/status controls below them. The pass therefore measured the
+rendered Android bounds as well as inspecting screenshots and exercising the
+actions.
+
+### 13.2 Findings and fixes
+
+| Finding | Remediation and Samsung proof |
+|---|---|
+| Home severity/actions wrapped differently at Samsung's 480 dpi | Mobile severity is now a deliberate 3 × 2 grid and home actions a stable 2 + 1 grid. No orphan chip, bullet, or action remains. Evidence `02-responsive-home.png`. |
+| A long own-app notice consumed 86 dp in a 360 dp-high landscape workspace | Compact-height notices now keep their complete, scrollable text in a 48 dp lane with no vertical host padding. The entry list grew from about 8 dp to 45 dp and the status line moved below it. Evidence `06-own-live-landscape.png` before and `08-fixed-live-landscape.png` after. |
+| Entry-inspector descendants could paint beyond the inspector card | The inspector's outer grid, scroll viewport, pinned header, raw surface, and card now own clipping boundaries. Scrolling keeps Copy message and source context inside the card. Evidence `10-entry-inspector-landscape.png`, `11-fixed-entry-inspector-landscape.png`, and `12-entry-inspector-scrolled.png`. |
+| The reported Time / Copy / Entry action strip could exceed its pane | The sort picker owns a measured slot; Copy and Entry divide all remaining width, keep 48 dp touch height, and use compact visible labels when width divided by effective text scale requires them. Their full tooltip and accessibility descriptions are unchanged. In the final landscape tree Time was `[1031,435][1367,579]`, Copy `[1385,435][1728,579]`, and Entry `[1746,435][2088,579]`: two equal 48 dp action slots, wholly inside the pane. Evidence `34-final-equal-actions-landscape.png`. |
+| At 130% Android text, `Details`, `Copy raw`, and `Entry ⤢` could be clipped | The tight visible labels become `Logs`, `Copy`, and `Entry`, while the full semantic names remain in the accessibility tree. The 130% scope dialog remained scrollable above a pinned footer and both choices were reachable. Evidence `22-clean-home-font-scale-130.png`, `24-scope-dialog-font-scale-130-scrolled.png`, and `26-live-font-scale-130.png`. |
+| A short *and narrow* workspace classified as compact-height put the plot and analysis pane in the same cell | Compact-height now uses side-by-side panes only when the scaled shared-row width actually fits; otherwise the plot, minimap, and analysis occupy rows 2, 3, and 5. This removed the large-text/long-notice overlap. Evidence `26-live-font-scale-130.png` before and `27-after-stacked-fix-launch.png` after. |
+
+### 13.3 Functional and interaction results
+
+| Scenario | Result |
+|---|---|
+| Clean install / launch | **Pass.** Release 2.0.6 launched on API 36, stayed alive, and emitted no fatal or unhandled exception. |
+| Scope chooser | **Pass.** Both choices, explanations, state change, and pinned action footer remained reachable at 100% and 130% system text. |
+| Own-app live capture | **Pass.** Entries arrived, counters and timeline updated, Follow could be disabled, and Stop retained the captured session. |
+| Rotation during capture | **Pass.** The same process and capture survived portrait/landscape recomposition. |
+| Reported controls | **Pass.** Time, Copy, and Entry were fully visible, separate, and inside the analysis pane in short landscape. |
+| Row Copy | **Pass.** Selecting a row enabled Copy; tapping it produced Samsung's clipboard toast and VisualCat's `Copied the raw text of 1 entry.` notice. Evidence `17-entries-landscape.png`, `18-header-copy-confirmation.png`, and the final build's `35-final-copy-confirmation.png`. |
+| Inspector / Copy message | **Pass.** Entry opened the inspector, its content scrolled within the card, and Copy message produced Samsung's clipboard toast plus `Copied 66 characters of this entry.` Evidence `14-entry-copy-position.png`, `16-entry-copy-immediate.png`, and the final build's `36-final-entry-inspector.png`. |
+| Large text | **Pass after remediation.** At system font scale 1.3, home, scope selection, plot/list stacking, and action labels remained readable and reachable. |
+
+Five Samsung-specific headless contracts now cover the 3 × 2 legend, stable
+home actions, compact notice lane, inspector clipping/scroll ownership, and
+large-text action bounds. The existing narrow-short regression now also asserts
+that the plot and analysis occupy distinct rows; checking only the one-column
+root had previously missed their same-cell overlap.
+
+### 13.4 Limits and hand-back
+
+This OEM pass did not repeat real Wireless ADB pairing or full-device capture;
+those transport and process-death paths are recorded in §12. It did exercise the
+Samsung/API-36 first-use UI and own-app fallback that a user can select without
+pairing. The APK is structurally verified and correctly fails the final
+production-upload gate when compared with the configured Play certificate: the
+local test certificate is intentionally not the production upload certificate.
+The final APK is 33,658,932 bytes with SHA-256
+`5C4648B404E1312CF797E7BA88BFF26F208C4FCF0C53DE5DC830568F33A66E14`.
+
+At hand-back the device is restored to font scale 1.0, automatic rotation with
+portrait user rotation, and Wireless debugging off. The final Release build is
+installed cleanly and open on the home screen; capture/session test data and the
+previous app installation have been removed.
+
+---
+
+## 14. Motorola API-36 final OEM and overlay recheck
+
+### 14.1 Run header and scope
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-23 |
+| Repository commit / tree | `479beab8`; working-tree implementation under review |
+| Device | Motorola Edge 60 Pro (`motorola_edge_60_pro` / `cybert`), Android 16 / API 36, `arm64-v8a` |
+| Serial | `ZY22M4T2Z4` |
+| Display | 1220 × 2712, density 450 (approximately 434 × 964 dp in portrait) |
+| Package | Optimized, non-debuggable Release 2.0.6 APK, locally debug-signed, 35,216,767 bytes, SHA-256 `99BCD3E830DC03EC2916C62CF71F50B7C24A5B25FDE28DFBBA4376CDF73DFE2B` |
+| Install state | Existing 2.0.5-dev removed before testing; corrected Release package then removed and installed cleanly for hand-back |
+| Capture scope | On-device own-app logcat plus Wireless-debugging setup/validation UI. Real Wireless ADB pairing was not repeated; §12 owns that transport evidence. |
+
+This pass rechecked the Samsung-responsive changes on a second API-36 OEM and
+then followed up two user-observed edge defects: the warning appeared cut off,
+and dialog sheets appeared to have the same incomplete lower boundary.
+
+### 14.2 Findings, intent and remediation
+
+| Finding | Resolution and Motorola proof |
+|---|---|
+| The compact warning deliberately shows its complete long message through an internal scroller, but its border omitted the lower edge | The compact 48 dp lane remains intentional so it does not cover the log list; the missing edge was not. The host now draws all four border sides. At 130% text in landscape its rendered bounds were `[128,1079][2577,1220]`, the full red lower outline was visible, and the message remained scrollable beside a fully visible Dismiss target. Evidence `17-large-text-live-landscape.png`. |
+| Phone dialog sheets used an open-bottom border and square lower corners flush with the viewport | Every in-page sheet now has a complete one-pixel frame, four 16 dp rounded corners, and an 8 dp side/bottom inset. The scope sheet changed from visually open at the lower screen edge to `[480,197][2225,1198]` in landscape and `[22,882][1198,2555]` in portrait. Evidence `12-corrected-popup-landscape.png` and `13-corrected-popup-portrait.png`. |
+| Enlarged text is the highest-risk version of both defects | At Android font scale 1.3, the portrait scope sheet remained completely framed at `[22,367][1198,2554]`; both choices and the pinned Cancel/Start action row were reachable. Evidence `15-large-text-popup-portrait.png`. |
+
+The notice and sheet fixes have headless contracts for all four border edges;
+the sheet contract additionally requires rounded lower corners and positive
+left, right and bottom insets.
+
+### 14.3 Responsive and functional results
+
+| Scenario | Result |
+|---|---|
+| Clean install / launch | **Pass.** The prior 2.0.5-dev app was uninstalled. Release 2.0.6 reported version code 20006, target SDK 36, no `DEBUGGABLE` flag, remained alive, and emitted no fatal or unhandled exception. |
+| Home at 100% and 130% text | **Pass.** Header actions, 3 × 2 severity legend, 2 + 1 hero actions, version and session card remained separate and readable in portrait and landscape. Evidence `11-corrected-clean-landscape.png` and `14-large-text-home-portrait.png`. |
+| Scope chooser and rotation | **Pass.** The open sheet recomposed between landscape and portrait without losing state; its body scrolled independently above a pinned, reachable footer. |
+| Reported Time / Copy / Entry strip | **Pass.** At 130% text in the compact landscape pane, Time was `[1204,545][1519,680]`, Copy `[1536,545][1998,680]`, and Entry `[2014,545][2475,680]`. All were 48 dp high, separate, and inside the pane; selecting a row enabled both actions. Evidence `17-large-text-live-landscape.png`. |
+| Own-app capture | **Pass.** Entries arrived and timeline/counters updated; Follow toggled; selecting, row Copy, Entry, inspector Copy message, and Stop all worked, with Motorola clipboard feedback and VisualCat confirmation. The stopped session retained 11 entries. |
+| Entry inspector | **Pass.** The selected message, Copy message, source-context disclosure and internal scrollbar stayed inside the inspector card in short landscape. Evidence `08-entry-inspector.png` and `09-inspector-copy.png`. |
+| Wireless setup UI | **Pass.** The nested setup sheet, pairing-port/code fields, privacy explanation and footer were fully visible. Empty submission focused the numeric port field; after keyboard dismissal the inline `1 to 65535` validation and both footer buttons were reachable. Evidence `21-wireless-setup-portrait.png` through `23-wireless-validation-visible.png`. |
+| Warning behavior | **Pass.** Portrait shows the longer scroll viewport; short landscape uses the compact lane. Both retain the complete message and a full-size Dismiss target without covering the action strip or list. |
+
+### 14.4 Limits, package gate and hand-back
+
+Real pairing/full-device capture was not repeated on the Motorola because the
+same product transport, pairing identity lifecycle, reconnect and process-death
+paths are exercised in §12. This pass does not claim TalkBack, locale, multi-hour
+soak, network roaming or production-key signing on this OEM device.
+
+The packaging verifier accepted the APK's structure, manifest and signing, then
+correctly rejected the local debug certificate SHA-256
+`848F98961FA6784F651331B2312C97D47A5D0861B492243BFE4062F58B8B92A9`
+against the configured Google Play upload certificate. This expected release
+gate is not a functional package failure.
+
+At hand-back, font scale is 1.0, automatic rotation is restored with portrait
+user rotation, Wireless debugging remains off, temporary device-side XML files
+are removed, and the final Release APK is installed cleanly and opened on the
+home screen. The test capture/session data and prior installation are removed.

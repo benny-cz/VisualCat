@@ -532,6 +532,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var sessionOpen = _tabs.Items.Count > 0;
         var compositionChanged = _mobileCompactHeight != compactHeight;
         _mobileCompactHeight = compactHeight;
+        ApplyNoticeLayout(compactHeight);
         // Once a session is open its tab title is the identity that matters. Removing the
         // decorative brand row recovers a full touch row in portrait without hiding any
         // command; the empty/home state still carries the complete VisualCat masthead.
@@ -625,36 +626,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
     private StackPanel BuildEmptyState(bool dark)
     {
-        var levelLegend = new WrapPanel
-        {
-            ItemSpacing = 8,
-            LineSpacing = 8,
-            HorizontalAlignment = HorizontalAlignment.Center,
-        };
-        foreach (var level in VisualCat.Domain.Entries.LogLevels.DisplayOrder)
-        {
-            if (level == VisualCat.Domain.Entries.LogLevel.Unknown)
-            {
-                continue;
-            }
-
-            var parsed = VisualCat.App.Timeline.LevelPalette.ColorOf(level);
-            levelLegend.Children.Add(new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(36, parsed.R, parsed.G, parsed.B)),
-                BorderBrush = new SolidColorBrush(parsed),
-                BorderThickness = new Thickness(0, 0, 0, 2),
-                CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(9, 5),
-                Child = new TextBlock
-                {
-                    Text = level.ToString().ToUpperInvariant(),
-                    FontSize = TextScale.Of(9),
-                    FontWeight = FontWeight.Bold,
-                    Foreground = new SolidColorBrush(parsed),
-                },
-            });
-        }
+        var mobile = OperatingSystem.IsAndroid();
+        var levelLegend = BuildSeverityLegend(dark, mobile);
 
         return new StackPanel
         {
@@ -682,7 +655,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextMuted(dark)),
                 },
                 levelLegend,
-                BuildHeroActions(dark),
+                BuildHeroActions(dark, mobile),
                 BuildRecentSection(dark),
                 new TextBlock
                 {
@@ -694,6 +667,67 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 },
             },
         };
+    }
+
+    /// <summary>
+    /// Keeps the six-level legend balanced on phone-width layouts. A free-form wrap can fit
+    /// six chips at 440 dpi but only five at 480 dpi, leaving a single orphaned chip on common
+    /// Samsung displays. Two intentional rows of three are stable across phone densities,
+    /// text scaling, portrait, and landscape; desktop keeps the compact single-row wrap.
+    /// </summary>
+    internal static Panel BuildSeverityLegend(bool dark, bool mobile)
+    {
+        Panel levelLegend = mobile
+            ? new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto"),
+                RowDefinitions = new RowDefinitions("Auto,Auto"),
+                ColumnSpacing = 8,
+                RowSpacing = 8,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            }
+            : new WrapPanel
+            {
+                ItemSpacing = 8,
+                LineSpacing = 8,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+
+        var legendIndex = 0;
+        foreach (var level in VisualCat.Domain.Entries.LogLevels.DisplayOrder)
+        {
+            if (level == VisualCat.Domain.Entries.LogLevel.Unknown)
+            {
+                continue;
+            }
+
+            var parsed = VisualCat.App.Timeline.LevelPalette.ColorOf(level);
+            var chip = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(36, parsed.R, parsed.G, parsed.B)),
+                BorderBrush = new SolidColorBrush(parsed),
+                BorderThickness = new Thickness(0, 0, 0, 2),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(9, 5),
+                Child = new TextBlock
+                {
+                    Text = level.ToString().ToUpperInvariant(),
+                    FontSize = TextScale.Of(9),
+                    FontWeight = FontWeight.Bold,
+                    Foreground = new SolidColorBrush(parsed),
+                },
+            };
+            levelLegend.Children.Add(chip);
+            if (levelLegend is Grid mobileLegend)
+            {
+                Grid.SetColumn(chip, legendIndex % 3);
+                Grid.SetRow(chip, legendIndex / 3);
+            }
+
+            legendIndex++;
+        }
+
+        return levelLegend;
     }
 
     /// <summary>
@@ -861,22 +895,15 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// real, keyboard-focusable control wired to the same handler as its toolbar button, so
     /// the affordance the styling promises is honoured instead of being a dead caption.
     /// </summary>
-    private WrapPanel BuildHeroActions(bool dark)
+    internal Control BuildHeroActions(bool dark, bool mobile)
     {
-        var row = new WrapPanel
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            ItemSpacing = 8,
-            LineSpacing = 4,
-        };
-
         var links = new List<(string Label, Func<Task> Action, string Tip)>();
-        if (OperatingSystem.IsAndroid())
+        if (mobile)
         {
             links.Add(("OPEN LOG", OpenLogAsync, "Open a saved logcat file"));
             if (PlatformSourceRegistry.CreateOnDeviceSource is not null)
             {
-                links.Add(("ON-DEVICE LIVE", StartOnDeviceAsync, "Capture this device's log live"));
+                links.Add(("ON-DEVICE LIVE", StartOnDeviceWithAccessSetupAsync, "Capture this device's log live"));
             }
 
             // SHARE used to sit here and do nothing at all: by definition there is never a
@@ -891,21 +918,72 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             links.Add(("REOPEN SESSION", OpenRecentAsync, "Reopen a recent session"));
         }
 
-        for (var index = 0; index < links.Count; index++)
+        if (mobile)
         {
-            if (index > 0)
+            var grid = new Grid
             {
-                row.Children.Add(new TextBlock
+                ColumnDefinitions = new ColumnDefinitions("Auto,Auto"),
+                RowDefinitions = new RowDefinitions("Auto,Auto"),
+                ColumnSpacing = 8,
+                RowSpacing = 4,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+
+            for (var index = 0; index < links.Count; index++)
+            {
+                var button = HeroLink(links[index].Label, links[index].Action, links[index].Tip, dark);
+                button.HorizontalAlignment = HorizontalAlignment.Center;
+                if (index < 2)
                 {
-                    Text = "·",
-                    FontSize = TextScale.Of(11),
-                    FontWeight = FontWeight.Bold,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextMuted(dark)),
-                });
+                    Grid.SetColumn(button, index);
+                }
+                else
+                {
+                    Grid.SetRow(button, 1);
+                    Grid.SetColumnSpan(button, 2);
+                }
+
+                grid.Children.Add(button);
             }
 
-            row.Children.Add(HeroLink(links[index].Label, links[index].Action, links[index].Tip, dark));
+            return grid;
+        }
+
+        var row = new WrapPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            ItemSpacing = 8,
+            LineSpacing = 4,
+        };
+
+        for (var index = 0; index < links.Count; index++)
+        {
+            var button = HeroLink(links[index].Label, links[index].Action, links[index].Tip, dark);
+            if (index == 0)
+            {
+                row.Children.Add(button);
+                continue;
+            }
+
+            // Keep each decorative separator with the action it introduces so a narrow desktop
+            // window can never leave a bullet stranded at the end of the previous wrap line.
+            row.Children.Add(new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "·",
+                        FontSize = TextScale.Of(11),
+                        FontWeight = FontWeight.Bold,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextMuted(dark)),
+                    },
+                    button,
+                },
+            });
         }
 
         return row;
@@ -1015,7 +1093,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         {
             if (PlatformSourceRegistry.CreateOnDeviceSource is not null)
             {
-                _liveButton = Primary("●  Live", StartOnDeviceAsync);
+                _liveButton = Primary("●  Live", StartOnDeviceWithAccessSetupAsync);
                 UpdateLiveCaptureIndicator();
             }
 
@@ -1583,32 +1661,61 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// dialog, whose only affirmative is "Allow one-time access" — a serious-sounding question
     /// with no context, arriving before the app had said anything about what it wanted the log
     /// for or where the data goes. The app's own framing lands better before that dialog than
-    /// after it (finding 27). It is shown once and remembered, because the system prompt
-    /// reappears on every capture and this must not become a second thing to dismiss.
+    /// after it (finding 27). It is shown once and remembered so VisualCat does not add a
+    /// repeated disclosure on top of Android's own direct-capture consent or Wireless setup.
     /// </remarks>
-    private async Task<bool> ConfirmLiveCaptureAsync()
+    private async Task<bool> ConfirmLiveCaptureAsync(
+        bool? fullDeviceOverride = null,
+        bool usesWirelessAdb = false,
+        bool accessContextAlreadyShown = false)
     {
         if (!OperatingSystem.IsAndroid())
         {
             return true;
         }
 
-        var fullDevice = PlatformSourceRegistry.HasFullDeviceLogPermission?.Invoke() ?? true;
+        // The Android scope chooser already explains what Live reads, how Wireless debugging is
+        // used, and that nothing is uploaded. Repeating the legacy one-time disclosure immediately
+        // after that chooser/setup creates warning fatigue and makes a successful setup look as if
+        // another permission decision is still pending. Record the same acknowledgement and start.
+        if (accessContextAlreadyShown)
+        {
+            if (!_settings.LiveCaptureNoticeAcknowledged)
+            {
+                _settings = _settings with { LiveCaptureNoticeAcknowledged = true };
+                if (_settingsLoaded)
+                {
+                    await RunAsync(() => SaveSettingsAsync());
+                }
+            }
+
+            return true;
+        }
+
+        var fullDevice = fullDeviceOverride ??
+            (PlatformSourceRegistry.HasFullDeviceLogPermission?.Invoke() ?? true);
         if (_settings.LiveCaptureNoticeAcknowledged)
         {
-            // The full explanation is shown once and remembered, because Android's own prompt
-            // arrives on every capture and this must not become a second thing to dismiss.
-            // But the prompt really does arrive every time, and a reader who has met it once
-            // and forgotten still deserves a second of warning before a system dialog covers
-            // the screen (audit 2, C1). The lane is not a dialog: it says so and gets out of
-            // the way.
+            // The full explanation is shown once and remembered. On Android 13+ the platform
+            // can still place its own per-use log-access consent in front of a direct READ_LOGS
+            // capture, so a reader who has met it before deserves a short warning. Android 12
+            // has no equivalent per-use sheet, and the Wireless ADB path has its own explicit
+            // pairing/connection disclosure instead.
             //
             // Unless no prompt is coming, in which case saying one is coming is simply false
             // (finding F-13): without READ_LOGS the capture is own-app-only and Android has
             // nothing to ask.
-            if (fullDevice)
+            if (usesWirelessAdb)
             {
-                ShowNotice("Android will ask you to allow log access. It asks on every capture.");
+                ShowNotice(
+                    "Full-device capture uses Wireless debugging. Keep it on until you stop Live. VisualCat closes its connection afterward, but Android leaves Wireless debugging enabled until you turn it off.");
+            }
+            else if (fullDevice)
+            {
+                ShowNotice(
+                    OperatingSystem.IsAndroidVersionAtLeast(33)
+                        ? "Android may ask you for device-log access when this direct capture starts."
+                        : "Full-device log access is already configured; this capture can start directly.");
             }
             else
             {
@@ -1622,12 +1729,12 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         var confirmed = await ShowDialogAsync(new ConfirmationDialog(
-            "About to capture this device's log",
+            "Before Live starts",
             "VisualCat reads the Android log and stores it in this app's private storage. " +
             "Nothing is uploaded and there is no telemetry; a session leaves the device only " +
             "when you share or export it yourself.\n\n" +
-            LogAccessExplanation(fullDevice),
-            "Continue"));
+            LogAccessExplanation(fullDevice, usesWirelessAdb),
+            "Start Live"));
         if (confirmed != true)
         {
             return false;
@@ -1666,15 +1773,34 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// (finding F-13). The two states have nothing in common, so they get two sentences rather
     /// than one hedged one.
     /// </remarks>
-    private static string LogAccessExplanation(bool fullDevice) =>
-        fullDevice
-            ? "Android will now ask you to allow access to device logs. It asks every time, " +
-              "because the permission it grants is one-time."
-            : "This capture will contain only VisualCat's own log lines, so an idle app produces " +
-              "almost nothing. Android will not ask you for anything: the permission a " +
-              "full-device capture needs is not one an app can request. Granting it takes one " +
-              "command over adb, and it has to be repeated after every reinstall:\n\n" +
-              (PlatformSourceRegistry.FullDeviceLogGrantCommand ?? string.Empty);
+    private static string LogAccessExplanation(bool fullDevice, bool usesWirelessAdb = false) =>
+        usesWirelessAdb
+            ? "This full-device capture uses Android Wireless debugging. VisualCat opens only a " +
+              "local authenticated log stream and does not change app permissions. It closes its " +
+              "connection when capture stops, but Android leaves Wireless debugging enabled until " +
+              "you turn it off in Settings."
+            : fullDevice
+            ? OperatingSystem.IsAndroidVersionAtLeast(33)
+                ? "Android may now ask you to allow access to device logs. This is a separate " +
+                  "per-use system consent for a direct READ_LOGS capture and can reappear later."
+                : "Full-device READ_LOGS access is already configured on this Android version, " +
+                  "so capture can start without an additional system log-access sheet."
+            : RestrictedLogAccessExplanation();
+
+    private static string RestrictedLogAccessExplanation()
+    {
+        const string explanation =
+            "This capture will contain only VisualCat's own log lines, so an idle app produces " +
+            "almost nothing. Android will not ask you for anything: the permission a direct " +
+            "full-device capture needs is not one an app can request. Stop this capture and tap " +
+            "Live again to use the recommended Wireless debugging path.";
+
+        return PlatformSourceRegistry.FullDeviceLogGrantCommand is { Length: > 0 } command
+            ? explanation +
+              " Advanced developer fallback for this build: grant READ_LOGS from a computer " +
+              "with adb; repeat after reinstall:\n\n" + command
+            : explanation;
+    }
 
     /// <summary>
     /// Puts a restricted-scope message in the lane, with the exact grant command and a way to
@@ -1711,10 +1837,18 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         ShowNotice("Grant command copied. Run it from a computer with adb.", NoticeKind.Completion);
     }
 
-    private async Task StartOnDeviceAsync()
+    private async Task StartOnDeviceAsync(
+        ILogSource? preparedSource = null,
+        bool usesWirelessAdb = false,
+        bool accessContextAlreadyShown = false)
     {
         if (_viewModel.ActiveLiveCapture is { } running)
         {
+            if (preparedSource is not null)
+            {
+                await preparedSource.DisposeAsync();
+            }
+
             _viewModel.Selected = running;
             ShowNotice(
                 $"{running.Title} is already capturing this device's log. " +
@@ -1722,12 +1856,20 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        if (!await ConfirmLiveCaptureAsync())
+        if (!await ConfirmLiveCaptureAsync(
+                preparedSource is null ? null : true,
+                usesWirelessAdb,
+                accessContextAlreadyShown))
         {
+            if (preparedSource is not null)
+            {
+                await preparedSource.DisposeAsync();
+            }
+
             return;
         }
 
-        var source = PlatformSourceRegistry.CreateOnDeviceSource?.Invoke();
+        var source = preparedSource ?? PlatformSourceRegistry.CreateOnDeviceSource?.Invoke();
         if (source is null)
         {
             ShowNotice("On-device log access is unavailable.", NoticeKind.Failure);
@@ -1780,13 +1922,26 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             };
         }
 
-        await RunAsync(async () =>
+        try
         {
-            await using (source)
+            await RunAsync(async () =>
             {
-                return await _viewModel.CaptureAsync(source, null);
+                await using (source)
+                {
+                    return await _viewModel.CaptureAsync(source, null);
+                }
+            });
+        }
+        finally
+        {
+            if (usesWirelessAdb && _noticeKind != NoticeKind.Failure)
+            {
+                ShowNotice(
+                    "VisualCat closed its Wireless debugging connection and discarded the decrypted key. Android still leaves Wireless debugging enabled; turn it off when you are finished.",
+                    NoticeKind.Completion,
+                    new NoticeAction("Open settings", OpenWirelessDebuggingSettingsFromNoticeAsync));
             }
-        });
+        }
     }
 
     private async Task SharePortableAsync()

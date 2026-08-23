@@ -404,12 +404,21 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             tab.CaptureScopeRemedy = report.Remedy;
         }
 
+        void OnConnectionStatusChanged(SourceConnectionStatus? status) =>
+            Dispatcher.UIThread.Post(() =>
+                tab.ReportCaptureConnectionStatus(status?.Summary, status?.Detail));
+
         // A source that only learns its own reach by exercising it says so when it knows.
         // Until then the status line carries the neutral name the source chose, rather than
         // promising a device-wide capture that may already have been declined.
         if (source is ISourceScopeReporter reporter)
         {
             reporter.ScopeResolved += OnScopeResolved;
+        }
+
+        if (source is ISourceConnectionStatusReporter connectionReporter)
+        {
+            connectionReporter.ConnectionStatusChanged += OnConnectionStatusChanged;
         }
 
 
@@ -569,6 +578,10 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             if (source is ISourceScopeReporter finished)
             {
                 finished.ScopeResolved -= OnScopeResolved;
+            }
+            if (source is ISourceConnectionStatusReporter finishedConnectionReporter)
+            {
+                finishedConnectionReporter.ConnectionStatusChanged -= OnConnectionStatusChanged;
             }
 
             if (acquired)

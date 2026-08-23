@@ -81,6 +81,14 @@ release. The four-hour ADB soak, accessibility review, macOS hardware testing,
 and desktop signing/notarization remain separate manual work rather than claims
 made by `v2.0.0`.
 
+> **Historical Android note:** this first-release evidence predates the
+> Play-oriented Wireless ADB transport. The `READ_LOGS` observations above remain
+> valid evidence for v2.0.0 and must not be rewritten, but they do not validate
+> current full-device capture. A candidate containing Wireless ADB requires the
+> current gates in `docs/RELEASE-CHECKLIST.md`. The newer pairing, reconnect and
+> full-device record is maintained separately in §§12–14 of
+> `docs/ANDROID-LIVE-TEST-REPORT.md`.
+
 ---
 
 ## 1. What the first release must produce

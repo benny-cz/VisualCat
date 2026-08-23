@@ -5,6 +5,7 @@ using Android.Runtime;
 using AndroidX.Core.Content;
 using Avalonia.Android;
 using VisualCat.App.Platform;
+using VisualCat.Application.Ports;
 
 namespace VisualCat.Android;
 
@@ -46,6 +47,7 @@ public sealed class MainActivity : AvaloniaMainActivity
 {
     private static WeakReference<MainActivity>? s_current;
     private readonly HashSet<string> _consumedUris = new(StringComparer.Ordinal);
+    private WirelessAdbService? _wirelessAdbService;
 
     protected override void OnCreate(global::Android.OS.Bundle? savedInstanceState)
     {
@@ -62,12 +64,32 @@ public sealed class MainActivity : AvaloniaMainActivity
         // effect against a running process (revoking one killed the app during the live test),
         // and the pre-capture explanation has to describe the state the next capture will
         // actually have (finding F-13).
+#if VISUALCAT_READ_LOGS
         PlatformSourceRegistry.HasFullDeviceLogPermission = static () =>
             global::Android.App.Application.Context.CheckSelfPermission(
                 global::Android.Manifest.Permission.ReadLogs) == Permission.Granted;
         var packageName = global::Android.App.Application.Context.PackageName;
         PlatformSourceRegistry.FullDeviceLogGrantCommand =
             $"adb shell pm grant {packageName} android.permission.READ_LOGS";
+#else
+        PlatformSourceRegistry.HasFullDeviceLogPermission = static () => false;
+        PlatformSourceRegistry.FullDeviceLogGrantCommand = null;
+#endif
+
+        // A Play app cannot request READ_LOGS through Android's runtime-permission API. The
+        // guided full-device path therefore leaves the permission model untouched and streams
+        // the fixed logcat command through a user-authorised local Wireless debugging session.
+        // The callbacks are deliberately installed without constructing the ADB stack: a
+        // crypto/provider or binding problem must never make ordinary VisualCat startup fail.
+        PlatformSourceRegistry.HasSavedWirelessAdbIdentity = HasSavedWirelessAdbIdentityCurrent;
+        PlatformSourceRegistry.PairWirelessAdbAsync = PairWirelessAdbCurrentAsync;
+        PlatformSourceRegistry.ConnectSavedWirelessAdbAsync = ConnectSavedWirelessAdbCurrentAsync;
+        PlatformSourceRegistry.CreateWirelessAdbSource = CreateWirelessAdbSourceCurrent;
+        PlatformSourceRegistry.OpenDeveloperOptionsAsync = OpenDeveloperOptionsCurrentAsync;
+        global::Android.Util.Log.Info(
+            "VisualCat.WirelessAdb",
+            "Registered guided Wireless debugging full-device transport. ADB remains disconnected until the user explicitly starts setup.");
+
         PlatformSourceRegistry.ShareFileAsync = ShareCurrentAsync;
         PlatformSourceRegistry.ConsumeLaunchFilesAsync = ConsumeCurrentLaunchFilesAsync;
         PlatformSourceRegistry.SetGestureExclusions = ApplyGestureExclusions;
@@ -128,11 +150,174 @@ public sealed class MainActivity : AvaloniaMainActivity
             PlatformSourceRegistry.CreateOnDeviceSource = null;
             PlatformSourceRegistry.HasFullDeviceLogPermission = null;
             PlatformSourceRegistry.FullDeviceLogGrantCommand = null;
+            PlatformSourceRegistry.HasSavedWirelessAdbIdentity = null;
+            PlatformSourceRegistry.PairWirelessAdbAsync = null;
+            PlatformSourceRegistry.ConnectSavedWirelessAdbAsync = null;
+            PlatformSourceRegistry.CreateWirelessAdbSource = null;
+            PlatformSourceRegistry.OpenDeveloperOptionsAsync = null;
             PlatformSourceRegistry.ConsumeLaunchFilesAsync = null;
             PlatformSourceRegistry.SetGestureExclusions = null;
+            _wirelessAdbService?.Dispose();
+            _wirelessAdbService = null;
         }
 
         base.OnDestroy();
+    }
+
+    private static bool HasSavedWirelessAdbIdentityCurrent()
+    {
+        try
+        {
+            return WirelessAdbService.HasSavedIdentity(global::Android.App.Application.Context);
+        }
+        catch (Exception exception)
+        {
+            global::Android.Util.Log.Error(
+                "VisualCat.WirelessAdb",
+                $"Could not inspect saved Wireless ADB pairing state: {exception.GetType().FullName}: {exception.Message}\n{exception}");
+            return false;
+        }
+    }
+
+    private static Task<WirelessAdbConnectionResult> PairWirelessAdbCurrentAsync(
+        WirelessAdbPairingRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (s_current?.TryGetTarget(out var activity) != true || activity is null)
+        {
+            global::Android.Util.Log.Warn(
+                "VisualCat.WirelessAdb",
+                "Wireless ADB pairing was requested while the Android activity was unavailable.");
+            return Task.FromResult(new WirelessAdbConnectionResult(
+                Connected: false,
+                PairingSucceeded: false,
+                "VisualCat is not in the foreground. Return to the app and try setup again."));
+        }
+
+        try
+        {
+            return activity.GetWirelessAdbService().PairAndConnectAsync(request, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            global::Android.Util.Log.Error(
+                "VisualCat.WirelessAdb",
+                $"Could not initialise Wireless ADB pairing: {exception.GetType().FullName}: {exception.Message}\n{exception}");
+            return Task.FromResult(new WirelessAdbConnectionResult(
+                Connected: false,
+                PairingSucceeded: false,
+                "Wireless debugging setup could not be initialised on this device. You can still capture VisualCat-only logs. Developer builds that explicitly declare READ_LOGS can also use the separate host-ADB workflow documented in Support."));
+        }
+    }
+
+    private static Task<WirelessAdbConnectionResult> ConnectSavedWirelessAdbCurrentAsync(
+        CancellationToken cancellationToken)
+    {
+        if (s_current?.TryGetTarget(out var activity) != true || activity is null)
+        {
+            global::Android.Util.Log.Warn(
+                "VisualCat.WirelessAdb",
+                "Saved-pairing reconnect was requested while the Android activity was unavailable.");
+            return Task.FromResult(new WirelessAdbConnectionResult(
+                Connected: false,
+                PairingSucceeded: false,
+                "VisualCat is not in the foreground. Return to the app and try setup again."));
+        }
+
+        try
+        {
+            return activity.GetWirelessAdbService().ConnectSavedAsync(cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            global::Android.Util.Log.Error(
+                "VisualCat.WirelessAdb",
+                $"Could not initialise saved Wireless ADB connection: {exception.GetType().FullName}: {exception.Message}\n{exception}");
+            return Task.FromResult(new WirelessAdbConnectionResult(
+                Connected: false,
+                PairingSucceeded: false,
+                "The saved Wireless debugging pairing could not be opened. Turn Wireless debugging on, then pair VisualCat again if reconnect still fails."));
+        }
+    }
+
+    private static ILogSource? CreateWirelessAdbSourceCurrent()
+    {
+        if (s_current?.TryGetTarget(out var activity) != true || activity is null)
+        {
+            global::Android.Util.Log.Warn(
+                "VisualCat.WirelessAdb",
+                "Wireless ADB source creation was requested while the Android activity was unavailable.");
+            return null;
+        }
+
+        try
+        {
+            return activity._wirelessAdbService?.CreateLogSource();
+        }
+        catch (Exception exception)
+        {
+            global::Android.Util.Log.Error(
+                "VisualCat.WirelessAdb",
+                $"Could not create Wireless ADB log source: {exception.GetType().FullName}: {exception.Message}\n{exception}");
+            return null;
+        }
+    }
+
+    private WirelessAdbService GetWirelessAdbService()
+    {
+        if (_wirelessAdbService is not null)
+        {
+            return _wirelessAdbService;
+        }
+
+        global::Android.Util.Log.Info(
+            "VisualCat.WirelessAdb",
+            "Creating the Wireless ADB full-device capture service after explicit user action.");
+        _wirelessAdbService = new WirelessAdbService(
+            global::Android.App.Application.Context);
+        return _wirelessAdbService;
+    }
+
+    private static Task<bool> OpenDeveloperOptionsCurrentAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (s_current?.TryGetTarget(out var activity) != true || activity is null)
+        {
+            throw new InvalidOperationException("The Android activity is not available to open Developer options.");
+        }
+
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        activity.RunOnUiThread(() =>
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                global::Android.Util.Log.Info(
+                    "VisualCat.WirelessAdb",
+                    "Opening Android Developer options for explicit Wireless debugging setup.");
+                try
+                {
+                    activity.StartActivity(new Intent(global::Android.Provider.Settings.ActionApplicationDevelopmentSettings));
+                }
+                catch (ActivityNotFoundException)
+                {
+                    global::Android.Util.Log.Warn(
+                        "VisualCat.WirelessAdb",
+                        "This Android build has no direct Developer options activity; opening general Settings instead.");
+                    activity.StartActivity(new Intent(global::Android.Provider.Settings.ActionSettings));
+                }
+
+                completion.TrySetResult(true);
+            }
+            catch (Exception exception)
+            {
+                global::Android.Util.Log.Error(
+                    "VisualCat.WirelessAdb",
+                    $"Could not open Android settings: {exception.GetType().FullName}: {exception.Message}\n{exception}");
+                completion.TrySetException(exception);
+            }
+        });
+        return completion.Task;
     }
 
     private static Task ShareCurrentAsync(string path, CancellationToken cancellationToken)

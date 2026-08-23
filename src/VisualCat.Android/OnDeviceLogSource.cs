@@ -49,16 +49,25 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
     private const int ScopeFullDevice = 2;
 
     private const string DeclinedRemedy =
-        "Android asks for permission to read the device log on every capture, and this one was " +
-        "not allowed, so the capture can only see VisualCat's own log lines. Tap Live again and " +
-        "choose the option that allows access.";
+        "Android did not allow this direct READ_LOGS capture to read the whole device log, so " +
+        "the capture can only see VisualCat's own log lines. Tap Live again and use the " +
+        "recommended Wireless debugging full-device path.";
 
+#if VISUALCAT_READ_LOGS
     private const string NotGrantedRemedy =
         "This capture can only see this app's own log lines, so an idle app produces " +
         "almost nothing. Android cannot prompt for wider access — READ_LOGS is not a " +
-        "runtime permission — so full-device capture has to be granted over adb, and " +
-        "again after every uninstall or reinstall:\n" +
+        "runtime permission. Stop this capture, tap Live again, and choose full-device " +
+        "access to use Android Wireless debugging. As an advanced developer fallback, " +
+        "READ_LOGS can still be granted from a computer with adb; repeat that after reinstall:\n" +
         "adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS";
+#else
+    private const string NotGrantedRemedy =
+        "This capture can only see this app's own log lines, so an idle app produces " +
+        "almost nothing. This Release build intentionally does not declare Android's privileged " +
+        "READ_LOGS permission. Stop this capture, tap Live again, and choose full-device access " +
+        "to use the recommended Wireless debugging path.";
+#endif
 
     private readonly CancellationTokenSource _stop = new();
     private readonly bool _permissionHeld;
@@ -76,8 +85,9 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
         _permissionHeld = context.CheckSelfPermission(global::Android.Manifest.Permission.ReadLogs) == Permission.Granted;
 
         // Deliberately not "full-device" yet. Holding READ_LOGS is a necessary condition and
-        // not a sufficient one: the platform still asks the reader on every capture, and a
-        // declined capture is granted, running, and restricted all at once. The name says
+        // not a sufficient one: on Android 13+ the platform can still require separate per-use
+        // log access consent, and a declined capture is granted, running, and restricted all
+        // at once. The name says
         // what is certain until the stream says more (audit 2, C1).
         Metadata = new SourceMetadata(
             SourceKind.Android,

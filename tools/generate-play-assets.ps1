@@ -402,7 +402,7 @@ $screenshots = @(
     }
     @{ Source = 'phone-08-live.png'; Slug = 'live'
         Headline = 'Capture this device live'
-        Subhead = 'Own-app by default. Device-wide with an ADB permission grant.'
+        Subhead = 'Own-app immediately. Full-device through Android Wireless debugging.'
     }
     @{ Source = 'phone-01-start.png'; Slug = 'start'
         Headline = 'Open a capture, or start one'
