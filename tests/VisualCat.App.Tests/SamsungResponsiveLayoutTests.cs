@@ -61,6 +61,18 @@ public sealed class SamsungResponsiveLayoutTests
     }
 
     [AvaloniaFact]
+    public async Task HomeHeroHeadingCanWrapInsteadOfClippingAtLargeText()
+    {
+        await using var view = new MainView();
+        var heading = view.GetLogicalDescendants()
+            .OfType<TextBlock>()
+            .Single(static block => block.Text == "SEE THE SHAPE OF YOUR LOG");
+
+        Assert.Equal(Avalonia.Media.TextWrapping.Wrap, heading.TextWrapping);
+        Assert.Equal(Avalonia.Media.TextAlignment.Center, heading.TextAlignment);
+    }
+
+    [AvaloniaFact]
     public async Task CompactHeightNoticePreservesWorkspaceHeightWithoutLosingItsMessage()
     {
         await using var view = new MainView();

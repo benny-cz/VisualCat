@@ -5324,3 +5324,64 @@ At hand-back, font scale is 1.0, automatic rotation is restored with portrait
 user rotation, Wireless debugging remains off, temporary device-side XML files
 are removed, and the final Release APK is installed cleanly and opened on the
 home screen. The test capture/session data and prior installation are removed.
+
+---
+
+## 15. Pixel 5 post-commit UI and functional recheck
+
+### 15.1 Run header and scope
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-23 |
+| Repository commit / tree | `97099da`; working-tree remediation under review |
+| Device | Google Pixel 5 (`redfin`), Android 14 / API 34, `arm64-v8a` |
+| Serial | `0A031FDD400365` |
+| Display | 1080 × 2340, density 440 (approximately 393 × 851 dp in portrait) |
+| Final test package | Optimized, non-debuggable Release 2.0.6 APK, locally debug-signed, 33,658,932 bytes, SHA-256 `8295D414D11F34DF9C48041A0C89691415AB58320C425ABD67E715DCED69BBAB` |
+| Install state | Existing Release 2.0.6 and its saved pairing identity were removed before the pass; the corrected package was installed again from a clean state for hand-back |
+| Scope | Regression of commit `97099da` at 100% and 130% Android text: home, scope/setup sheets, warning frame, Time/Copy/Entry, own-app capture, inspector, clipboard, rotation, invalid pairing UI and process logs |
+
+This returns to the API-34 Pixel that owns the real Wireless ADB transport
+evidence in §12. Because the required clean uninstall removed that encrypted
+pairing identity and Wireless debugging was off, the pass did not manufacture a
+second pairing harness. It rechecked the product UI and own-app transport while
+retaining §12 as the pairing/reconnect oracle.
+
+### 15.2 Regressions from the preceding commit
+
+| Finding | Remediation and Pixel proof |
+|---|---|
+| At 130% Android text, the home headline's accessibility node still contained `SEE THE SHAPE OF YOUR LOG`, but the visible single line ended after `YOUR L` | The headline now wraps and remains center-aligned. Its rendered height changed from 93 px (`[66,921][1014,1014]`) to 185 px (`[77,874][1003,1059]`), showing the complete final word on a second centered line. Evidence `22-large-text-home-observed.png` and `23-fixed-large-text-home.png`. |
+| Empty Wireless-ADB submission focused the port, but the only validation line was after the entire form and appeared behind the pinned footer at 130% text | Port and code validations now live immediately after their corresponding editor, clear as the reader edits, use assertive accessibility announcements, and receive a post-layout bring-into-view request. The final port error was fully visible at `[102,1504][945,1597]` between the port and code controls rather than intersecting the footer beginning at y=2023. Evidence `17-large-text-wireless-validation.png` and `24-final-validation.png`. |
+
+Two headless contracts preserve these results: the home headline must wrap and
+center, while each field validation must be the editor's next sibling, appear on
+invalid submission, and clear on edit.
+
+### 15.3 Regression and interaction results
+
+| Scenario | Result |
+|---|---|
+| Clean launch | **Pass.** The old package was uninstalled, the current Release installed cleanly, the process remained alive, and no fatal exception or ANR was logged. |
+| Complete popup frame | **Pass.** The scope sheet was fully bordered, rounded and inset above Pixel gesture navigation in portrait (`[22,570][1058,2252]`) and landscape (`[386,106][2091,992]`). Its body scrolled independently while Cancel and the primary action stayed pinned. |
+| Large-text sheets | **Pass after remediation.** At font scale 1.3, scope choices, setup guidance, port/code editors, adjacent validation and footer actions remained reachable. |
+| Own-app capture | **Pass.** Live received entries, timeline and counters updated, Follow toggled, and Stop retained the complete session. |
+| Time / Copy / Entry | **Pass.** In compact landscape Time was `[1108,534][1416,666]`, Copy `[1432,534][1828,666]`, and Entry `[1845,534][2242,666]`: separate, full 48 dp targets inside the analysis pane. Selecting a row enabled both actions. |
+| Clipboard and inspector | **Pass.** Row Copy invoked Pixel clipboard feedback; Entry opened the clipped/scroll-owned inspector; scrolling revealed Copy message and source context; Copy message produced `Copied 78 characters of this entry.` |
+| Compact warning | **Pass.** The complete lower border remained visible immediately above gesture navigation, long text scrolled internally, and Dismiss stayed a full touch target without covering the action strip. |
+| Rotation | **Pass.** The open scope sheet and active capture recomposed between portrait and landscape without process loss or state loss. |
+
+### 15.4 Package gate, limits and hand-back
+
+The packaging verifier accepted the APK structure, manifest and signature, then
+correctly stopped at the configured production-upload-certificate comparison:
+the local debug certificate is not the Google Play upload key. Real new pairing,
+saved reconnect, interruption recovery and full-device external-log ingestion
+remain covered by §12 rather than being claimed again here. TalkBack, multi-hour
+soak and network roaming were not repeated in this focused post-commit pass.
+
+At hand-back the test installation/data and device-side XML dumps are removed,
+font scale is restored to 1.0, automatic rotation and portrait user rotation are
+restored, Wireless debugging is off, and the final corrected Release package is
+installed cleanly and open on the home screen.

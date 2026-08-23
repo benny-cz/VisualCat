@@ -644,6 +644,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     FontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 22 : 28),
                     FontWeight = FontWeight.Bold,
                     TextAlignment = TextAlignment.Center,
+                    // Pixel 5 at 130% Android text needs two lines. Keeping the headline
+                    // unwrapped preserved its semantic text in accessibility but clipped the
+                    // visible ending after "YOUR L" on the phone.
+                    TextWrapping = TextWrapping.Wrap,
                     Foreground = new SolidColorBrush(VisualCat.App.Timeline.WorkspacePalette.TextPrimary(dark)),
                 },
                 new TextBlock

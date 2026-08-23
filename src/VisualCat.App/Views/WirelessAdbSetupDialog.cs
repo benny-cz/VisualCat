@@ -3,6 +3,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input.TextInput;
 using Avalonia.Layout;
+using Avalonia.Threading;
 using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
 
@@ -202,6 +203,9 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
         Opacity = 0.82,
     };
 
+    private readonly TextBlock _portValidation = BuildFieldValidation("Pairing port validation");
+    private readonly TextBlock _codeValidation = BuildFieldValidation("Pairing code validation");
+
     private readonly Button _openDeveloperOptions;
     private readonly Button _connectSavedPairing;
     private readonly Button _pairAndConnect;
@@ -239,6 +243,8 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
         AutomationProperties.SetHelpText(_port, "Enter only the digits after the colon shown by Android.");
         AutomationProperties.SetName(_code, "Wireless debugging pairing code");
         AutomationProperties.SetHelpText(_code, "Enter the six digits shown in Android's pairing-code panel.");
+        _port.TextChanged += (_, _) => ClearFieldValidation(_portValidation);
+        _code.TextChanged += (_, _) => ClearFieldValidation(_codeValidation);
 
         _openDeveloperOptions = new Button
         {
@@ -339,12 +345,14 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
                     FontWeight = Avalonia.Media.FontWeight.SemiBold,
                 },
                 _port,
+                _portValidation,
                 new TextBlock
                 {
                     Text = "Pairing code",
                     FontWeight = Avalonia.Media.FontWeight.SemiBold,
                 },
                 _code,
+                _codeValidation,
                 new TextBlock
                 {
                     Text = "The 6-digit pairing code is used only for this attempt and is not saved or written to logs. " +
@@ -412,6 +420,45 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
             new Thickness(16));
     }
 
+    /// <summary>
+    /// Keeps a field error beside the field it explains. A single form-level status after the
+    /// privacy note was scrolled behind the pinned footer on a Pixel 5 at 130% Android text,
+    /// leaving only the focused empty field visible after validation failed.
+    /// </summary>
+    private static TextBlock BuildFieldValidation(string accessibleName)
+    {
+        var validation = new TextBlock
+        {
+            IsVisible = false,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            FontSize = TextScale.Of(11),
+            FontWeight = Avalonia.Media.FontWeight.SemiBold,
+            Margin = new Thickness(0, -4, 0, 2),
+        };
+        AutomationProperties.SetName(validation, accessibleName);
+        AutomationProperties.SetLiveSetting(validation, AutomationLiveSetting.Assertive);
+        return validation;
+    }
+
+    private static void ClearFieldValidation(TextBlock validation)
+    {
+        validation.Text = string.Empty;
+        validation.IsVisible = false;
+    }
+
+    private void ShowFieldValidation(TextBlock validation, TextBox field, string message)
+    {
+        _status.Text = string.Empty;
+        validation.Text = message;
+        validation.IsVisible = true;
+        field.Focus();
+
+        // Focus asks Android to reveal the editor as its keyboard opens. Follow it with the
+        // adjacent explanation after layout so the error, not only the empty editor, stays in
+        // the visible part of the internally scrolling form.
+        Dispatcher.UIThread.Post(validation.BringIntoView, DispatcherPriority.Loaded);
+    }
+
     private async void AutomaticConnectOnAttach(object? sender, Avalonia.VisualTreeAttachmentEventArgs eventArgs)
     {
         if (!_connectSavedImmediately || _automaticConnectStarted)
@@ -475,18 +522,25 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
 
         if (!int.TryParse(_port.Text?.Trim(), out var port) || port is < 1 or > 65535)
         {
-            _status.Text = "Enter the pairing port shown by Android: a number from 1 to 65535.";
-            _port.Focus();
+            ShowFieldValidation(
+                _portValidation,
+                _port,
+                "Enter the pairing port shown by Android: a number from 1 to 65535.");
             return;
         }
 
         var code = _code.Text?.Trim() ?? string.Empty;
         if (code.Length != 6 || code.Any(static character => character is < '0' or > '9'))
         {
-            _status.Text = "Enter the 6-digit pairing code exactly as Android shows it.";
-            _code.Focus();
+            ShowFieldValidation(
+                _codeValidation,
+                _code,
+                "Enter the 6-digit pairing code exactly as Android shows it.");
             return;
         }
+
+        ClearFieldValidation(_portValidation);
+        ClearFieldValidation(_codeValidation);
 
         var request = new WirelessAdbPairingRequest(port, code);
         await RunConnectionAsync(

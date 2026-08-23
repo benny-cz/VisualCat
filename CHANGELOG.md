@@ -65,7 +65,12 @@ screenshot says which build it came from.
   the same row.
 - Phone home content now uses stable 3 × 2 severity and 2 + 1 action grids so
   OEM density and font differences cannot leave orphaned or partially visible
-  controls.
+  controls. Its hero headline also wraps at enlarged Android text instead of
+  retaining the full accessible name while visibly clipping its last word.
+- Wireless-debugging pairing errors now appear directly beneath the port or
+  code field they explain and scroll into view with that field. On narrow phones
+  at enlarged text, validation no longer lands after the whole form where the
+  pinned action footer can hide it.
 
 ### Security
 - The runtime Wireless ADB API exposes no general-purpose shell execution.

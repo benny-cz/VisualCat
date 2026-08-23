@@ -2,6 +2,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.LogicalTree;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using VisualCat.App.Platform;
 using VisualCat.App.Views;
 
@@ -123,6 +124,61 @@ public sealed class WirelessAdbSetupTests
             Assert.Contains(
                 dialog.GetLogicalDescendants().OfType<TextBlock>(),
                 static block => (block.Text ?? string.Empty).Contains("1 to 65535", StringComparison.Ordinal));
+        }
+        finally
+        {
+            PlatformSourceRegistry.HasSavedWirelessAdbIdentity = previousIdentity;
+            PlatformSourceRegistry.PairWirelessAdbAsync = previousPair;
+        }
+    }
+
+    [AvaloniaFact]
+    public void FieldValidationStaysBesideTheFieldAndClearsWhenEdited()
+    {
+        var previousIdentity = PlatformSourceRegistry.HasSavedWirelessAdbIdentity;
+        var previousPair = PlatformSourceRegistry.PairWirelessAdbAsync;
+        try
+        {
+            PlatformSourceRegistry.HasSavedWirelessAdbIdentity = static () => false;
+            PlatformSourceRegistry.PairWirelessAdbAsync = static (_, _) =>
+                Task.FromResult(new WirelessAdbConnectionResult(true, true, "Connected."));
+
+            using var dialog = new WirelessAdbSetupDialog();
+            var port = dialog.GetLogicalDescendants().OfType<TextBox>().Single(static input =>
+                AutomationProperties.GetName(input) == "Wireless debugging pairing port");
+            var code = dialog.GetLogicalDescendants().OfType<TextBox>().Single(static input =>
+                AutomationProperties.GetName(input) == "Wireless debugging pairing code");
+            var portValidation = dialog.GetLogicalDescendants().OfType<TextBlock>().Single(static block =>
+                AutomationProperties.GetName(block) == "Pairing port validation");
+            var codeValidation = dialog.GetLogicalDescendants().OfType<TextBlock>().Single(static block =>
+                AutomationProperties.GetName(block) == "Pairing code validation");
+            var submit = dialog.GetLogicalDescendants().OfType<Button>().Single(static button =>
+                string.Equals(button.Content?.ToString(), "Pair & connect", StringComparison.Ordinal));
+
+            submit.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+
+            var portPanel = Assert.IsType<StackPanel>(port.Parent);
+            Assert.Same(portPanel, portValidation.Parent);
+            Assert.Equal(portPanel.Children.IndexOf(port) + 1, portPanel.Children.IndexOf(portValidation));
+            Assert.True(portValidation.IsVisible);
+            Assert.Contains("1 to 65535", portValidation.Text, StringComparison.Ordinal);
+            Assert.False(codeValidation.IsVisible);
+
+            port.Text = "37123";
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(portValidation.IsVisible);
+            code.Text = "12345x";
+            submit.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+
+            var codePanel = Assert.IsType<StackPanel>(code.Parent);
+            Assert.Same(codePanel, codeValidation.Parent);
+            Assert.Equal(codePanel.Children.IndexOf(code) + 1, codePanel.Children.IndexOf(codeValidation));
+            Assert.True(codeValidation.IsVisible);
+            Assert.Contains("exactly as Android shows", codeValidation.Text, StringComparison.Ordinal);
+
+            code.Text = "123456";
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(codeValidation.IsVisible);
         }
         finally
         {
