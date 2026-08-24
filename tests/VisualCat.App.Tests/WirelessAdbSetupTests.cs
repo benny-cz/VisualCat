@@ -1,4 +1,6 @@
 using Avalonia.Automation;
+using Avalonia.Automation.Peers;
+using Avalonia.Automation.Provider;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.LogicalTree;
@@ -13,6 +15,46 @@ namespace VisualCat.App.Tests;
 /// </summary>
 public sealed class WirelessAdbSetupTests
 {
+    [Fact]
+    public void SheetInputPaneLayoutKeepsThePanelWhollyAboveTheIme()
+    {
+        const double viewportHeight = 776;
+        const double keyboardTopInOverlay = 391;
+
+        var open = MainView.ResolveSheetInputPaneLayout(viewportHeight, keyboardTopInOverlay);
+
+        Assert.Equal(385, open.BottomInset, 3);
+        Assert.Equal(383, open.MaximumHeight, 3);
+        Assert.Equal(viewportHeight, open.BottomInset + 8 + open.MaximumHeight, 3);
+
+        var closed = MainView.ResolveSheetInputPaneLayout(viewportHeight, inputPaneTop: null);
+
+        Assert.Equal(0, closed.BottomInset, 3);
+        Assert.Equal(viewportHeight * 0.82, closed.MaximumHeight, 3);
+        Assert.False(open.AlignTop);
+        Assert.False(closed.AlignTop);
+    }
+
+    [Fact]
+    public void SheetInputPaneLayoutPreservesAnEditorViewportWhenTheImeIsExtremelyTall()
+    {
+        const double viewportHeight = 319;
+        const double keyboardTopInOverlay = 76;
+
+        var open = MainView.ResolveSheetInputPaneLayout(viewportHeight, keyboardTopInOverlay);
+
+        Assert.True(open.AlignTop);
+        Assert.Equal(0, open.BottomInset, 3);
+        Assert.Equal(viewportHeight * 0.82, open.MaximumHeight, 3);
+        Assert.Equal(
+            50,
+            MainView.ResolveUnoccludedScrollerHeight(
+                viewportHeight: 180,
+                scrollerTop: 26,
+                inputPaneTop: keyboardTopInOverlay),
+            3);
+    }
+
     [AvaloniaFact]
     public void FirstUseExplainsPairingWithoutClaimingAReadLogsGrant()
     {
@@ -298,6 +340,62 @@ public sealed class WirelessAdbSetupTests
     }
 
     [AvaloniaFact]
+    public void SetupExplainsWhenAnOemCancelsPairingEvenInSplitScreen()
+    {
+        var previous = PlatformSourceRegistry.HasSavedWirelessAdbIdentity;
+        try
+        {
+            PlatformSourceRegistry.HasSavedWirelessAdbIdentity = static () => false;
+            using var dialog = new WirelessAdbSetupDialog();
+            var text = string.Join(
+                "\n",
+                dialog.GetLogicalDescendants().OfType<TextBlock>().Select(static block => block.Text ?? string.Empty));
+
+            Assert.Contains("Pairing unsuccessful", text, StringComparison.Ordinal);
+            Assert.Contains("fresh code", text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("VisualCat-only", text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            PlatformSourceRegistry.HasSavedWirelessAdbIdentity = previous;
+        }
+    }
+
+    [AvaloniaFact]
+    public void FailedPairingKeepsTheOemSafeFallbackVisible()
+    {
+        var previousIdentity = PlatformSourceRegistry.HasSavedWirelessAdbIdentity;
+        var previousPair = PlatformSourceRegistry.PairWirelessAdbAsync;
+        try
+        {
+            PlatformSourceRegistry.HasSavedWirelessAdbIdentity = static () => false;
+            PlatformSourceRegistry.PairWirelessAdbAsync = static (_, _) =>
+                Task.FromResult(new WirelessAdbConnectionResult(
+                    Connected: false,
+                    PairingSucceeded: false,
+                    "Android did not accept the pairing. Generate a fresh code; if it also fails, use VisualCat-only capture."));
+            using var dialog = new WirelessAdbSetupDialog();
+            var inputs = dialog.GetLogicalDescendants().OfType<TextBox>().ToArray();
+            inputs.Single(static input => AutomationProperties.GetName(input) == "Wireless debugging pairing port").Text = "37123";
+            inputs.Single(static input => AutomationProperties.GetName(input) == "Wireless debugging pairing code").Text = "123456";
+
+            dialog.GetLogicalDescendants()
+                .OfType<Button>()
+                .Single(static button => string.Equals(button.Content?.ToString(), "Pair & connect", StringComparison.Ordinal))
+                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+
+            Assert.Contains(
+                dialog.GetLogicalDescendants().OfType<TextBlock>(),
+                static block => (block.Text ?? string.Empty).Contains("VisualCat-only capture", StringComparison.Ordinal));
+        }
+        finally
+        {
+            PlatformSourceRegistry.HasSavedWirelessAdbIdentity = previousIdentity;
+            PlatformSourceRegistry.PairWirelessAdbAsync = previousPair;
+        }
+    }
+
+    [AvaloniaFact]
     public void PairingInputsRequestNumericSensitiveMobileKeyboards()
     {
         var previous = PlatformSourceRegistry.HasSavedWirelessAdbIdentity;
@@ -314,8 +412,15 @@ public sealed class WirelessAdbSetupTests
             Assert.Equal("Pairing port", port.PlaceholderText);
             Assert.Equal("6-digit pairing code", code.PlaceholderText);
             Assert.Equal(Avalonia.Input.TextInput.TextInputContentType.Digits, Avalonia.Input.TextInput.TextInputOptions.GetContentType(port));
-            Assert.Equal(Avalonia.Input.TextInput.TextInputContentType.Pin, Avalonia.Input.TextInput.TextInputOptions.GetContentType(code));
+            Assert.Equal(Avalonia.Input.TextInput.TextInputContentType.Digits, Avalonia.Input.TextInput.TextInputOptions.GetContentType(code));
             Assert.True(Avalonia.Input.TextInput.TextInputOptions.GetIsSensitive(code));
+            Assert.NotEqual(default, code.PasswordChar);
+            Assert.False(code.RevealPassword);
+            Assert.Equal(typeof(TextBox), code.StyleKey);
+            code.Text = "123456";
+            var valueProvider = Assert.IsAssignableFrom<IValueProvider>(
+                ControlAutomationPeer.CreatePeerForElement(code));
+            Assert.Equal(new string(code.PasswordChar, 6), valueProvider.Value);
             Assert.False(Avalonia.Input.TextInput.TextInputOptions.GetShowSuggestions(port));
             Assert.False(Avalonia.Input.TextInput.TextInputOptions.GetShowSuggestions(code));
         }

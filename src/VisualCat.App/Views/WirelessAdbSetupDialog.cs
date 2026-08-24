@@ -1,6 +1,9 @@
 using Avalonia;
 using Avalonia.Automation;
+using Avalonia.Automation.Peers;
+using Avalonia.Automation.Provider;
 using Avalonia.Controls;
+using Avalonia.Controls.Platform;
 using Avalonia.Input.TextInput;
 using Avalonia.Layout;
 using Avalonia.Threading;
@@ -15,6 +18,27 @@ internal enum OnDeviceLogAccessChoice
     Cancel,
     SetUpFullDevice,
     CaptureVisualCatOnly,
+}
+
+/// <summary>
+/// A masked editor whose automation value is masked too. Avalonia's TextBox paints
+/// <see cref="TextBox.PasswordChar"/> but its stock automation peer still returns the plain
+/// <see cref="TextBox.Text"/> value on Android (F-45).
+/// </summary>
+internal sealed class SensitiveTextBox : TextBox
+{
+    protected override Type StyleKeyOverride => typeof(TextBox);
+
+    protected override AutomationPeer OnCreateAutomationPeer() => new SensitiveTextBoxPeer(this);
+
+    private sealed class SensitiveTextBoxPeer(SensitiveTextBox owner)
+        : TextBoxAutomationPeer(owner), IValueProvider
+    {
+        // Re-implement the provider interface because TextBoxAutomationPeer.Value is final in
+        // Avalonia 12. This preserves the stock edit-control semantics while ensuring Android's
+        // accessibility bridge receives the same masked representation that is painted on screen.
+        string IValueProvider.Value => new(owner.PasswordChar, owner.Text?.Length ?? 0);
+    }
 }
 
 /// <summary>
@@ -195,10 +219,12 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
         MaxLength = 5,
     };
 
-    private readonly TextBox _code = new()
+    private readonly SensitiveTextBox _code = new()
     {
         PlaceholderText = "6-digit pairing code",
         MaxLength = 6,
+        PasswordChar = '●',
+        RevealPassword = false,
     };
 
     private readonly TextBlock _status = new()
@@ -252,7 +278,11 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
         TextInputOptions.SetContentType(_port, TextInputContentType.Digits);
         TextInputOptions.SetReturnKeyType(_port, TextInputReturnKeyType.Next);
         TextInputOptions.SetShowSuggestions(_port, false);
-        TextInputOptions.SetContentType(_code, TextInputContentType.Pin);
+        // Avalonia's abstract Pin content type maps to a full text keyboard on Pixel/API 34
+        // and does not mask this TextBox in Android's accessibility bridge. Digits is the
+        // platform hint that reliably produces a six-digit keypad; PasswordChar supplies the
+        // explicit visible/accessibility masking contract (F-45).
+        TextInputOptions.SetContentType(_code, TextInputContentType.Digits);
         TextInputOptions.SetReturnKeyType(_code, TextInputReturnKeyType.Done);
         TextInputOptions.SetIsSensitive(_code, true);
         TextInputOptions.SetShowSuggestions(_code, false);
@@ -262,6 +292,8 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
         AutomationProperties.SetHelpText(_code, "Enter the six digits shown in Android's pairing-code panel.");
         _port.TextChanged += (_, _) => ClearFieldValidation(_portValidation);
         _code.TextChanged += (_, _) => ClearFieldValidation(_codeValidation);
+        _port.GotFocus += (_, _) => ScheduleFieldReveal(_port);
+        _code.GotFocus += (_, _) => ScheduleFieldReveal(_code);
         _portFieldGroup = BuildFieldGroup(_portValidation, _port);
         _codeFieldGroup = BuildFieldGroup(_codeValidation, _code);
         _validationScrollTimer.Tick += ValidationScrollTimerTick;
@@ -354,8 +386,10 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
                 {
                     Text = "1. In Developer options, turn on Wireless debugging.\n" +
                            "2. Tap “Pair device with pairing code” and keep that panel open.\n" +
-                           "3. If Android closes that panel when you switch apps, use split screen if your device supports it.\n" +
-                           "4. Enter the pairing port shown after the colon and the 6-digit code below.",
+                           "3. If Android closes that panel when you switch apps, try split screen if your device supports it.\n" +
+                           "4. Enter the pairing port shown after the colon and the 6-digit code below, then pair before the code expires.\n" +
+                           "5. If Android says “Pairing unsuccessful”, generate a fresh code. Some devices cancel codes even in split screen; " +
+                           "if a fresh code also fails, cancel and use VisualCat-only capture.",
                     TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                     Opacity = 0.82,
                 },
@@ -481,19 +515,27 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
         validation.Text = message;
         validation.IsVisible = true;
 
-        // The explanation precedes the editor so Android's native focus reveal naturally keeps
-        // it near the field. Samsung's overlay keyboard is not part of Avalonia's viewport, so
-        // schedule one bounded scroll nudge after the IME animation to expose the complete pair.
+        // The explanation precedes the editor so the explicit reveal below keeps the message
+        // and its field together after the shared sheet host has moved above the keyboard.
         field.Focus();
-        if (OperatingSystem.IsAndroid())
+        ScheduleFieldReveal(validation.Parent as Control ?? field);
+    }
+
+    private void ScheduleFieldReveal(Control target)
+    {
+        if (!OperatingSystem.IsAndroid())
         {
-            // The overlay IME does not reduce Avalonia's reported viewport. Add temporary extent
-            // so even the final field can move above it, then nudge by the measured pair height.
-            _imeScrollReserve.IsVisible = true;
-            _validationScrollTarget = validation.Parent as Control ?? field;
-            _validationScrollTimer.Stop();
-            _validationScrollTimer.Start();
+            return;
         }
+
+        // The overlay IME is reported separately from Avalonia's viewport on some devices.
+        // MainView moves the whole sheet above it; this reserve and delayed reveal then let
+        // either final field scroll clear of the pinned decision row. The delay spans the IME
+        // animation and also handles port -> code while the pane is already open (F-44).
+        _imeScrollReserve.IsVisible = true;
+        _validationScrollTarget = target;
+        _validationScrollTimer.Stop();
+        _validationScrollTimer.Start();
     }
 
     private void ValidationScrollTimerTick(object? sender, EventArgs eventArgs)
@@ -507,9 +549,35 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
             return;
         }
 
-        var maximum = Math.Max(0, scroller.Extent.Height - scroller.Viewport.Height);
-        var nudge = Math.Max(target.Bounds.Height, 48) + 8;
-        scroller.Offset = new Vector(scroller.Offset.X, Math.Min(maximum, scroller.Offset.Y + nudge));
+        var viewportHeight = scroller.Viewport.Height > 0 ? scroller.Viewport.Height : scroller.Bounds.Height;
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel?.InputPane is { State: InputPaneState.Open } inputPane &&
+            inputPane.OccludedRect.Height > 0 &&
+            scroller.TranslatePoint(default, topLevel) is { } scrollerOrigin)
+        {
+            viewportHeight = MainView.ResolveUnoccludedScrollerHeight(
+                viewportHeight,
+                scrollerOrigin.Y,
+                inputPane.OccludedRect.Y);
+        }
+
+        if (viewportHeight <= 0 || target.TranslatePoint(default, scroller) is not { } origin)
+        {
+            return;
+        }
+
+        var clearance = Math.Min(8, Math.Max(0, (viewportHeight - target.Bounds.Height) / 2));
+        var top = origin.Y;
+        var bottom = top + target.Bounds.Height;
+        var delta = bottom > viewportHeight - clearance
+            ? bottom - (viewportHeight - clearance)
+            : top < clearance
+                ? top - clearance
+                : 0;
+        var maximum = Math.Max(0, scroller.Extent.Height - viewportHeight);
+        scroller.Offset = new Vector(
+            scroller.Offset.X,
+            Math.Clamp(scroller.Offset.Y + delta, 0, maximum));
     }
 
     private async void AutomaticConnectOnAttach(object? sender, Avalonia.VisualTreeAttachmentEventArgs eventArgs)

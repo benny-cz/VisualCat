@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Layout;
@@ -186,6 +187,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             // descendant never sees it.
             TopLevel.GetTopLevel(this)?.AddHandler(TopLevel.BackRequestedEvent, OnBackRequested);
             ObserveSafeArea();
+            ObserveOverlayInputPane();
 
             // ActualThemeVariant is only meaningful once there is a top level to inherit it
             // from: everything built in the constructor resolved it as Default, which the
@@ -204,6 +206,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         {
             TopLevel.GetTopLevel(this)?.RemoveHandler(TopLevel.BackRequestedEvent, OnBackRequested);
             StopObservingSafeArea();
+            StopObservingOverlayInputPane();
         };
         AddHandler(KeyDownEvent, OnKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
     }
@@ -624,15 +627,14 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         _commandBar.InvalidateMeasure();
     }
 
-    private StackPanel BuildEmptyState(bool dark)
+    private ScrollViewer BuildEmptyState(bool dark)
     {
         var mobile = OperatingSystem.IsAndroid();
         var levelLegend = BuildSeverityLegend(dark, mobile);
 
-        return new StackPanel
+        var content = new StackPanel
         {
             HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
             MaxWidth = 680,
             Spacing = 15,
             Margin = new Thickness(24),
@@ -670,6 +672,19 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     Opacity = 0.8,
                 },
             },
+        };
+
+        // Center the ordinary phone/desktop hero, but make it genuinely scrollable whenever
+        // large text or a short landscape viewport needs more height. Centering an oversized
+        // StackPanel directly in the host clips equal portions above and below the viewport;
+        // on Pixel 5 at 130% that put the provenance behind the gesture bar (F-46).
+        return new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Content = content,
         };
     }
 

@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Headless.XUnit;
 using Avalonia.LogicalTree;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using VisualCat.App.Platform;
 using VisualCat.App.Views;
@@ -61,6 +62,42 @@ public sealed class SamsungResponsiveLayoutTests
     }
 
     [AvaloniaFact]
+    public async Task PhoneSeverityFilterTargetsReserveForPlatformEdgeRounding()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            const string log = "01-01 00:00:00.000000   100   101 I Worker         : message\n";
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(log, width: 393, height: 851);
+            fixture.Window.UpdateLayout();
+
+            var filters = fixture.View.GetLogicalDescendants()
+                .OfType<Button>()
+                .Single(button => AutomationProperties.GetName(button) == "Open search and timeline filters");
+            filters.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+            fixture.Window.UpdateLayout();
+
+            var toggles = fixture.View.GetLogicalDescendants()
+                .OfType<ToggleButton>()
+                .Where(toggle => AutomationProperties.GetName(toggle)?.EndsWith(" level", StringComparison.Ordinal) == true)
+                .Distinct()
+                .ToArray();
+
+            Assert.Equal(7, toggles.Length);
+            Assert.All(
+                toggles,
+                toggle => Assert.True(
+                    toggle.Width >= 49,
+                    $"{AutomationProperties.GetName(toggle)} reserves only {toggle.Width:0.#} dp"));
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    [AvaloniaFact]
     public async Task HomeHeroHeadingCanWrapInsteadOfClippingAtLargeText()
     {
         await using var view = new MainView();
@@ -70,6 +107,20 @@ public sealed class SamsungResponsiveLayoutTests
 
         Assert.Equal(Avalonia.Media.TextWrapping.Wrap, heading.TextWrapping);
         Assert.Equal(Avalonia.Media.TextAlignment.Center, heading.TextAlignment);
+    }
+
+    [AvaloniaFact]
+    public async Task HomeHeroCanScrollWhenLargeTextExceedsAShortLandscapeViewport()
+    {
+        await using var view = new MainView();
+        var heading = view.GetLogicalDescendants()
+            .OfType<TextBlock>()
+            .Single(static block => block.Text == "SEE THE SHAPE OF YOUR LOG");
+        var scroller = heading.GetLogicalAncestors().OfType<ScrollViewer>().Single();
+
+        Assert.Equal(ScrollBarVisibility.Auto, scroller.VerticalScrollBarVisibility);
+        Assert.Equal(ScrollBarVisibility.Disabled, scroller.HorizontalScrollBarVisibility);
+        Assert.Equal(Avalonia.Layout.VerticalAlignment.Center, scroller.VerticalContentAlignment);
     }
 
     [AvaloniaFact]

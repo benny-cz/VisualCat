@@ -1159,7 +1159,11 @@ public sealed partial class SessionWorkspaceView : UserControl
                 IsChecked = true,
                 VerticalAlignment = VerticalAlignment.Center,
                 Tag = level,
-                Width = _mobile ? 48 : 28,
+                // Android rounds each accessibility edge independently. At 440 dpi one
+                // nominally 48 dp chip exported as 131 px = 47.6 dp, while its siblings
+                // happened to round to 132 px. One logical dp of reserve keeps every
+                // physical target above the 48 dp floor without changing this row's wrap.
+                Width = _mobile ? TouchTarget.Minimum + 1 : 28,
                 Height = _mobile ? 48 : 26,
                 Padding = new Thickness(0),
                 FontWeight = FontWeight.Bold,

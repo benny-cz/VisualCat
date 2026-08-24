@@ -305,14 +305,16 @@ internal sealed class WirelessAdbService : IDisposable
                 {
                     LogPairingFailure(exception, request.PairingCode);
                     return Failure(
-                        "Pairing failed. Keep Android's pairing-code panel open, verify the port and 6-digit code, then try again.");
+                        "Pairing failed. Keep Android's pairing-code panel open, verify the port and 6-digit code, then try a fresh code. " +
+                        "Some devices cancel codes when Settings loses focus even in split screen; if a fresh code also fails, cancel and use VisualCat-only capture.");
                 }
 
                 if (!paired)
                 {
                     global::Android.Util.Log.Warn(LogTag, "Wireless ADB pairing returned false without an exception.");
                     return Failure(
-                        "Android did not accept the pairing. Generate a new pairing code and try again.");
+                        "Android did not accept the pairing. Generate a fresh code and try again. Some devices cancel codes when Settings " +
+                        "loses focus even in split screen; if a fresh code also fails, cancel and use VisualCat-only capture.");
                 }
 
                 pairedThisAttempt = true;

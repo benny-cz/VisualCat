@@ -24,8 +24,12 @@ privileged `READ_LOGS` permission.
 2. Enable **Wireless debugging**.
 3. Open **Pair device with pairing code** and keep that Android panel visible.
 4. Enter the pairing port (the digits after the colon) and six-digit code in
-   VisualCat, then tap **Pair & connect**.
-5. Keep Wireless debugging enabled while Live capture is running. VisualCat
+   VisualCat, then tap **Pair & connect** before the code expires.
+5. If Android says **Pairing unsuccessful**, generate a fresh code. Some devices
+   invalidate the code when Settings loses focus even in split screen; if one
+   fresh retry also fails, cancel setup and use **Capture VisualCat only**. An
+   ordinary app cannot force an OEM pairing panel to remain open.
+6. Keep Wireless debugging enabled while Live capture is running. VisualCat
    closes its connection when capture stops; Android leaves Wireless debugging
    enabled until you turn it off in Settings.
 
@@ -78,8 +82,10 @@ log-access consent. Uninstalling/reinstalling removes an external grant.
 - **Saved pairing cannot connect:** verify Wireless debugging is currently on;
   if it still fails, remove the stale Android paired-device entry and pair again.
 - **Pairing code rejected:** generate a fresh code and keep Android's pairing
-  panel open while entering both the port and code. Some devices require split
-  screen/pop-up view because switching apps closes the panel.
+  panel open while entering both the port and code. Try split screen/pop-up view
+  if switching apps closes it. Some OEMs still invalidate the code when the
+  other pane takes focus; after one fresh retry, use **Capture VisualCat only**
+  rather than looping on expired codes.
 - **Capture loses the transport:** VisualCat records a reconnect gap and tries to
   reconnect with the saved identity. If Wireless debugging was turned off, stop
   Live, turn it back on, and reconnect.

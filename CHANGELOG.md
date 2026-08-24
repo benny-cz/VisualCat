@@ -13,6 +13,29 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Fixed
+- Android Wireless-debugging setup no longer implies that split screen can keep
+  every OEM's short-lived pairing code alive. It names Android's **Pairing
+  unsuccessful** result, asks for only one fresh-code retry, and offers the
+  immediate VisualCat-only fallback instead of trapping readers in an expired-
+  code loop.
+- Android in-page sheets now consume the keyboard's actual occlusion rectangle
+  when `AdjustResize` leaves the app viewport unchanged. The whole sheet and its
+  pinned decision row move above the IME, and Wireless-debugging setup scrolls
+  the active port or code field wholly into the remaining space. If a landscape
+  keyboard leaves less room than the sheet header and 48 dp actions can
+  physically occupy, the sheet preserves a top-aligned editor viewport and
+  reveals its deferred actions again when the keyboard closes.
+- Wireless-debugging pairing codes now request the proven digit-only Android
+  keyboard and carry explicit password masking, so the temporary value is not
+  rendered or exported as plain accessibility text on affected devices.
+- The Android home hero now scrolls when enlarged text exceeds a short
+  landscape viewport, keeping its final action and build/provenance line above
+  the gesture bar while preserving the centered layout at ordinary sizes.
+- Mobile severity-filter chips now reserve one extra logical pixel so Android's
+  independent accessibility-edge rounding cannot shrink a nominal 48 dp touch
+  target below the platform floor on fractional-density devices.
+
 ## [2.0.7] - 2026-08-23
 
 ### Added

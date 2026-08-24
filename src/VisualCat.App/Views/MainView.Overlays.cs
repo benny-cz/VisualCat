@@ -1,12 +1,16 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Platform;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using VisualCat.App.Timeline;
 
 namespace VisualCat.App.Views;
@@ -20,6 +24,9 @@ public sealed partial class MainView : IDialogHost
 {
     private readonly Grid _overlayHost = new() { IsVisible = false, ZIndex = 30 };
     private readonly List<OverlayEntry> _overlays = [];
+    private IInputPane? _overlayInputPane;
+    private bool _overlayInputPaneOpen;
+    private Rect _overlayInputPaneRect;
 
     /// <summary>
     /// One overlay on the stack: how the system Back gesture takes it down, the parts of it
@@ -52,15 +59,27 @@ public sealed partial class MainView : IDialogHost
         TextBlock Heading,
         Button? Close,
         FadingScrollHost? Fade,
-        ContentControl BodyHost)
+        ContentControl BodyHost,
+        Grid Host)
     {
         /// <summary>Re-resolves everything the sheet was given when it opened.</summary>
-        internal void Apply(bool dark, double viewportHeight)
+        internal void Apply(bool dark, double viewportHeight, double? inputPaneTop)
         {
             Scrim.Background = new SolidColorBrush(Color.FromArgb(dark ? (byte)170 : (byte)120, 0, 0, 0));
             Panel.Background = new SolidColorBrush(WorkspacePalette.SurfaceRaised(dark));
             Panel.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
-            Panel.MaxHeight = SheetHeightCap(viewportHeight);
+            var placement = ResolveSheetInputPaneLayout(viewportHeight, inputPaneTop);
+            Panel.VerticalAlignment = placement.AlignTop
+                ? VerticalAlignment.Top
+                : VerticalAlignment.Bottom;
+            Panel.Margin = placement.AlignTop
+                ? new Thickness(8)
+                : new Thickness(8, 0, 8, 8 + placement.BottomInset);
+            Panel.MaxHeight = placement.MaximumHeight;
+            // In the extreme fallback, the panel's automation name still supplies the title.
+            // Suppressing only the repeated visual heading reclaims enough of the 76 dp strip
+            // for one complete 48 dp editor; it returns with the footer when the IME closes.
+            Heading.IsVisible = !placement.AlignTop;
             Heading.Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
             Heading.FontSize = TextScale.Of(15);
             if (Close is { } close)
@@ -75,6 +94,69 @@ public sealed partial class MainView : IDialogHost
     /// <summary>How much of the window a bottom sheet may take.</summary>
     private static double SheetHeightCap(double viewportHeight) =>
         Math.Max(240, viewportHeight * 0.82);
+
+    /// <summary>
+    /// Places an in-page sheet in the part of its overlay host the soft keyboard does not
+    /// cover. The returned inset moves the pinned footer, while the height keeps the sheet's
+    /// scrolling body inside the same visible region.
+    /// </summary>
+    /// <remarks>
+    /// Some Android keyboards honor <c>AdjustResize</c> by publishing an occluded rectangle
+    /// instead of reducing Avalonia's viewport. A sheet that only reads the viewport keeps
+    /// its editor and decision row behind the IME (F-44). This calculation deliberately
+    /// consumes host-relative geometry, so it is independent of density, navigation insets,
+    /// keyboard brand and orientation.
+    /// </remarks>
+    internal static (double BottomInset, double MaximumHeight, bool AlignTop) ResolveSheetInputPaneLayout(
+        double viewportHeight,
+        double? inputPaneTop)
+    {
+        if (!double.IsFinite(viewportHeight) || viewportHeight <= 0 ||
+            inputPaneTop is not { } top || !double.IsFinite(top) || top >= viewportHeight - 0.5)
+        {
+            return (0, SheetHeightCap(Math.Max(0, viewportHeight)), false);
+        }
+
+        var available = Math.Clamp(top, 0, viewportHeight);
+
+        // A 130%-text landscape Pixel leaves about 76 logical pixels above Gboard. That is
+        // smaller than a 48 dp decision row plus the heading, so shrinking the entire card to
+        // the unobscured strip produces a title-only sheet with no editor (F-47). In that
+        // physically impossible case, anchor the ordinary card at the top and let the IME
+        // cover its deferred footer; the body scroller is then moved so the focused editor is
+        // the useful 48 dp that remains. Dismissing the IME reveals the pinned actions again.
+        const double minimumWholeSheetHeight = 240;
+        if (available < minimumWholeSheetHeight)
+        {
+            return (
+                0,
+                Math.Max(0, Math.Min(SheetHeightCap(viewportHeight), viewportHeight - 16)),
+                true);
+        }
+
+        var bottomInset = viewportHeight - available;
+
+        // Eight units are the sheet's ordinary bottom breathing room. Spending them here
+        // makes BottomInset + margin + panel height exactly the host height: no overlap and
+        // no unexplained gap above the IME.
+        return (bottomInset, Math.Max(0, available - 8), false);
+    }
+
+    /// <summary>Caps a scroller's usable height at the keyboard's top edge.</summary>
+    internal static double ResolveUnoccludedScrollerHeight(
+        double viewportHeight,
+        double scrollerTop,
+        double? inputPaneTop)
+    {
+        if (!double.IsFinite(viewportHeight) || viewportHeight <= 0 ||
+            !double.IsFinite(scrollerTop) ||
+            inputPaneTop is not { } top || !double.IsFinite(top))
+        {
+            return Math.Max(0, viewportHeight);
+        }
+
+        return Math.Clamp(top - scrollerTop, 0, viewportHeight);
+    }
 
     /// <summary>
     /// A secondary command, independent of the control that presents it.
@@ -354,10 +436,10 @@ public sealed partial class MainView : IDialogHost
         panel.PointerPressed += (_, eventArgs) => eventArgs.Handled = true;
         AutomationProperties.SetName(panel, title);
 
-        surface = new SheetSurface(scrim, panel, heading, closeButton, fade, bodyHost);
         var host = new Grid();
         host.Children.Add(scrim);
         host.Children.Add(panel);
+        surface = new SheetSurface(scrim, panel, heading, closeButton, fade, bodyHost, host);
         return host;
     }
 
@@ -396,7 +478,16 @@ public sealed partial class MainView : IDialogHost
         }
 
         var dark = ActualThemeVariant != ThemeVariant.Light;
-        var height = Bounds.Height;
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (_overlayInputPane is { } inputPane)
+        {
+            _overlayInputPaneOpen = inputPane.State == InputPaneState.Open;
+            if (_overlayInputPaneOpen && inputPane.OccludedRect.Height > 0)
+            {
+                _overlayInputPaneRect = inputPane.OccludedRect;
+            }
+        }
+
         foreach (var entry in _overlays)
         {
             if (entry.Surface is not { } surface)
@@ -404,12 +495,111 @@ public sealed partial class MainView : IDialogHost
                 continue;
             }
 
-            surface.Apply(dark, height);
+            var height = surface.Host.Bounds.Height > 0 ? surface.Host.Bounds.Height : Bounds.Height;
+            double? inputPaneTop = null;
+            if (_overlayInputPaneOpen &&
+                _overlayInputPaneRect.Height > 0 &&
+                topLevel is not null &&
+                surface.Host.TranslatePoint(default, topLevel) is { } hostOrigin)
+            {
+                inputPaneTop = _overlayInputPaneRect.Y - hostOrigin.Y;
+            }
+
+            surface.Apply(dark, height, inputPaneTop);
             if (entry.RebuildBody is { } rebuild)
             {
                 surface.BodyHost.Content = rebuild(dark);
             }
         }
+    }
+
+    /// <summary>Watches the top-level keyboard rectangle for every in-page sheet.</summary>
+    private void ObserveOverlayInputPane()
+    {
+        if (_overlayInputPane is not null)
+        {
+            return;
+        }
+
+        _overlayInputPane = TopLevel.GetTopLevel(this)?.InputPane;
+        if (_overlayInputPane is { } pane)
+        {
+            pane.StateChanged += OnOverlayInputPaneStateChanged;
+            _overlayInputPaneOpen = pane.State == InputPaneState.Open;
+            _overlayInputPaneRect = _overlayInputPaneOpen ? pane.OccludedRect : default;
+        }
+    }
+
+    private void StopObservingOverlayInputPane()
+    {
+        if (_overlayInputPane is { } pane)
+        {
+            pane.StateChanged -= OnOverlayInputPaneStateChanged;
+            _overlayInputPane = null;
+        }
+
+        _overlayInputPaneOpen = false;
+        _overlayInputPaneRect = default;
+    }
+
+    private void OnOverlayInputPaneStateChanged(object? sender, InputPaneStateEventArgs eventArgs)
+    {
+        _overlayInputPaneOpen = eventArgs.NewState == InputPaneState.Open;
+        _overlayInputPaneRect = _overlayInputPaneOpen ? eventArgs.EndRect : default;
+        RefreshOverlays();
+        if (_overlayInputPaneOpen)
+        {
+            // The placement write above triggers a new arrange. Reveal in the loaded queue,
+            // after the scroller knows the viewport it actually has above the keyboard.
+            Dispatcher.UIThread.Post(RevealFocusedOverlayControl, DispatcherPriority.Loaded);
+        }
+    }
+
+    /// <summary>Scrolls the editor that raised the keyboard wholly into its sheet body.</summary>
+    private void RevealFocusedOverlayControl()
+    {
+        if (TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is not Control focused ||
+            focused.GetVisualAncestors().OfType<ScrollViewer>().FirstOrDefault() is not { } scroller ||
+            focused.TranslatePoint(default, scroller) is not { } origin)
+        {
+            return;
+        }
+
+        var viewportHeight = scroller.Viewport.Height > 0 ? scroller.Viewport.Height : scroller.Bounds.Height;
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (_overlayInputPaneOpen &&
+            _overlayInputPaneRect.Height > 0 &&
+            topLevel is not null &&
+            scroller.TranslatePoint(default, topLevel) is { } scrollerOrigin)
+        {
+            viewportHeight = ResolveUnoccludedScrollerHeight(
+                viewportHeight,
+                scrollerOrigin.Y,
+                _overlayInputPaneRect.Y);
+        }
+
+        if (viewportHeight <= 0)
+        {
+            return;
+        }
+
+        var clearance = Math.Min(8, Math.Max(0, (viewportHeight - focused.Bounds.Height) / 2));
+        var top = origin.Y;
+        var bottom = top + focused.Bounds.Height;
+        var delta = bottom > viewportHeight - clearance
+            ? bottom - (viewportHeight - clearance)
+            : top < clearance
+                ? top - clearance
+                : 0;
+        if (Math.Abs(delta) < 0.5)
+        {
+            return;
+        }
+
+        var maximum = Math.Max(0, scroller.Extent.Height - viewportHeight);
+        scroller.Offset = new Vector(
+            scroller.Offset.X,
+            Math.Clamp(scroller.Offset.Y + delta, 0, maximum));
     }
 
     private void RemoveOverlay(Control root)

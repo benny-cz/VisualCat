@@ -10,13 +10,13 @@ against a physical Android device.
 > identity storage, saved reconnect, transport resume, Stop cleanup, and the
 > Release manifest's removal of `READ_LOGS`.
 
-**Status: COMPLETED AS EXECUTED.** Results were written continuously, including
-across an interrupted test process, and the final device hand-back is recorded
-below. Declared gaps remain gaps rather than implied passes.
+**Status: COMPLETE through F-48 / §20.13 — all implementation and physical-device
+steps are closed; the two remaining limits are declared, not promoted to passes.**
+Results are written continuously, including across interrupted test processes.
+Completed passes and declared gaps remain authoritative.
 
-**Seven passes have now run over this report.** §1–§5 are the original run and its
-remediation; §6 to §11 are re-audits on three devices, each of which found defects
-the ones before it did not. §5.1 remains the single status table for every
+Sections 1–20 record the original run, its remediation and the subsequent
+independent device continuations. §5.1 remains the single status table for every
 finding, and the newest pass is always the last section.
 
 This report is context-agnostic. Device identity, artifact provenance, oracles,
@@ -1456,6 +1456,18 @@ Found by the seventh pass (§11); same vocabulary, same rules.
 | F-40 A sheet is built from the state it opened in, and no state change reaches it | Minor | Shell | **Done** | **Yes — Pixel 5 Release, theme flip and rotation; light sheet on a light shell, 9 of 9 commands** |
 | F-41 The analysis tab strip is arranged once and never again, so it slices its own labels at any enlarged text size | Minor | Layout | **Done** | **Yes — Pixel 5 Release, 92.0 dp → 117.1 dp, contiguous, `Entries`/`Insights`/`Entry` whole at 1.3×** |
 | F-42 `Load 500 more· 49,656 remaining` — the separator lost its space | Polish | Copy | **Done** | **Yes — Pixel 5 Release** |
+
+Found by the Motorola independent continuation (§19); same vocabulary, same
+rules.
+
+| Finding | Severity | Area | Status | Device-verified |
+|---|---|---|---|---|
+| F-43 Pairing help implies split screen preserves Android's code on every OEM | Minor | Copy + setup UX | **Done** | **Yes — Motorola API 36 Release; §§19.6–19.8** |
+| F-44 Pairing fields and footer stay behind the Pixel numeric IME | Major | Sheet + input-pane layout | **Done** | **Device-verified — Pixel 5 API 34 Release; §20.7** |
+| F-45 Pairing code opens QWERTY and remains plain accessibility text on Pixel | Major | Input UX + privacy | **Done** | **Device-verified — Pixel 5 API 34 Release; §20.8** |
+| F-46 Large-text landscape home clips provenance below the system bar | Minor | Responsive home layout | **Done** | **Device-verified — Pixel 5 API 34 Release; §20.9** |
+| F-47 Tall landscape IME collapses the setup sheet to its title | Major | Extreme-height sheet + IME | **Done** | **Device-verified — Pixel 5 API 34 Release; §20.10** |
+| F-48 One 48 dp severity toggle rounds down to 47.6 dp on Pixel | Polish | Filter touch geometry | **Done** | **Device-verified — Pixel 5 API 34 Release; §20.13** |
 
 ### 5.2 Per-finding remediation record
 
@@ -6306,3 +6318,845 @@ script with a process-scoped `-ExecutionPolicy Bypass` (without changing system
 policy) passed: 95 relative links across 43 Markdown files, all required files
 and version metadata are consistent. The subsequent `git diff --check` also
 exits 0.
+
+---
+
+## 19. Motorola independent continuation — current Android lifecycle build
+
+### 19.1 Durable continuation checkpoint
+
+This section is updated after every material checkpoint. It is the authoritative
+resume point for the currently connected device; an independent session should
+read the step ledger below before repeating or changing device state. Times are
+Europe/Prague unless explicitly marked UTC.
+
+| Field | Value |
+|---|---|
+| Continuation start | 2026-08-24, afternoon CEST |
+| Repository | `main` at `16ed98e` (`Harden Android live capture lifecycle`); clean working tree before this report update |
+| Device | Motorola Edge 60 Pro (`cybert`), Android 16 / API 36, serial `ZY22M4T2Z4`, `arm64-v8a` |
+| Display | 1220 × 2712 at density 450 (approximately 434 × 964 dp), system font scale 1.0 |
+| Power / thermal baseline | USB powered, battery 100%, 27.7 °C, `Thermal Status: 0` |
+| Inherited package | `com.barebit.visualcat` 2.0.6 / 20006, installed 2026-08-23 22:26:41; app foregrounded and healthy |
+| Authorization | The owner explicitly authorized updating and, if useful, deleting the installed app. A clean install is therefore permitted after preserving the baseline. |
+
+The complete §5 remediation ledger is already `Done`, including physical-device
+proof. Sections 12–18 also close the subsequent Wireless ADB, responsive-layout,
+foreground-service, reconnect-cursor, epoch-serialization and first-notification-
+grant work. This pass does not reopen completed findings without contrary
+evidence. Its purpose is to update the stale Motorola installation to the current
+tree, re-audit the highest-risk mobile interactions with fresh eyes, and close
+the Motorola real-Wireless-ADB coverage limit declared in §14 if the device
+permits a secure fresh pairing.
+
+### 19.2 Step ledger (live)
+
+| ID | Step | Status | Evidence / resume instruction |
+|---|---|---|---|
+| M-01 | Audit the report, repository and connected-device baseline | **Done** | §19.1 records the clean tree, exact commit, old installed version, device/display/power state and the already-completed remediation scope. Preserve the pre-update evidence before uninstalling. |
+| M-02 | Preserve the inherited 2.0.6 visual/package oracle | **Done** | `m01-before-update.{png,xml}`, `m01-before-package.txt`, `m01-before-process.txt` and `m01-before-logcat.txt` are under `artifacts/live-test/motorola-continuation-20260824/`; details are in §19.3. |
+| M-03 | Build the current optimized Release and run pre-install gates | **Done** | §19.4: optimized build 0 warnings/errors; 407/407 Release tests; APK identity, permissions, ABI and v3 signature verified; immutable copy/hash preserved. |
+| M-04 | Clean-install the current package on the Motorola | **Done** | §19.5: exact old package removed, absence confirmed, M-03 APK installed, version/flags/permissions verified and 1.698 s cold launch passed with no fatal/ANR. |
+| M-05 | Re-audit responsive UX/UI and accessibility | **Done** | §19.6 records passing home/sheet/IME/touch checks at 1.0×/1.3× and portrait/landscape. §19.7 adds active-capture portrait/landscape plus Plot/Split/Details workspace proof. Entry inspector/copy are already device-closed in earlier sections and were not reopened by contrary evidence. |
+| M-06 | Exercise capture lifecycle and Motorola-only Wireless ADB gap | **Done** | §§19.6–19.8 prove reusable pairing, real Release full-device capture, permission/service/notification state, single ownership, forced reconnect, 125-second screen-off continuity, notification **Stop and save**, graceful teardown and cold persistence. |
+| M-07 | Implement and regress every defect found in M-05/M-06 | **Done** | F-43 was the only current-tree product finding. The implementation and 409/409 suite pass, and §19.8 physically verifies the final copy on Motorola API 36. |
+| M-08 | Final regression and deterministic hand-back | **Done** | §§19.7–19.8 record repository gates, exact installed artifact/hash, sensitive-evidence cleanup, restored settings, two persisted sessions and zero active reader/service/notification. |
+
+### 19.3 Inherited-package oracle
+
+M-02 completed before any destructive device action. The accessibility tree and
+full-device screenshot show a retained 303,145-entry Wireless session on 2.0.6.
+Its finalized data is readable; the current status is `Reading · 303,145 entries
+ready`, while a separate, fully visible application notice truthfully says that
+Wireless debugging disconnected repeatedly and that the already-written capture
+was kept. Toolbar, tab, workspace switches, equal-width Time/Copy/Entry row,
+loaded entries, `Load 10 more`, session status and the notice's 48 dp-or-larger
+Dismiss target are separate and inside the 434 dp-wide portrait viewport.
+
+The process was foregrounded and alive, and the bounded log contained no current
+fatal exception or ANR. This is a useful visual/state oracle, not a failure of the
+current tree: the installed package is 2.0.6 whereas all §18 lifecycle changes
+are in the repository's later 2.0.7-dev source. The evidence is now durable, so
+clean removal of only `com.barebit.visualcat` is safe once M-03 produces the
+replacement APK.
+
+### 19.4 Current-build gate
+
+`dotnet build src/VisualCat.Android/VisualCat.Android.csproj -c Release
+--no-restore` completed in 55.18 seconds with 0 warnings and 0 errors, including
+the trim/AOT pass. `dotnet test VisualCat.slnx -c Release --no-restore` then
+passed **407/407** tests: Domain 11, Core 95, App 249 and Application 52.
+
+Android build-tools 36 independently report package `com.barebit.visualcat`,
+version `2.0.7-dev` / 20007, target SDK 36, and `arm64-v8a` plus `x86_64` native
+code. The manifest requests exactly `INTERNET`, `CHANGE_WIFI_MULTICAST_STATE`,
+`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`, and
+AndroidX's package-scoped non-exported receiver permission; it does not request
+`READ_LOGS`, phone state, or storage. `apksigner` verifies one APK Signature
+Scheme v3 signer. It is the expected local Android debug certificate, not a
+claim about the production upload key.
+
+The exact install candidate is preserved as
+`artifacts/live-test/motorola-continuation-20260824/m03-current-release-signed.apk`:
+35,384,920 bytes, SHA-256
+`A601FA737E23FD6309B557B21B772FCB238C98BF208B627A3CEF74061E176F4C`.
+
+### 19.5 Authorized clean replacement
+
+Immediately before deletion, `pm path` resolved the exact inherited target as
+`com.barebit.visualcat` and its only app process was PID 11047; no active capture
+service was reported. `adb uninstall com.barebit.visualcat` returned `Success`,
+and a second `pm path` proved the package absent. This erased only that app's
+private 2.0.6 data, including the preserved-on-host 303,145-entry session.
+
+Installing the exact M-03 APK then returned `Success`. The device reports
+2.0.7-dev / 20007, target SDK 36, `HAS_CODE` and `ALLOW_CLEAR_USER_DATA`, with no
+debuggable flag. First/last install time is 2026-08-24 17:00:32. The manifest-
+resolved activity cold-launched in 1.698 seconds as PID 17538. Android grants the
+normal and foreground-service install permissions while `POST_NOTIFICATIONS`
+is correctly false before the first runtime prompt. The clean bounded launch log
+contains no VisualCat fatal exception, unhandled exception or ANR.
+
+### 19.6 Responsive sweep and F-43 first-pairing finding
+
+The clean home at 1.0× text is visually balanced and the accessibility tree has
+exactly six clickable nodes. Every one is at least 48.0 dp tall; the three hero
+actions measure 71.8–117.7 dp wide by 48.0 dp high. The 3 × 2 severity legend,
+2 + 1 actions, complete headline and build provenance are separate and readable.
+
+The scope and setup sheets pass in portrait and in the 341 dp-high landscape
+viewport at 1.3× Android text. The sheet keeps its four-sided rounded frame and
+pinned 48 dp footer; both scope choices are reachable after an internal scroll.
+The pairing form exposes both 48 dp numeric fields and its privacy note. With the
+599 px landscape IME visible, the focused port field remains wholly above the
+keyboard. Submitting port `0` reveals the complete inline `1 to 65535` guidance
+beside that field and leaves the footer reachable. Evidence is under
+`artifacts/live-test/motorola-continuation-20260824/m05-*`.
+
+The product's **Open Wireless debugging** route also passes on Motorola: it opens
+Developer options with the exact Wireless debugging row in the first viewport.
+The switch and pairing page are reachable, and the setup sheet remains usable in
+a 434 × 477 dp split pane. A dry run proved the port/code fields, numeric IME,
+Next/TAB focus order and fixed **Pair & connect** action all work in that pane.
+
+#### F-43 · Pairing help implies split screen preserves Android's code on every OEM
+
+**Status: Done — reproduced twice, failing contract now passes, and the final
+Release copy is physically verified on Motorola API 36.**
+
+On this Motorola API-36 build, Android's pairing-code panel and VisualCat can be
+shown simultaneously in split screen, but focusing/submitting from the other
+pane causes Android to reject the short-lived pairing socket. Two fresh,
+shape-validated in-memory attempts ended in Android's own **Pairing
+unsuccessful** dialog. VisualCat created no saved identity, foreground service,
+capture or notification-permission decision. The fields and LibADB call were
+reached; this is not field validation, clipping, network mismatch or a stale app
+install. Section 12 records the same foreground-panel restriction on Pixel/API
+34 and required a temporary test harness, while Samsung/API 36 accepts the split
+flow. The behavior is therefore an OEM/platform constraint, not something an
+ordinary app can force open.
+
+The product defect is narrower but real: step 3 currently says to use split
+screen when Android closes the panel, without warning that some Android builds
+also invalidate the code when the other pane takes focus. The robust UX fix is
+to keep split screen as the first recovery, explicitly say a new code is required
+after **Pairing unsuccessful**, and offer the immediate VisualCat-only capture
+fallback when the OEM repeats the cancellation. This does not pretend the app
+can override Android's pairing service. The low-level transport will be tested
+with a temporary DEBUG-only bridge while Settings retains focus; that bridge is
+test infrastructure and must be absent from the final source, manifest and APK.
+
+The contract `SetupExplainsWhenAnOemCancelsPairingEvenInSplitScreen` was added
+first and failed against the previous copy because **Pairing unsuccessful** was
+absent. The setup now keeps split screen as the first recovery but says to pair
+before expiry, generate one fresh code after Android's rejection, and fall back
+to VisualCat-only capture if the OEM repeats it. The Android service's two
+pairing-failure results carry the same guidance, so the reader sees it after a
+real failed attempt as well as before one. `docs/SUPPORT.md`, W1 in the Android
+live-test plan and `[Unreleased]` in the changelog agree. The focused Wireless
+setup suite passes **16/16**, including a second contract that keeps the fallback
+visible after a simulated low-level rejection.
+
+The temporary harness was developed as a deliberately disposable test fixture,
+and its failed iterations are recorded so a later session does not misdiagnose
+them as product regressions. The first DEBUG compile caught and corrected a
+nullable `ApplicationContext` guard. The first install used .NET Android fast
+deployment, whose thin APK cannot run after a standalone `adb install`; it
+failed before managed product code loaded. Rebuilding a self-contained DEBUG
+APK removed that packaging-only problem. A `Theme.NoDisplay` activity then hit
+Android's requirement to finish before `onResume` and, by taking activity focus,
+also allowed Motorola to close the loopback pairing socket. That design was
+discarded.
+
+The corrected fixture is a DEBUG-only exported broadcast receiver using
+`GoAsync()`. It invokes the unchanged production `WirelessAdbService` without
+moving foreground focus away from Settings, validates only the expected port/
+code shapes, and logs neither value. Its self-contained build completed with 0
+warnings/errors. A deliberately malformed request was rejected cleanly while
+Settings remained the focused app. One fresh real request then completed with
+`connected=True` and `pairingSucceeded=True`; the receiver disposed its
+temporary connection, Android closed the code panel, and Settings listed the
+reusable VisualCat authorization. No pairing secret or pairing endpoint was
+written to repository evidence. This closes the Motorola low-level pairing gap
+without weakening F-43's truthful product guidance. The receiver and its helper
+scripts are temporary and must be deleted before the next Release build.
+
+### 19.7 Final Release transport/lifecycle checkpoint
+
+All temporary DEBUG source and helper scripts were deleted before the shipping
+build. A repository search finds no harness class, action or log tag. The
+optimized Release build completed in 46.00 seconds with 0 warnings/errors. Its
+decoded manifest contains neither a harness component nor `READ_LOGS`, and the
+installed package has no `DEBUGGABLE` flag. The exact immutable candidate is
+`artifacts/live-test/motorola-continuation-20260824/m07-final-release-signed.apk`:
+33,827,085 bytes, SHA-256
+`639C4191FB08D90DDC5AFA66DD8A982188167BE1034424D5DBA638407302F652`.
+Installing it with `-r` preserved the app-owned pairing identity and the
+original 17:00:32 install time while updating the package at 17:37:57.
+The installed `base.apk` was then pulled back as
+`artifacts/live-test/motorola-continuation-20260824/m08-installed-base.apk`;
+its byte count and SHA-256 exactly match the immutable candidate, proving the
+device is running the artifact described here.
+
+The final Release source chooser immediately reported **Recommended · already
+paired**. **Connect full-device** reused that identity and started a real
+Wireless ADB `logcat -b all` session. Before the permission decision, Android
+reported exactly one `dataSync` foreground service with ID 4108/start ID 1,
+permission false and no posted VisualCat record. The genuine first-use prompt
+was fully visible; selecting **Allow** granted `POST_NOTIFICATIONS`, reposted the
+same foreground service at start ID 2, and produced the intended private,
+silent, ongoing, non-clearable notification with one action. Exactly one shell
+`logcat` child and one in-progress session existed. The workspace showed 2,599
+entries at the first post-grant evidence capture and continued climbing.
+
+Active-capture composition passes portrait and 1220 × 2712 landscape rotation.
+Landscape keeps Open/Recording/More, Filters/Plot/Split/Details/Fit,
+Follow/Stop, histogram/minimap, rows and the complete status in one usable
+viewport. Back in portrait, Plot, Details and Split each rendered as distinct,
+usable workspaces; the session stayed owned by the same tab and **Recording**
+returned to it rather than creating another capture.
+
+The reconnect test killed the sole child PID only. One second later there was
+exactly one replacement child, the foreground service remained ID 4108/start
+ID 2, and the visible session advanced from 9,845 to 11,463+ received lines.
+There was no duplicate reader or stale-session reset. With the screen then off
+and Android reporting `Dozing`, the app process, sole reader and same foreground
+service remained present at 55, 100 and 125 seconds. Battery stayed at 100% and
+temperature fell from 31.9 °C to 31.2 °C.
+
+At wake, the owner's secure fingerprint lock engaged. VisualCat's private
+notification action was correctly not exposed on that lock screen, and no
+credential was guessed or bypassed. To avoid leaving work running unattended,
+the exact package was force-stopped. Immediately before that action Android
+reported one app notification and one reader; three seconds afterward it
+reported zero app processes, zero readers, zero VisualCat notification records
+and no capture service. This safely exercised abrupt lifecycle teardown. The
+owner later unlocked normally and §19.8 completed every UI check that was paused
+at this boundary.
+
+Final repository gates are otherwise complete. The Release suite passes
+**409/409** tests: Domain 11, Core 95, App 251 and Application 52. Scoped
+`dotnet format --verify-no-changes` passes for all three changed C# files;
+`tools/verify-docs.ps1` passes 95 relative links across 43 Markdown files; and
+`git diff --check` exits 0. A whole-solution format probe reported only the
+pre-existing Android binding generator's `obj/Debug/.../__NamespaceMapping__.cs`
+whitespace, so generated output was not edited and the scoped source gate was
+used as the meaningful result.
+
+The privacy audit also removed eleven exact, reproducible M-06 artifacts that
+showed the device's local Wireless-debugging connection endpoint and three
+lock-screen artifacts containing owner-visible personal content. Safe product
+evidence remains. A post-delete scan finds zero text artifacts with an
+IP-and-port endpoint and zero standalone six-digit values in pairing context.
+Font scale is restored to 1.0, rotation is restored to portrait/rotation 0, and
+Wireless debugging remains enabled for future saved-pairing capture.
+
+### 19.8 Owner-unlocked completion — F-43, notification stop and persistence
+
+After the owner unlocked normally, cold launch recovered the force-stopped
+session exactly as designed: **Interrupted · 19,450 entries recovered**, with a
+truthful notice that everything which reached disk is exact and later source
+output may be absent. Its tab, histogram, rows, workspace controls and Review/
+Dismiss actions remained usable. This closes the abrupt-stop persistence half
+of the lifecycle test.
+
+Wireless debugging was then temporarily switched off so the saved-pairing
+dialog could remain visible instead of immediately reconnecting. Automatic
+saved reconnect failed truthfully and left **Connect saved pairing**, **Pair
+again with a new code**, and Cancel reachable. Selecting the new-code form on
+the final Release displayed the complete five-step F-43 guidance in one
+scrollable, framed sheet with the pinned footer intact. It explicitly names
+Android's **Pairing unsuccessful** result, says to generate one fresh code,
+explains that some devices cancel codes even in split screen, and directs the
+reader to VisualCat-only capture after the repeated OEM failure. Pairing port,
+pairing code, Cancel and **Pair & connect** remained reachable. The physical
+evidence is `m08-f43-copy.{png,xml}`. F-43 is therefore device-verified, not only
+code- and contract-verified.
+
+After Wireless debugging was restored, a second saved-pairing connection
+started one fresh full-device capture with exactly one app process, one reader,
+one private foreground notification and foreground service ID 4108/start ID 1.
+The unlocked Motorola shade rendered VisualCat under Silent with truthful
+full-device/local copy. Expanding it exposed a **Stop and save** accessibility
+node measuring 318 × 135 px. Selecting it removed the service and notification
+by the first one-second poll and the sole reader by the second. VisualCat then
+showed a separate complete session as **Stopped · 4,720 entries kept**.
+
+A final exact-package force-stop/cold launch reopened that session as **Ready ·
+4,720 entries**, with its histogram and rows intact; the earlier 19,450-entry
+interrupted session remained independently labeled rather than being merged or
+silently rewritten. The final visual oracle is
+`m08-final-persistence.{png,xml}`. Android reports zero reader processes, zero
+capture services and zero VisualCat notification records. The app is
+foregrounded on the complete session; `POST_NOTIFICATIONS` remains granted;
+Wireless debugging is enabled for the reusable pairing; font scale is 1.0;
+automatic rotation is enabled with portrait user rotation 0; battery is 100%,
+temperature 32.9 °C and thermal behavior remained normal.
+
+The two temporary unlocked notification-shade screenshots and their XML dumps
+were deleted after the action geometry/result were recorded because they also
+contained unrelated personal notifications. No pairing code, pairing endpoint
+or personal notification content is retained in the final continuation
+evidence. This completes M-01 through M-08 with no remaining device or code
+action.
+
+---
+
+## 20. Pixel 5 independent continuation — current tree and fresh install
+
+This section is the durable handoff for the continuation requested on the newly
+connected physical Android device. It begins after §19 completed on Motorola;
+its steps deliberately preserve the inherited Pixel state before the owner-
+authorized clean update. Every row in §20.2 is now closed; §20.12 is the
+deterministic hand-back checkpoint for a later independent session.
+
+### 20.1 Durable continuation checkpoint
+
+| Field | Value |
+|---|---|
+| Continuation start | 2026-08-24 17:00 UTC / 19:00 CEST |
+| Repository | `main` at `16ed98e` (`Harden Android live capture lifecycle`) |
+| Inherited working tree | Seven intentional modified files from §19: F-43 product copy, two contracts and matching support/plan/changelog/report records; no unrelated source edit identified |
+| Device | Google Pixel 5 (`redfin`), Android 14 / API 34, serial `0A031FDD400365`, `arm64-v8a` primary ABI |
+| Build fingerprint | `google/redfin/redfin:14/UP1A.231105.001.B2/11260668:user/release-keys` |
+| Display | 1080 × 2340 at density 440 (approximately 393 × 851 dp); gesture navigation; dark mode; font scale 1.0; rotation enabled and currently portrait |
+| Locale / time zone | `cs-CZ`; `Europe/Prague` |
+| Power / thermal / storage | USB powered, battery 100%, thermal status 0, battery 28.3 °C, approximately 92.3 GiB free on `/data` |
+| Inherited package | `com.barebit.visualcat` 2.0.6 / 20006, target SDK 36, installed 2026-08-23 22:53:10; non-debuggable |
+| Inherited runtime | Process PID 17603 retained while the screen was dozing; no VisualCat capture service, app-owned `logcat` reader or posted VisualCat notification found |
+| Authorization | The owner explicitly authorized updating and, if useful, deleting the installed app; exact-package clean replacement is permitted after build and evidence gates pass |
+
+All 43 findings in §5.1 are already marked **Done** and device-verified. This
+pass does not mechanically reimplement their original suggestions. It verifies
+the uncommitted F-43 handoff, updates the new device to the exact current-tree
+artifact, and re-audits high-risk UX/UI, accessibility and capture lifecycle
+paths. Contrary physical evidence becomes a new numbered finding, a failing
+contract where practical, a robust implementation, and a same-device retest.
+
+### 20.2 Step ledger (live)
+
+| ID | Step | Status | Evidence / resume instruction |
+|---|---|---|---|
+| N-01 | Audit report, working tree and connected-device baseline | **Done** | §20.1 records the exact commit/diff scope, device, display, locale, power, inherited package and inactive capture state. |
+| N-02 | Preserve and privacy-scrub the inherited 2.0.6 oracle | **Done, visual credential-blocked** | The black ambient frame and package/runtime facts are preserved. The personal lock-screen XML was deleted and absence confirmed. `wm dismiss-keyguard` correctly left the secure keyguard in place; no credential was guessed or bypassed, so there is no inherited foreground product visual. |
+| N-03 | Verify the inherited F-43 change; build and run pre-install gates | **Done** | §20.4: F-43 setup 16/16 and full Release 409/409; clean optimized build 0 warnings/errors; manifest, permissions, components, ABIs and v3 signature verified; exact install candidate/hash preserved. |
+| N-04 | Clean-install the exact current-tree package | **Done** | §20.5: exact 2.0.6 target rechecked and removed, absence proved, current-tree candidate installed, installed bytes/hash identical, Android identity/permissions correct, and cold launch completed without fatal/ANR. The owner subsequently unlocked normally for the visual pass. |
+| N-05 | Fresh-eyes responsive UX/UI and accessibility sweep | **Done** | §§20.6–20.11: portrait, landscape, 1.3× text, sheet/IME, Plot, Split, Details, Filters and search-keyboard states are physically exercised. All 15 clickable workspace nodes measured at least 48 dp in the final sweep. |
+| N-06 | Capture, notification, reconnect and persistence lifecycle | **Done, with declared transport/action gaps** | §20.11 proves one-reader ownership, background continuity, UI Stop/save, exact-package cold persistence and forced recovery. A clean uninstall intentionally removed saved Wireless ADB identity, and Pixel's shade did not expose the action node to automation; those two unclaimed branches are explicit in §20.12. |
+| N-07 | Implement and regress every current-tree defect found | **Done — F-44…F-48** | §§20.7–20.10 close F-44–F-47; §20.13 closes the final fractional-density target-rounding defect with a failing-first contract and exact Pixel remeasurement. |
+| N-08 | Final regression, privacy cleanup and deterministic hand-back | **Done** | §20.13 supersedes the complete N-13 checkpoint in §20.12 with 413/413 tests, a clean N-18 build, installed-hash proof, final privacy checks and the restored idle device state. |
+
+### 20.3 Baseline evidence and privacy decision
+
+The inherited package resolves to
+`com.barebit.visualcat/crc64a1973b883a99125a.MainActivity`. Android reports
+`HAS_CODE` and `ALLOW_CLEAR_USER_DATA` without `DEBUGGABLE`; it requests no
+`READ_LOGS`. The bounded runtime inspection found the app process but no active
+capture resources. The display was `Dozing`, so the first screenshot is a black
+ambient frame rather than a product visual.
+
+`artifacts/live-test/pixel5-continuation-20260824/p20-baseline.png` is retained
+only as the screen-state oracle (15,495 bytes; SHA-256
+`01C30EC12F73D7C99AA134DE9AF955E26CAAFABD7BD1B67DEF06E8C0AC391533`).
+The accompanying UI hierarchy contained unrelated personal notification labels
+despite the black frame. It was therefore deleted as soon as this limited fact
+was recorded and must not be recreated on the lock screen or notification shade.
+
+Waking the device and calling Android's normal `wm dismiss-keyguard` route left
+the secure keyguard in place, as it should. The inherited foreground visual is
+therefore a declared credential-blocked gap rather than an implied pass. The
+package/runtime oracle is sufficient for the authorized replacement, and no
+owner credential was guessed, entered or bypassed.
+
+### 20.4 F-43 and clean current-build gate
+
+The focused `WirelessAdbSetupTests` suite passes **16/16**, including both F-43
+contracts. `dotnet test VisualCat.slnx -c Release --no-restore` passes
+**409/409**: Domain 11, Core 95, App 251 and Application 52.
+
+The first incremental Release output had the same 35,384,920-byte size as §19's
+pre-harness artifact. Although no temporary harness source remained, artifact
+provenance should not depend on old `obj`/`bin` state, so it was rejected before
+installation. `dotnet clean` followed by a new optimized Release build completed
+in 1m19.78s with 0 warnings and 0 errors. A source search and the decoded clean
+manifest both find no pairing harness action, class, receiver or service.
+
+Build-tools 36 report `com.barebit.visualcat`, 2.0.7-dev / 20007, min SDK 31,
+target SDK 36, and `arm64-v8a` plus `x86_64`. The manifest requests exactly
+`INTERNET`, `CHANGE_WIFI_MULTICAST_STATE`, `FOREGROUND_SERVICE`,
+`FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`, and AndroidX's
+package-scoped non-exported receiver permission. It requests neither `READ_LOGS`
+nor storage. The application capture service and provider are non-exported; the
+launcher/ACTION_VIEW activity is the intended exported product surface.
+
+`apksigner` verifies one APK Signature Scheme v3 signer: the expected local
+Android debug certificate (`e58d3c45…`), not the production upload key. The exact
+install candidate is
+`artifacts/live-test/pixel5-continuation-20260824/n03-clean-release-signed.apk`:
+35,384,920 bytes, SHA-256
+`46E44003267363D25E4BEA4C50FCB50FA542E10B32089719D5CB383C394C0DFD`.
+
+### 20.5 Authorized clean replacement
+
+Immediately before deletion, `pm path` again resolved only the intended
+`com.barebit.visualcat` package and PID 17603. `adb uninstall
+com.barebit.visualcat` returned `Success`; subsequent `pm path` and `pidof`
+returned nothing. This erased only VisualCat 2.0.6's private state, as explicitly
+authorized, including any old sessions or saved Wireless ADB identity.
+
+Installing the immutable N-03 APK returned `Success`. Android now reports
+2.0.7-dev / 20007, min SDK 31, target SDK 36, `HAS_CODE` and
+`ALLOW_CLEAR_USER_DATA`, without `DEBUGGABLE`. First/last install time is
+2026-08-24 19:12:55 local. `POST_NOTIFICATIONS` is correctly false on clean
+first use and `READ_LOGS` is absent. The manifest-resolved activity is unchanged.
+
+The installed `base.apk` was pulled back as
+`artifacts/live-test/pixel5-continuation-20260824/n04-installed-base.apk`.
+Its 35,384,920-byte length and SHA-256
+`46E44003267363D25E4BEA4C50FCB50FA542E10B32089719D5CB383C394C0DFD`
+exactly match N-03, proving the Pixel is running the gated artifact.
+
+An exact-package force-stop followed by `am start -W` completed in 3.025s as
+PID 16828. The activity and process are healthy and the process-bounded launch
+log contains no fatal exception, unhandled exception or ANR. The screen returned
+to Dozing behind the secure keyguard, so launch timing is functional evidence,
+not a claim about first-frame visual latency. The owner was asked to unlock
+normally before N-05; no credential is required by or exposed to this test.
+
+### 20.6 Responsive/accessibility sweep — live checkpoint
+
+After the owner unlocked normally, the clean portrait home rendered correctly
+at 393 × 851 dp, dark theme and 1.0× text. The full VisualCat branding, three
+toolbar commands, hero explanation, 3 × 2 severity legend, three hero actions
+and build provenance are distinct, unclipped and balanced. The UI hierarchy has
+exactly six clickable nodes; every one is 48.0 dp high and 70.5–118.2 dp wide.
+The labels distinguish Open, Live, More and all three hero routes without an
+app-private path. Safe evidence is `n05-home.{png,xml}`.
+
+The device's inherited screen timeout is only 30 seconds. It expired during the
+home-node measurement, so the next scripted tap reached the ambient lock screen
+instead of VisualCat. That attempt is not product evidence. Its black screenshot
+and UI hierarchy were both deleted immediately because the hierarchy contained
+unrelated personal notification labels. The original
+`stay_on_while_plugged_in` value is 0; it is temporarily 2 (USB) for the live
+pass and must be restored to 0 in N-08. The secure keyguard again remains for the
+owner to unlock normally.
+
+After the second normal unlock, the clean first-use source chooser passes. Its
+complete local-only/background-service explanation, recommended full-device
+choice, honest VisualCat-only fallback, Cancel and **Set up full-device** all fit
+inside a four-sided framed sheet; the two scope targets and both footer buttons
+are at least 48 dp high. `n05-source.{png,xml}` is the safe oracle.
+
+The setup sheet also proves F-43's final copy on Pixel/API 34. The complete five
+steps name Android's **Pairing unsuccessful** result, require one fresh code and
+offer VisualCat-only capture after a repeated OEM cancellation. The Wireless
+debugging route, both pairing fields, privacy statement and pinned actions are
+present in the accessibility tree. Without the keyboard, the body scrolls under
+a stable four-sided frame and the footer remains separate. Evidence is
+`n05-setup.{png,xml}`.
+
+### 20.7 F-44 — the pairing form ignores the Pixel numeric IME
+
+**Status: Done — contract and exact Release behavior verified on Pixel/Gboard.**
+
+Tapping the visible pairing-port field focuses it and opens Gboard's numeric
+layout (`mInputShown=true`). The screenshot shows the IME beginning at physical
+y=1194. Android's accessibility geometry still places the focused port editor at
+y=1839–1971, the code editor at y=2072–2204 and the pinned Cancel/Pair row at
+y=2023–2155. All three are completely behind the keyboard; no part of the value
+being typed or the visible exit/submit route remains on screen. The failure is
+`n05-setup-ime.{png,xml}`. No pairing attempt or secret was used; the only value
+entered was invalid port `0`.
+
+This contradicts §19's Motorola/API-36 pass and is not a false screenshot caused
+by the earlier lock timeout: VisualCat remained the focused window, its process
+remained PID 16828, Gboard was explicitly reported open, and both the screenshot
+and hierarchy agree on the non-intersection. It is a major clean-setup UX defect.
+
+The root cause is shared sheet geometry. `AdjustResize` is requested, but this
+Pixel reports Gboard as an `InputPane.OccludedRect` without reducing Avalonia's
+sheet host. `SessionWorkspaceView` already consumes that rectangle for its
+filter drawer; `MainView`'s overlay sheets do not. `WirelessAdbSetupDialog` adds a
+small scroll reserve only after validation fails, not when an editor first gains
+focus, and it cannot move the outer panel or pinned footer above the IME.
+
+The robust fix is therefore not a Pixel-sized spacer. Every in-page sheet must
+observe the top-level input pane, translate its occluded top into the overlay
+host, move its bottom edge above the IME, cap itself to the genuinely available
+height, and restore its ordinary margin/cap when the IME closes. After that
+reflow, the active editor must be scrolled wholly into the internal viewport.
+This also protects future sheet forms instead of special-casing these two fields.
+
+The contract `SheetInputPaneLayoutKeepsThePanelWhollyAboveTheIme` was added
+first. It failed to compile against the reproduced source because the shell had
+no input-pane placement model. The implementation adds that model to the shared
+`MainView` overlay host: every sheet observes the top-level `InputPane`, converts
+its occluded top edge into host coordinates, assigns exactly the matching bottom
+inset and visible maximum height, and restores the ordinary 82% cap when the IME
+closes. The focused control is then revealed against the newly arranged internal
+scroll viewport. Wireless setup also schedules the same exact reveal when focus
+moves between port and code while the IME is already open; its earlier fixed
+one-row nudge is gone. No keyboard height, device density or OEM constant is
+hard-coded.
+
+The focused setup suite now passes **17/17**, including F-43 and F-44. The
+changelog records the user-visible behavior. A new optimized Release must be
+built, installed and re-measured against the exact Pixel/Gboard failure state
+before F-44 can be marked Done.
+
+The exact rebuilt candidate is
+`artifacts/live-test/pixel5-continuation-20260824/n07-f44-release-signed.apk`:
+35,389,016 bytes, SHA-256
+`4BF1993C9149B9CA0D5AB6F1646830023E3C241B0E6ED94D874007A7A31F15BC`.
+The optimized clean build completed in 1m22.32s with 0 warnings/errors after the
+full Release suite passed **410/410** (Domain 11, Core 95, App 252, Application
+52). Build-tools and `apksigner` reconfirm the same identity, SDKs, ABIs and one
+v3 signer. `adb install -r` succeeded; the installed base was pulled back and
+its byte count/hash exactly match the immutable candidate.
+
+F-44 now passes its original Pixel/Gboard oracle. With the port keyboard open,
+the editor is wholly visible at y=933–1065, the pinned actions end at y=1245,
+and Android reports the IME beginning at y=1364. Moving focus to code while the
+IME remains open also re-scrolls: code y=934–1066, actions y=1113–1245, and the
+taller IME begins at y=1267. Port validation is likewise complete and adjacent
+at y=689–760, its editor y=794–926 and actions y=1015–1147, all above the IME at
+y=1364. Safe evidence is `n07-f44-{port,code,validation}.{png,xml}`. F-44's
+functional and geometry requirements are therefore device-closed; its table row
+will be marked Done with F-45's final setup build so the installed artifact
+remains one coherent hand-back candidate.
+
+### 20.8 F-45 — the six-digit code is neither numeric nor masked on Pixel
+
+**Status: Done — numeric input, visible masking and accessibility redaction verified together.**
+
+Changing focus from port to code proves the F-44 reflow, but Gboard changes from
+its numeric layout to a full Czech QWERTY keyboard even though the value is
+exactly six digits. More importantly, after a non-secret test digit `1` is
+entered, the screenshot renders `1` and the Android hierarchy exposes
+`text="1"` with `password="false"`. The app set Avalonia's abstract
+`TextInputContentType.Pin` and `IsSensitive`, but on this Pixel/API-34 bridge
+that pair neither requests a digit-only keyboard nor masks the `TextBox`/its
+accessibility value. No real pairing code was entered or retained.
+
+The robust contract is explicit at the control as well as the platform hint:
+use the known-working digit-only content type, keep suggestions off and sensitive
+semantics on, and set a non-empty `PasswordChar` with reveal disabled. Validation
+still independently rejects anything outside six ASCII digits; masking is not a
+substitute for shape validation. The device retest must prove numeric Gboard,
+masked visible text and no plaintext code in the UI hierarchy.
+
+The implementation now requests `Digits`, uses a bullet `PasswordChar`, keeps
+password reveal disabled, and retains sensitive/no-suggestions hints. The first
+physical retest produced numeric Gboard and six visible bullets, but Android's
+UI hierarchy still disclosed the synthetic test value because Avalonia 12's
+stock `TextBoxAutomationPeer` returns `Text` even for a password-painted editor.
+That XML was deleted immediately; only the visually masked screenshot remains.
+
+A new regression therefore exercises the actual `IValueProvider`, not just
+control properties. It failed with plaintext `123456` before the bridge fix.
+The initial attempt to override `TextBoxAutomationPeer.Value` correctly failed
+at compile time because Avalonia declares the member final. The supported fix is
+a small sensitive `TextBox` peer that retains the stock peer and edit-control
+behavior while explicitly reimplementing `IValueProvider.Value` as one bullet
+per character. The focused setup suite passes **17/17**, including the numeric,
+paint masking, reveal-disabled and automation-redaction contracts. A fresh
+Release build and Pixel hierarchy retest are required before closure.
+
+The first peer-enabled device build passed the keypad and hierarchy checks:
+Android exported `●●●●●●` and a literal search found zero occurrences of the
+synthetic input. Direct screenshot review nevertheless rejected that build: the
+derived control had no applied text presenter, so its focused editor looked
+blank rather than showing masking feedback. Avalonia themes custom controls by
+their derived type unless they opt into a base style key. `SensitiveTextBox`
+now returns `typeof(TextBox)` from `StyleKeyOverride`, and the setup regression
+locks that invariant alongside redaction. The suite remains **17/17**. The
+rejected screenshot is diagnostic evidence only; a second fresh build must
+prove both visible bullets and redacted hierarchy together.
+
+The second build, N-09, passes all three physical requirements simultaneously.
+Gboard stays on its numeric layout, the focused field paints six bullets, and
+Android exports `SensitiveTextBox text="●●●●●●"`; a literal scan finds zero
+occurrences of the synthetic `123456`. The field is wholly visible at
+y=934–1066, the actions end at y=1245 and the IME starts at y=1364. Safe
+evidence is `n09-f45-pass.{png,xml}`. The final N-13 candidate repeats the same
+masked/numeric/redacted result in F-47's more demanding state, so F-45 is closed
+on the installed hand-back artifact as well as its first passing build.
+
+### 20.9 F-46 — 1.3× landscape home clips its final content
+
+**Status: Done — same-state 1.3× landscape behavior verified on Pixel.**
+
+At the plan's 1.3× font-scale boundary, the portrait home remains balanced and
+complete: all six controls are present, each is at least 48 dp high, the wrapped
+headline and description are readable, and build provenance is above the
+gesture inset. Safe evidence is `n10-font130-home.{png,xml}`.
+
+Rotating the same running process to landscape exposes a short-viewport defect.
+The final **RECENT CAPTURES** action ends at physical y=1013, exactly one pixel
+above the usable viewport edge at y=1014, while the provenance is arranged at
+y=1054–1080 behind the 66-pixel navigation bar. The accessible node exists but
+the text is visibly clipped. Evidence is
+`n10-font130-landscape-home.{png,xml}`.
+
+The root cause is the hero's oversized `StackPanel` being vertically centered
+directly in a shorter host. Avalonia clips equal overflow rather than offering
+movement. The new contract
+`HomeHeroCanScrollWhenLargeTextExceedsAShortLandscapeViewport` first failed
+because no ancestor scroller existed. The hero is now hosted by a vertical
+auto-scroller with horizontal movement disabled and centered content alignment:
+ordinary screens retain the existing composition, while short/large-text
+screens can reach every action and the provenance. All eight Samsung/responsive
+contracts pass. A fresh Release build and same-state Pixel retest are required
+before closure.
+
+The N-11 Release retest preserves the centered first frame and makes the entire
+oversized hero reachable. After one ordinary upward swipe, **RECENT CAPTURES**
+occupies y=733–865 and the provenance occupies y=906–948, both above the usable
+viewport edge at y=1014. Safe before/after evidence is
+`n11-f46-landscape-{top,scrolled}.{png,xml}`. The responsive suite remains 8/8;
+F-46 is device-closed.
+
+### 20.10 F-47 — the 1.3× landscape IME collapses setup to a title
+
+**Status: Done — the final Release preserves the editor and restores the full sheet.**
+
+The N-11 candidate was kept in the Pixel's 1.3× font/landscape state and the
+full-device form was scrolled to its pairing fields. Gboard begins at physical
+y=344, leaving only 208 px (about 76 dp) above it. The original F-44 rule tried
+to fit the complete sheet into that strip even though its title and 48 dp
+decision row alone cannot fit. The result is a card containing only **Connect
+full-device capture**; the editor, privacy explanation and actions are all
+absent. `n11-font130-landscape-code-ime.{png,xml}` records the failure; the
+hierarchy contains no synthetic code because the hidden editor did not receive
+the attempted input.
+
+This is an impossibility boundary, not a new device constant. If the unoccluded
+height is at least the sheet's existing 240 dp useful-height floor, the F-44
+behavior remains exact: the full panel and footer stay above the IME. Below that
+floor, the panel keeps its ordinary responsive cap, anchors to the top, and
+allows the keyboard to cover the deferred footer. Both the shared focus reveal
+and Wireless-setup's delayed port-to-code reveal cap their usable scroll
+viewport at the real IME top. This prioritizes the focused 48 dp editor in the
+only usable strip; hiding the keyboard restores the pinned actions.
+
+`SheetInputPaneLayoutPreservesAnEditorViewportWhenTheImeIsExtremelyTall` was
+added first and failed because the placement model had no extreme-height mode.
+The setup suite now passes **18/18**, including ordinary no-overlap geometry,
+top-aligned fallback, exact unoccluded scroller height, numeric/masked code and
+automation redaction. A fresh optimized Release must reproduce the exact
+landscape/1.3×/IME state before F-47 is closed.
+
+The first extreme-height candidate, N-12, moved the editor into view but left
+its lower 26 px (about 9.5 dp) under the IME. It was rejected. The final change
+temporarily hides only the visual heading in this impossible-height mode while
+retaining the panel's accessible name, reclaiming enough room for the complete
+48 dp editor. No dimension or keyboard model is special-cased.
+
+The N-13 Release pass reproduces the exact 1.3× landscape state. The masked
+`SensitiveTextBox` occupies y=203–335 and Gboard begins at y=344: a 9 px clear
+gap, six visible bullets, numeric keys and zero plaintext in the hierarchy. The
+card remains named **Connect full-device capture** for accessibility. Pressing
+Back closes the IME and restores the visual heading at y=259–322 plus Cancel and
+**Pair & connect** at y=763–895; the retained value remains bullet-redacted.
+Safe evidence is `n13-f47-code-ime.{png,xml}` and
+`n13-f47-ime-dismissed.{png,xml}`. F-47 is device-closed.
+
+### 20.11 Capture, recovery and workspace continuation
+
+**Status: Done, with the two unclaimed branches stated below.** The clean install
+had no saved Wireless ADB identity, so the lifecycle pass used the source
+chooser's honest **VisualCat only** fallback. Android first presented its Czech
+notification-permission dialog; the owner-visible **Allow** route was selected
+and `POST_NOTIFICATIONS` became granted. No endpoint or real pairing code was
+entered.
+
+Starting capture produced exactly one app PID (23269), one app-owned `logcat`
+child (23534), one `CaptureForegroundService` with `isForeground=true`, and one
+private ongoing notification (ID 4108) with exactly one **Stop and save** service
+action. `n14-capture-running.{png,xml}` shows 15 entries already arriving. Home
+then kept the app backgrounded for 20 seconds: the same app PID, reader, service
+and notification remained singular. Returning to VisualCat was a hot 49 ms
+resume and showed 40 entries (`n14-capture-resumed.xml`), proving continuity
+rather than a hidden restart.
+
+The Pixel notification shelf exposed only VisualCat's app icon to UI automation;
+tapping it opened Android's general notification settings, not the notification
+action. The decoded notification still proves the action's label, intent type,
+privacy and singular ownership, but this pass does **not** claim a physical tap
+of **Stop and save**. The temporary shade/settings evidence was deleted because
+it could include unrelated personal notification state. §19.8 already verifies
+the same final action end to end on the unlocked Motorola. On this Pixel the app
+UI's **Stop** route completed normally with **Stopped · 5,311 entries kept** and
+zero reader, service or notification; safe evidence is
+`n14-capture-complete.{png,xml}`.
+
+An exact-package force-stop removed PID 23269. Cold launch created PID 25358 in
+2.506 seconds and reopened the same session as **Ready · 5,311 entries**, with
+rows and plot intact and no live resources. Evidence is
+`n14-cold-persistence.{png,xml}`. A second VisualCat-only capture then produced
+one reader and four durable entries. Force-stopping the package while it was
+active removed the process, reader, service and notification. A 2.486-second
+cold launch as PID 25759 recovered a separate session as **Interrupted · 4
+entries recovered** and explained that only records already on disk are
+recoverable. `n15-recovery-dialog.{png,xml}` is the recovery-notice state;
+`n15-recovery-review.{png,xml}` is the actual Review dialog with Delete, Keep and
+Export choices. **Keep** retained the four entries with truthful interrupted
+semantics (`n15-recovery-kept.{png,xml}`).
+
+The final fresh-eyes workspace sweep exercised Plot, Details and Split
+(`n16-plot`, `n16-details` and `n16-final-workspace`), then opened Filters and
+focused Search (`n16-filters` and `n16-filters-ime`, each with PNG/XML). At 440
+dpi all 15 clickable workspace controls are at least 48 dp. With Gboard open,
+Search occupies y=700–832, Reset/Done y=1196–1328 and the IME begins at y=1364,
+leaving the complete footer reachable. Reset returns **No filters · showing
+everything in view**. The final workspace is Split on the complete session and
+reports **970 in view · 5,311 match · 5,311 in session** and **Ready · 5,311
+entries**. Plot, filters, rows, progressive loading and status remain visually
+distinct without clipping.
+
+Fresh real Wireless ADB pairing/reconnect is the other unclaimed branch. The
+owner-authorized clean uninstall deliberately erased the old encrypted identity,
+and switching from Android's pairing-code surface back to the app invalidates
+the Pixel's one-time code as already documented in §12/F-43. No credential was
+invented and no pairing failure is promoted to a pass. Saved reconnect and the
+real notification-action path remain covered by the earlier Motorola run.
+
+### 20.12 Final gates, privacy cleanup and hand-back
+
+**Status: Complete N-13 checkpoint; superseded by the F-48/N-18 final in
+§20.13.** At 2026-08-24 19:14 UTC / 21:14 CEST, the optimized clean Release
+build completed in 1m27.06s with 0 warnings and 0 errors. Its immutable candidate
+is
+`artifacts/live-test/pixel5-continuation-20260824/n13-final-release-signed.apk`:
+35,389,016 bytes, SHA-256
+`7F0459B569B54EAE589E5537E9C6B89E1DF25C33D796CD28E73B30B5210F53DC`.
+The installed `base.apk` pulled back as `n13-installed-base.apk` has the exact
+same length and hash.
+
+Build-tools 36 reconfirm `com.barebit.visualcat`, 2.0.7-dev / 20007, min SDK 31,
+target SDK 36 and `arm64-v8a` plus `x86_64`. The APK requests only Internet,
+Wi-Fi multicast-state change, foreground/data-sync service, notifications and
+AndroidX's package-scoped receiver permission; it requests neither `READ_LOGS`
+nor storage. `apksigner` verifies one v3 signer, the expected local Android debug
+certificate (`e58d3c45…`), not the production upload key.
+
+N-13 repository gates against that source all pass:
+
+- `dotnet test VisualCat.slnx -c Release --no-restore`: **412/412** — Domain 11,
+  Core 95, App 254 and Application 52;
+- focused Wireless setup: **18/18**, including F-43–F-45 and F-47; responsive
+  layout: **8/8**, including F-46;
+- `dotnet format ... --verify-no-changes --no-restore` over every touched source
+  and test file: pass;
+- `tools/verify-docs.ps1` under a process-scoped execution-policy bypass: 95
+  relative links across 43 Markdown files plus required files/version metadata,
+  all consistent;
+- `git diff --check`: pass.
+
+The evidence tree contains zero XML files with literal synthetic code `123456`.
+The one pre-fix hierarchy that exposed it, plus temporary lock-screen and
+notification-shade/settings captures that could contain personal labels, were
+deleted. Retained rejection screenshots contain no real credential. No endpoint,
+real pairing code or other pairing secret was used or preserved.
+
+The Pixel is handed back with font scale 1.0, automatic rotation enabled,
+portrait user rotation 0, screen timeout 30,000 ms and
+`stay_on_while_plugged_in=0`, matching its recorded original settings. Battery
+is 100%, temperature 29.3 °C, thermal status 0 and about 92.3 GiB remains free on
+`/data`. `POST_NOTIFICATIONS` remains granted as the explicit first-use choice.
+VisualCat is foregrounded on the complete 5,311-entry session in unfiltered
+Split mode; the 4-entry interrupted session remains a separate tab and the
+recovery notice is dismissed. PID 25759 is healthy. There are **zero** app-owned
+`logcat` readers, capture services and VisualCat notifications. Safe final
+evidence is `n17-handback.{png,xml}`.
+
+The only limits of this continuation are the two precise branches above: no
+fresh real Wireless ADB pairing/reconnect after the authorized identity-erasing
+uninstall, and no physical Pixel tap of the notification action because its OEM
+shade did not expose that node to automation. Neither limits F-44–F-47 or the
+physically completed fallback capture, background, UI-stop, persistence,
+forced-recovery and workspace results.
+
+### 20.13 F-48 — Android rounds one nominal 48 dp severity target below the floor
+
+**Status: Done — failing-first contract, clean build and exact Pixel retest pass.** The final
+evidence audit measured every clickable node rather than assuming a logical
+`Width = 48` must export as 48 physical dp. In both
+`n16-filters.{png,xml}` and `n16-filters-ime.{png,xml}`, six severity toggles
+occupy 132 px at 440 dpi, but **Debug** occupies x=646–777: 131 px / 2.75 =
+47.6 dp. Height is exactly 132 px / 2.75 = 48 dp. The neighboring 4 dp gaps and
+fractional layout origin make Android round this control's two accessibility
+edges inward independently.
+
+This is a polish defect with a direct accessibility oracle. The implementation
+must retain the compact wrap and visual rhythm while reserving enough logical
+width that no platform-edge rounding can cross the 48 dp floor. A host contract
+will require the mobile severity targets to reserve one additional logical dp;
+then a fresh Release update must show all seven target bounds at or above 48 dp
+in the same Pixel drawer, both without and with Gboard.
+
+`PhoneSeverityFilterTargetsReserveForPlatformEdgeRounding` was added first and
+failed 7/7 target assertions: every chip reserved exactly 48 logical dp. The
+mobile chip width now uses `TouchTarget.Minimum + 1`; desktop remains 28 dp.
+That one-dp reserve does not change the phone's six-plus-one two-row wrap, label
+copy, height, color or spacing. The focused contract passes, and the complete
+Samsung/responsive suite passes **9/9**.
+
+The exact N-18 Pixel retest passes before and during Gboard. All seven exported
+bounds are 135 × 132 px = **49.1 × 48.0 dp**; Debug is now x=658–793 instead of
+the failing x=646–777. Search and the pinned Reset/Done footer retain their
+complete IME geometry, and the severity body remains scrollable. Safe evidence
+is `n18-f48-filters.{png,xml}` and
+`n18-f48-filters-ime.{png,xml}`. Two intermediate scroll captures were deleted
+because the body drag dismissed Gboard and their filenames would therefore have
+misrepresented the state.
+
+After `dotnet clean`, the final Android Release build completed in 1m46.23s with
+0 warnings and 0 errors, including trim/AOT. The immutable hand-back candidate
+is `artifacts/live-test/pixel5-continuation-20260824/n18-final-release-signed.apk`:
+35,389,016 bytes, SHA-256
+`D78031210D05FB4599975F248B76012C485E6C95CBF9E0CADA316E05A4DC0BE5`.
+Build-tools 36 reconfirm 2.0.7-dev / 20007, target SDK 36 and `arm64-v8a` plus
+`x86_64`; `apksigner` reconfirms the expected single local v3 debug signer.
+`adb install -r` succeeded without deleting the two sessions. The installed
+`base.apk`, pulled back as `n18-installed-base.apk`, has the exact same length
+and SHA-256. Cold launch completed in 3.012 seconds and reopened the persisted
+5,311-entry session.
+
+The final source passes **413/413** Release tests: Domain 11, Core 95, App 255
+and Application 52. The F-48 contract passes individually; responsive layout is
+9/9; focused Wireless setup remains 18/18. Scoped `dotnet format
+--verify-no-changes --no-restore`, documentation verification and
+`git diff --check` pass. The safe-evidence privacy scan still finds zero XML
+files containing literal synthetic code `123456`.
+
+At 2026-08-24 19:43 UTC / 21:43 CEST, the Pixel is again foregrounded on the
+complete 5,311-entry session in unfiltered Split mode, with the recovery notice
+dismissed and the separate four-entry interrupted tab retained. Font scale is
+1.0, automatic rotation is enabled with portrait user rotation 0, the inherited
+30-second timeout is untouched and `stay_on_while_plugged_in=0`. There are zero
+app-owned `logcat` readers, capture services and VisualCat notifications. Safe
+final evidence is `n18-handback.{png,xml}`. The two precise limits in §20.12 — no
+fresh real Wireless ADB pairing after the authorized identity-erasing uninstall,
+and no Pixel notification-action tap — remain unchanged.
