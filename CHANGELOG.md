@@ -13,6 +13,12 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Added
+- Added a concise, privacy-safe Android video for Google Play's
+  `FOREGROUND_SERVICE_DATA_SYNC` declaration. It demonstrates user-started Live
+  capture continuing while VisualCat is backgrounded, then stopping and saving
+  the local session.
+
 ## [2.0.8] - 2026-08-24
 
 ### Added

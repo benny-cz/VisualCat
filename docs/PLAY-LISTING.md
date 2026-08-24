@@ -191,6 +191,31 @@ Wireless debugging transport and reader-visible background capture:
 VisualCat does not expose a general ADB shell UI. The application adapter opens
 only its fixed `logcat` stream and disconnects when Live capture ends.
 
+### Foreground-service declaration
+
+Declare `FOREGROUND_SERVICE_DATA_SYNC` under **Local processing → Import and
+export**. Live capture imports a user-requested logcat stream into a local
+VisualCat session and saves the retained entries when the user stops it; this is
+more precise than **Other**.
+
+Use this public, direct MP4 URL in Play Console's video-link field:
+
+```text
+https://raw.githubusercontent.com/benny-cz/VisualCat/main/docs/assets/android-foreground-service-data-sync.mp4
+```
+
+Declaration description (420 characters):
+
+```text
+VisualCat imports a user-started live logcat stream into a local analysis session. The dataSync foreground service keeps that import active while VisualCat is backgrounded or the screen is off; interrupting it would leave a gap in the requested capture. Android shows a private ongoing Live capture notification, and the user can stop and save at any time from either the notification or the visible Stop capture action.
+```
+
+The 24-second video starts app-only Live capture, shows the active analysis,
+backgrounds VisualCat into its Android notification settings where the **Live
+capture** channel is visible, returns to the still-running session, and stops it.
+No notification shade, personal notification, device log from another app,
+pairing secret, or private user data is shown.
+
 Debug or explicitly opted-in non-Play builds may still declare `READ_LOGS` for
 the established developer workflow. That declaration must be absent from the
 AAB uploaded to Play. The release checklist verifies the final manifest.

@@ -1,9 +1,9 @@
-# Documentation screenshots
+# Documentation assets
 
-These are captured from the real applications — the Windows desktop build and the
-Android companion on a physical phone — not mockups. Every one of them shows the
-same seeded synthetic capture, so the repository ships no private or
-device-derived log data.
+These screenshots and recordings come from the real applications — the Windows
+desktop build and the Android companion on physical hardware — not mockups. The
+product walkthroughs use synthetic or app-only input, so the repository ships no
+private log or notification data.
 
 | Asset | Documentation use | Capture state |
 |---|---|---|
@@ -13,6 +13,7 @@ device-derived log data.
 | [`start-page.jpg`](start-page.jpg) | Secondary README image | Clean desktop start page at 1440 × 900 |
 | [`android-demo.gif`](android-demo.gif) | README Android loop | Composited from the on-device recording |
 | [`android-demo.mp4`](android-demo.mp4) | Full Android walkthrough | 70 s, 1920 × 1080, captured with `adb shell screenrecord` |
+| [`android-foreground-service-data-sync.mp4`](android-foreground-service-data-sync.mp4) | Google Play `FOREGROUND_SERVICE_DATA_SYNC` declaration | 24 s, 1080 × 2340, app-only Live capture on a Pixel 5 running Android 14 |
 | [`android-companion.jpg`](android-companion.jpg) | README Android feature image | Two on-device screenshots on the product background |
 | [`logo.svg`](logo.svg) | Repository/product mark | Source vector for the V plus severity-density motif |
 | [`social-preview.jpg`](social-preview.jpg) | GitHub link preview | 1280 × 640 crop of the analysis workspace |
@@ -80,6 +81,16 @@ show a capability path the Play build does not declare.
 A Debug or explicitly opted-in non-Play build may still use the external
 `READ_LOGS` grant as a developer convenience when the asset is specifically
 intended to document that developer path. Label such evidence accordingly.
+
+The foreground-service declaration video uses the exact public `2.0.8` APK on a
+clean install. It starts **Capture VisualCat only**, shows the running capture,
+opens VisualCat's Android notification settings to prove that the **Live capture**
+channel is active while the app is backgrounded, returns to the same session, and
+uses **Stop capture**. The stopped session visibly retains 19 entries. The
+notification shade is deliberately not opened, so no notification belonging to
+another app or person appears in the recording. Touch indicators are enabled for
+reviewer clarity; the final MP4 contains H.264 video only, at 15 fps, with no audio
+or Android screen-recording metadata tracks.
 
 Regenerate all of the derived assets whenever the application chrome changes
 materially.
