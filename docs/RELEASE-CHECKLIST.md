@@ -72,6 +72,33 @@ be published from an unmerged commit or one that would fail a pull request:
 > candidate must satisfy the manual Wireless ADB gates above and record a new
 > physical-device run before Play publication.
 
+### v2.0.8 — 2026-08-24
+
+- The Google Play upload-key-signed candidate APK was clean-installed on a
+  Google Pixel 5 (`redfin`) running Android 14/API 34. It reported application
+  ID `com.barebit.visualcat`, version `2.0.8`, version code `20008`, target SDK
+  36, and no debuggable flag; its cold launch produced no VisualCat fatal
+  exception or ANR.
+- Filters, Plot, Split, Details, Follow and Stop capture exported complete,
+  aligned 132 px (48 dp) high touch targets in portrait. The earlier current-
+  source Pixel evidence records the 49 dp severity-chip reserve, masked numeric
+  pairing code, keyboard occlusion, large-text landscape and OEM fallback
+  checks added for this release.
+- A clean first VisualCat-only Live run requested notification permission once,
+  then held exactly one `dataSync` foreground service, one app-owned `logcat`
+  reader and one private ongoing notification with a **Stop and save** action.
+  Backgrounding and locking the screen for 12 seconds retained the same process
+  and all three resources; returning to VisualCat resumed the same capture.
+- In-app Stop kept 65 entries, then removed the reader, foreground service and
+  notification. A forced process stop and cold launch reopened the same complete
+  65-entry session. Automatic rotation and font scale 1.0 were restored after
+  testing.
+- The AAB and APK passed the release packager's application ID, version, API,
+  ABI, 16 KB alignment, permission, foreground-service, signature and pinned
+  Google Play upload-certificate checks. The Release manifest contains the five
+  audited Wireless/background-capture permissions, the unexported `dataSync`
+  service and no `READ_LOGS` declaration.
+
 ### v2.0.7 — 2026-08-23
 
 - The production-upload-key-signed APK was clean-installed on a Samsung

@@ -205,7 +205,7 @@ do not add it to the current API-36 build pre-emptively.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version: `2.0.7` → `20007` |
+| versionCode | Derived from the release version: `2.0.8` → `20008` |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
 | ABIs | `arm64-v8a`, `x86_64` |
@@ -221,6 +221,12 @@ explore it as a zoomable severity-by-time heat map with filters, ranked message
 templates and byte-faithful source context. Full-device Live capture can pair
 with Android Wireless debugging; VisualCat-only capture works without setup.
 Everything is processed on the device.
+```
+
+Release notes for `2.0.8` (443/500 characters):
+
+```text
+Live capture can now continue while VisualCat is in the background or the screen is locked, with a private ongoing notification and Stop and save action. Wireless ADB reconnects resume from a safer bounded timestamp overlap instead of replaying large log sections. Pairing fields stay visible above Android keyboards, six-digit codes are masked, OEM pairing failures offer a clear fallback, and large-text phone layouts keep actions reachable.
 ```
 
 Release notes for `2.0.7` (448/500 characters):

@@ -97,10 +97,11 @@ path for developer testing. See the
 for the exact current behavior.
 
 The historical v2.0.6 device evidence predates the Wireless ADB production
-path. Version 2.0.7 has physical-device records in
+path. Version 2.0.8 has physical-device records in
 `docs/ANDROID-LIVE-TEST-REPORT.md`: real first pairing, saved reconnect,
-interruption recovery and full-device capture on a Pixel 5, API-36 Samsung and
-Motorola layout/own-app checks, and a final production-upload-key-signed Samsung
-smoke. Historical external-`READ_LOGS` evidence is not used as a substitute.
+interruption recovery, background/screen-off foreground-service capture and
+full-device capture on a Pixel 5, plus API-36 Samsung and Motorola layout and
+own-app checks. Historical external-`READ_LOGS` evidence is not used as a
+substitute.
 
 No VisualCat build sends telemetry or uploads log content.

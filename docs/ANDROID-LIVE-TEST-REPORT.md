@@ -7160,3 +7160,57 @@ app-owned `logcat` readers, capture services and VisualCat notifications. Safe
 final evidence is `n18-handback.{png,xml}`. The two precise limits in §20.12 — no
 fresh real Wireless ADB pairing after the authorized identity-erasing uninstall,
 and no Pixel notification-action tap — remain unchanged.
+
+## 21. Version 2.0.8 production-signed Pixel release smoke
+
+**Status: Pass.** On 2026-08-24, the Google Play upload-key-signed 2.0.8
+candidate was clean-installed on the connected Google Pixel 5 (`redfin`),
+Android 14/API 34, serial `0A031FDD400365`. The previous development install and
+its data were removed with the user's explicit authorization before install.
+
+The exact local artifacts were:
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `artifacts/android/VisualCat-Android-v2.0.8.apk` | 35,393,112 | `10a004c50bb9921f4d8d252d002146024274fc241e70d86562a85dfb460758c2` |
+| `artifacts/android/VisualCat-Android-v2.0.8.aab` | 35,263,976 | `2be753177cc7c9cc9e3f1af90e8b23c21fa3b9bf24d36ec051df22f7b7e0b674` |
+
+Both packages passed `tools/package-android.ps1 -Format both -Version 2.0.8`.
+The verifier confirmed application ID `com.barebit.visualcat`, version code
+20008, min/target API 31/36, `arm64-v8a` and `x86_64`, all 190 native libraries
+16 KB aligned, and the five audited Release permissions. The compiled AAB
+contains the unexported capture service with foreground-service type
+`dataSync`; neither package declares `READ_LOGS`. The APK uses Signature Scheme
+v3 and both artifacts use the pinned Play upload certificate, SHA-1
+`37:5C:8D:64:4F:BF:BD:07:DE:4C:1A:71:95:10:6C:94:4B:C6:B8:14`.
+
+The clean install reported 2.0.8 / 20008, target SDK 36, no debuggable package
+flag, and cold-started without a VisualCat fatal exception or ANR. The home
+screen exposed the stable 2.0.8 provenance. In the Live chooser, full-device
+and VisualCat-only scopes remained explicit; VisualCat-only was selected so the
+clean-install lifecycle could be exercised without creating or retaining a new
+Wireless ADB identity.
+
+The first capture raised Android's one-time notification prompt. After the
+owner selected Allow, the running workspace exposed Filters, Plot, Split,
+Details, Follow and Stop capture as complete 132 px / 48 dp high targets. It
+reported its limited own-app scope and a truthful quiet interval. Runtime
+inspection found one `CaptureForegroundService` with
+`isForeground=true`, foreground ID 4108 and type `00000001`, one app-owned
+`logcat` child, and one private ongoing VisualCat notification with exactly one
+**Stop and save** service action.
+
+The app was sent Home and the screen was locked for 12 seconds. The same app
+PID, single reader, single foreground service and single notification remained;
+after the owner unlocked the phone, VisualCat returned to the same capture and
+its received-line counter had advanced. In-app Stop then retained 65 entries
+and removed the reader, service and notification. After a forced process stop,
+a cold launch reopened the same complete 65-entry session as Ready, proving
+that graceful stop persisted the capture.
+
+The temporary UI hierarchies contain no pairing code or endpoint and remain in
+the ignored local `artifacts/android` verification area only. Automatic
+rotation was restored to enabled and font scale remained 1.0. VisualCat is
+installed with the signed 2.0.8 candidate and foregrounded on the persisted
+session; there are zero app-owned `logcat` readers, capture services and active
+VisualCat notifications.

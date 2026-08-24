@@ -581,7 +581,10 @@ foreach ($result in $results) {
         if ($manifestText -notmatch 'android:name="com\.barebit\.visualcat\.CaptureForegroundService"') {
             throw "$name does not declare VisualCat's Live capture foreground service."
         }
-        if ($manifestText -notmatch '<service\b(?=[^>]*android:name="com\.barebit\.visualcat\.CaptureForegroundService")(?=[^>]*android:foregroundServiceType="dataSync")[^>]*>') {
+        # bundletool renders a compiled enum as its numeric value (dataSync = bit 0),
+        # while older versions sometimes retain the symbolic XML spelling. Accept
+        # both representations, but no other service type.
+        if ($manifestText -notmatch '<service\b(?=[^>]*android:name="com\.barebit\.visualcat\.CaptureForegroundService")(?=[^>]*android:foregroundServiceType="(?:dataSync|0x0*1)")[^>]*>') {
             throw "$name does not declare the Live capture service with foregroundServiceType=dataSync."
         }
         if (-not (Get-PackageEntry -Package $result.Path -EntryName 'BundleConfig.pb')) {

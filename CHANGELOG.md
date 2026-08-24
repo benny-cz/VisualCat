@@ -7,13 +7,32 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Version numbers correspond to git tags and the GitHub [Releases](https://github.com/benny-cz/VisualCat/releases)
 page.
 
-The current stable release is `2.0.7`. Ongoing work is recorded under
+The current stable release is `2.0.8`. Ongoing work is recorded under
 `[Unreleased]`, and development builds carry a `-dev` version suffix so a
 screenshot says which build it came from.
 
 ## [Unreleased]
 
+## [2.0.8] - 2026-08-24
+
+### Added
+- Android Live capture can continue while VisualCat is backgrounded or the
+  screen is locked. A private ongoing notification shows the capture state and
+  provides a **Stop and save** action; notification permission remains optional
+  and capture also appears in Android's Active apps surface when it is denied.
+
 ### Fixed
+- Wireless-ADB recovery now resumes from the latest genuine logcat timestamp
+  with a one-second overlap and a timezone-safe numeric cursor. It stays bounded
+  after repeated out-of-order entries or a device-clock rollback, avoiding both
+  large replays and silent gaps.
+- Android 15 and later now end an overlong background `dataSync` capture
+  gracefully at the operating system's six-hour limit, preserving the session
+  instead of letting the foreground service fail abruptly.
+- Android release verification now recognizes the numeric `dataSync` enum that
+  current `bundletool` emits for compiled App Bundle manifests, so a correctly
+  declared foreground service no longer fails packaging after a successful
+  signed build.
 - Android Wireless-debugging setup no longer implies that split screen can keep
   every OEM's short-lived pairing code alive. It names Android's **Pairing
   unsuccessful** result, asks for only one fresh-code retry, and offers the
@@ -860,7 +879,8 @@ Initial public baseline — the greenfield .NET 10 rewrite described in
   archive, a CycloneDX SBOM, build provenance attestations, and the
   `tools/verify-public-release.ps1` one-command local preflight.
 
-[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.7...HEAD
+[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.8...HEAD
+[2.0.8]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.8
 [2.0.7]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.7
 [2.0.6]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.6
 [2.0.5]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.5
