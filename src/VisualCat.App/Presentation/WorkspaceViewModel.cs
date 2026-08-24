@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using Avalonia.Threading;
+using VisualCat.App.Platform;
 using VisualCat.Application.Coordination;
 using VisualCat.Application.Ports;
 using VisualCat.Application.UseCases;
@@ -140,7 +141,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     /// Captures continue; what stops is work whose only product is a picture. Refreshing
     /// a snapshot re-runs the heat map, the overview, statistics and any active search,
     /// and a live capture did all of that every few seconds for as long as it ran,
-    /// whether or not anyone could see the result. Over a night with the screen off that
+    /// whether or not anyone could see the result. Over a long screen-off capture that
     /// is hours of CPU, and on a phone it is battery and flash wear too.
     /// </remarks>
     public void SuspendLiveViews() => _presence.IsWatching = false;
@@ -392,6 +393,8 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         var operation = RegisterOperation(tab, cancellationToken);
         var operationToken = operation.Cancellation.Token;
         var acquired = false;
+        IDisposable? backgroundExecution = null;
+        var platformStopReason = -1;
 
         // Held in a cell rather than a local because it is rewritten from the source's own
         // thread the moment the platform reveals what the capture can actually see, and read
@@ -451,6 +454,23 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             Dispatcher.UIThread.Post(() => tab.BeginStop()));
         try
         {
+            if (PlatformSourceRegistry.BeginLiveCaptureBackgroundExecution is { } beginBackgroundExecution)
+            {
+                backgroundExecution = beginBackgroundExecution(
+                    scope.Value,
+                    reason =>
+                    {
+                        // The first request owns the explanation. Android can deliver a
+                        // notification action and a service timeout nearly together; both
+                        // still converge on the one idempotent graceful-stop token.
+                        Interlocked.CompareExchange(
+                            ref platformStopReason,
+                            (int)reason,
+                            comparand: -1);
+                        operation.GracefulStop.Cancel();
+                    });
+            }
+
             EnterQueue(tab);
             await _resourceGovernor.WaitAsync(operationToken).ConfigureAwait(false);
             acquired = true;
@@ -524,11 +544,18 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             // the layout (audit 3, A2).
             var readerStopped = operation.GracefulStop.IsCancellationRequested;
             var durationElapsed = timed.IsCancellationRequested;
+            var platformStopped = Volatile.Read(ref platformStopReason);
             if (capturedEntries == 0)
             {
                 tab.ReportActivity(
                     SessionActivity.Stopped,
                     "Stopped · no log entries were received; retry Live and generate app activity");
+            }
+            else if (platformStopped == (int)PlatformLiveCaptureStopReason.SystemTimeLimit)
+            {
+                tab.ReportActivity(
+                    SessionActivity.Stopped,
+                    $"Stopped · Android's six-hour background limit ended this capture · {Counted.Entries(capturedEntries)} kept");
             }
             else if (readerStopped)
             {
@@ -583,6 +610,12 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             {
                 finishedConnectionReporter.ConnectionStatusChanged -= OnConnectionStatusChanged;
             }
+
+            // Release after the source and pipeline are no longer live, but before the
+            // operation disappears from the workspace. On Android this removes the ongoing
+            // notification and foreground-service state; Dispose is idempotent so every
+            // failure/cancellation route gets the same cleanup.
+            backgroundExecution?.Dispose();
 
             if (acquired)
             {

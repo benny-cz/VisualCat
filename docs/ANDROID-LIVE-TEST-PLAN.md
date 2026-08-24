@@ -268,11 +268,12 @@ transport continuity as first-class test states. Do not use a host-side
 | State | How to produce | Expected product behaviour |
 |---|---|---|
 | **W0 — restricted, no Wireless setup** | Clean Release install; choose **Capture VisualCat only** | Starts immediately in own-app scope after the scope chooser, with no redundant legacy confirmation. No claim that Android will show a `READ_LOGS` prompt. The chooser explains that full-device capture is available through explicit Wireless debugging setup. |
-| **W1 — first pairing** | Clean Release install; choose **Full-device capture**, enable Developer options + Wireless debugging; open **Pair device with pairing code**; enter the displayed port/code | The first scope chooser explains local-only handling without privileged-permission jargon. Pairing code is accepted only as six ASCII digits, is never persisted/logged, and successful setup starts Live without a redundant third confirmation. Cancel setup once as well: Back, scrim, and Cancel must keep the sheet visibly on **Cancelling…** until an in-flight low-level pairing handshake returns; Live must not start afterward and no authenticated ADB connection may remain. |
+| **W1 — first pairing** | Clean Release install; choose **Full-device capture**; verify **Open Wireless debugging** opens Developer options focused on the Wireless debugging row (or safely falls back when an OEM ignores the focus hint); enable Wireless debugging; open **Pair device with pairing code**; enter the displayed port/code | The first scope chooser explains local-only handling without privileged-permission jargon. Pairing code is accepted only as six ASCII digits, is never persisted/logged, and successful setup starts Live without a redundant third confirmation. Cancel setup once as well: Back, scrim, and Cancel must keep the sheet visibly on **Cancelling…** until an in-flight low-level pairing handshake returns; Live must not start afterward and no authenticated ADB connection may remain. |
 | **W2 — saved pairing connected** | Pair once, stop capture, keep/re-enable Wireless debugging, then start Live, choose **Full-device capture**, and use **Connect saved pairing** | No new code is required. Saved reconnect is the only primary connection action; the new-code form stays hidden behind **Pair again with a new code**. Full-device capture starts through Wireless ADB and every scope-bearing UI/manifest surface agrees. |
 | **W3 — saved pairing, Wireless debugging off/unreachable** | Saved identity exists; disable Wireless debugging or make discovery unavailable | Reconnect fails with actionable guidance, no crash/ANR, no silent fallback claiming full-device, and own-app capture remains available. |
 | **W4 — stale/revoked pairing** | Remove VisualCat from Android Wireless debugging paired devices while the encrypted local identity remains | Saved reconnect fails as untrusted/stale and guides the user to pair again. A new pairing replaces/reuses local identity safely without exposing the code. |
 | **W5 — transport interrupted mid-capture** | Start W2, then temporarily disable/re-enable Wireless debugging or otherwise break the local ADB transport | Capture records a reconnect gap, performs bounded reconnect attempts, resumes from the last complete timestamp without silent byte loss claims, and either continues or fails explicitly while preserving committed data. |
+| **W6 — background foreground-service lifecycle** | Start W2 from the visible activity; allow/deny the one-time notification permission in separate clean-install passes; on the allow pass verify the same first capture explicitly reposts after the grant; lock the screen; stop once from the notification | An unexported `dataSync` foreground service appears immediately, the private notification is visible on that first allowed capture, contains no log content and offers **Stop and save**; capture advances while locked, denial still exposes Active apps without a repeated prompt, and notification Stop drains/finalizes exactly like in-app Stop. API-35+ timeout simulation names the six-hour platform limit and keeps received entries. |
 
 The direct `READ_LOGS` path is now a **developer-only compatibility dimension**.
 Debug or explicitly opted-in non-Play builds may declare the development
@@ -888,9 +889,13 @@ workspace. Growing-file follow itself is desktop-only and is not tested here.
 *Steps* Start a full-device capture · turn the screen off for 10 minutes ·
 turn it back on.
 *Expect* The capture is still running, the entry count grew across the dark
-period, and the UI redraws correctly on resume without a stale frame.
+period, Android reports VisualCat's unexported `dataSync` foreground service,
+the private ongoing notification exposes **Stop and save** without any log
+content, and the UI redraws correctly on resume without a stale frame. Repeat
+once by stopping from that notification and prove the session drains and seals.
 *Fail if* The capture ended, or the resumed UI shows counts from before the
-screen went off.
+screen went off; the service/notification is absent or leaks sensitive content;
+or notification Stop abandons the temporary session.
 
 **A-13 · Live capture survives a configuration change**
 *Steps* During a running capture, in turn: rotate · change the system text size ·
@@ -1126,7 +1131,9 @@ this scale — this is the size at which the stop defect appeared. The finished
 session reopens with a complete, verifiable manifest. If the Wireless ADB bounded
 receive queue saturates, diagnostics record a transport recycle/reconnect gap and
 the source resumes from its last complete timestamp instead of showing sustained
-unbounded memory growth or silently claiming perfect continuity.
+unbounded memory growth or silently claiming perfect continuity. The `dataSync`
+foreground service and private ongoing notification remain present for the whole
+live interval and disappear only after the session finishes finalizing.
 *Instrument* `dumpsys thermalservice` and `batterystats` at the end; record
 throttling and battery attribution. Take `meminfo` hourly and every 1–2 minutes
 during the high-log interval until memory has visibly stabilized again. Retain
@@ -1136,14 +1143,22 @@ recycle is not represented by a reconnect-gap defect/diagnostic, or stop does no
 resolve.
 
 **X-06 · Overnight capture (soak)**
-*Steps* As X-05 but 8–12 hours, unattended, off charge for the first half.
+*Steps* On API 35+, run unattended with the screen off until Android's six-hour
+`dataSync` foreground-service allowance ends; separately run 8–12 total hours as
+two or more reader-started segments, bringing VisualCat to the foreground between
+segments to reset Android's allowance. On older supported APIs, use one 8–12 hour
+segment. Keep the device off charge for the first half where safe.
 *Expect* Behaviour across naturally entered Doze windows matches the product's
-declared background-capture contract. Any platform-caused suspension is marked
-as a gap rather than silently presented as continuous. No attributable ANR,
-crash, or unbounded growth. The session is finalizable in the morning.
+declared background-capture contract. On API 35+ the uninterrupted background
+segment ends gracefully at or before the platform allowance, names Android's
+six-hour limit and keeps received data; it must not promise an impossible
+12-hour background service. Any other platform-caused suspension is marked as a
+gap rather than silently presented as continuous. No attributable ANR, crash,
+stale notification or unbounded growth. Every segment is finalizable.
 *Instrument* Before and after: `meminfo`, `df /data`, time-bounded full/crash
 logcat, and a bugreport/dropbox snapshot where available.
-*Fail if* The app is dead in the morning, or the session cannot be finalized.
+*Fail if* The app is dead without recoverable session data, the service times out
+into an ANR, the UI still claims capture is live, or a session cannot be finalized.
 
 **X-07 · Doze and battery saver explicitly**
 ```shell
@@ -1913,7 +1928,7 @@ regression pack that stops growing stops protecting.
 | **Smoke** | Every device build | B-01, B-03, B-04, B-10 or B-11, B-12, B-13, B-16 direct-start pass | ~45–60 min |
 | **Standard** | Before a candidate build is shared | All B; R except the four-hour R-01/R-18 procedures; U-01, U-03, U-04, U-06, U-19; X-01; X-24 | ~8–12 attended h |
 | **Upgrade** | Every schema/settings/storage change and every release candidate | A-19 and, where applicable, A-22; then B-03, B-13, B-14, H-06 on migrated data | ~3–5 attended h |
-| **Full** | Before a release tag | Every applicable tier except X-06; W0–W5 as applicable; exact signed candidate is authoritative, with a separate optional D-state Debug diagnostic subset where direct-permission evidence is required | ~5–8 person-days plus unattended machine time |
+| **Full** | Before a release tag | Every applicable tier except X-06; W0–W6 as applicable; exact signed candidate is authoritative, with a separate optional D-state Debug diagnostic subset where direct-permission evidence is required | ~5–8 person-days plus unattended machine time |
 | **Soak** | Before a release tag, on a dedicated device | X-05, X-06, X-07, X-16, X-22; do not overlap workloads on one device | ~20–30 elapsed h/device, including ~6–10 attended h and review |
 | **Parity** | Whenever the engine, store, or parser changes | All H, plus X-25 and A-23 | ~4–6 attended h |
 | **Accessibility** | Before a release tag, and after any layout change | All U, including a fresh participant for U-14 | ~6–10 attended h plus participant availability |

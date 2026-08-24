@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Avalonia.Headless.XUnit;
+using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
 using VisualCat.Application.Ports;
 using VisualCat.Domain.Sessions;
@@ -208,6 +209,58 @@ public sealed class CaptureStopTests
         }
     }
 
+    /// <summary>
+    /// Android's notification and API-35 service timeout must use the same draining stop as
+    /// the in-app button. Otherwise the foreground service can disappear while the source
+    /// and an unsealed temporary session continue running behind it.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task APlatformTimeLimitStopsSavesAndReleasesItsBackgroundLease()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        WorkspaceViewModel.ConfigureTemporarySessionRoot(root);
+        var previous = PlatformSourceRegistry.BeginLiveCaptureBackgroundExecution;
+        var lease = new TrackingLease();
+        Action<PlatformLiveCaptureStopReason>? requestStop = null;
+        string? summary = null;
+        try
+        {
+            PlatformSourceRegistry.BeginLiveCaptureBackgroundExecution = (value, stop) =>
+            {
+                summary = value;
+                requestStop = stop;
+                return lease;
+            };
+
+            await using var workspace = new WorkspaceViewModel();
+            await using var device = new StreamingLogSource(BuildLog(64, TimeSpan.FromSeconds(64)));
+            var capture = workspace.CaptureAsync(device, null, TestContext.Current.CancellationToken);
+            await device.WaitForFirstReadAsync();
+
+            Assert.Equal("On-device full-device logcat", summary);
+            Assert.NotNull(requestStop);
+            requestStop(PlatformLiveCaptureStopReason.SystemTimeLimit);
+
+            var captured = await capture;
+            Assert.Equal(SessionActivity.Stopped, captured.Activity);
+            Assert.Contains("Android's six-hour background limit", captured.Status, StringComparison.Ordinal);
+            Assert.Contains("entries kept", captured.Status, StringComparison.Ordinal);
+            Assert.True(lease.Disposed);
+
+            await workspace.CloseAsync(captured);
+        }
+        finally
+        {
+            PlatformSourceRegistry.BeginLiveCaptureBackgroundExecution = previous;
+            WorkspaceViewModel.ConfigureTemporarySessionRoot(null);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
     private static ProgressSnapshot Progress(IngestStage stage, long read, long committed) =>
         new(
             Guid.Empty,
@@ -333,5 +386,12 @@ public sealed class CaptureStopTests
         }
 
         return builder.ToString();
+    }
+
+    private sealed class TrackingLease : IDisposable
+    {
+        public bool Disposed { get; private set; }
+
+        public void Dispose() => Disposed = true;
     }
 }

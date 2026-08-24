@@ -84,7 +84,7 @@ public sealed partial class MainView
 
     private async Task OpenWirelessDebuggingSettingsFromNoticeAsync()
     {
-        if (PlatformSourceRegistry.OpenDeveloperOptionsAsync is not { } open)
+        if (PlatformSourceRegistry.OpenWirelessDebuggingSettingsAsync is not { } open)
         {
             ShowNotice(
                 "Open Android Settings > Developer options and turn Wireless debugging off.",

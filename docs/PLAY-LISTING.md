@@ -176,11 +176,17 @@ a privileged/development permission that Google Play cannot grant to an ordinary
 application, and VisualCat's production full-device path does not depend on it.
 
 The Release manifest declares these normal permissions for the explicit local
-Wireless debugging transport:
+Wireless debugging transport and reader-visible background capture:
 
 - `INTERNET` — opens the authenticated local ADB/TLS socket;
 - `CHANGE_WIFI_MULTICAST_STATE` — permits the short-lived multicast lock used
-  while discovering Android's Wireless debugging service over mDNS.
+  while discovering Android's Wireless debugging service over mDNS;
+- `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_DATA_SYNC` — keep an explicitly
+  started Live import running when the activity is hidden or the screen locks,
+  with Android's six-background-hour limit on API 35+;
+- `POST_NOTIFICATIONS` — requested once at the first Live capture so Android can
+  show the private ongoing capture notice and **Stop and save** action. Denial
+  does not block capture; Android still exposes the service through Active apps.
 
 VisualCat does not expose a general ADB shell UI. The application adapter opens
 only its fixed `logcat` stream and disconnects when Live capture ends.

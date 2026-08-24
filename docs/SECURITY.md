@@ -67,6 +67,13 @@ API in front of the third-party library:
   Android for later explicit use and can be revoked in Wireless debugging
   settings.
 
+Every Android Live source holds an unexported `dataSync` foreground-service
+lease while it runs. Its private notification contains no log or pairing data
+and routes **Stop and save** through the same draining session-finalization path
+as the in-app control. The service is non-sticky, so Android cannot resurrect a
+stale capture notification after process loss, and the API-35+ six-hour timeout
+removes foreground state promptly while requesting graceful capture shutdown.
+
 The production Release/Play build does not declare `READ_LOGS` by default and
 never uses local ADB to change its own permission state. Debug or an explicitly
 opted-in non-Play build can retain the established externally granted direct

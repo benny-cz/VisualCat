@@ -29,6 +29,10 @@ public sealed class WirelessAdbSetupTests
             Assert.DoesNotContain("READ_LOGS", text, StringComparison.Ordinal);
             Assert.Contains("Nothing is uploaded", text, StringComparison.Ordinal);
             Assert.Contains("Wireless debugging", text, StringComparison.Ordinal);
+            Assert.Contains("private ongoing notification", text, StringComparison.Ordinal);
+            Assert.Contains("screen off", text, StringComparison.Ordinal);
+            Assert.Contains("six-hour service limit", text, StringComparison.Ordinal);
+            Assert.Contains("everything already received is kept", text, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -248,6 +252,48 @@ public sealed class WirelessAdbSetupTests
         finally
         {
             PlatformSourceRegistry.HasSavedWirelessAdbIdentity = previous;
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task SetupUsesTheDedicatedWirelessDebuggingAction()
+    {
+        var previousIdentity = PlatformSourceRegistry.HasSavedWirelessAdbIdentity;
+        var previousOpen = PlatformSourceRegistry.OpenWirelessDebuggingSettingsAsync;
+        try
+        {
+            var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            PlatformSourceRegistry.HasSavedWirelessAdbIdentity = static () => false;
+            PlatformSourceRegistry.OpenWirelessDebuggingSettingsAsync = cancellationToken =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                opened.TrySetResult();
+                return Task.CompletedTask;
+            };
+
+            using var dialog = new WirelessAdbSetupDialog();
+            var button = dialog.GetLogicalDescendants().OfType<Button>().Single(static candidate =>
+                string.Equals(candidate.Content?.ToString(), "Open Wireless debugging", StringComparison.Ordinal));
+
+            Assert.Contains(
+                "Developer options at Wireless debugging",
+                AutomationProperties.GetHelpText(button),
+                StringComparison.Ordinal);
+
+            button.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            await opened.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Contains(
+                dialog.GetLogicalDescendants().OfType<TextBlock>(),
+                static block => (block.Text ?? string.Empty).Contains(
+                    "Turn on Wireless debugging",
+                    StringComparison.Ordinal));
+        }
+        finally
+        {
+            PlatformSourceRegistry.HasSavedWirelessAdbIdentity = previousIdentity;
+            PlatformSourceRegistry.OpenWirelessDebuggingSettingsAsync = previousOpen;
         }
     }
 

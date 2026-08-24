@@ -101,11 +101,11 @@ internal sealed class WirelessAdbService : IDisposable
     }
 
     internal async Task<AdbStream> OpenLogcatStreamAsync(
-        string? resumeTimestamp,
+        string? resumeArgument,
         CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
-        ValidateResumeTimestamp(resumeTimestamp);
+        ValidateResumeArgument(resumeArgument);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
         var operationToken = linked.Token;
 
@@ -116,12 +116,12 @@ internal sealed class WirelessAdbService : IDisposable
                 "Wireless debugging is not connected. Turn Wireless debugging on and start Live again.");
         }
 
-        var destination = BuildLogcatDestination(resumeTimestamp);
+        var destination = BuildLogcatDestination(resumeArgument);
         global::Android.Util.Log.Info(
             LogTag,
-            resumeTimestamp is null
+            resumeArgument is null
                 ? "Opening fixed Wireless ADB logcat stream at the live tail."
-                : $"Opening fixed Wireless ADB logcat stream from resume timestamp {resumeTimestamp} UTC after a transport interruption.");
+                : $"Opening fixed Wireless ADB logcat stream from timezone-independent resume epoch {resumeArgument} after a transport interruption.");
 
         AdbStream? stream = null;
         try
@@ -570,17 +570,18 @@ internal sealed class WirelessAdbService : IDisposable
         }
     }
 
-    private static string BuildLogcatDestination(string? resumeTimestamp)
+    private static string BuildLogcatDestination(string? resumeArgument)
     {
         const string prefix = "shell:logcat -b all -D ";
         const string format = " -v threadtime,year,UTC,usec";
-        var destination = resumeTimestamp is null
+        var destination = resumeArgument is null
             ? prefix + "-T 1" + format
-            : prefix + "-T \"" + resumeTimestamp + "\"" + format;
+            : prefix + "-T \"" + resumeArgument + "\"" + format;
 
         // Keep the service string intentionally short even if LibADB changes internally. Older
         // libadb branches had an A_OPEN allocation bug for destinations around 104 bytes. The
-        // current fixed command is 55 bytes at the live tail and 82 bytes when resuming; this
+        // current fixed command is 55 bytes at the live tail and shorter than 82 bytes when
+        // resuming from epoch seconds; this
         // guard makes a future edit fail closed instead of silently crossing that historical
         // hazard or growing into an accidental general-purpose shell surface.
         var destinationBytes = Encoding.UTF8.GetByteCount(destination);
@@ -593,34 +594,35 @@ internal sealed class WirelessAdbService : IDisposable
         return destination;
     }
 
-    private static void ValidateResumeTimestamp(string? resumeTimestamp)
+    private static void ValidateResumeArgument(string? resumeArgument)
     {
-        if (resumeTimestamp is null)
+        if (resumeArgument is null)
         {
             return;
         }
 
-        if (resumeTimestamp.Length != 26 ||
-            resumeTimestamp[4] != '-' ||
-            resumeTimestamp[7] != '-' ||
-            resumeTimestamp[10] != ' ' ||
-            resumeTimestamp[13] != ':' ||
-            resumeTimestamp[16] != ':' ||
-            resumeTimestamp[19] != '.')
+        var separator = resumeArgument.IndexOf('.');
+        if (separator is < 1 or > 19 ||
+            resumeArgument.Length - separator - 1 != 6 ||
+            resumeArgument.LastIndexOf('.') != separator)
         {
-            throw new ArgumentException("The Wireless ADB resume timestamp has an invalid shape.", nameof(resumeTimestamp));
+            throw new ArgumentException(
+                "The Wireless ADB resume epoch has an invalid shape.",
+                nameof(resumeArgument));
         }
 
-        for (var index = 0; index < resumeTimestamp.Length; index++)
+        for (var index = 0; index < resumeArgument.Length; index++)
         {
-            if (index is 4 or 7 or 10 or 13 or 16 or 19)
+            if (index == separator)
             {
                 continue;
             }
 
-            if (resumeTimestamp[index] is < '0' or > '9')
+            if (resumeArgument[index] is < '0' or > '9')
             {
-                throw new ArgumentException("The Wireless ADB resume timestamp contains invalid characters.", nameof(resumeTimestamp));
+                throw new ArgumentException(
+                    "The Wireless ADB resume epoch contains invalid characters.",
+                    nameof(resumeArgument));
             }
         }
     }

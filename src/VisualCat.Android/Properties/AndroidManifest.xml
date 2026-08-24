@@ -7,6 +7,14 @@
        builds through AssemblyInfo.cs and is absent from Release/Play by default. -->
   <uses-permission android:name="android.permission.INTERNET" />
   <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+  <!-- Live capture is reader-initiated, potentially long-running data import. Android's
+       data-sync foreground service keeps that work explicit and supplies an ongoing private
+       notification with Stop and save while the screen is off. POST_NOTIFICATIONS is optional
+       at runtime: denial hides the drawer notification but Android still exposes the service
+       through Active apps and permits it to run. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <!-- Some Java/AndroidX dependencies carry legacy assembly-level permission declarations.
        VisualCat never reads phone state or shared storage, and its minimum Android version does
        not use the legacy external-storage model. Remove them at the final manifest merge rather

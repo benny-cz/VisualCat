@@ -5507,3 +5507,802 @@ At hand-back, the Samsung retains its original font scale and rotation settings.
 The production-signed 2.0.7 candidate is installed cleanly and open on the home
 screen, with no saved pairing identity, capture/session data or granted log
 permission.
+
+---
+
+## 18. Production-signed Samsung Wireless ADB endurance continuation
+
+### 18.1 Durable continuation checkpoint
+
+This section is intentionally updated after every material checkpoint so an
+interrupted or independent session can resume without reconstructing device
+state. Times are Europe/Prague unless explicitly marked UTC.
+
+| Field | Value |
+|---|---|
+| Continuation start | 2026-08-24 11:46 CEST |
+| Repository | `main` at tagged release commit `0c2f332` (`v2.0.7`); clean working tree before this report update |
+| Device | Samsung Galaxy S21 FE / SM-G990B, Android 16 / API 36, serial `RFCRC0A9GND` |
+| Installed package | `com.barebit.visualcat`, version 2.0.7 / 20007; production-signed release installed cleanly at 2026-08-24 00:17:29 |
+| Rotation / power baseline | Automatic rotation enabled, portrait user rotation, device awake |
+| Active test inherited from device | Real Wireless ADB full-device capture `Wireless logcat 11h04m26`, started at approximately 11:04:26 |
+
+The active session was already present when this continuation began and is being
+preserved rather than restarted. At 11:44:23 its visible UI reported 765 rows in
+view, 7,354,220 matching rows, 7,354,613 retained session rows, 8,493,055 source
+lines received and a current input rate of 141 lines/s. The production app
+process was healthy (`PID 12193`). Its active shell transport used
+`logcat -b all -D -T "2026-08-24 08:59:51.347040" -v
+threadtime,year,UTC,usec`; at 11:47 the current shell/logcat pair was PIDs
+6115/6117 and had been alive for about ten minutes. That younger transport
+process is evidence of a connection/process replacement during the still-open
+app session, not evidence that the app capture itself began ten minutes ago.
+
+The session title is a start-time label (`11h04m26`), not an elapsed duration.
+Consequently this checkpoint claims approximately 42 minutes of app-session
+runtime, not eleven hours. The large received count also includes the initial
+device-log backlog and must not be divided by wall time as a steady-state rate.
+
+### 18.2 Step ledger (live)
+
+| ID | Step | Status | Evidence / resume instruction |
+|---|---|---|---|
+| H-01 | Preserve and identify the inherited live session | **Done** | Package, process tree, UI counters, repository state and start-time semantics are recorded in §18.1; graceful stop and the later authorized cleanup are recorded in §§18.9–18.13. |
+| H-02 | Validate the corrected Wireless ADB endurance path on the physical Samsung | **Done** | §§18.11–18.13 contain the bounded capture, forced and natural reconnects, five-minute screen-off continuity, foreground notification and clean first-grant proof. |
+| H-03 | Gracefully stop and verify final session integrity | **Done** | §18.12 records notification Stop-and-save, the 79,505-entry seal, child/service/notification teardown, tab switching and cold-process persistence with no fatal/ANR. |
+| H-04 | Restore and document hand-back state | **Done** | §18.13 records the final full-screen corrected build, granted notification permission, saved fresh pairing, stopped 9,477-entry verification session, no service/child/notification, 95% battery and thermal status 0. Wireless debugging remains on as explicitly disclosed. |
+| H-02a | Implement supported Android background execution | **Done — automated and physical pass** | §§18.5–18.13 record the implementation, five-minute screen-off counter advance, notification stop and genuinely first-grant notification repost. |
+| H-02b | Prevent merged-buffer cursor regression | **Done — automated and physical pass** | §§18.7 and 18.12 record the monotonic cursor, controlled EOF and later natural recycle; both reconnects used increasing high-water values without replay amplification. |
+| H-02c | Make reconnect resume timezone-independent | **Done — automated and physical pass** | §§18.11–18.12 record the controlled epoch/local/UTC comparison and physical replacement commands using six-fraction Unix epoch `-T` arguments. |
+| H-02d | Repost the notification after the first runtime grant | **Done — clean-install physical pass** | §18.13 records the exact pre-grant absence, permission callback, service refresh command, immediate shade rendering and notification stop action. |
+
+An attempted fresh UIAutomator dump at 11:47 could not obtain Android's idle
+state while the high-volume capture was updating. The already-preserved 11:44
+XML is therefore the baseline oracle; this is an automation-observation limit,
+not currently classified as an app defect.
+
+### 18.3 Package and resource baseline
+
+The installed `base.apk` was pulled without changing the running application.
+It is 35,224,959 bytes with SHA-256
+`2D88FBA6EE5185FCCC9BB5A999EBCFB5D5EF105A41EDA309038F517084131903`, an exact
+byte match for
+`artifacts/release-verification/v2.0.7-0c2f332/public-assets/VisualCat-Android-v2.0.7.apk`.
+Android build-tools 36 `apksigner` reports one signer, APK Signature Scheme v3,
+certificate SHA-1
+`37:5C:8D:64:4F:BF:BD:07:DE:4C:1A:71:95:10:6C:94:4B:C6:B8:14` and certificate
+SHA-256
+`A7:15:B0:30:95:89:AA:83:DD:21:54:8D:19:59:AF:4B:B9:7B:8D:F0:6D:97:FD:AE:32:71:5F:BD:65:30:E1:84`.
+This closes the ambiguity between a production-signed repository artifact and
+the package actually exercising the Wireless ADB transport.
+
+At 11:51, with USB power connected, battery was 96%, Android thermal status was
+0 and battery temperature was 35.8 °C. The app used approximately 714 MiB PSS
+(718 MiB RSS, 65 MiB swap PSS). The detailed breakdown included 212 MiB of
+other memory maps and 295 MiB of private-dirty unknown memory; Java heap was
+16 MiB PSS and native heap was 23 MiB PSS. This is a high-volume stress case
+with about 7.35 million retained rows, so memory is now a monitored endurance
+metric rather than being labelled a leak from one sample. Android's exit-info
+history contains only the clean self-exit at the 00:17 installation transition,
+and current app-PID logs contain no managed fatal exception or ANR. Samsung
+surface teardown emitted repeated `BufferQueue has been abandoned` errors; the
+process and visible capture remained healthy, so they are recorded for trend
+comparison rather than classified as a crash.
+
+### 18.4 Screen-off/background checkpoint and new finding
+
+At 11:50:41 the screen was turned off with Android's sleep key event for a
+planned five-minute background leg. The app and Wireless shell/logcat child
+started as PIDs 12193/6117 and Android reported `mWakefulness=Dozing`. The screen
+was restored at 11:55:53; no Stop, process kill, package mutation or Wireless
+debugging toggle was used.
+
+| Minute | App CPU (one-core %) | Transport CPU | App / child PID | Thermal / battery | Result |
+|---:|---:|---:|---|---|---|
+| 1 | 31.45% | 0.33% | 12193 / 6117 | status 0 / 97% | Initial screen-off/backlog transition; both alive |
+| 2 | 0.00% | 0.03% | 12193 / 6117 | status 0 / 97% | Stable doze |
+| 3 | 0.00% | unavailable | 12193 / absent | status 0 / 98% | Wireless shell child disappeared |
+| 4 | 0.00% | unavailable | 12193 / absent | status 0 / 98% | No transport recovery while dozing |
+| 5 | 0.00% | unavailable | 12193 / absent | status 0 / 98% | No transport recovery while dozing |
+
+The app process remained alive, and no fatal exception or ANR was emitted. The
+earlier 11:37 logs prove that the bounded 1,024 KiB receive queue can deliberately
+recycle the transport and rapidly reauthenticate with the saved identity; the
+current child had survived from 11:37:15 until the doze leg. During deeper doze,
+however, the child disappeared and there was no Wireless ADB reconnect log before
+the app became suspended. This is a reproducible background-lifecycle gap, not a
+completed endurance pass.
+
+After wake, Samsung presented its secure swipe/PIN bouncer. The original
+unlocked foreground state cannot be restored without user authentication, so
+credentials must not be guessed or automated. VisualCat remains alive behind
+the lock screen with its saved identity and session data intact; the stopped or
+reconnect-pending UI state is not yet observable. Continue with code-level
+diagnosis while preserving the device, then obtain an authorized unlock before
+installing or repeating the test.
+
+### 18.5 Background-capture remediation checkpoint
+
+**Root cause.** Product comments and UI treated a Live capture as work that could
+continue with the screen off, but the Android adapter had no foreground service
+or ongoing notification. The capture task, Wireless socket and session writer
+all remained owned only by the ordinary app process. Samsung could therefore
+suspend the process after lock before the read loop observed the dead shell
+stream and ran its otherwise-working reconnect path.
+
+**Implementation now under verification:**
+
+- `PlatformSourceRegistry` exposes one platform background-execution lease for
+  Live capture and a typed stop reason. `WorkspaceViewModel.CaptureAsync` acquires
+  it synchronously before import begins, releases it on every completion/failure
+  path, and routes notification/timeout requests through the existing graceful
+  Stop pipeline so received records are drained, sealed and reopened.
+- Android supplies `CaptureForegroundService`, an unexported `dataSync`
+  foreground service with a low-importance, private, ongoing **VisualCat live
+  capture** notification. It contains no log data or device identity and offers
+  **Stop and save**. The action changes the notice to **Stopping VisualCat
+  capture** while the normal session finalization runs.
+- The service is `NotSticky`: Android must not recreate a stale capture notice
+  after process loss. API-35+ `OnTimeout` requests graceful stop, removes
+  foreground state immediately as Android requires, and gives the final session
+  the truthful status **Android's six-hour background limit ended this capture**.
+- The manifest adds only the reviewed foreground-service/data-sync permissions
+  and optional `POST_NOTIFICATIONS`. The notification permission is requested
+  once, only after the reader explicitly starts Live. Denial does not block
+  capture or cause repeated prompts; Android still exposes the foreground
+  service through Active apps, although the drawer action is unavailable.
+- No partial wake lock is used. The foreground service is the platform-supported
+  user-visible mechanism for background network access; avoiding an hours-long
+  wake lock prevents a disproportionate battery cost and Android-vitals risk.
+- The Live scope chooser now discloses the private ongoing notification, screen-
+  off behavior, Stop-and-save path, Android's six-hour background limit and the
+  guarantee that already-received data is kept. The release permission allowlist
+  and AAB service-type gate are updated with the implementation.
+
+Focused Release tests for `CaptureStopTests` and `WirelessAdbSetupTests` pass
+19/19. The new regression starts a synthetic Live source, invokes the platform
+time-limit callback, verifies the session stops and keeps entries through the
+normal pipeline, verifies the six-hour explanation, and proves the background
+lease is disposed. The embedded-assembly Android Debug build then succeeded with
+0 warnings and 0 errors. Its 79,279,840-byte signed APK has SHA-256
+`58C784A43B03D9B638282E337A0F4CBDFCD5014B2367B2AA57F2AFE5EDF26402`; `aapt2`
+confirms target API 36, the expected debug-only `READ_LOGS`, all three reviewed
+background-capture permissions, and an unexported
+`com.barebit.visualcat.CaptureForegroundService` whose foreground-service type
+is `dataSync` (`0x1`). Release compilation, the full test suite and physical-
+device retest are the next gates; this checkpoint does not yet claim the fix
+works on Samsung.
+
+### 18.6 Automated and trimmed-Release gates
+
+The final full Release solution suite passes **406/406**: Domain 11, Core 95,
+Application 52 and App 248. `git diff --check` is clean, and `dotnet format
+--verify-no-changes` passes for every changed C# file. A whole-solution formatter
+run still reports whitespace in Android binding files generated under `obj`; no
+generated file was edited or treated as product source.
+
+The final trimmed Release Android build succeeds with 0 warnings and 0 errors.
+Its locally signed APK, including both remediations, is 35,380,824 bytes with
+SHA-256 `B22ABAB43FCDCD9E713601FCDBC4A468810E272A68EA84BE2A399A99719D62CB`.
+`aapt2` confirms version 2.0.7-dev / 20007, minimum API 31, target API 36,
+`INTERNET`, `CHANGE_WIFI_MULTICAST_STATE`, `FOREGROUND_SERVICE`,
+`FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`, and AndroidX's package-
+scoped receiver permission. It contains no `READ_LOGS`, phone-state or storage
+permission. The unexported capture service and `dataSync` type survive trimming.
+
+The release packager's explicit allowlist now requires those five product
+permissions and rejects a bundle without the unexported named `dataSync`
+service. This shell has no `ANDROID_KEYSTORE_*` signing environment, so it cannot
+produce the production-upload-key APK needed for an in-place update over the
+currently installed production package. The locally signed Release/Debug APKs
+must not be installed over it: Android will reject the signature mismatch, and
+uninstalling first would destroy the saved pairing identity and inherited
+session. Obtain the authorized production signing environment or explicitly
+choose a clean uninstall/re-pair test only after the secure device is unlocked.
+
+### 18.7 Wireless resume-cursor replay finding and remediation
+
+The inherited app diagnostics expose a second endurance defect. During the
+11:37 backpressure storm the bounded receive queue correctly recycled and
+reauthenticated the transport, but successive resume timestamps were not
+monotonic: `08:12:22.346901` → `08:08:08.413491` → `08:17:16.890079` →
+`08:04:23.217766` → `08:43:32.346446` → `08:11:09.412062` →
+`08:59:51.347040`. The implementation used the timestamp on the last line it
+saw. A merged `-b all` stream is not guaranteed to be perfectly ordered across
+buffers, so moving the cursor backward can replay a large ring-buffer suffix,
+fill the queue again, reconnect again, and amplify both row count and memory.
+That loop is consistent with the otherwise disproportionate 8.49 million source
+lines, 7.35 million retained rows and 714 MiB PSS in the short inherited run.
+
+A separate read-only host sample of the current device collected 60,355 output
+lines / 51,487 structurally valid threadtime records. It contained 204 adjacent
+timestamp regressions, with a maximum backward step of 5.505 ms. That proves a
+last-line cursor is invalid even without the hours-scale stress trace; it also
+gives an independent bound for the normal merged-buffer jitter observed on this
+Samsung.
+
+The new `LogcatResumeCursor` accepts only a structurally valid year/usec
+threadtime record (date/time, optional zone, nonzero PID/TID, priority and tag),
+retains the greatest genuine UTC timestamp, and supplies `logcat -T` an inclusive
+one-second overlap before that high-water mark. Small cross-buffer reordering can
+no longer move the cursor backward, while the bounded overlap deliberately
+prefers a small number of duplicate boundary records to unknown loss. A real
+device wall-clock rollback is detected independently: if the former high-water
+mark is more than five seconds in the device clock's future, the cursor starts a
+new clock epoch and emits a diagnostic instead of skipping post-adjustment data.
+
+The Android source now converts at most the documented 96-character ASCII
+record prefix on the stack, avoiding a per-line full-message allocation in this
+hot path. Focused Release tests for the record reader and resume cursor pass
+36/36, covering millisecond reordering, one-second overlap, timestamp-looking
+non-record text, invalid dividers/PIDs, and a multi-hour wall-clock rollback.
+This is not yet a physical pass; the next build and device run must prove that
+resume timestamps stay monotonic and memory settles after a forced queue recycle.
+
+Post-remediation gates are green: the trimmed Release Android build completes
+with 0 warnings/errors, the full Release solution passes 406/406, changed-file
+format verification passes, and `git diff --check` is clean.
+
+### 18.8 Authorized unlock and pre-update session state
+
+The user unlocked the Samsung normally at approximately 12:19; no credential was
+shared or automated. VisualCat returned to the foreground as the same PID 12193.
+The Wireless shell/logcat child remained absent, while the product still exposed
+**Stop capture** and reported:
+
+`Capturing · 8,511,960 lines received · no source lines for 30m 27s · Wireless debugging full-device logcat`
+
+The visible session contained 7,370,577 retained/matching entries and 928 rows in
+the current view. This proves the original build neither lost the already-sealed
+segments nor recovered the suspended transport after unlock; it also confirms
+the stale **Capturing** state is a real background-lifecycle failure rather than
+an automation inability to inspect the locked UI. Battery was 98% on USB,
+temperature 32.5 °C and thermal status 0. The next authorized mutation is the
+visible in-app **Stop capture** action so the inherited session finalizes before
+any package update.
+
+### 18.9 Graceful stop of the inherited session
+
+At approximately 12:21, with the device unlocked and VisualCat visible, the
+in-app **Stop capture** button was activated at its current accessibility bounds
+`[820,486][1039,594]`. This was the product's normal non-destructive stop path;
+the process was not killed and app data was not cleared. Within four seconds the
+UI changed to **Stopping…** / **Stopping · 4s · compacting the session**. The
+session still exposed all 7,370,577 retained entries, and the Wireless shell /
+`logcat` child was absent while the VisualCat process remained alive as PID
+12193. Finalization is being monitored before any install or signing decision.
+
+At the 50-second checkpoint the UI still truthfully reported **compacting the
+session** with the same 7,370,577 entries. VisualCat remained PID 12193 and
+Android's exit history showed no new crash or kill. Compaction temporarily
+raised total PSS/RSS to approximately 1.22 GiB with 94 MiB swap PSS, up from the
+already-high pre-stop footprint. This is recorded as a stress-path memory cost;
+interrupting the normal finalizer would risk the very session this step is
+intended to preserve.
+
+The next checkpoint completed successfully. The tab changed from in-progress to
+complete and reported **Stopped · 7,370,820 entries kept**; the additional 243
+entries were already buffered records drained by the graceful stop. VisualCat
+remained alive as PID 12193, no Wireless shell / `logcat` child remained, and
+memory settled back to 728,023 KiB PSS / 697,080 KiB RSS with 82,553 KiB swap
+PSS. This closes the inherited capture without deleting app data, its saved
+Wireless ADB identity, or the resulting complete session.
+
+### 18.10 Update gate requiring owner choice
+
+The repository's supported release path was rechecked after finalization. It
+requires `ANDROID_KEYSTORE_PATH`, `ANDROID_KEY_ALIAS` and
+`ANDROID_KEYSTORE_PASSWORD` (or equivalent explicit parameters), verifies the
+known Google Play upload-certificate SHA-256, and fails closed when signing data
+is absent. None of those environment variables is present in this shell. The
+installed production APK and the fixed local Release APK therefore have
+different signing identities, which Android will not accept as an in-place
+update regardless of version code.
+
+Further mutation is deliberately paused at this boundary. The preferred path
+is to make the authorized production signing environment available so the fixed
+APK can update in place and preserve the just-completed session and saved
+pairing. The fallback is an explicitly authorized uninstall followed by install
+and Wireless ADB re-pair; that irreversibly clears the app's 7,370,820-entry
+session and pairing identity. No uninstall, data clear, sideload attempt,
+credential search, commit, push or external release job has been performed.
+
+### 18.11 Authorized clean-install fallback
+
+The owner explicitly authorized deleting VisualCat from the physical device if
+needed. This authorizes uninstalling only `com.barebit.visualcat`, with the
+understood consequence that Android will irreversibly remove the completed
+7,370,820-entry session, app preferences and saved Wireless ADB pairing
+identity. It does not authorize deleting unrelated packages or changing device-
+wide data. The clean-install path will use the already verified locally signed
+Release APK, then establish a new pairing and repeat the physical tests.
+
+The destructive step completed exactly within that scope: `adb uninstall
+com.barebit.visualcat` returned `Success`, followed by a successful incremental
+install of the 35,380,824-byte fixed APK (SHA-256
+`B22ABAB43FCDCD9E713601FCDBC4A468810E272A68EA84BE2A399A99719D62CB`). The
+fresh package reports version 2.0.7-dev / 20007, minimum API 31, target API 36,
+`firstInstallTime=2026-08-24 12:42:24`, and no installer package. This is a
+locally signed engineering candidate, not a claim about Play delivery. The old
+session and pairing are no longer recoverable from the device.
+
+Fresh launch resolved to the generated MAUI launcher activity and completed cold
+in 1.47 seconds. The first-run portrait UI is visually intact at 1080×2340 / 480
+dpi: the app bar and three primary actions fit without clipping, the empty-state
+message and severity legend remain centered and legible, system bars do not
+overlap content, and the build provenance is visible at the bottom. The
+accessibility tree exposes the primary controls and contains no stale recent
+session. Android reports both foreground-service permissions granted and the
+optional notification permission not yet granted, which is the intended state
+before the reader explicitly starts Live.
+
+Opening Live presents the revised scope chooser without triggering a permission
+prompt prematurely. At this device size the tall disclosure dialog fits between
+the system bars, both radio choices and their consequences are readable, and
+**Cancel** / **Set up full-device** remain visible without scrolling. Full-
+device capture is selected by default and labelled recommended; the copy clearly
+states local-only use, Wireless-debugging persistence, the ongoing notification,
+Stop-and-save behavior, the Android six-hour limit and retained partial data.
+
+Selecting **Set up full-device** opens the fresh pairing form and still does not
+request notification access before capture exists. Its accessibility tree
+exposes the port and six-digit code fields, and the copy states that the code is
+not saved or logged while the reusable identity is protected by Android
+Keystore. One physical UX issue was found: **Open Developer options** reaches
+Samsung's general Developer options page at its top, leaving Wireless debugging
+far down a long OEM settings list. The label is technically accurate but the
+extra search/scroll burden is avoidable; implementation is paused before pairing
+to route this control directly to Android's Wireless debugging settings action
+with a compatible fallback.
+
+The route is now implemented as a three-level Android fallback: first
+`android.settings.WIRELESS_DEBUGGING_SETTINGS`, then Developer options when the
+OEM does not expose or allow the dedicated activity, then general Settings as a
+last resort. The control and accessibility help now say **Open Wireless
+debugging**, while post-stop **Open settings** uses the same route. Support copy
+and test-plan W1 were updated. A new headless UX regression proves the dedicated
+action is exposed and invoked; the focused setup/background-stop suite passes
+20/20. A rebuilt APK and physical recheck are still required before this is
+marked passed.
+
+The first Android compile of this incremental UX change failed before packaging
+with two `CS0103` errors because the fallback filter used an unqualified
+`SecurityException`. The intended platform exception is
+`Java.Lang.SecurityException`; both filters now name it explicitly. No failed-
+build artifact was installed, and the Android gate is being rerun from that
+correction.
+
+The corrected trimmed Release Android build then succeeded in 46.71 seconds
+with 0 warnings and 0 errors. Its newly signed APK is 33,827,085 bytes with
+SHA-256 `8555C275E171C8465A4EECD1183EBDB9197547ECA1A38C9CEBDFBA539635B192`.
+An in-place `adb install -r` over the fresh engineering install returned
+`Success`; `firstInstallTime` remained 12:42:24 and `lastUpdateTime` advanced to
+12:47:36, confirming data-preserving update semantics under the same local
+signing identity. The dedicated-settings route now needs a physical pass.
+
+That first physical recheck showed Samsung registers no activity for the
+unpublished `android.settings.WIRELESS_DEBUGGING_SETTINGS` action, so the new
+fallback still reached the unpositioned Developer options page. The candidate
+was not accepted as a pass. A read-only package query confirmed **No activities
+found**, and Android's public `Settings` API exposes Developer options but no
+Wireless-debugging activity action. AOSP Settings instead supports the stable
+preference key `toggle_adb_wireless` and the best-effort highlight argument
+`:settings:fragment_args_key`. Launching the public Developer-options action with
+that hint was tested independently on this Samsung: the page opened scrolled to
+the **Bezdrátové ladění** (Wireless debugging) row. The implementation now uses
+that official activity plus the non-destructive AOSP hint; OEMs that ignore the
+hint still get the existing usable Developer-options page, and devices without
+that activity fall back to general Settings. A final rebuild/retest is pending.
+
+The revised focused route passes on the physical Samsung. The focused tests again
+pass 20/20, the trimmed Android build succeeds with 0 warnings/errors, and the
+35,380,824-byte APK (SHA-256
+`1DA92C469D4B5FAB2A3516B8DAE4E062DA31C1DC3B151156A804DBECDC41F30A`) updated
+in place successfully. Starting from VisualCat's fresh home, automation followed
+Live → Set up full-device → Open Wireless debugging. Samsung opened Developer
+options with the full Wireless debugging row visible at the bottom of the first
+viewport—no search or manual scroll. Its localized switch was exposed as a
+clickable, unchecked accessibility node. This closes the shortcut finding on
+this device while preserving an honest fallback for other OEMs.
+
+Wireless debugging was enabled through its unchecked localized accessibility
+switch. Android still retained three obsolete **VisualCat** public keys from
+earlier app identities even though the corresponding private keys were removed
+by uninstall; Settings owns that list independently. Each stale VisualCat entry
+was opened by its exact row bounds and forgotten, with the list refreshed after
+each removal. The final count was zero VisualCat entries while the unrelated
+`marek@BENNY-WORKSTATI…` workstation pairing remained exactly one.
+
+Samsung split screen was then established with Wireless debugging above and
+VisualCat's setup sheet below, as the product instructions recommend. The layout
+itself remains usable at half height: the form scrolls, its two fields can be
+positioned together, and the fixed Cancel / Pair & connect footer remains
+reachable. A platform/tooling limitation was observed: at this reduced Avalonia
+window height Android UI Automator exposes only VisualCat's native root, not the
+managed control descendants. This prevents accessibility-coordinate automation
+of the fields in split screen even though they render and accept focus; it does
+not reproduce in full-screen setup and is recorded for later accessibility
+coverage rather than misreported as a product pairing failure.
+
+A fresh Android pairing panel was kept open in the upper pane. Its ephemeral
+port/code were read only into process memory, never printed, logged or saved to
+the repository; the transient device hierarchy file was removed immediately
+after each read and expired attempts were discarded. The values were entered in
+the visible lower-pane fields and **Pair & connect** was activated. Pairing and
+connection succeeded: Android immediately presented VisualCat's first explicit
+`POST_NOTIFICATIONS` runtime request, which can only occur after the setup sheet
+returns success and reader-started Live begins acquiring its foreground-service
+lease. The permission decision and service/capture verification are next.
+
+The localized **Allow** action was selected. Android now reports
+`POST_NOTIFICATIONS: granted=true` with `USER_SET`, and no second prompt
+occurred. `dumpsys activity services` shows the unexported
+`CaptureForegroundService` created from top/visible state, `isForeground=true`,
+foreground ID 4108, service type `0x1` (`dataSync`), `startRequested=true`, and a
+private, silent, ongoing notification with exactly one action. The app process
+is PID 10366 and a real `logcat -b all -D -T ... -v
+threadtime,year,UTC,usec` child is running. This is the first physical proof that
+the fixed build starts its Android foreground lease for the real Wireless ADB
+source; notification content/action, full-screen UI, counters, memory and
+background survival remain separate gates.
+
+The first real capture is **not a pass**. Within minutes the UI reached
+3,663,939 source lines / roughly 2.54 million visible matches at 49,620 lines/s,
+then 6,363,681 source lines / roughly 4.24 million visible matches. PSS had
+already risen to 732,197 KiB. Diagnostics show the bounded 1 MiB queue recycling
+every 1–5 seconds and every authenticated reconnect reopening from the identical
+`2026-08-24 11:01:57.410479 UTC` cursor. The monotonic high-water remediation is
+working as written, but cannot advance because each replay fills the queue
+before the stream reaches a newer record.
+
+Device clocks explain the loop: at the checkpoint Samsung reported local
+`2026-08-24T13:03:57+0200` and UTC `2026-08-24T11:03:57+0000`. VisualCat emits
+records with the `UTC` logcat presentation modifier and passed the bare UTC
+wall-clock text `11:01:57` back to `logcat -T`. Android's `-T` parser interprets
+that zone-less wall-clock form in local time, placing the restart roughly two
+hours behind the intended instant. `logcat --help` also exposes a numeric epoch
+seconds form (`sssss.mmm...`), which is timezone-independent. The next cursor
+revision must use that form and retain human-readable UTC only for diagnostics.
+
+The permitted notification did not appear in Samsung's shade after permission
+was granted: the foreground service had already posted while permission was
+undecided, and NotificationManager recorded no posted VisualCat notification.
+The service retained its internal foreground notification object, but Android
+did not automatically repost it after the grant. Consequently the intended
+notification Stop action could not be exercised in this run. Stop was activated
+from the visible in-app button instead; the first split-pane tap only focused
+VisualCat, and the second stopped the Wireless child. Normal finalization and
+service removal are being monitored before rebuilding. Permission must be
+requested before the first foreground notification, or the service notification
+must be explicitly reposted after a grant.
+
+At the 58-second stop checkpoint the UI truthfully reported **saving the last of
+the capture**, the Wireless child remained absent, and the retained view had
+grown to 5,457,065 replay-amplified entries. Finalization again temporarily
+raised memory to 1,220,687 KiB PSS / 1,333,264 KiB RSS with 31,730 KiB swap PSS.
+The foreground service correctly remains present during this graceful save; it
+must disappear only after the session seal completes.
+
+Finalization completed without a crash: **Stopped · 5,757,926 entries kept**.
+The foreground service and every Wireless shell/`logcat` child disappeared only
+after sealing, the process remained alive, Android exit history contained only
+the two expected package-update exits, and memory settled to 528,455 KiB PSS /
+547,800 KiB RSS with 35,070 KiB swap PSS. The post-stop notice correctly states
+that VisualCat closed its connection/discarded decrypted key material while
+Android leaves Wireless debugging enabled. This validates graceful failure
+containment, but the session contents are intentionally classified as replay-
+amplified evidence rather than a successful capture.
+
+A controlled read-only `logcat -d` comparison on the stopped device confirms
+the timezone diagnosis from one instant. `-T 1787569728.000000` (epoch) returned
+42 lines; the equivalent bare UTC text `-T '2026-08-24 11:08:48.000000'`
+returned 271,572 lines; the equivalent Prague local text `-T '2026-08-24
+13:08:48.000000'` returned 110 lines. The small epoch/local difference is normal
+traffic produced while commands ran. The five-order-of-magnitude UTC-text
+increase proves Android parses zone-less `-T` wall time locally and that epoch
+seconds are the appropriate invariant resume argument.
+
+The second cursor revision now separates command data from diagnostics. The
+inclusive one-second overlap is serialized as Unix epoch seconds with exactly
+six fractional digits for `logcat -T`; a separate UTC wall-clock string is used
+only in logs. The Wireless service validates the epoch argument as digits, one
+decimal point and six fractional digits before placing it in the still-fixed
+shell destination. Tests assert both representations across reordering,
+overlap, invalid records and a real wall-clock rollback; the focused Core suite
+passes 7/7. Focused setup/background-stop tests remain green at 20/20.
+
+The first-grant notification path now sends an internal refresh command only
+when Android's permission callback reports `Granted` and an active capture lease
+still exists. The non-exported service handles that command by rebuilding the
+same private ongoing notification from its in-memory summary. Denial remains
+non-blocking and is not re-prompted; stale grants cannot create a notification
+without an active lease. Android compilation and a physical in-place update are
+the next gates.
+
+The corrected Android build passes trimming/AOT in 63.57 seconds with 0 warnings
+and 0 errors. Its APK is 33,827,085 bytes with SHA-256
+`EFE3F762F399C4702DBF85743E9A8040780A81FC81B464030F631F8BCFCE1CF1`.
+The in-place physical update returned `Success`; first-install time remained
+12:42:24, last-update time advanced to 13:13:39, the saved pairing/session data
+were preserved, and notification permission remains granted. A new capture can
+therefore test the epoch fix and immediately visible notification without
+another pairing or permission prompt.
+
+### 18.12 Corrected-build launch state
+
+Samsung retained the Settings/VisualCat split container after its combined
+recents card was dismissed. The app was not capturing, so the exact VisualCat
+package was force-stopped to finish only its activities/process; no app data,
+pairing identity, Android Wireless-debugging authorization or retained session
+was cleared. Relaunching the manifest-resolved activity with fullscreen
+windowing created fresh task 2670 in `mode=fullscreen` and cold-started PID
+16002. The stale empty split stages remain invisible system bookkeeping and do
+not own the app task.
+
+The full-screen accessibility tree is restored and exposes the toolbar, saved
+session tab and actionable controls. The replay-amplified evidence session is
+still present and truthfully reports **Ready · 5,757,926 entries**; it has not
+been deleted or reused as a success result. The saved pairing and granted
+notification permission remain available for the next clean Live capture.
+
+The corrected chooser then passed its physical UX checkpoint: it opened
+full-screen, selected **Full-device capture** by default, labelled it
+**Recommended · already paired**, retained the local-only/screen-off/six-hour
+disclosure, and exposed a large **Connect full-device** action. Selecting it
+created a distinct in-progress session titled `Wireless logcat 13h18m37`; the
+5,757,926-entry evidence session remained a separate complete tab.
+
+The first bounded acceptance window is a pass. At roughly eight seconds the new
+session contained 806 entries / 941 received lines at 94/s and spanned only
+13:18:38–13:18:46. After about two minutes it showed 9,296 matching entries /
+10,781 received lines at 52/s with current 13:20 records. This is ordinary
+device traffic, not the prior millions-of-lines replay: there is one app
+process (PID 16002), one capture `logcat` child (PID 16144), no queue-recycle
+storm and no second capture child. PSS was 512,454 KiB / RSS 625,572 KiB / swap
+PSS 199 KiB; most of that process baseline is the still-open 5.76-million-entry
+evidence session, so the bounded new-session growth is the meaningful result.
+
+Android NotificationManager now has exactly one VisualCat record, ID 4108, on
+the `visualcat-live-capture` channel. It is private, silent, ongoing/no-clear,
+uses the foreground-service flag and has exactly one **Stop and save** action.
+Samsung's notification shade visibly renders the VisualCat icon, title
+**VisualCat live capture** and concise text **Full-device logs are being saved
+locally.** at the top of the notification list. This closes the previously
+missing-notification regression for the already-granted path; the action's
+expanded rendering and behavior remain to be exercised after reconnect and
+screen-off validation.
+
+Expanding that card also passes: Samsung renders the app name/time separately,
+keeps the title and local-only scope readable, and presents **Stop and save** as
+a full-width 966-by-108-pixel accessible button (`clickable=true`, content
+description `Stop and save`). The action has not yet been pressed, because the
+same session must first prove reconnect and screen-off continuity.
+
+The epoch reconnect gate is a pass. With the app in the foreground, the exact
+capture command PID 16144 was terminated once to simulate transport EOF. The
+reader classified one `TransportClosed` gap, retained a high-water cursor of
+`2026-08-24 11:22:57.915898 UTC`, waited 250 ms, reused the saved identity,
+discovered/authenticated successfully on attempt 1 and opened the replacement
+stream from epoch `1787570577.915898`. The new device command was visibly
+`logcat -b all -D -T 1787570577.915898 -v threadtime,year,UTC,usec`; it appeared
+within the first one-second poll as PID 16596 and remained the only capture
+child more than 25 seconds later.
+
+At 13:24 the UI showed current 13:23–13:24 records, 22,011 entries in the clean
+session, 25,302 received lines and a settled 17/s rate. PSS was 533,642 KiB /
+RSS 646,132 KiB / swap PSS 192 KiB. The foreground service remained type
+`dataSync`, NotificationManager retained exactly one VisualCat notification,
+and diagnostics contained exactly the expected one-gap/one-reconnect sequence—
+no old wall-clock `-T`, no two-hour replay, no bounded-queue recycle and no
+rapid reconnect loop. This physically validates both the monotonic high-water
+and timezone-independent serialization fixes.
+
+The repeat screen-off leg began at local `2026-08-24T13:24:55+0200`
+(`11:24:55Z`). USB power remained connected, battery was 96%, battery
+temperature 33.2 °C and thermal status 0. The pre-sleep process pair was app PID
+16002 / resumed `logcat` PID 16596; Android reported `mWakefulness=Dozing` two
+seconds after the sleep key. The UI baseline immediately before this leg was
+25,302 received lines.
+
+At minute 1 (`13:26:10`) Android was still dozing. App PID 16002 and the same
+epoch-resumed child PID 16596 were alive; a point-in-time `top` sample showed
+11.5% / 3.8% of one core. The service remained foreground/start-requested and
+the sole ID-4108 notification remained posted. PSS was 505,794 KiB / RSS
+611,560 KiB / swap PSS 192 KiB, battery remained 96% at 32.9 °C and thermal
+status remained 0. This is a pass; no reconnect or suspension was observed.
+
+At minute 2 (`13:27:15`) the device remained dozing with the identical
+16002/16596 process pair, foreground service and one notification. Instant CPU
+was 3.8% / 0.0%; PSS declined again to 489,486 KiB / RSS 591,316 KiB / swap PSS
+192 KiB. Battery was 96% at 32.8 °C and thermal status 0. This is a pass and,
+unlike the original screen-off run, the transport is still present beyond its
+previous disappearance window.
+
+At minute 3 (`13:28:03`) the device remained dozing and the same process pair,
+foreground service and one notification were intact. Instant CPU was 3.8% /
+0.0%; PSS/RSS settled to 477,050/571,284 KiB with 183 KiB swap PSS. Battery was
+96% at 32.8 °C and thermal status 0. This is a pass.
+
+At minute 4 (`13:29:06`) the device remained dozing with PIDs 16002/16596,
+foreground service and sole notification unchanged. Instant CPU was 3.8% /
+0.0%; PSS/RSS were 472,649/566,728 KiB with 183 KiB swap PSS. Battery was 96%
+at 32.8 °C and thermal status 0. This is a pass.
+
+At minute 5 (`13:30:08`) Android was still dozing with the same PIDs 16002 /
+16596, foreground service and sole notification. Instant CPU was 7.6% / 0.0%;
+PSS/RSS had settled further to 463,670/557,692 KiB with 183 KiB swap PSS.
+Battery remained 96% at 32.8 °C and thermal status 0. The device was woken at
+13:30:23; it became `Awake`, retained the app as the focused underlying
+activity and retained the identical process pair. Samsung is now at its secure
+lock screen, so post-wake counter and notification-action checks require an
+owner unlock. The complete five-minute background leg is a service/transport
+survival pass.
+
+While the phone awaited owner unlock, the final solution regression gate was
+rerun against the repository's actual `VisualCat.slnx`: **407/407 passed** in
+Release with no restore (Domain 11, Core 95, App 249, Application 52). An
+initial invocation using the obsolete/nonexistent filename `VisualCat.sln`
+failed before build or test discovery and is not a product/test failure; the
+correct `.slnx` run completed with exit code 0.
+
+`git diff --check` is clean. Whole-solution `dotnet format` again reports only
+the known whitespace emitted into
+`VisualCat.Android.AdbBinding/obj/.../__NamespaceMapping__.cs`; that generated,
+ignored output was not edited. Five source-scoped formatter gates covering
+every changed C# file in Android, App, Core and both affected test projects all
+pass `--verify-no-changes --no-restore` with exit code 0.
+
+At the 15-minute service-health checkpoint the corrected session still had app
+PID 16002 and the same post-test reconnect child PID 16596. The dataSync service
+remained foreground/start-requested and Android's bounded 15-minute log window
+contained no VisualCat fatal exception, ANR or service timeout. Exit history
+contains only three package-update exits plus the explicitly documented
+13:16:59 remove-task/force-stop used to escape Samsung's stale split task; there
+is no crash or low-memory exit.
+
+The owner unlocked the device at approximately 13:34 without exposing or
+automating credentials. VisualCat returned as the focused full-screen activity
+with the identical app/capture PIDs, foreground service and notification. The
+UI showed current 13:34 records, 74,281 entries in the clean session and 83,325
+received lines at 18/s. Relative to the 25,302-line pre-sleep baseline, at least
+58,023 additional lines were received while the screen-off/locked interval and
+post-wake wait elapsed. This closes the background capture continuity gate; it
+is not merely process survival.
+
+The expanded notification's exact **Stop and save** button was pressed at
+`13:36:02+0200`. Android immediately replaced the action-bearing card with an
+action-free ongoing state titled **Stopping VisualCat capture** and text
+**Saving received logs and finalizing the session…**. Diagnostics confirm the
+notification pending intent—not the in-app button—requested stop. VisualCat
+closed Wireless ADB/discarded decrypted key material, removed the child and
+then stopped the foreground service/ongoing notification at 13:36:03. The shade
+visibly contained no VisualCat card afterward.
+
+The app remained alive and returned to its normal **Live** toolbar state. The
+session sealed as **Stopped · 79,505 entries kept**, remained selected/readable,
+and displayed the correct post-stop explanation that VisualCat closed its
+connection while Android leaves Wireless debugging enabled, with **Open
+settings** and **Dismiss** actions. PSS settled to 350,051 KiB / RSS 374,160 KiB
+with 67,348 KiB swap PSS; the child and service were absent and exit history
+still had no crash/ANR/low-memory event.
+
+The full corrected run contained exactly two authenticated reconnects: the
+intentional forced-EOF gate at 13:22 and one natural bounded-queue recycle at
+13:35 after roughly 12 minutes. Both succeeded on attempt 1 and used increasing
+epoch cursors (`1787570577.915898`, then `1787571312.551789`). There was no
+reconnect storm, no partial-record loss reported, no replay-amplified count and
+no fatal exception or ANR in the 30-minute bounded diagnostics window.
+
+Tab re-openability also passes without mutating either session: selecting the
+older tab restored **Ready · 5,757,926 entries**, and selecting the corrected
+tab again restored **Stopped · 79,505 entries kept**. The corrected tab is the
+selected hand-back view. A cold-process persistence check is next now that no
+capture/service/notification is active.
+
+Cold-process persistence passes. With no active capture, the exact package was
+force-stopped once at 13:39:39 and relaunched from its manifest activity as a
+new fullscreen process (PID 19995). Both complete session tabs returned from
+disk, the corrected tab remained selected, its histogram/rows rendered and the
+count restored exactly as **Ready · 79,505 entries**. The status appropriately
+normalizes from the transient post-stop wording to `Ready` after reload. No
+`logcat` child, capture service or active VisualCat notification was recreated.
+The cold-loaded process used 544,147 KiB PSS / 639,776 KiB RSS / 343 KiB swap
+PSS while both the 5.76-million-entry stress artifact and corrected 79,505-entry
+session were open. Exit history labels the preceding termination
+`USER REQUESTED / FORCE STOP`, not a crash.
+
+### 18.13 Clean first-grant notification gate
+
+The permission-refresh fix cannot be honestly exercised by merely revoking the
+permission in place. The test revoked only `POST_NOTIFICATIONS` and cleared the
+OS decision flags without touching app data. The saved-pairing capture started,
+the foreground service ran and NotificationManager correctly had no visible
+record, but VisualCat did not nag again because the app-private
+`capture-notification-requested` one-shot flag records that this installation
+already answered once. This is intended denial/revocation behavior, not a
+callback failure.
+
+That 13:42 probe was stopped from the in-app action; its child and service were
+both absent at the first one-second poll. The owner explicitly authorized app
+deletion if useful, and all preceding session evidence is now captured in this
+report/screenshots. The next step is therefore an authorized uninstall/reinstall
+of the same corrected APK, fresh pairing and genuinely first permission grant.
+This will erase the device copies of the 5,757,926-entry stress session, the
+79,505-entry corrected session, the short permission probe and the saved app
+identity; Android's independent Wireless-debugging authorization list will be
+inspected and cleaned where Samsung accepts its exact Forget action.
+
+The same 33,827,085-byte corrected APK was clean-installed successfully at
+13:43:21 (version 2.0.7-dev / 20007); `POST_NOTIFICATIONS` began ungranted and
+the app-private sessions/identity were absent as expected. The fresh setup again
+proved the Wireless-debugging shortcut lands with Samsung's localized row
+visible. Samsung continued to list one old VisualCat public key even after its
+exact **Forget** action was invoked twice and the page was fully exited/reopened;
+that authorization is OS-owned and did not block a fresh cryptographic pairing.
+
+Split screen was re-established with VisualCat's responsive setup sheet above
+Wireless debugging. The two fields and fixed footer were simultaneously
+visible after one scroll. Android's pairing-code panel was parsed only in
+process memory: the report records only that a six-digit code and five-digit
+port had valid shapes. The transient `/sdcard/pair.xml` was deleted before the
+values were submitted, and neither value was printed, logged or saved in the
+repository. Fresh pairing succeeded and Android displayed the genuinely first
+notification-permission prompt.
+
+Immediately before the grant, the capture was real (`logcat -T 1`), the dataSync
+foreground service was active with start ID 1, permission was false and
+NotificationManager had no VisualCat record—the exact previously failing
+state. Selecting the localized **Allow** changed permission to granted and the
+same service to start ID 2. Logs then recorded **Requested a foreground-
+notification repost after notification permission was granted** followed by
+**Reposting the active capture notification after notification permission was
+granted** five milliseconds later.
+
+NotificationManager immediately contained exactly the intended ID-4108 private,
+silent, ongoing foreground record with title **VisualCat live capture**, local-
+only full-device text and one **Stop and save** action. Samsung's shade visibly
+rendered it at the top of the list at 13:51. Expanding that fresh-grant card
+exposed a clickable 966-by-108-pixel Stop action; selecting it removed the
+transport and service by the first one-second poll, left permission granted and
+left no active VisualCat notification record. The first-grant repost regression
+is therefore physically closed, not merely unit-tested.
+
+Final hand-back verification passed after another cold force-stop/fullscreen
+relaunch. VisualCat is installed from the corrected APK and opens to one saved
+verification session, **Wireless logcat 13h50m19**, restored as **Ready · 9,477
+entries** with its rows and histogram visible. The source chooser independently
+reports **Recommended · already paired** and offers **Connect full-device**, so
+the newly generated app identity survived the cold restart; the chooser was
+then cancelled without starting another capture.
+
+The device is being returned with VisualCat foregrounded, notification
+permission granted, no active capture child, no running capture service and no
+active VisualCat notification. Battery was 95%, temperature 32.7 °C and Android
+thermal status 0 at the final poll. Wireless debugging intentionally remains
+enabled, matching the product's post-stop disclosure. Samsung may still show
+the older OS-owned VisualCat authorization that its **Forget** action refused
+to remove alongside the fresh working authorization; this does not affect the
+app-owned saved pairing or the completed tests. All transient pairing XML files
+were removed from `/sdcard` and no pairing code or port was retained.
+
+The installed package was pulled back to
+`artifacts/live-test/continuation-20260824/final-installed-base.apk`: it is
+33,827,085 bytes and has SHA-256
+`EFE3F762F399C4702DBF85743E9A8040780A81FC81B464030F631F8BCFCE1CF1`, an exact
+match for the locally built signed APK. The final visual hand-back capture is
+`artifacts/live-test/continuation-20260824/final-handback.png`. This leaves the
+device and repository in a deterministic state from which an independent
+session can continue without repeating any completed gate.
+
+A final redacted-only evidence audit found zero exact six-digit, five-digit or
+IP-and-port credential-like attributes in the intentionally retained
+`recents-split-pair.xml` UI-hierarchy capture. Together with the device-side
+absence checks above, this confirms that the fresh pairing secret was not
+retained in either the evidence folder or the two transient `/sdcard` paths.
+
+Final repository documentation gate: the host's signature policy rejected the
+first direct invocation before the checker ran. Re-running the same repository
+script with a process-scoped `-ExecutionPolicy Bypass` (without changing system
+policy) passed: 95 relative links across 43 Markdown files, all required files
+and version metadata are consistent. The subsequent `git diff --check` also
+exits 0.

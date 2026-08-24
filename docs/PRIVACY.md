@@ -51,6 +51,16 @@ telemetry. Current builds target Android 16 / API 36. A future move to target
 Android 17 / API 37 must add the platform's local-network permission flow (or a
 system-mediated alternative) before release.
 
+Reader-started Live capture also declares Android's `FOREGROUND_SERVICE` and
+`FOREGROUND_SERVICE_DATA_SYNC` permissions. Its required foreground-service
+notification is private and contains only capture state, never a log message,
+device identifier, pairing code, search or file name. Android 13+ notification
+visibility is requested once through `POST_NOTIFICATIONS`; denial does not
+change what VisualCat stores or transmit anything, and Android still exposes
+the running service through Active apps. Android 15+ can end background
+data-sync work after six hours; VisualCat then requests its ordinary graceful
+Stop so already-received session data is kept.
+
 Debug or explicitly opted-in non-Play builds may additionally declare
 `READ_LOGS` so developers can test the existing direct on-device source after an
 external ADB grant. VisualCat's production Wireless ADB path never grants that

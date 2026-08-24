@@ -87,7 +87,10 @@ $requiredTargetSdk = 36
 $requiredPageAlignment = 16384
 $requiredReleasePermissions = @(
     'android.permission.INTERNET',
-    'android.permission.CHANGE_WIFI_MULTICAST_STATE'
+    'android.permission.CHANGE_WIFI_MULTICAST_STATE',
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_DATA_SYNC',
+    'android.permission.POST_NOTIFICATIONS'
 )
 $forbiddenReleasePermissions = @(
     'android.permission.READ_LOGS',
@@ -575,6 +578,12 @@ foreach ($result in $results) {
         if ($unexpectedBundlePermissions.Count -gt 0) {
             throw "$name declares unexpected permissions: $($unexpectedBundlePermissions -join ', '). Update the explicit Release allowlist only after reviewing their product and Play impact."
         }
+        if ($manifestText -notmatch 'android:name="com\.barebit\.visualcat\.CaptureForegroundService"') {
+            throw "$name does not declare VisualCat's Live capture foreground service."
+        }
+        if ($manifestText -notmatch '<service\b(?=[^>]*android:name="com\.barebit\.visualcat\.CaptureForegroundService")(?=[^>]*android:foregroundServiceType="dataSync")[^>]*>') {
+            throw "$name does not declare the Live capture service with foregroundServiceType=dataSync."
+        }
         if (-not (Get-PackageEntry -Package $result.Path -EntryName 'BundleConfig.pb')) {
             throw "$name has no BundleConfig.pb and is not a valid App Bundle."
         }
@@ -599,7 +608,7 @@ foreach ($result in $results) {
         $summary.Add("- ``$name`` ($size): signed App Bundle for $expectedApplicationId $Version, " +
             "$libraries native libraries 16 KB aligned")
         $summary.Add("  - signed by $($signer.Subject), valid until $($signer.Expires.ToString('yyyy-MM-dd'))")
-        $summary.Add("  - Play/Release permissions verified: required local Wireless ADB permissions present; READ_LOGS absent")
+        $summary.Add("  - Play/Release permissions verified: Wireless ADB and user-visible background-capture permissions present; READ_LOGS absent")
     }
 }
 

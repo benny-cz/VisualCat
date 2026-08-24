@@ -37,6 +37,16 @@ public sealed record WirelessAdbConnectionResult(
     bool PairingSucceeded,
     string Message);
 
+/// <summary>Why the host platform asked a running Live capture to stop.</summary>
+public enum PlatformLiveCaptureStopReason
+{
+    /// <summary>The reader pressed the platform notification's Stop and save action.</summary>
+    NotificationAction,
+
+    /// <summary>The operating system's foreground-work allowance expired.</summary>
+    SystemTimeLimit,
+}
+
 public static class PlatformSourceRegistry
 {
     /// <summary>
@@ -110,8 +120,25 @@ public static class PlatformSourceRegistry
     /// </summary>
     public static Func<ILogSource?>? CreateWirelessAdbSource { get; set; }
 
-    /// <summary>Opens Android's Developer options so the reader can reach Wireless debugging.</summary>
-    public static Func<CancellationToken, Task>? OpenDeveloperOptionsAsync { get; set; }
+    /// <summary>
+    /// Makes a reader-started Live capture explicit to a mobile operating system while it is
+    /// running in the background, and returns the lease that removes that state on completion.
+    /// </summary>
+    /// <remarks>
+    /// Android implements this with a user-visible data-sync foreground service. The callback
+    /// is deliberately a graceful-stop request rather than source disposal: notification Stop
+    /// and Android's service timeout must drain, seal and reopen the session through the same
+    /// path as the in-app Stop action. Desktop hosts leave this null.
+    /// </remarks>
+    public static Func<string, Action<PlatformLiveCaptureStopReason>, IDisposable>?
+        BeginLiveCaptureBackgroundExecution
+    { get; set; }
+
+    /// <summary>
+    /// Opens Android's Developer options focused on Wireless debugging, falling back to
+    /// general Settings on platform builds that do not expose Developer options.
+    /// </summary>
+    public static Func<CancellationToken, Task>? OpenWirelessDebuggingSettingsAsync { get; set; }
 
     public static Func<string, CancellationToken, Task>? ShareFileAsync { get; set; }
     public static Func<CancellationToken, Task<IReadOnlyList<IncomingFile>>>? ConsumeLaunchFilesAsync { get; set; }

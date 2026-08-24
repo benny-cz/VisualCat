@@ -94,7 +94,10 @@ internal sealed class OnDeviceLogAccessDialog : DialogBody<OnDeviceLogAccessChoi
                 {
                     Text = "Nothing is uploaded. Full-device capture uses Android Wireless debugging only on this device, " +
                            "uses the connection only to read the Android log, and closes its connection when Live stops. " +
-                           "Android leaves Wireless debugging enabled until you turn it off in Settings.",
+                           "Android leaves Wireless debugging enabled until you turn it off in Settings. While Live runs, " +
+                           "Android shows a private ongoing notification so capture can continue with the screen off and " +
+                           "you can Stop and save. Android may end background capture after its six-hour service limit; " +
+                           "everything already received is kept.",
                     TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                     Opacity = 0.82,
                 },
@@ -215,7 +218,7 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
         IsVisible = false,
     };
 
-    private readonly Button _openDeveloperOptions;
+    private readonly Button _openWirelessDebugging;
     private readonly Button _connectSavedPairing;
     private readonly Button _pairAndConnect;
     private readonly Button _showNewPairing;
@@ -263,16 +266,16 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
         _codeFieldGroup = BuildFieldGroup(_codeValidation, _code);
         _validationScrollTimer.Tick += ValidationScrollTimerTick;
 
-        _openDeveloperOptions = new Button
+        _openWirelessDebugging = new Button
         {
-            Content = "Open Developer options",
+            Content = "Open Wireless debugging",
             MinHeight = touch,
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
         AutomationProperties.SetHelpText(
-            _openDeveloperOptions,
-            "Opens Android Settings. Turn on Wireless debugging, then return to this sheet.");
-        _openDeveloperOptions.Click += OpenDeveloperOptionsClicked;
+            _openWirelessDebugging,
+            "Opens Android Developer options at Wireless debugging when supported. Turn it on, then return to this sheet.");
+        _openWirelessDebugging.Click += OpenWirelessDebuggingClicked;
 
         _connectSavedPairing = new Button
         {
@@ -421,7 +424,7 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
                     TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                     Opacity = 0.86,
                 },
-                _openDeveloperOptions,
+                _openWirelessDebugging,
                 _savedPairingPanel,
                 _showNewPairing,
                 _newPairingPanel,
@@ -528,24 +531,24 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
             token => connect(token));
     }
 
-    private async void OpenDeveloperOptionsClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs eventArgs)
+    private async void OpenWirelessDebuggingClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs eventArgs)
     {
-        if (PlatformSourceRegistry.OpenDeveloperOptionsAsync is not { } open)
+        if (PlatformSourceRegistry.OpenWirelessDebuggingSettingsAsync is not { } open)
         {
-            _status.Text = "VisualCat cannot open Developer options on this device. Open Android Settings and find Developer options manually.";
+            _status.Text = "VisualCat cannot open Wireless debugging on this device. Open Android Settings, find Developer options, and choose Wireless debugging manually.";
             return;
         }
 
         try
         {
-            _status.Text = "Opening Developer options…";
+            _status.Text = "Opening Wireless debugging…";
             await open(CancellationToken.None);
             _status.Text = "Turn on Wireless debugging, then return here. Use the saved pairing button if available, or open Android's pairing-code panel for a new pairing.";
         }
         catch (Exception exception)
         {
             WorkspaceViewModel.RecordFailure("wireless-adb.open-developer-options", exception);
-            _status.Text = "Developer options could not be opened automatically. Open Android Settings, find Developer options, turn on Wireless debugging, then return here.";
+            _status.Text = "Wireless debugging could not be opened automatically. Open Android Settings, find Developer options, turn on Wireless debugging, then return here.";
         }
     }
 
@@ -670,7 +673,7 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
     {
         _port.IsEnabled = !busy;
         _code.IsEnabled = !busy;
-        _openDeveloperOptions.IsEnabled = !busy;
+        _openWirelessDebugging.IsEnabled = !busy;
         _connectSavedPairing.IsEnabled = !busy;
         _showNewPairing.IsEnabled = !busy;
         _pairAndConnect.IsEnabled = !busy;

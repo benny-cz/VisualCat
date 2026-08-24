@@ -18,7 +18,9 @@ privileged `READ_LOGS` permission.
 
 ### First full-device capture
 
-1. Tap **Open Developer options** in VisualCat.
+1. Tap **Open Wireless debugging** in VisualCat. VisualCat opens Developer
+   options and asks Android to focus the Wireless debugging row; some device
+   makers may ignore the focus hint, so scroll to the row if needed.
 2. Enable **Wireless debugging**.
 3. Open **Pair device with pairing code** and keep that Android panel visible.
 4. Enter the pairing port (the digits after the colon) and six-digit code in
@@ -26,6 +28,20 @@ privileged `READ_LOGS` permission.
 5. Keep Wireless debugging enabled while Live capture is running. VisualCat
    closes its connection when capture stops; Android leaves Wireless debugging
    enabled until you turn it off in Settings.
+
+While Live runs, Android uses a private ongoing **VisualCat live capture**
+notification so the capture can keep working when the activity is hidden or the
+screen locks. Its **Stop and save** action drains and finalizes the session just
+like the in-app Stop button. Android 13+ may ask once for notification
+permission when the first capture starts. Declining does not block capture and
+is not asked again; Android still lists the work under **Active apps**, but the
+ordinary drawer action is hidden.
+
+Android limits `dataSync` foreground services to six background hours in a
+24-hour period on Android 15+. If that limit is reached, VisualCat stops and
+saves the capture and names the platform limit in session status. Bringing the
+app to the foreground resets Android's allowance. A fully unattended screen-off
+capture should therefore be planned for no more than six hours at a time.
 
 Android normally remembers the pairing. On later captures, enable Wireless
 debugging and use **Connect saved pairing**; another code is usually unnecessary.

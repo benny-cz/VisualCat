@@ -2,6 +2,7 @@ using Android.App;
 using Android.Content;
 using Android.Content.PM;
 using Android.Runtime;
+using AndroidX.Core.App;
 using AndroidX.Core.Content;
 using Avalonia.Android;
 using VisualCat.App.Platform;
@@ -85,7 +86,8 @@ public sealed class MainActivity : AvaloniaMainActivity
         PlatformSourceRegistry.PairWirelessAdbAsync = PairWirelessAdbCurrentAsync;
         PlatformSourceRegistry.ConnectSavedWirelessAdbAsync = ConnectSavedWirelessAdbCurrentAsync;
         PlatformSourceRegistry.CreateWirelessAdbSource = CreateWirelessAdbSourceCurrent;
-        PlatformSourceRegistry.OpenDeveloperOptionsAsync = OpenDeveloperOptionsCurrentAsync;
+        PlatformSourceRegistry.BeginLiveCaptureBackgroundExecution = BeginLiveCaptureBackgroundExecutionCurrent;
+        PlatformSourceRegistry.OpenWirelessDebuggingSettingsAsync = OpenWirelessDebuggingSettingsCurrentAsync;
         global::Android.Util.Log.Info(
             "VisualCat.WirelessAdb",
             "Registered guided Wireless debugging full-device transport. ADB remains disconnected until the user explicitly starts setup.");
@@ -100,6 +102,19 @@ public sealed class MainActivity : AvaloniaMainActivity
     {
         base.OnResume();
         PlatformSourceRegistry.PublishAppResumed();
+    }
+
+    public override void OnRequestPermissionsResult(
+        int requestCode,
+        string[] permissions,
+        [GeneratedEnum] Permission[] grantResults)
+    {
+        base.OnRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == CaptureForegroundService.NotificationPermissionRequestCode &&
+            grantResults.Any(static result => result == Permission.Granted))
+        {
+            CaptureForegroundService.RepublishNotificationAfterPermissionGrant(this);
+        }
     }
 
     /// <summary>
@@ -125,8 +140,8 @@ public sealed class MainActivity : AvaloniaMainActivity
 
     /// <summary>
     /// The screen turned off, or the user left the app. A live capture keeps running —
-    /// that is the point of leaving one going overnight — but nothing on screen needs
-    /// redrawing until <see cref="OnResume"/>.
+    /// Android's user-visible foreground service owns that background allowance — but
+    /// nothing on screen needs redrawing until <see cref="OnResume"/>.
     /// </summary>
     protected override void OnPause()
     {
@@ -154,7 +169,8 @@ public sealed class MainActivity : AvaloniaMainActivity
             PlatformSourceRegistry.PairWirelessAdbAsync = null;
             PlatformSourceRegistry.ConnectSavedWirelessAdbAsync = null;
             PlatformSourceRegistry.CreateWirelessAdbSource = null;
-            PlatformSourceRegistry.OpenDeveloperOptionsAsync = null;
+            PlatformSourceRegistry.BeginLiveCaptureBackgroundExecution = null;
+            PlatformSourceRegistry.OpenWirelessDebuggingSettingsAsync = null;
             PlatformSourceRegistry.ConsumeLaunchFilesAsync = null;
             PlatformSourceRegistry.SetGestureExclusions = null;
             _wirelessAdbService?.Dispose();
@@ -278,12 +294,62 @@ public sealed class MainActivity : AvaloniaMainActivity
         return _wirelessAdbService;
     }
 
-    private static Task<bool> OpenDeveloperOptionsCurrentAsync(CancellationToken cancellationToken)
+    private static IDisposable BeginLiveCaptureBackgroundExecutionCurrent(
+        string scope,
+        Action<PlatformLiveCaptureStopReason> requestStop)
+    {
+        if (s_current?.TryGetTarget(out var activity) != true || activity is null)
+        {
+            throw new InvalidOperationException(
+                "VisualCat cannot start reliable background capture while its Android activity is unavailable. Return to the app and start Live again.");
+        }
+
+        activity.RequestCaptureNotificationPermissionOnce();
+        return CaptureForegroundService.Begin(
+            global::Android.App.Application.Context,
+            scope,
+            requestStop);
+    }
+
+    /// <summary>
+    /// Requests notification visibility once, at the moment the reader starts Live.
+    /// </summary>
+    /// <remarks>
+    /// Android does not require this grant to run a foreground service: if it is denied, the
+    /// service remains visible in Android's Active apps UI. Asking here still matters because
+    /// the ordinary notification provides the useful Stop and save action. The one-shot flag
+    /// prevents every later capture from nagging someone who declined it.
+    /// </remarks>
+    private void RequestCaptureNotificationPermissionOnce()
+    {
+        const string notificationPermission = "android.permission.POST_NOTIFICATIONS";
+        if (global::Android.OS.Build.VERSION.SdkInt < global::Android.OS.BuildVersionCodes.Tiramisu ||
+            CheckSelfPermission(notificationPermission) == Permission.Granted)
+        {
+            return;
+        }
+
+        const string preferencesName = "visualcat-platform";
+        const string requestedKey = "capture-notification-requested";
+        var preferences = GetSharedPreferences(preferencesName, FileCreationMode.Private);
+        if (preferences?.GetBoolean(requestedKey, false) == true)
+        {
+            return;
+        }
+
+        preferences?.Edit()?.PutBoolean(requestedKey, true)?.Apply();
+        RunOnUiThread(() => ActivityCompat.RequestPermissions(
+            this,
+            [notificationPermission],
+            CaptureForegroundService.NotificationPermissionRequestCode));
+    }
+
+    private static Task<bool> OpenWirelessDebuggingSettingsCurrentAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (s_current?.TryGetTarget(out var activity) != true || activity is null)
         {
-            throw new InvalidOperationException("The Android activity is not available to open Developer options.");
+            throw new InvalidOperationException("The Android activity is not available to open Wireless debugging settings.");
         }
 
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -294,16 +360,24 @@ public sealed class MainActivity : AvaloniaMainActivity
                 cancellationToken.ThrowIfCancellationRequested();
                 global::Android.Util.Log.Info(
                     "VisualCat.WirelessAdb",
-                    "Opening Android Developer options for explicit Wireless debugging setup.");
+                    "Opening Android Developer options focused on Wireless debugging for explicit setup.");
                 try
                 {
-                    activity.StartActivity(new Intent(global::Android.Provider.Settings.ActionApplicationDevelopmentSettings));
+                    var developerSettings = new Intent(
+                        global::Android.Provider.Settings.ActionApplicationDevelopmentSettings);
+                    // AOSP Settings has honored this preference-highlight hint since Wireless
+                    // debugging was introduced. OEMs may ignore it, which is harmless: the
+                    // public Developer-options activity still opens and the setup copy explains
+                    // where the preference lives. Samsung Android 16 uses the hint to scroll the
+                    // long page directly to the Wireless debugging row.
+                    developerSettings.PutExtra(":settings:fragment_args_key", "toggle_adb_wireless");
+                    activity.StartActivity(developerSettings);
                 }
-                catch (ActivityNotFoundException)
+                catch (Exception exception) when (exception is ActivityNotFoundException or Java.Lang.SecurityException)
                 {
                     global::Android.Util.Log.Warn(
                         "VisualCat.WirelessAdb",
-                        "This Android build has no direct Developer options activity; opening general Settings instead.");
+                        "This Android build has no accessible Developer options activity; opening general Settings instead.");
                     activity.StartActivity(new Intent(global::Android.Provider.Settings.ActionSettings));
                 }
 

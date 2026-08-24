@@ -1,9 +1,8 @@
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading.Channels;
 using IO.Github.Muntashirakon.Adb;
 using VisualCat.Application.Ports;
+using VisualCat.Core.Parsing;
 using VisualCat.Domain.Sessions;
 
 namespace VisualCat.Android;
@@ -17,9 +16,13 @@ namespace VisualCat.Android;
 /// and paired in Developer options. A saved pairing removes the need to enter a code again, but
 /// Wireless debugging must remain enabled while this source is running.
 ///
-/// Unexpected transport loss is retried with the last complete logcat timestamp. The retry can
-/// overlap the final record at the boundary, which is preferable to silently skipping an unknown
-/// interval; every reconnect is recorded in the session defect counters.
+/// Unexpected transport loss is retried from a one-second overlap before the greatest complete,
+/// genuine logcat-record timestamp. Merged buffers can be slightly out of order, so using the
+/// last line can move backward and replay a large ring-buffer suffix repeatedly. The bounded
+/// overlap prefers a small number of duplicate boundary records to silent loss. The command uses
+/// logcat's numeric Unix-epoch <c>-T</c> form because zone-less wall-clock text is parsed in the
+/// device's local timezone even when output is formatted as UTC. Every reconnect is recorded in
+/// the session defect counters.
 /// </remarks>
 internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, ISourceConnectionStatusReporter
 {
@@ -34,9 +37,9 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
     private readonly CancellationTokenSource _stop = new();
     private readonly NewlineRecordFramer _recordFramer = new(MaximumBufferedRecordBytes);
     private readonly List<byte> _timestampLineBuffer = new(512);
+    private readonly LogcatResumeCursor _resumeCursor = new();
     private readonly object _streamSync = new();
     private AdbStream? _activeStream;
-    private string? _resumeTimestamp;
     private long _reconnectGaps;
     private int _released;
     private int _disposed;
@@ -186,11 +189,16 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
                 _timestampLineBuffer.Clear();
                 consecutiveTransportGaps++;
                 Interlocked.Increment(ref _reconnectGaps);
+                var resumeArgument = _resumeCursor.ResumeArgument;
+                var resumeUtcTimestamp = _resumeCursor.ResumeUtcTimestamp;
+                var resumeDescription = resumeArgument is null
+                    ? "unavailable"
+                    : $"{resumeUtcTimestamp} UTC / epoch {resumeArgument}";
                 global::Android.Util.Log.Warn(
                     LogTag,
                     pumpResult.Reason == PumpEndReason.Backpressure
-                        ? $"Wireless ADB transport was deliberately recycled because the bounded {PumpQueueCapacity * PumpBufferBytes / 1024} KiB receive queue filled. This prevents LibADB's unbounded internal queue from growing without limit; reconnect gap={consecutiveTransportGaps}/{MaximumConsecutiveTransportGaps}, discardedPartialRecordBytes={discardedPartialBytes}, resume timestamp={_resumeTimestamp ?? "unavailable"}."
-                        : $"Wireless ADB transport ended unexpectedly; reconnect gap={consecutiveTransportGaps}/{MaximumConsecutiveTransportGaps}, reason={pumpResult.Reason}, discardedPartialRecordBytes={discardedPartialBytes}, resume timestamp={_resumeTimestamp ?? "unavailable"}, detail={pumpResult.Exception?.Message ?? "none"}.");
+                        ? $"Wireless ADB transport was deliberately recycled because the bounded {PumpQueueCapacity * PumpBufferBytes / 1024} KiB receive queue filled. This prevents LibADB's unbounded internal queue from growing without limit; reconnect gap={consecutiveTransportGaps}/{MaximumConsecutiveTransportGaps}, discardedPartialRecordBytes={discardedPartialBytes}, resume point={resumeDescription}."
+                        : $"Wireless ADB transport ended unexpectedly; reconnect gap={consecutiveTransportGaps}/{MaximumConsecutiveTransportGaps}, reason={pumpResult.Reason}, discardedPartialRecordBytes={discardedPartialBytes}, resume point={resumeDescription}, detail={pumpResult.Exception?.Message ?? "none"}.");
 
                 ReportConnectionStatus(new SourceConnectionStatus(
                     "Wireless debugging interrupted · preparing to reconnect",
@@ -210,7 +218,7 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
                         Math.Min(4_000, 250 * Math.Pow(2, reconnectAttempt - 1)));
                     global::Android.Util.Log.Warn(
                         LogTag,
-                        $"Wireless ADB reconnect attempt {reconnectAttempt}/{MaximumReconnectAttempts} will start after {delay.TotalMilliseconds:0} ms; resume timestamp={_resumeTimestamp ?? "unavailable"}.");
+                        $"Wireless ADB reconnect attempt {reconnectAttempt}/{MaximumReconnectAttempts} will start after {delay.TotalMilliseconds:0} ms; resume point={resumeDescription}.");
                     ReportConnectionStatus(new SourceConnectionStatus(
                         $"Wireless debugging interrupted · reconnecting {reconnectAttempt}/{MaximumReconnectAttempts}",
                         $"VisualCat is looking for Android's Wireless debugging service with the saved pairing (attempt {reconnectAttempt} of {MaximumReconnectAttempts}). Keep Wireless debugging on; the captured session remains safe and Stop remains available."));
@@ -231,7 +239,7 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
                     try
                     {
                         stream = await _service
-                            .OpenLogcatStreamAsync(_resumeTimestamp, linked.Token)
+                            .OpenLogcatStreamAsync(resumeArgument, linked.Token)
                             .ConfigureAwait(false);
                         lastReconnectFailure = null;
                         ReportConnectionStatus(new SourceConnectionStatus(
@@ -490,10 +498,7 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
 
             if (value == (byte)'\n')
             {
-                if (TryReadTimestamp(CollectionsMarshal.AsSpan(_timestampLineBuffer), out var timestamp))
-                {
-                    _resumeTimestamp = timestamp;
-                }
+                ObserveResumeRecord(_timestampLineBuffer);
 
                 _timestampLineBuffer.Clear();
                 continue;
@@ -506,35 +511,34 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
         }
     }
 
-    private static bool TryReadTimestamp(ReadOnlySpan<byte> line, out string timestamp)
+    private void ObserveResumeRecord(List<byte> line)
     {
-        timestamp = string.Empty;
-        if (line.Length < 26 ||
-            line[4] != (byte)'-' ||
-            line[7] != (byte)'-' ||
-            line[10] != (byte)' ' ||
-            line[13] != (byte)':' ||
-            line[16] != (byte)':' ||
-            line[19] != (byte)'.')
+        var length = Math.Min(line.Count, LogcatRecordOrigin.MaximumPrefixLength);
+        if (length == 0)
         {
-            return false;
+            return;
         }
 
-        for (var index = 0; index < 26; index++)
+        Span<char> prefix = stackalloc char[length];
+        for (var index = 0; index < length; index++)
         {
-            if (index is 4 or 7 or 10 or 13 or 16 or 19)
+            var value = line[index];
+            if (value > 0x7f)
             {
-                continue;
+                // Every field the cursor reads is ASCII. Refusing an unusual non-ASCII
+                // prefix is safer than manufacturing a resume point from message bytes.
+                return;
             }
 
-            if (line[index] is < (byte)'0' or > (byte)'9')
-            {
-                return false;
-            }
+            prefix[index] = (char)value;
         }
 
-        timestamp = Encoding.ASCII.GetString(line[..26]);
-        return true;
+        if (_resumeCursor.Observe(prefix, DateTime.UtcNow, out var clockEpochReset) && clockEpochReset)
+        {
+            global::Android.Util.Log.Warn(
+                LogTag,
+                "The device wall clock moved behind the previous Wireless ADB resume point. Starting a new timestamp epoch so a later reconnect does not skip post-adjustment records.");
+        }
     }
 
     private static IOException CaptureDisconnected(Exception? innerException = null) =>

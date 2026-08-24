@@ -57,7 +57,7 @@ be published from an unmerged commit or one that would fail a pull request:
 - [ ] Privacy, support matrix, known limits, migration policy, and third-party notices are current.
 - [ ] Components the SBOM reports without license metadata have been resolved by
       hand and explained in `docs/THIRD-PARTY-NOTICES.md`.
-- [ ] The exact Play AAB manifest has `INTERNET` and `CHANGE_WIFI_MULTICAST_STATE`, does **not** contain `android.permission.READ_LOGS`, and has no unexpected sensitive permission.
+- [ ] The exact Play AAB manifest has `INTERNET`, `CHANGE_WIFI_MULTICAST_STATE`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, and `POST_NOTIFICATIONS`; declares the unexported Live capture service as `dataSync`; does **not** contain `android.permission.READ_LOGS`; and has no unexpected sensitive permission.
 - [ ] The exact Play AAB is inspected for Android-only Maven/JNI dependencies and licenses, including `libadb-android-bc`, Bouncy Castle, and every bundled/transitive pairing component.
 - [ ] Wireless ADB pairing code is absent from logs, diagnostics, persisted files, backups, and crash artifacts; the saved ADB identity is encrypted in `NoBackupFilesDir` and removal/clear-data behavior is verified.
 - [ ] Play Console Data Safety, App access, permissions, privacy policy, and store description match the audited AAB rather than an older direct-`READ_LOGS` build.
