@@ -123,6 +123,17 @@ public sealed partial class MainView
             return;
         }
 
+        // Nothing may be asked, and nothing written, until the settings file has been read. A
+        // resume can reach here while InitializeAsync is still loading, and the update memory
+        // would then be the defaults: the throttle would be ignored, and — far worse — the
+        // first write would persist a default ApplicationSettings over the reader's real one,
+        // taking their theme, timeline preferences and open workspace with it. The existing
+        // workspace writes guard on the same flag for the same reason.
+        if (!_settingsLoaded)
+        {
+            return;
+        }
+
         var origin = PlatformSourceRegistry.GetInstallOrigin?.Invoke() ?? AppInstallOrigin.Unknown;
         if (!AppUpdatePolicy.ShouldCheck(UpdateChannel, origin, coldStart, UpdateMemory(), DateTimeOffset.UtcNow))
         {
@@ -132,8 +143,11 @@ public sealed partial class MainView
         try
         {
             var status = await check(_updateLifetime.Token).ConfigureAwait(true);
-            await RecordUpdateCheckedAsync().ConfigureAwait(true);
+
+            // Rendered before the write, not after: the reader is waiting for the answer, not
+            // for a disk flush, and the persisted timestamp changes nothing on screen.
             RenderUpdateStatus(status);
+            await RecordUpdateCheckedAsync().ConfigureAwait(true);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -179,8 +193,8 @@ public sealed partial class MainView
         try
         {
             var status = await check(_updateLifetime.Token).ConfigureAwait(true);
-            await RecordUpdateCheckedAsync().ConfigureAwait(true);
             RenderUpdateStatus(status, manual: true);
+            await RecordUpdateCheckedAsync().ConfigureAwait(true);
         }
         catch (OperationCanceledException)
         {
@@ -272,8 +286,36 @@ public sealed partial class MainView
             prompt.ActionLabel is null
                 ? null
                 : new NoticeAction(prompt.ActionLabel, () => RunUpdateActionAsync(prompt.Action)),
-            prompt.Persistent ? () => RecordUpdateDismissed() : null);
+
+            // Only an offer records a refusal. Waving away a failure, a progress report, or
+            // "this build was installed from a file" is not a decision about a build, and
+            // treating it as one would silence the next real offer for a week.
+            prompt.Snoozable ? RecordUpdateDismissed : null);
         _updateNoticeRevision = prompt.Persistent ? _noticeRevision : 0;
+    }
+
+    /// <summary>
+    /// The lane has just been cleared by the reader, so an offer that was waiting for it can go up.
+    /// </summary>
+    /// <remarks>
+    /// Only a prompt that was actually withheld is raised here, and it is re-decided from the
+    /// latest status rather than replayed: time has passed, and a capture may have started in
+    /// it. Re-deciding unconditionally would be wrong in the other direction — it would put a
+    /// failure or an "installed from a file" message straight back on screen the instant the
+    /// reader dismissed it, since neither is gated by a snooze.
+    /// </remarks>
+    private void NoticeLaneFreed()
+    {
+        if (_pendingUpdatePrompt is null)
+        {
+            return;
+        }
+
+        _pendingUpdatePrompt = null;
+        if (_lastUpdateStatus.State != AppUpdateState.Unknown)
+        {
+            RenderUpdateStatus(_lastUpdateStatus);
+        }
     }
 
     /// <summary>
@@ -287,20 +329,9 @@ public sealed partial class MainView
     /// </remarks>
     private void ReconsiderUpdateNotice()
     {
-        if (_lastUpdateStatus.State == AppUpdateState.Unknown && _pendingUpdatePrompt is null)
-        {
-            return;
-        }
-
         if (_lastUpdateStatus.State != AppUpdateState.Unknown)
         {
             RenderUpdateStatus(_lastUpdateStatus);
-            return;
-        }
-
-        if (_pendingUpdatePrompt is { } pending)
-        {
-            RenderUpdatePrompt(pending, manual: false);
         }
     }
 
@@ -421,21 +452,41 @@ public sealed partial class MainView
     private void RecordUpdateDismissed()
     {
         _updateNoticeRevision = 0;
-        if (_lastUpdateStatus.AvailableVersionCode <= 0)
+        if (!_settingsLoaded)
         {
             return;
         }
 
+        // The snooze is recorded even when the version code is unknown, which is the case Play
+        // leaves open when a code does not decode. Skipping it there meant Dismiss did nothing
+        // at all for exactly the offer the reader was least able to identify: the banner was
+        // back on the next resume, and pressing Dismiss again would not have helped either.
         _settings = _settings with
         {
-            UpdateDismissedVersionCode = _lastUpdateStatus.AvailableVersionCode,
+            UpdateDismissedVersionCode = Math.Max(_lastUpdateStatus.AvailableVersionCode, 0),
             UpdateSnoozedUntilUtc = AppUpdatePolicy.SnoozeUntil(UpdateChannel, DateTimeOffset.UtcNow),
         };
-        _ = PersistUpdateMemoryAsync();
+
+        // Kept rather than abandoned. A button handler cannot await, but the write must not
+        // outlive the view either: disposal closes the gate that serialises settings writes, and
+        // the workspace writes are drained there for exactly this reason.
+        _lastUpdatePersist = PersistUpdateMemoryAsync();
     }
+
+    /// <summary>The most recent update-memory write, so disposal can wait for it.</summary>
+    private Task _lastUpdatePersist = Task.CompletedTask;
+
+    /// <summary>Waits for any update-memory write this view started.</summary>
+    /// <remarks>Never throws: <see cref="PersistUpdateMemoryAsync"/> absorbs its own failures.</remarks>
+    private Task DrainUpdatePersistAsync() => _lastUpdatePersist;
 
     private Task RecordUpdateCheckedAsync()
     {
+        if (!_settingsLoaded)
+        {
+            return Task.CompletedTask;
+        }
+
         _settings = _settings with { UpdateLastCheckedUtc = DateTimeOffset.UtcNow };
         return PersistUpdateMemoryAsync();
     }

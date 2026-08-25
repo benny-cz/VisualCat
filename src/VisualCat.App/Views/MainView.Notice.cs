@@ -334,6 +334,11 @@ public sealed partial class MainView
         var dismissed = _noticeDismissedHandler;
         ShowNotice(string.Empty);
         dismissed?.Invoke();
+
+        // Ordered after the dismissal callback so anything the reader has just refused is
+        // already remembered, and a message that was waiting for the lane can take it now
+        // rather than at the next unrelated event.
+        NoticeLaneFreed();
     }
 
     private Func<Task>? _noticeActionHandler;

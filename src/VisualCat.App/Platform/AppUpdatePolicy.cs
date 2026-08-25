@@ -30,11 +30,24 @@ public enum AppUpdatePromptAction
 /// <param name="ActionLabel">The verb on the button, or null for a report with no button.</param>
 /// <param name="Action">What that button does.</param>
 /// <param name="Persistent">Whether the lane holds it until the reader dismisses it.</param>
+/// <param name="Snoozable">
+/// Whether dismissing this message means "not now" about a specific build, and should therefore
+/// be remembered.
+/// </param>
+/// <remarks>
+/// <see cref="Snoozable"/> is decided here rather than by the view, because it is the difference
+/// between an offer and a report and the view has no way to tell them apart. Dismissing an offer
+/// records the version code and starts the channel's snooze; dismissing a download's progress, a
+/// failure, or "this build was installed from a file" records nothing — a reader who waves away a
+/// failure message has not declined an update, and silencing the next real offer because they did
+/// would be a defect they could never diagnose.
+/// </remarks>
 public sealed record AppUpdatePrompt(
     string Message,
     string? ActionLabel,
     AppUpdatePromptAction Action,
-    bool Persistent);
+    bool Persistent,
+    bool Snoozable = false);
 
 /// <summary>Everything the app remembers about update prompts between launches.</summary>
 /// <param name="DismissedVersionCode">The version code the reader has already said no to.</param>
@@ -177,57 +190,76 @@ public static class AppUpdatePolicy
         ArgumentNullException.ThrowIfNull(status);
         ArgumentNullException.ThrowIfNull(memory);
 
-        // Work already in flight is reported whatever the channel says, because the app
-        // started it and the reader is waiting on it. Everything below this is an offer.
+        // Work already in flight is reported whatever the channel says, because the app started
+        // it and the reader is waiting on it — a Development build that began a flow still gets
+        // told how it ended.
         var name = Name(status);
         var subject = Sentence(name);
-        switch (status.State)
+        var inFlight = status.State switch
         {
-            case AppUpdateState.Downloading:
-                return new AppUpdatePrompt(
-                    Downloading(name, status),
-                    ActionLabel: null,
-                    AppUpdatePromptAction.None,
-                    Persistent: false);
+            AppUpdateState.Downloading => new AppUpdatePrompt(
+                Downloading(name, status),
+                ActionLabel: null,
+                AppUpdatePromptAction.None,
 
-            case AppUpdateState.ReadyToInstall when liveCaptureRunning:
-                // Rule 2 of the live-capture guard: CompleteUpdate restarts the process, and
-                // the recording would end without the drain-seal-reopen the in-app Stop does.
-                // The install is not refused, it is deferred — and the wording says whose
-                // move it is, because the reader can end the capture and this must not.
-                return new AppUpdatePrompt(
-                    $"{subject} is downloaded. Stop the capture to install it — installing restarts the app.",
-                    ActionLabel: null,
-                    AppUpdatePromptAction.None,
-                    Persistent: true);
+                // Persistent, and deliberately so. As an ordinary confirmation it would be
+                // retired by the lane's six-second timer, and Play reports progress at its own
+                // pace: on a slow download the only sign that anything was happening would
+                // blink out and come back. It is always replaced — by the next progress report,
+                // or by the finished download — so it cannot go stale on screen.
+                Persistent: true),
 
-            case AppUpdateState.ReadyToInstall:
-                return new AppUpdatePrompt(
-                    $"{subject} is downloaded. Installing restarts the app.",
-                    "Install",
-                    AppUpdatePromptAction.CompleteInstall,
-                    Persistent: true);
+            // Rule 2 of the live-capture guard: CompleteUpdate restarts the process, and the
+            // recording would end without the drain-seal-reopen the in-app Stop does. The
+            // install is not refused, it is deferred — and the wording says whose move it is,
+            // because the reader can end the capture and this must not.
+            AppUpdateState.ReadyToInstall when liveCaptureRunning => new AppUpdatePrompt(
+                $"{subject} is downloaded. Stop the capture to install it — installing restarts the app.",
+                ActionLabel: null,
+                AppUpdatePromptAction.None,
+                Persistent: true,
+                Snoozable: true),
 
-            case AppUpdateState.InProgress when liveCaptureRunning:
-                return new AppUpdatePrompt(
-                    $"An update to {name} was interrupted. Stop the capture to resume it — installing restarts the app.",
-                    ActionLabel: null,
-                    AppUpdatePromptAction.None,
-                    Persistent: true);
+            AppUpdateState.ReadyToInstall => new AppUpdatePrompt(
+                $"{subject} is downloaded. Installing restarts the app.",
+                "Install",
+                AppUpdatePromptAction.CompleteInstall,
+                Persistent: true,
+                Snoozable: true),
 
-            case AppUpdateState.InProgress:
-                return new AppUpdatePrompt(
-                    $"An update was interrupted. Resume it to finish installing {name}.",
-                    "Resume",
-                    AppUpdatePromptAction.StartImmediate,
-                    Persistent: true);
+            AppUpdateState.InProgress when liveCaptureRunning => new AppUpdatePrompt(
+                $"An update to {name} was interrupted. Stop the capture to resume it — installing restarts the app.",
+                ActionLabel: null,
+                AppUpdatePromptAction.None,
+                Persistent: true,
+                Snoozable: true),
 
-            case AppUpdateState.Failed:
-                return new AppUpdatePrompt(
-                    status.Message ?? "The update did not start. Try again from the Play Store.",
-                    "Open Play",
-                    AppUpdatePromptAction.OpenStore,
-                    Persistent: true);
+            AppUpdateState.InProgress => new AppUpdatePrompt(
+                $"An update was interrupted. Resume it to finish installing {name}.",
+                "Resume",
+                AppUpdatePromptAction.StartImmediate,
+                Persistent: true,
+                Snoozable: true),
+
+            AppUpdateState.Failed => new AppUpdatePrompt(
+                status.Message ?? "The update did not start. Try again from the Play Store.",
+                "Open Play",
+                AppUpdatePromptAction.OpenStore,
+                Persistent: true),
+
+            _ => null,
+        };
+
+        if (inFlight is not null)
+        {
+            // A downloaded update is a standing request to restart the app, and the app repeats
+            // it on every resume for as long as it stands. Without this gate, Dismiss cleared
+            // the banner and the next return to the foreground put it straight back — the exact
+            // nag the per-version snooze exists to prevent, and worse here, because the only
+            // answer that would end it is "restart now".
+            return inFlight.Snoozable && !manual && !MayOffer(status, channel, memory, nowUtc)
+                ? null
+                : inFlight;
         }
 
         if (!manual && channel == ReleaseChannel.Development)
@@ -314,7 +346,8 @@ public static class AppUpdatePolicy
                 $"{subject} is available, but Google Play cannot start the update from here.",
                 "Open Play",
                 AppUpdatePromptAction.OpenStore,
-                Persistent: true);
+                Persistent: true,
+                Snoozable: true);
         }
 
         if (liveCaptureRunning)
@@ -325,7 +358,8 @@ public static class AppUpdatePolicy
                 $"{subject} is available. Downloading it now is safe; installing restarts the app, so it waits until the capture stops.",
                 "Download",
                 AppUpdatePromptAction.StartFlexible,
-                Persistent: true);
+                Persistent: true,
+                Snoozable: true);
         }
 
         var channelNote = channel switch
@@ -342,7 +376,8 @@ public static class AppUpdatePolicy
             $"{subject} is available on Google Play.{channelNote}",
             "Update",
             action,
-            Persistent: true);
+            Persistent: true,
+            Snoozable: true);
     }
 
     /// <summary>

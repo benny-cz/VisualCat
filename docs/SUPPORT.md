@@ -108,8 +108,11 @@ at the bottom of the screen. Play does the download and the install in its own
 interface, after you agree. A production build asks about once a day; the alpha
 and beta testing channels ask more often, because a tester on an old build is not
 testing anything. **Dismiss** puts the offer away — for a week on a production
-build, less on a testing channel — and a newer release asks again. **More ▾ →
-Check for updates…** asks immediately, whenever you want.
+build, less on a testing channel — and a newer release asks again. That applies
+to an update that has already downloaded as well: VisualCat asks to install it
+every time you come back to the app until you do, so dismissing it buys the same
+quiet interval. **More ▾ → Check for updates…** asks immediately, whenever you
+want, and is not affected by a dismissal.
 
 Two things the app deliberately will not do. It will not install an update while
 a Live capture is running: installing restarts VisualCat, which would end the

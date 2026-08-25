@@ -7276,6 +7276,25 @@ certificate. Signed-AAB size went from 35,278,156 to 35,532,567 bytes — **+248
 KiB, +0.72%** — measured by building the same commit with and without the package
 reference.
 
+### 22.1 Second pass — re-audit of the merged implementation
+
+The implementation was re-read after it was merged, and the audit found thirteen defects, one of
+them capable of losing a reader's settings. Two needed hardware to confirm the fix, and both were
+re-run on the same device:
+
+| Case | Result |
+|---|---|
+| Dismiss a **downloaded** update, then background and resume | Lane stayed empty. Before the fix the install prompt returned on every resume, because a pending download is re-reported each time and that state ignored the snooze — so the only answer that would end it was the restart the reader had just declined. `settings.json` showed `updateDismissedVersionCode 2010100` and a +24 h beta snooze. |
+| **More ▾ → Check for updates…** inside that snooze | Offered the install again. A question the reader typed is never silenced by an earlier Dismiss. |
+
+The defect that mattered most needed no device: update settings writes were not gated on the
+settings file having been loaded, and a resume arriving during startup would have persisted a
+default `ApplicationSettings` over the reader's real one — theme, timeline preferences and open
+workspace included. It is now gated the same way the existing workspace writes are.
+
+Packaging was re-run after the fixes: version code 2000900, permission list unchanged, 196 native
+libraries 16 KB aligned, pinned upload certificate.
+
 **Not covered here, by construction:** the live Play client's own consent UI, a
 real staged rollout, `UpdateAvailability.DeveloperTriggeredUpdateInProgress`
 after a genuine interrupted Immediate flow, and a device with no Play Store. The

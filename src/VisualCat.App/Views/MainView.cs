@@ -179,13 +179,32 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         subscription.Attach();
     }
 
+    /// <summary>Where the settings file lives when nobody says otherwise.</summary>
+    internal static string DefaultSettingsPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "VisualCat",
+        "settings.json");
+
     public MainView(IEnumerable<string>? startupPaths = null)
+        : this(startupPaths, DefaultSettingsPath)
     {
+    }
+
+    /// <summary>
+    /// Builds a view whose settings live somewhere other than this machine's own.
+    /// </summary>
+    /// <remarks>
+    /// For tests, and worth the seam. A headless view runs the whole of startup, including the
+    /// settings load and every write that follows it, so a test that dismisses an update offer
+    /// wrote a real snooze into the developer's own settings file — which then suppressed the
+    /// offer in later runs and made unrelated tests fail on a machine where the suite had been
+    /// run before. A test that changes the machine it runs on is not a test.
+    /// </remarks>
+    internal MainView(IEnumerable<string>? startupPaths, string settingsPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(settingsPath);
         _startupPaths = startupPaths?.ToArray() ?? [];
-        _settingsStore = new SettingsStore(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "VisualCat",
-            "settings.json"));
+        _settingsStore = new SettingsStore(settingsPath);
         _launchFilesHandler = files => Dispatcher.UIThread.Post(() => _ = OpenIncomingAsync(files));
         _appResumedHandler = () => Dispatcher.UIThread.Post(() =>
         {
@@ -2844,6 +2863,11 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         {
             global::System.Diagnostics.Debug.WriteLine($"VisualCat final workspace persistence failed: {exception}");
         }
+
+        // Drained beside the workspace writes above, and for the same reason: the settings gate
+        // is disposed at the end of this method, and a dismissal recorded a moment earlier is
+        // still on its way to disk.
+        await DrainUpdatePersistAsync();
 
         await _viewModel.DisposeAsync();
         if (_diagnostics is not null)

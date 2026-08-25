@@ -413,7 +413,11 @@ public sealed class AppUpdatePolicyTests
         Assert.NotNull(prompt);
         Assert.Equal("Downloading VisualCat 2.1.0 · 12.4 MB of 31.0 MB.", prompt.Message);
         Assert.Null(prompt.ActionLabel);
-        Assert.False(prompt.Persistent);
+
+        // Held rather than timed out, and not remembered as a refusal — see
+        // DownloadProgressStaysOnScreenBetweenReports and OnlyOffersAreRememberedAsRefusals.
+        Assert.True(prompt.Persistent);
+        Assert.False(prompt.Snoozable);
     }
 
     [Fact]
@@ -548,6 +552,132 @@ public sealed class AppUpdatePolicyTests
             AppUpdateMemory.Empty,
             Now,
             manual: true));
+
+    // --- what a dismissal is allowed to mean ------------------------------------------------
+
+    /// <summary>
+    /// A downloaded update is a standing request to restart the app, repeated on every resume.
+    /// Dismiss has to end that until the snooze lapses, or the reader cannot get rid of it
+    /// without restarting — which is the one thing they were declining to do.
+    /// </summary>
+    [Fact]
+    public void DismissingADownloadedUpdateStopsItComingBackOnEveryResume()
+    {
+        var status = new AppUpdateStatus(AppUpdateState.ReadyToInstall, 2010000, "2.1.0");
+        var dismissed = new AppUpdateMemory(
+            DismissedVersionCode: 2010000,
+            SnoozedUntilUtc: AppUpdatePolicy.SnoozeUntil(ReleaseChannel.Stable, Now));
+
+        Assert.Null(AppUpdatePolicy.Decide(
+            status, ReleaseChannel.Stable, liveCaptureRunning: false, dismissed, Now.AddHours(1)));
+
+        // And it comes back once the snooze has run out, because the update is still pending.
+        Assert.NotNull(AppUpdatePolicy.Decide(
+            status, ReleaseChannel.Stable, liveCaptureRunning: false, dismissed, Now.AddDays(8)));
+    }
+
+    /// <summary>The same, for an update interrupted mid-install.</summary>
+    [Fact]
+    public void DismissingAnInterruptedUpdateAlsoSnoozes() =>
+        Assert.Null(AppUpdatePolicy.Decide(
+            new AppUpdateStatus(AppUpdateState.InProgress, 2010000, "2.1.0"),
+            ReleaseChannel.Stable,
+            liveCaptureRunning: false,
+            new AppUpdateMemory(
+                DismissedVersionCode: 2010000,
+                SnoozedUntilUtc: AppUpdatePolicy.SnoozeUntil(ReleaseChannel.Stable, Now)),
+            Now.AddHours(1)));
+
+    /// <summary>
+    /// A snooze recorded against one build does not silence a newer one that is already
+    /// downloaded — the reader declined a restart for 2.1.0, not for everything after it.
+    /// </summary>
+    [Fact]
+    public void ANewerDownloadedBuildIsStillOffered() =>
+        Assert.NotNull(AppUpdatePolicy.Decide(
+            new AppUpdateStatus(AppUpdateState.ReadyToInstall, 2010100, "2.1.1"),
+            ReleaseChannel.Stable,
+            liveCaptureRunning: false,
+            new AppUpdateMemory(DismissedVersionCode: 2010000, SnoozedUntilUtc: Now.AddDays(6)),
+            Now));
+
+    /// <summary>
+    /// Only messages that are actually offers may be remembered as refusals.
+    /// </summary>
+    /// <remarks>
+    /// The dismissal callback is attached from <see cref="AppUpdatePrompt.Snoozable"/>, so a
+    /// prompt marked wrongly here silences a real update for a week because somebody waved away
+    /// a failure or a progress report — a defect the reader could never diagnose from the screen.
+    /// </remarks>
+    [Fact]
+    public void OnlyOffersAreRememberedAsRefusals()
+    {
+        AppUpdatePrompt? Decide(AppUpdateStatus status, bool manual = false) =>
+            AppUpdatePolicy.Decide(
+                status, ReleaseChannel.Stable, liveCaptureRunning: false, AppUpdateMemory.Empty, Now, manual);
+
+        Assert.True(Decide(Available())!.Snoozable);
+        Assert.True(Decide(new AppUpdateStatus(AppUpdateState.ReadyToInstall, 2010000, "2.1.0"))!.Snoozable);
+        Assert.True(Decide(new AppUpdateStatus(AppUpdateState.InProgress, 2010000, "2.1.0"))!.Snoozable);
+
+        Assert.False(Decide(new AppUpdateStatus(
+            AppUpdateState.Downloading, 2010000, "2.1.0", TotalBytesToDownload: 1024))!.Snoozable);
+        Assert.False(Decide(new AppUpdateStatus(AppUpdateState.Failed, Message: "no"))!.Snoozable);
+        Assert.False(Decide(new AppUpdateStatus(AppUpdateState.Unsupported), manual: true)!.Snoozable);
+        Assert.False(Decide(new AppUpdateStatus(AppUpdateState.UpToDate), manual: true)!.Snoozable);
+        Assert.False(Decide(new AppUpdateStatus(AppUpdateState.Unknown), manual: true)!.Snoozable);
+    }
+
+    /// <summary>
+    /// A manual check still reaches a downloaded update the reader had snoozed, because they
+    /// have just asked for it in so many words.
+    /// </summary>
+    [Fact]
+    public void AManualCheckStillOffersASnoozedInstall() =>
+        Assert.NotNull(AppUpdatePolicy.Decide(
+            new AppUpdateStatus(AppUpdateState.ReadyToInstall, 2010000, "2.1.0"),
+            ReleaseChannel.Stable,
+            liveCaptureRunning: false,
+            new AppUpdateMemory(DismissedVersionCode: 2010000, SnoozedUntilUtc: Now.AddDays(6)),
+            Now,
+            manual: true));
+
+    /// <summary>
+    /// Download progress holds the lane rather than being retired by its six-second timer.
+    /// </summary>
+    /// <remarks>
+    /// Play reports progress at its own pace. As an ordinary confirmation the only sign that
+    /// anything was happening would blink out between reports on a slow download, which reads
+    /// as the update having quietly stopped.
+    /// </remarks>
+    [Fact]
+    public void DownloadProgressStaysOnScreenBetweenReports() =>
+        Assert.True(AppUpdatePolicy.Decide(
+            new AppUpdateStatus(
+                AppUpdateState.Downloading, 2010000, "2.1.0", TotalBytesToDownload: 1024),
+            ReleaseChannel.Stable,
+            liveCaptureRunning: false,
+            AppUpdateMemory.Empty,
+            Now)!.Persistent);
+
+    /// <summary>A development build still hears how a flow it started ended.</summary>
+    [Fact]
+    public void ADevelopmentBuildIsStillToldAboutWorkItStarted()
+    {
+        Assert.NotNull(AppUpdatePolicy.Decide(
+            new AppUpdateStatus(AppUpdateState.ReadyToInstall, 2010000, "2.1.0"),
+            ReleaseChannel.Development,
+            liveCaptureRunning: false,
+            AppUpdateMemory.Empty,
+            Now));
+
+        Assert.NotNull(AppUpdatePolicy.Decide(
+            new AppUpdateStatus(AppUpdateState.Failed, Message: "The update did not start."),
+            ReleaseChannel.Development,
+            liveCaptureRunning: false,
+            AppUpdateMemory.Empty,
+            Now));
+    }
 
     /// <summary>A manual check is not silenced by an earlier Dismiss.</summary>
     [Fact]

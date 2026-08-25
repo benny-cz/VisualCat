@@ -42,9 +42,27 @@ public sealed class MainViewUpdateNoticeTests
     {
         var previous = MainView.UpdateChannel;
         MainView.UpdateChannel = channel;
-        var view = new MainView();
+
+        // The status cache is process-static, which is exactly what it is for in production: a
+        // view rebuilt by an activity recreation renders the offer already in flight. In a test
+        // assembly it is shared state between tests, and a status left behind by one of them
+        // paints a banner into the next one's lane before its first assertion runs. Cleared on
+        // the way in as well as the way out, so a test cannot inherit one either.
+        PlatformSourceRegistry.CacheAppUpdateStatus(AppUpdateStatus.None);
+
+        // Its own settings file, not this machine's. These tests dismiss offers, and a
+        // dismissal is persisted: run against the real path they wrote a week-long snooze into
+        // the developer's own settings and then failed, on that machine only, from the second
+        // run onwards. Starting from a file that does not exist also means every test begins
+        // with the update memory empty, which is the state the assertions describe.
+        var settingsPath = Path.Combine(
+            Path.GetTempPath(),
+            $"visualcat-update-tests-{Guid.NewGuid():N}",
+            "settings.json");
+        var view = new MainView(null, settingsPath);
         var window = new Window { Content = view, Width = 1400, Height = 800 };
         window.Show();
+        Dispatcher.UIThread.RunJobs();
         try
         {
             await body(view);
@@ -54,6 +72,21 @@ public sealed class MainViewUpdateNoticeTests
             window.Close();
             await view.DisposeAsync();
             MainView.UpdateChannel = previous;
+            PlatformSourceRegistry.CacheAppUpdateStatus(AppUpdateStatus.None);
+            var directory = Path.GetDirectoryName(settingsPath)!;
+            try
+            {
+                if (Directory.Exists(directory))
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+            }
+            catch (IOException)
+            {
+                // A leftover temp file is not a test failure. Disposal drains the settings
+                // writes this view started, so reaching here means something outside the view
+                // still had the file open — a virus scanner, most likely.
+            }
         }
     }
 
@@ -122,11 +155,18 @@ public sealed class MainViewUpdateNoticeTests
         });
 
     /// <summary>
-    /// The offer is held rather than dropped, so it appears the moment the lane is free
-    /// instead of waiting for the next resume to re-ask Play.
+    /// The offer is held rather than dropped, and goes up the moment the reader clears the lane
+    /// — without waiting for a resume, a capture change, or anything else to happen to arrive.
     /// </summary>
+    /// <remarks>
+    /// This is the assertion that makes the withheld prompt worth keeping at all. It used to be
+    /// written with a second explicit render standing in for whatever would eventually re-raise
+    /// it, which passed while nothing in the product actually did: dismissing the failure left
+    /// the lane empty and the offer sat in a field until an unrelated event happened to shake
+    /// it loose. Nothing here calls into the update path a second time.
+    /// </remarks>
     [AvaloniaFact]
-    public async Task AWithheldOfferAppearsOnceTheLaneIsFree() =>
+    public async Task AWithheldOfferAppearsTheMomentTheReaderClearsTheLane() =>
         await WithChannel(ReleaseChannel.Stable, view =>
         {
             view.ShowNotice("Export failed.", MainView.NoticeKind.Failure);
@@ -134,13 +174,107 @@ public sealed class MainViewUpdateNoticeTests
             Dispatcher.UIThread.RunJobs();
             Assert.Equal("Export failed.", LaneText(view));
 
-            // The reader reads the failure and clears it. The offer is still pending.
-            view.DismissNotice();
-            Dispatcher.UIThread.RunJobs();
-            view.RenderUpdateStatus(Available());
+            // The reader reads the failure and clears it. Nothing else happens.
+            LaneDismiss(view).RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
             Dispatcher.UIThread.RunJobs();
 
             Assert.Equal("VisualCat 2.1.0 is available on Google Play.", LaneText(view));
+            return Task.CompletedTask;
+        });
+
+    /// <summary>
+    /// Clearing a message the update path never withheld leaves the lane empty.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to the test above, and the reason it re-raises only a genuinely withheld
+    /// prompt rather than simply re-deciding: a failure and an "installed from a file" message
+    /// are not gated by any snooze, so re-deciding on every dismissal would put them straight
+    /// back on screen and leave the reader with a notice they cannot get rid of.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task DismissingAMessageNothingWasWaitingBehindLeavesTheLaneEmpty() =>
+        await WithChannel(ReleaseChannel.Stable, view =>
+        {
+            view.RenderUpdateStatus(new AppUpdateStatus(AppUpdateState.Failed, Message: "The update did not start."));
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal("The update did not start.", LaneText(view));
+
+            LaneDismiss(view).RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(string.Empty, LaneText(view));
+            Assert.Null(view.HoldingNoticeKind);
+            return Task.CompletedTask;
+        });
+
+    /// <summary>
+    /// Dismissing a downloaded update stops it reappearing, without touching the settings file
+    /// before it has been read.
+    /// </summary>
+    /// <remarks>
+    /// A headless view never completes <c>InitializeAsync</c>, so its settings are unloaded —
+    /// which is exactly the state a resume can catch on a device. Nothing here may be persisted,
+    /// and the banner must still come down and stay down for this render.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task DismissingADownloadedUpdateTakesTheBannerDown() =>
+        await WithChannel(ReleaseChannel.Stable, view =>
+        {
+            view.RenderUpdateStatus(new AppUpdateStatus(AppUpdateState.ReadyToInstall, 2010000, "2.1.0"));
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal("Install", (string)LaneAction(view)!.Content!);
+
+            LaneDismiss(view).RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(string.Empty, LaneText(view));
+            return Task.CompletedTask;
+        });
+
+    /// <summary>
+    /// Download progress carries no button and is not treated as something to dismiss.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task DownloadProgressRendersWithoutAnAction() =>
+        await WithChannel(ReleaseChannel.Stable, view =>
+        {
+            view.RenderUpdateStatus(new AppUpdateStatus(
+                AppUpdateState.Downloading,
+                2010000,
+                "2.1.0",
+                BytesDownloaded: 13_002_342,
+                TotalBytesToDownload: 32_505_856));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal("Downloading VisualCat 2.1.0 · 12.4 MB of 31.0 MB.", LaneText(view));
+            Assert.Null(LaneAction(view));
+            Assert.Equal(MainView.NoticeKind.Completion, view.HoldingNoticeKind);
+            return Task.CompletedTask;
+        });
+
+    /// <summary>
+    /// The message the command bar shows is not a second copy of the lane's on Android, and it
+    /// can never outgrow the space it has.
+    /// </summary>
+    /// <remarks>
+    /// It sat in the brand row's trailing auto-sized column, which gives a TextBlock its full
+    /// desired width, so the CharacterEllipsis it asked for could never engage: on a 1080 px
+    /// phone the update offer painted through the wordmark and off the edge of the screen. This
+    /// asserts the two properties that make that impossible — the flexible column, and the
+    /// trimming that column finally lets work.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task TheCommandBarMessageIsWidthLimitedAndTrimmed() =>
+        await WithChannel(ReleaseChannel.Stable, view =>
+        {
+            var message = view.GetLogicalDescendants()
+                .OfType<TextBlock>()
+                .Single(static block => Grid.GetColumn(block) == 1 &&
+                    block.TextTrimming == Avalonia.Media.TextTrimming.CharacterEllipsis &&
+                    block.Parent is Grid { ColumnDefinitions.Count: 3 });
+
+            Assert.Equal(Avalonia.Layout.HorizontalAlignment.Stretch, message.HorizontalAlignment);
+            Assert.Equal(Avalonia.Media.TextAlignment.Right, message.TextAlignment);
             return Task.CompletedTask;
         });
 
@@ -219,7 +353,10 @@ public sealed class MainViewUpdateNoticeTests
         {
             PlatformSourceRegistry.PublishAppUpdateStatus(Available());
 
-            var rebuilt = new MainView();
+            var rebuilt = new MainView(null, Path.Combine(
+                Path.GetTempPath(),
+                $"visualcat-update-tests-{Guid.NewGuid():N}",
+                "settings.json"));
             var window = new Window { Content = rebuilt, Width = 1400, Height = 800 };
             window.Show();
             try
@@ -236,6 +373,7 @@ public sealed class MainViewUpdateNoticeTests
         finally
         {
             PlatformSourceRegistry.PublishAppUpdateStatus(AppUpdateStatus.None);
+            PlatformSourceRegistry.CacheAppUpdateStatus(AppUpdateStatus.None);
             MainView.UpdateChannel = previous;
         }
     }

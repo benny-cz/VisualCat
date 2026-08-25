@@ -225,13 +225,18 @@ public sealed class MainActivity : AvaloniaMainActivity
             PlatformSourceRegistry.OpenAppStoreListingAsync = null;
             _wirelessAdbService?.Dispose();
             _wirelessAdbService = null;
-
-            // Unregisters the install listener, which otherwise holds this activity for the
-            // life of the process.
-            _appUpdateService?.Dispose();
-            _appUpdateService = null;
-            _updateLauncher = null;
         }
+
+        // Outside the "am I still the current activity?" guard, unlike everything above it.
+        // Those are static registry slots, which only the newest activity may clear; this is
+        // this instance's own object. Android recreates the activity for a text-size change or
+        // a low-memory kill, and a recreated one is destroyed while s_current already names its
+        // replacement — so inside the guard the old service was never disposed, its Play install
+        // listener stayed registered, and it went on holding the dead activity for the life of
+        // the process. Disposal is idempotent and safe on an instance that never built one.
+        _appUpdateService?.Dispose();
+        _appUpdateService = null;
+        _updateLauncher = null;
 
         base.OnDestroy();
     }

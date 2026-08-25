@@ -41,7 +41,6 @@ internal sealed class PlayAppUpdateService : Java.Lang.Object, IInstallStateUpda
 {
     private const string LogTag = "VisualCat.AppUpdate";
 
-    private readonly Activity _activity;
     private readonly ActivityResultLauncher _launcher;
 #if VISUALCAT_FAKE_APP_UPDATE
     // Under the fake-update constant this field is only ever assigned a FakeAppUpdateManager,
@@ -79,7 +78,6 @@ internal sealed class PlayAppUpdateService : Java.Lang.Object, IInstallStateUpda
 
     internal PlayAppUpdateService(Activity activity, ActivityResultLauncher launcher)
     {
-        _activity = activity;
         _launcher = launcher;
 #if VISUALCAT_FAKE_APP_UPDATE
         var fake = CreateFakeManager(activity);
@@ -338,7 +336,10 @@ internal sealed class PlayAppUpdateService : Java.Lang.Object, IInstallStateUpda
             InstallStatus.Failed => new AppUpdateStatus(
                 AppUpdateState.Failed,
                 Message: $"The update download did not finish (Play error {state.InstallErrorCode()}). Try again from the Play Store."),
-            InstallStatus.Canceled => new AppUpdateStatus(AppUpdateState.UpToDate),
+            // Not UpToDate. The reader cancelled a download; the newer build is still out
+            // there, and recording "you are on the latest version" would be a plain untruth
+            // that the shared cache would then hand to the next view that asked.
+            InstallStatus.Canceled => new AppUpdateStatus(AppUpdateState.Unknown),
             _ => null,
         };
 
@@ -595,10 +596,13 @@ internal sealed class PlayAppUpdateService : Java.Lang.Object, IInstallStateUpda
                 break;
 
             case (int)Result.Canceled:
-                // The reader said no inside Play's own sheet. Take the offer down rather than
-                // leaving a banner they have already answered.
+                // The reader said no inside Play's own sheet, so the banner they have already
+                // answered comes down. Unknown rather than UpToDate: declining an update does
+                // not make this the newest build, and UpToDate is cached and handed to the next
+                // view that asks. "No current answer" is the true one, and the ordinary
+                // throttle decides when to ask again.
                 StopListening();
-                PlatformSourceRegistry.PublishAppUpdateStatus(new AppUpdateStatus(AppUpdateState.UpToDate));
+                PlatformSourceRegistry.PublishAppUpdateStatus(new AppUpdateStatus(AppUpdateState.Unknown));
                 break;
 
             default:

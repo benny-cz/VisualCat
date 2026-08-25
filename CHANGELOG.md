@@ -35,6 +35,13 @@ screenshot says which build it came from.
   stranded.
 
 ### Fixed
+- Dismissing a downloaded update now means something. The prompt to install one
+  is repeated on every return to the app for as long as the update is pending, so
+  Dismiss used to be undone by the next glance at the screen — and the only answer
+  that would have ended it was the restart the reader was declining. It now waits
+  the same per-channel interval an offer does, and a manual check still reaches it.
+- Waving away a failure or a download's progress no longer counts as declining an
+  update, which had been silencing the next real offer for a week.
 - A long status message no longer runs off the right edge of the Android command
   bar. It was in a column sized to its own content, so the ellipsis it asked for
   could never apply; on a phone the text painted straight through the wordmark
