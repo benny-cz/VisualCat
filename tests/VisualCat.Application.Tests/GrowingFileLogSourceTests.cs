@@ -3,89 +3,63 @@ using VisualCat.Infrastructure.Files;
 
 namespace VisualCat.Application.Tests;
 
-/// <summary>
-/// Tests that read a process-wide GC counter, and so cannot share the process with tests
-/// that are busy allocating.
-/// </summary>
-/// <remarks>
-/// <see cref="GC.GetTotalAllocatedBytes(bool)"/> reports the whole process. Run alongside
-/// the ingest tests, which move hundreds of megabytes through the pipeline, it reported
-/// 848 MB for a source that had allocated about one. There is no per-object allocation
-/// counter to use instead — and no thread-local one either, because the source under test
-/// awaits with <c>ConfigureAwait(false)</c> and resumes on whatever pool thread it likes —
-/// so the measurement has to have the process to itself.
-/// </remarks>
-[CollectionDefinition(nameof(AllocationMeasurementGroup), DisableParallelization = true)]
-public sealed class AllocationMeasurementGroup;
-
-[Collection(nameof(AllocationMeasurementGroup))]
-public sealed class GrowingFileLogSourceAllocationTests
+public sealed class GrowingFileLogSourceTests
 {
+    private static SourceReadContext Context() =>
+        new(Guid.NewGuid(), 0, Path.GetTempPath());
+
     /// <summary>
-    /// Following an idle file allocates a bounded amount, no matter how many times the poll
-    /// loop goes round.
+    /// Repeated reads use one long-lived buffer rather than allocating a chunk-sized buffer
+    /// on every pass through the follow loop.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// The read buffer is a mebibyte, comfortably a large-object allocation, and it used to
-    /// be allocated inside the poll loop. A follow that was waiting on a quiet file
-    /// therefore spent about four mebibytes a second — roughly fifteen gibibytes an hour —
-    /// and a continuous gen2 collection cadence to deliver nothing at all, on a heap that is
-    /// not compacted by default. That is the cost of running, not the cost of reading, which
-    /// is what made it a defect rather than churn.
-    /// </para>
-    /// <para>
-    /// The assertion is deliberately loose. It is not measuring an allocation budget, it is
-    /// separating "one buffer for the life of the read" from "one buffer per tick": at this
-    /// poll interval the old shape allocated tens of mebibytes over this window and the
-    /// current one allocates a little over the single buffer it keeps.
-    /// </para>
+    /// The previous allocation test sampled a process-wide GC counter. Coverage collectors
+    /// and test-host background work also contribute to that counter, which made the result
+    /// depend on the CI runner instead of the source. Counting the buffer factory directly
+    /// pins the same regression without a timing or machine-load threshold.
     /// </remarks>
     [Fact]
-    public async Task IdleFollowDoesNotAllocatePerPollTick()
+    public async Task RepeatedReadsCreateOneLongLivedReadBuffer()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"vcat-idle-follow-{Guid.NewGuid():N}.log");
-        await File.WriteAllTextAsync(path, "05-15 14:13:37.496  1  1 D Tag: seed\n", TestContext.Current.CancellationToken);
+        var path = Path.Combine(Path.GetTempPath(), $"vcat-follow-buffer-{Guid.NewGuid():N}.log");
+        var first = "05-15 14:13:37.496  1  1 D Tag: first\n";
+        var second = "05-15 14:13:38.500  2  2 W Tag: second\n";
+        await File.WriteAllTextAsync(path, first, TestContext.Current.CancellationToken);
         try
         {
-            const int chunkBytes = 1024 * 1024;
-            await using var source = new GrowingFileLogSource(path, TimeSpan.FromMilliseconds(20), chunkBytes);
-            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-
-            var before = GC.GetTotalAllocatedBytes(precise: true);
-            try
-            {
-                await foreach (var chunk in source.ReadAsync(
-                    new SourceReadContext(Guid.NewGuid(), 0, Path.GetTempPath()),
-                    stop.Token))
+            var bufferCreations = 0;
+            await using var source = new GrowingFileLogSource(
+                path,
+                TimeSpan.FromMilliseconds(20),
+                1024 * 1024,
+                size =>
                 {
-                    _ = chunk;
-                }
-            }
-            catch (OperationCanceledException)
+                    Interlocked.Increment(ref bufferCreations);
+                    return new byte[size];
+                });
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            var chunks = 0;
+            await foreach (var chunk in source.ReadAsync(Context(), stop.Token))
             {
+                _ = chunk;
+                if (++chunks == 1)
+                {
+                    await File.AppendAllTextAsync(path, second, TestContext.Current.CancellationToken);
+                    continue;
+                }
+
+                break;
             }
 
-            var allocated = GC.GetTotalAllocatedBytes(precise: true) - before;
-
-            // Two seconds at a 20 ms poll is about a hundred ticks. Per-tick allocation of
-            // the buffer would be ~100 MiB; four buffers' worth is far below that and far
-            // above anything the fixed shape can reach.
-            Assert.True(
-                allocated < 4L * chunkBytes,
-                $"Idle follow allocated {allocated:N0} bytes, which is per-tick buffer allocation rather than one buffer for the read.");
+            Assert.Equal(2, chunks);
+            Assert.Equal(1, Volatile.Read(ref bufferCreations));
         }
         finally
         {
             File.Delete(path);
         }
     }
-}
-
-public sealed class GrowingFileLogSourceTests
-{
-    private static SourceReadContext Context() =>
-        new(Guid.NewGuid(), 0, Path.GetTempPath());
 
     /// <summary>
     /// A chunk handed to the consumer is its own array, sized to the bytes actually read,

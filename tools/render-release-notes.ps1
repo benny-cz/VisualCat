@@ -8,7 +8,7 @@
     tokens, and writes the exact Markdown passed to the GitHub release action.
 
 .EXAMPLE
-    pwsh ./tools/render-release-notes.ps1 -Version 2.0.8 -Destination release-notes.md
+    pwsh ./tools/render-release-notes.ps1 -Version 2.0.9 -Destination release-notes.md
 #>
 [CmdletBinding()]
 param(

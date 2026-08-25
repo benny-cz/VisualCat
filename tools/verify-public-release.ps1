@@ -144,7 +144,7 @@ Invoke-Stage 'Docs' {
     Invoke-Native 'render-release-notes.ps1' {
         New-Item -ItemType Directory -Path $output -Force | Out-Null
         & (Join-Path $PSScriptRoot 'render-release-notes.ps1') `
-            -Version '2.0.8-preview.local' `
+            -Version '2.0.9-preview.local' `
             -Destination (Join-Path $output 'release-notes.md')
     }
 }

@@ -10,10 +10,21 @@ public sealed class GrowingFileLogSource : ILogSource, ISourceDefectSource
     private readonly CancellationTokenSource _stop = new();
     private readonly TimeSpan _pollInterval;
     private readonly int _chunkBytes;
+    private readonly Func<int, byte[]> _readBufferFactory;
     private int _sourceChanged;
 
     public GrowingFileLogSource(string path, TimeSpan? pollInterval = null, int chunkBytes = 1024 * 1024)
+        : this(path, pollInterval, chunkBytes, static size => new byte[size])
     {
+    }
+
+    internal GrowingFileLogSource(
+        string path,
+        TimeSpan? pollInterval,
+        int chunkBytes,
+        Func<int, byte[]> readBufferFactory)
+    {
+        ArgumentNullException.ThrowIfNull(readBufferFactory);
         _path = Path.GetFullPath(path);
         var info = new FileInfo(_path);
         if (!info.Exists)
@@ -23,6 +34,7 @@ public sealed class GrowingFileLogSource : ILogSource, ISourceDefectSource
 
         _pollInterval = pollInterval ?? TimeSpan.FromMilliseconds(250);
         _chunkBytes = chunkBytes;
+        _readBufferFactory = readBufferFactory;
         Metadata = new SourceMetadata(
             SourceKind.GrowingFile,
             info.Name,
@@ -66,7 +78,11 @@ public sealed class GrowingFileLogSource : ILogSource, ISourceDefectSource
         // delivering nothing at all. The LOH is not compacted by default, so that is
         // fragmentation as well as churn. One buffer for the life of the read costs one
         // allocation instead.
-        var buffer = new byte[_chunkBytes];
+        var buffer = _readBufferFactory(_chunkBytes);
+        if (buffer.Length < _chunkBytes)
+        {
+            throw new InvalidOperationException("The growing-file read buffer is smaller than the configured chunk size.");
+        }
         long offset = 0;
         while (!linked.IsCancellationRequested)
         {

@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <InternalsVisibleTo Include="VisualCat.Application.Tests" />
     <ProjectReference Include="../VisualCat.Domain/VisualCat.Domain.csproj" />
     <ProjectReference Include="../VisualCat.Core/VisualCat.Core.csproj" />
     <ProjectReference Include="../VisualCat.Application/VisualCat.Application.csproj" />

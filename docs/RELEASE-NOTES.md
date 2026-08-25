@@ -97,7 +97,7 @@ path for developer testing. See the
 for the exact current behavior.
 
 The historical v2.0.6 device evidence predates the Wireless ADB production
-path. Version 2.0.8 has physical-device records in
+path. Versions 2.0.8 and 2.0.9 have physical-device records in
 `docs/ANDROID-LIVE-TEST-REPORT.md`: real first pairing, saved reconnect,
 interruption recovery, background/screen-off foreground-service capture and
 full-device capture on a Pixel 5, plus API-36 Samsung and Motorola layout and

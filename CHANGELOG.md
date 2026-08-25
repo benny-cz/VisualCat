@@ -7,11 +7,13 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Version numbers correspond to git tags and the GitHub [Releases](https://github.com/benny-cz/VisualCat/releases)
 page.
 
-The current stable release is `2.0.8`. Ongoing work is recorded under
+The current stable release is `2.0.9`. Ongoing work is recorded under
 `[Unreleased]`, and development builds carry a `-dev` version suffix so a
 screenshot says which build it came from.
 
 ## [Unreleased]
+
+## [2.0.9] - 2026-08-25
 
 ### Added
 - Added a concise, privacy-safe Android video for Google Play's
@@ -33,6 +35,10 @@ screenshot says which build it came from.
   every poll. An idle follow spent about four mebibytes a second — some fifteen
   gibibytes an hour — on the large-object heap, and the continuous gen2
   collections that implies, to deliver nothing at all.
+- The growing-file regression gate now counts buffer construction directly
+  instead of sampling a process-wide allocation counter. Coverage collectors
+  and test-host background work could contaminate that counter and make the
+  Windows and Ubuntu CI jobs fail even when the source reused its buffer.
 - Closing a session tab, or the application, while **Load all** is still walking
   the view no longer waits for that walk to finish. The session lifetime is
   cancelled before disposal takes the load lock, so the tab closes at once
@@ -916,7 +922,8 @@ Initial public baseline — the greenfield .NET 10 rewrite described in
   archive, a CycloneDX SBOM, build provenance attestations, and the
   `tools/verify-public-release.ps1` one-command local preflight.
 
-[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.8...HEAD
+[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.9...HEAD
+[2.0.9]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.9
 [2.0.8]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.8
 [2.0.7]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.7
 [2.0.6]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.6

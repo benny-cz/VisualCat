@@ -200,7 +200,7 @@ jobs:
     env:
       RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
       # versionCode is deliberately not set here. The project derives it from the
-      # release version (for example, 2.0.8 -> 20008), which Google Play requires to increase
+      # release version (for example, 2.0.9 -> 20009), which Google Play requires to increase
       # with every upload; a workflow run number would let a rebuild of an older
       # version outrank a newer one.
     steps:

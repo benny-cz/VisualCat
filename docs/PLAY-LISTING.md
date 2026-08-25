@@ -230,7 +230,7 @@ do not add it to the current API-36 build pre-emptively.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version: `2.0.8` → `20008` |
+| versionCode | Derived from the release version: `2.0.9` → `20009` |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
 | ABIs | `arm64-v8a`, `x86_64` |
@@ -246,6 +246,12 @@ explore it as a zoomable severity-by-time heat map with filters, ranked message
 templates and byte-faithful source context. Full-device Live capture can pair
 with Android Wireless debugging; VisualCat-only capture works without setup.
 Everything is processed on the device.
+```
+
+Release notes for `2.0.9` (396/500 characters):
+
+```text
+Long captures now stay fast by reusing completed statistics instead of rescanning millions of entries. Closing a tab or the app during Load all now cancels promptly instead of hanging. Android activity recreation no longer leaves an old view running hidden queries or restoring stale tabs. Following a growing file also avoids repeated 1 MB allocations, reducing memory churn during idle periods.
 ```
 
 Release notes for `2.0.8` (443/500 characters):
