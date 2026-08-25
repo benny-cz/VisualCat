@@ -104,4 +104,12 @@ full-device capture on a Pixel 5, plus API-36 Samsung and Motorola layout and
 own-app checks. Historical external-`READ_LOGS` evidence is not used as a
 substitute.
 
+An APK installed from this page cannot be updated by Google Play, and VisualCat
+does not check anywhere else for a new release on its own — a local-first log
+viewer should not be contacting a server at startup on your behalf. **More ▾ →
+Check for updates…** says exactly that and offers to open this releases page in
+your browser. Builds installed from Google Play do ask the Play Store, over an
+inter-process call that sends no identifier and reaches no VisualCat server, and
+offer the store's own update flow.
+
 No VisualCat build sends telemetry or uploads log content.

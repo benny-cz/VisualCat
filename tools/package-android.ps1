@@ -44,8 +44,14 @@
 
 .PARAMETER VersionCode
     Play's ordering integer. Defaults to the value the project derives from the
-    release version, and only needs overriding to re-upload an unchanged
-    version.
+    release version and VisualCatBuildNumber:
+
+        major * 1000000 + minor * 10000 + patch * 100 + build
+
+    so 2.0.9 -> 2000900 and 2.1.0 built with -p:VisualCatBuildNumber=3 -> 2010003.
+    Play refuses a code it has already seen on any track, so a second build of the
+    same version needs the build counter bumped rather than this parameter set;
+    overriding here is for re-uploading an unchanged version.
 
 .PARAMETER Output
     Directory that receives the final named artifacts. Defaults to

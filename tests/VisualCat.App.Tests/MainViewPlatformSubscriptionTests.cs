@@ -32,6 +32,10 @@ public sealed class MainViewPlatformSubscriptionTests
         "AppResumed",
         "AppPaused",
         "DisplayConfigurationChanged",
+
+        // A new event that is not listed here is silently unprotected: this test reflects over
+        // the backing delegate fields, so the list is the invariant rather than a proxy for it.
+        "AppUpdateStatusChanged",
     ];
 
     [AvaloniaFact]

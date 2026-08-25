@@ -45,6 +45,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private readonly Action _appResumedHandler;
     private readonly Action _appPausedHandler;
     private readonly Action _displayConfigurationHandler;
+    private readonly Action<AppUpdateStatus> _appUpdateStatusHandler;
 
     // Responsive command bar: primary actions are always inline, flexible actions render as
     // buttons while they fit and fold into "More" when they do not, and settings live in
@@ -117,6 +118,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         Action appResumed,
         Action appPaused,
         Action displayConfiguration,
+        Action<AppUpdateStatus> appUpdateStatus,
         Action superseded)
     {
         public void Attach()
@@ -125,6 +127,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             PlatformSourceRegistry.AppResumed += appResumed;
             PlatformSourceRegistry.AppPaused += appPaused;
             PlatformSourceRegistry.DisplayConfigurationChanged += displayConfiguration;
+            PlatformSourceRegistry.AppUpdateStatusChanged += appUpdateStatus;
         }
 
         public void Detach()
@@ -133,6 +136,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             PlatformSourceRegistry.AppResumed -= appResumed;
             PlatformSourceRegistry.AppPaused -= appPaused;
             PlatformSourceRegistry.DisplayConfigurationChanged -= displayConfiguration;
+            PlatformSourceRegistry.AppUpdateStatusChanged -= appUpdateStatus;
         }
 
         /// <summary>Another view has taken this one's place and it will never be seen again.</summary>
@@ -190,6 +194,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             // Ordered after the layout restore so the first refreshed frame lands in the
             // layout the user left, not the one being rebuilt underneath it.
             _viewModel.ResumeLiveViews();
+
+            // Last, and only if the channel's throttle allows it: a store answer is the least
+            // urgent thing about coming back to the app, and it must not delay the frame.
+            _ = CheckForUpdateAsync(coldStart: false);
         });
 
         // Suspension is not posted to the dispatcher: OnPause is the last moment the app
@@ -213,11 +221,13 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 Dispatcher.UIThread.Post(ApplyDisplayConfigurationChange);
             }
         };
+        _appUpdateStatusHandler = status => Dispatcher.UIThread.Post(() => RenderUpdateStatus(status));
         _platformEvents = new PlatformEventSubscription(
             _launchFilesHandler,
             _appResumedHandler,
             _appPausedHandler,
             _displayConfigurationHandler,
+            _appUpdateStatusHandler,
 
             // A superseded view is off screen for good, and its workspace does not know
             // that: left watching, it goes on answering every progress report by reopening
@@ -225,7 +235,11 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             // that has no surface to land on. Suspension is the same state the platform
             // asks for when the app is backgrounded, and this one is never lifted, because
             // nothing will ever resume this view.
-            () => _viewModel.SuspendLiveViews());
+            () =>
+            {
+                _viewModel.SuspendLiveViews();
+                CancelUpdateWork();
+            });
         AttachToPlatform(_platformEvents);
         Content = Build();
         SizeChanged += (_, eventArgs) =>
@@ -246,7 +260,14 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         _viewModel.CaptureEndedUnprompted += (_, message) =>
             Dispatcher.UIThread.Post(() => ShowNotice(message, NoticeKind.Failure));
         _viewModel.LiveCaptureChanged += (_, _) =>
-            Dispatcher.UIThread.Post(UpdateLiveCaptureIndicator);
+            Dispatcher.UIThread.Post(() =>
+            {
+                UpdateLiveCaptureIndicator();
+
+                // A recording ending is the moment a deferred install becomes possible, and a
+                // recording starting is the moment an offer has to get out of the way.
+                ReconsiderUpdateNotice();
+            });
         _tabs.SelectionChanged += (_, _) =>
         {
             if (_tabs.SelectedItem is TabItem { Tag: SessionTabViewModel tab })
@@ -274,10 +295,25 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             // (audit 2, A1c). Re-running once the tree has settled is what makes a cold
             // start in either variant produce the same result as a switch into it.
             Dispatcher.UIThread.Post(ApplyThemeSurfaces, DispatcherPriority.Loaded);
+
+            // After the theme so a restored update banner is painted in the variant the
+            // reader is actually in, and before startup so a rebuilt view shows an offer
+            // that is already in flight rather than waiting for the next store answer.
+            Dispatcher.UIThread.Post(RestoreCachedUpdateNotice, DispatcherPriority.Loaded);
             if (!_startupOpened)
             {
                 _startupOpened = true;
-                _ = InitializeAsync();
+
+                // The update check is chained after startup rather than run inside it: a
+                // workspace restore and a tapped file outrank an update offer for the first
+                // screen the reader sees, and InitializeAsync's catch turns anything thrown
+                // inside it into "part of the startup did not finish", which a store that
+                // cannot answer must never be able to produce.
+                _ = InitializeAsync().ContinueWith(
+                    _ => Dispatcher.UIThread.Post(() => _ = CheckForUpdateAsync(coldStart: true)),
+                    CancellationToken.None,
+                    TaskContinuationOptions.None,
+                    TaskScheduler.Default);
             }
         };
         DetachedFromVisualTree += (_, _) =>
@@ -539,7 +575,16 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         brandRow.Children.Add(brand);
         _message.VerticalAlignment = VerticalAlignment.Center;
         _message.TextTrimming = TextTrimming.CharacterEllipsis;
-        Grid.SetColumn(_message, 2);
+
+        // The flexible column, not the trailing Auto one. An Auto column gives the message its
+        // full desired width, so CharacterEllipsis never engaged and a long message simply ran
+        // off the edge of the screen — the first sentence of the update offer painted straight
+        // through the wordmark and out of the window on a 1080 px phone. Stretched inside the
+        // star column with the text right-aligned, it keeps the trailing position it had and
+        // gains the width limit the trimming needs to mean anything.
+        _message.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _message.TextAlignment = TextAlignment.Right;
+        Grid.SetColumn(_message, 1);
         brandRow.Children.Add(_message);
         commandContent.Children.Add(brandRow);
 
@@ -1257,6 +1302,21 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         Setting("Appearance & timeline…", ShowAppearanceAsync, "Theme, text size, and how the plot is drawn");
         Setting("Session cache…", ShowSessionCacheAsync, "What this device is storing, and for how long");
         Setting("Diagnostic bundle…", CreateDiagnosticBundleAsync, "A redacted zip for a bug report");
+
+        // Offered only where the host can say where it was installed from, the same way Share
+        // is offered only where a file can be handed to another app: a host that cannot answer
+        // that question cannot answer this one honestly either. The description changes with
+        // the origin, because promising to ask Google Play and then opening a browser is the
+        // same class of defect as a notice naming a command the reader cannot run (F-13).
+        if (PlatformSourceRegistry.GetInstallOrigin is { } installOrigin)
+        {
+            Setting(
+                "Check for updates…",
+                CheckForUpdatesManuallyAsync,
+                installOrigin() == AppInstallOrigin.PlayStore
+                    ? "Ask Google Play whether a newer VisualCat is out"
+                    : "Open the GitHub releases page — this build cannot update itself");
+        }
 
         if (OperatingSystem.IsAndroid())
         {
@@ -2369,7 +2429,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     {
         try
         {
-            _settings = await _settingsStore.LoadAsync();
+            _settings = ForgetSpentUpdateMemory(await _settingsStore.LoadAsync());
             _settingsLoaded = true;
             if (_hostWindow is { } window)
             {
@@ -2768,6 +2828,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // removing a handler that is no longer subscribed does nothing.
         Interlocked.CompareExchange(ref s_platformEvents, null, _platformEvents);
         _platformEvents.Detach();
+        DisposeUpdateWork();
         StopNoticeTimer();
         StopObservingSafeArea();
 

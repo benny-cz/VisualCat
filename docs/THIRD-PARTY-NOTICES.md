@@ -18,6 +18,11 @@ stack or self-contained runtime.
 | [AndroidX Core](https://github.com/dotnet/android-libraries) | Direct on Android | Android compatibility APIs | Apache-2.0 |
 | [libadb-android-bc](https://github.com/osservatorionessuno/libadb-android-bc) | Direct on Android (`3.2.0`) | Explicitly paired Android Wireless debugging transport used only for the fixed full-device `logcat` stream | Apache-2.0 option of the upstream dual GPL-3.0-or-later / Apache-2.0 license |
 | [Bouncy Castle Java](https://github.com/bcgit/bc-java) | Android dependency (`1.84`) | RSA/X.509, TLS 1.3, and cryptographic support required by the Wireless ADB library | MIT |
+| [Play In-App Update binding](https://www.nuget.org/packages/Xamarin.Google.Android.Play.App.Update) | Direct on Android (`2.1.0.18`) | .NET binding for Google's in-app update client | MIT (binding only — see the Java library below) |
+| [Play In-App Update (`com.google.android.play:app-update`)](https://developer.android.com/guide/playcore/in-app-updates) | Android dependency (`2.1.0`, embedded in the binding package) | Asks the installed Play Store over IPC whether a newer build exists, and runs the store's update flow | **[Play Core Software Development Kit Terms of Service](https://developer.android.com/guide/playcore/license) — proprietary, not Apache-2.0** |
+| [Play Core Common (`com.google.android.play:core-common`)](https://developer.android.com/guide/playcore) | Android dependency (`2.0.4`, transitive) | Shared Play Core dialog host; contributes one non-exported activity and no permission | **Play Core Software Development Kit Terms of Service — proprietary** |
+| [Google Play services Basement](https://developers.google.com/android/guides/setup) | Android dependency (transitive) | Play services availability and common utilities required by the update client | [Android Software Development Kit License](https://developer.android.com/studio/terms) — proprietary |
+| [Google Play services Tasks](https://developers.google.com/android/guides/setup) | Android dependency (transitive) | Asynchronous `Task` type the update client returns | [Android Software Development Kit License](https://developer.android.com/studio/terms) — proprietary |
 | [.NET](https://github.com/dotnet/runtime) | Platform/runtime | Managed runtime and base class libraries included in self-contained packages | MIT |
 
 ## Build and test
@@ -57,6 +62,29 @@ Bouncy Castle 1.84, but the **resolved AAB** is authoritative for what is actual
 redistributed. Before publishing, inventory every Maven/AAR/JAR/native artifact,
 record its version and license, and inspect the packaged ABIs. Do not infer the
 final graph solely from this hand-maintained table.
+
+The Play in-app update client is the second Android-only dependency and is
+**not open source**: the Java library is licensed under the Play Core Software
+Development Kit Terms of Service, as its own `THIRD-PARTY-NOTICES.txt` states,
+and only the Microsoft binding around it is MIT. Do not record it as Apache-2.0
+alongside the AndroidX rows. Its whole chain — `app-update`, `core-common`,
+`play-services-basement`, `play-services-tasks` — declares no Android permission
+and contributes one non-exported activity
+(`com.google.android.play.core.common.PlayCoreDialogWrapperActivity`) plus the
+`com.google.android.gms.version` meta-data. The packaging script's permission
+allowlist enforces the first half of that on every release build; a binding bump
+that adds an *exported* component would not be caught automatically and should be
+checked by hand when the version moves.
+
+Measured cost of the whole chain, signed release AAB built from the same commit
+with and without the package reference: **35,278,156 -> 35,532,567 bytes, +248 KiB
+(+0.72%)**. Most of it is the AOT-compiled managed bindings rather than the Java
+classes.
+
+The binding is pinned at `2.1.0.18` rather than the newest revision because
+`2.1.0.19` requires AndroidX Core 1.19, which drags AndroidX Lifecycle to 2.11 and
+collides with the constraint Avalonia's own Lifecycle.Process declares; restore
+fails closed. Both revisions wrap the same Java `app-update` 2.1.0.
 
 The `libadb-android-bc` upstream README explicitly says the library has not had a
 security audit and still carries an inherited historical warning about an LGPL

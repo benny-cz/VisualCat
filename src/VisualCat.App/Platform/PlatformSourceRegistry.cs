@@ -47,6 +47,97 @@ public enum PlatformLiveCaptureStopReason
     SystemTimeLimit,
 }
 
+/// <summary>Where this installation came from, which decides whether it can update itself.</summary>
+public enum AppInstallOrigin
+{
+    /// <summary>The platform could not answer, so nothing may be claimed either way.</summary>
+    Unknown,
+
+    /// <summary>Installed by Google Play, which is the only origin that can update in place.</summary>
+    PlayStore,
+
+    /// <summary>Installed by another store or an enterprise installer.</summary>
+    OtherStore,
+
+    /// <summary>Installed from a file — the GitHub release APK, or a developer deploy.</summary>
+    SideLoaded,
+}
+
+/// <summary>Which of the store's two update experiences to start.</summary>
+public enum AppUpdateFlow
+{
+    /// <summary>Downloads in the background; the app keeps running until the install is completed.</summary>
+    Flexible,
+
+    /// <summary>The store takes the screen, installs, and restarts the app.</summary>
+    Immediate,
+}
+
+/// <summary>What the platform's store currently knows about a newer build of this app.</summary>
+public enum AppUpdateState
+{
+    /// <summary>Not asked yet, or the store could not answer.</summary>
+    Unknown,
+
+    /// <summary>This installation cannot update itself — side-loaded, or no store present.</summary>
+    Unsupported,
+
+    /// <summary>The store has nothing newer for this user.</summary>
+    UpToDate,
+
+    /// <summary>A newer build exists and a flow can be started.</summary>
+    Available,
+
+    /// <summary>The store is downloading in the background.</summary>
+    Downloading,
+
+    /// <summary>Downloaded and waiting to be installed, which restarts the app.</summary>
+    ReadyToInstall,
+
+    /// <summary>An update the app started earlier is still running and should be resumed.</summary>
+    InProgress,
+
+    /// <summary>The last attempt failed. <see cref="AppUpdateStatus.Message"/> says how.</summary>
+    Failed,
+}
+
+/// <summary>One answer from the platform's store about updating this app.</summary>
+/// <remarks>
+/// Deliberately a snapshot rather than a live object: Play Core's <c>AppUpdateInfo</c> can
+/// start exactly one update flow and goes stale afterwards, so the shared layer must never
+/// hold one. The Android adapter keeps the live object and hands out this record.
+///
+/// <see cref="AvailableVersionName"/> is decoded from the version code by the app, because
+/// the store supplies no version name and cannot say which track the build came from. It is
+/// null when the code does not decode plausibly, and the UI then declines to name a version
+/// rather than inventing one.
+/// </remarks>
+/// <param name="State">What the store is currently reporting.</param>
+/// <param name="AvailableVersionCode">The version code the store would install, or 0.</param>
+/// <param name="AvailableVersionName">That code decoded to a version name, where it decodes.</param>
+/// <param name="Priority">The 0-5 urgency fixed into the release at upload time.</param>
+/// <param name="StalenessDays">Days since this user could first have had the newer build, where known.</param>
+/// <param name="FlexibleAllowed">Whether a background download may be started.</param>
+/// <param name="ImmediateAllowed">Whether the store's take-the-screen flow may be started.</param>
+/// <param name="BytesDownloaded">Progress of a download in flight.</param>
+/// <param name="TotalBytesToDownload">Size of a download in flight, where the store reports it.</param>
+/// <param name="Message">Why a <see cref="AppUpdateState.Failed"/> attempt failed.</param>
+public sealed record AppUpdateStatus(
+    AppUpdateState State,
+    long AvailableVersionCode = 0,
+    string? AvailableVersionName = null,
+    int Priority = 0,
+    int? StalenessDays = null,
+    bool FlexibleAllowed = false,
+    bool ImmediateAllowed = false,
+    long BytesDownloaded = 0,
+    long TotalBytesToDownload = 0,
+    string? Message = null)
+{
+    /// <summary>Nothing has been asked yet.</summary>
+    public static AppUpdateStatus None { get; } = new(AppUpdateState.Unknown);
+}
+
 public static class PlatformSourceRegistry
 {
     /// <summary>
@@ -179,6 +270,81 @@ public static class PlatformSourceRegistry
     /// Where this is null, <see cref="EdgeGestureGuard"/> does nothing at all.
     /// </remarks>
     public static Action<IReadOnlyList<Avalonia.PixelRect>>? SetGestureExclusions { get; set; }
+
+    /// <summary>Where this installation came from, or null on a platform with no such notion.</summary>
+    /// <remarks>
+    /// Its presence is also what decides whether the Check for updates command is offered at
+    /// all, the way <see cref="ShareFileAsync"/> decides whether Share is: a host that cannot
+    /// say where it was installed from cannot honestly answer the question either.
+    /// </remarks>
+    public static Func<AppInstallOrigin>? GetInstallOrigin { get; set; }
+
+    /// <summary>
+    /// Asks the platform's store whether a newer build is available to this user. Null on
+    /// platforms with no store; must never throw.
+    /// </summary>
+    /// <remarks>
+    /// Android implements this against Google Play's in-app update client, which is an IPC
+    /// call into the Play Store app already installed on the device. VisualCat opens no
+    /// socket, sends no identifier and reaches no VisualCat-operated endpoint; see
+    /// docs/PRIVACY.md and docs/adr/0019-app-updates.md.
+    /// </remarks>
+    public static Func<CancellationToken, Task<AppUpdateStatus>>? CheckForAppUpdateAsync { get; set; }
+
+    /// <summary>
+    /// Starts the store's own update experience. Returns false when the offer went stale and
+    /// the caller should check again.
+    /// </summary>
+    public static Func<AppUpdateFlow, CancellationToken, Task<bool>>? StartAppUpdateAsync { get; set; }
+
+    /// <summary>
+    /// Installs an update that has already been downloaded. This restarts the process, so
+    /// callers must have established that no live capture is running.
+    /// </summary>
+    public static Func<CancellationToken, Task>? CompleteAppUpdateAsync { get; set; }
+
+    /// <summary>
+    /// Opens this app's page in the platform's own store, for the cases the API cannot serve.
+    /// </summary>
+    public static Func<CancellationToken, Task>? OpenAppStoreListingAsync { get; set; }
+
+    /// <summary>The most recent status, so a rebuilt view can render without asking again.</summary>
+    public static AppUpdateStatus LastAppUpdateStatus { get; private set; } = AppUpdateStatus.None;
+
+    /// <summary>The store reported new state about an update.</summary>
+    public static event Action<AppUpdateStatus>? AppUpdateStatusChanged;
+
+    /// <summary>
+    /// Reports what the store said, and remembers it for whichever view asks next.
+    /// </summary>
+    /// <remarks>
+    /// Android rebuilds <see cref="VisualCat.App.Views.MainView"/> on every activity
+    /// recreation, and the service that owns the Play client outlives those rebuilds. Caching
+    /// the last answer is what lets a fresh view render an offer that is already in flight
+    /// without a second IPC round trip.
+    /// </remarks>
+    public static void PublishAppUpdateStatus(AppUpdateStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        LastAppUpdateStatus = status;
+        AppUpdateStatusChanged?.Invoke(status);
+    }
+
+    /// <summary>
+    /// Remembers a status the current view already has, without telling it again.
+    /// </summary>
+    /// <remarks>
+    /// An answer to <see cref="CheckForAppUpdateAsync"/> is returned to the caller, so raising
+    /// the event as well would render it twice — and, for a check the reader asked for, the
+    /// second render would arrive on the dispatcher after the first and overwrite the more
+    /// specific message with the ordinary one. The cache still has to be warmed, because it is
+    /// what a view rebuilt by an activity recreation renders from.
+    /// </remarks>
+    public static void CacheAppUpdateStatus(AppUpdateStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        LastAppUpdateStatus = status;
+    }
 
     public static void PublishLaunchFiles(IReadOnlyList<IncomingFile> files)
     {

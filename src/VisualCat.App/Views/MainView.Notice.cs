@@ -121,7 +121,7 @@ public sealed partial class MainView
             VerticalContentAlignment = VerticalAlignment.Center,
         };
         AutomationProperties.SetName(dismiss, "Dismiss application status message");
-        dismiss.Click += (_, _) => ShowNotice(string.Empty);
+        dismiss.Click += (_, _) => DismissNotice();
 
         var action = _noticeAction = new Button
         {
@@ -198,14 +198,33 @@ public sealed partial class MainView
     /// additionally receives the always-visible notice lane because the brand row is removed
     /// as soon as a session opens.
     /// </summary>
-    internal void ShowNotice(string text, NoticeKind kind = NoticeKind.Information, NoticeAction? action = null)
+    /// <param name="text">The message, or empty to clear the lane.</param>
+    /// <param name="kind">What the message is, which decides how long the lane holds it.</param>
+    /// <param name="action">One thing the reader can do about it, offered beside Dismiss.</param>
+    /// <param name="dismissed">
+    /// Run when the reader clears <em>this</em> message with Dismiss — not when another message
+    /// replaces it, and not when a timer retires it.
+    /// </param>
+    /// <remarks>
+    /// The dismissal callback exists because the Dismiss button is generic and the lane is
+    /// shared, so a caller had no way to learn that its own notice was the one refused.
+    /// Watching <see cref="NoticeRevision"/> from outside cannot substitute for it: it would
+    /// fire every time an unrelated message took the lane. The update offer uses it to record
+    /// that this version was declined, which is the difference between an offer and a nag.
+    /// </remarks>
+    internal void ShowNotice(
+        string text,
+        NoticeKind kind = NoticeKind.Information,
+        NoticeAction? action = null,
+        Action? dismissed = null)
     {
         if (!Dispatcher.UIThread.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => ShowNotice(text, kind, action));
+            Dispatcher.UIThread.Post(() => ShowNotice(text, kind, action, dismissed));
             return;
         }
 
+        _noticeDismissedHandler = dismissed;
         if (_noticeAction is { } actionButton)
         {
             actionButton.Content = action?.Label;
@@ -215,7 +234,12 @@ public sealed partial class MainView
         }
 
         text ??= string.Empty;
-        _message.Text = text;
+
+        // The brand row's compact message is the desktop's only notice surface. On Android the
+        // lane below carries the same words at full length and is always visible, so echoing
+        // them into the brand row put the identical sentence on screen twice — obviously so
+        // once the update offer made a long message the first thing a cold start shows.
+        _message.Text = OperatingSystem.IsAndroid() ? string.Empty : text;
         _noticeKind = kind;
         var revision = ++_noticeRevision;
 
@@ -282,7 +306,38 @@ public sealed partial class MainView
     /// <summary>Which message the lane is currently carrying.</summary>
     internal long NoticeRevision => _noticeRevision;
 
+    /// <summary>
+    /// What the lane is holding, or null when it is empty.
+    /// </summary>
+    /// <remarks>
+    /// There is one notice lane in this product and there should stay one, so anything that
+    /// wants to raise a message the reader did not ask for has to be able to see what it would
+    /// be erasing. <see cref="ShowNotice"/> replaces whatever is there unconditionally, and the
+    /// lane is where a failed export, a failed cleanup and — the one capture outcome the reader
+    /// cannot see for themselves — a recording that stopped without being asked to are reported.
+    /// An update offer arriving on resume must not be what takes those off the screen.
+    /// </remarks>
+    internal NoticeKind? HoldingNoticeKind =>
+        string.IsNullOrWhiteSpace(_noticeText?.Text) ? null : _noticeKind;
+
+    /// <summary>
+    /// Clears the lane the way the reader does, running the notice's own dismissal callback.
+    /// </summary>
+    internal void DismissNotice()
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(DismissNotice);
+            return;
+        }
+
+        var dismissed = _noticeDismissedHandler;
+        ShowNotice(string.Empty);
+        dismissed?.Invoke();
+    }
+
     private Func<Task>? _noticeActionHandler;
+    private Action? _noticeDismissedHandler;
 
     private void ApplyNoticeTheme()
     {

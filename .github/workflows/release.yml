@@ -200,9 +200,13 @@ jobs:
     env:
       RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
       # versionCode is deliberately not set here. The project derives it from the
-      # release version (for example, 2.0.9 -> 20009), which Google Play requires to increase
-      # with every upload; a workflow run number would let a rebuild of an older
-      # version outrank a newer one.
+      # release version and an explicit build counter — major*1000000 + minor*10000 +
+      # patch*100 + build, so 2.0.9 -> 2000900 and 2.1.0 with -p:VisualCatBuildNumber=3
+      # -> 2010003 — which Google Play requires to increase with every upload; a
+      # workflow run number would let a rebuild of an older version outrank a newer one.
+      # A prerelease tag does not move the counter by itself: two builds of the same
+      # version (v2.1.0-beta.1 and v2.1.0-beta.2) need VisualCatBuildNumber bumped, or
+      # Play refuses the second upload. Promotion between tracks needs no rebuild at all.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6

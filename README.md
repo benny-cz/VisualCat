@@ -173,6 +173,17 @@ path:
 adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS
 ```
 
+A build **installed from Google Play** notices when a newer VisualCat is
+published and offers it in the status lane. That check is an inter-process call
+into the Play Store app already on the device: VisualCat opens no socket, sends
+no identifier and reaches no VisualCat server. It will not interrupt or install
+over a running Live capture — installing restarts the app, so a downloaded update
+waits until you stop recording. A build installed **from a GitHub release** cannot
+be updated by Play and is never checked automatically; **More ▾ → Check for
+updates…** says so and offers the releases page. See
+[docs/PRIVACY.md](docs/PRIVACY.md) and
+[ADR 0019](docs/adr/0019-app-updates.md).
+
 The external grant is a developer convenience, not the Play installation flow,
 and must be repeated after uninstall/reinstall. See
 [`docs/PRIVACY.md`](docs/PRIVACY.md) and [`docs/SUPPORT.md`](docs/SUPPORT.md) for

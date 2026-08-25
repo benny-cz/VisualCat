@@ -159,6 +159,17 @@ processed on-device and is not sent to VisualCat or another remote service. The
 other user-controlled transfer is the Android share sheet, which VisualCat opens
 only after an explicit Share action.
 
+The in-app update check does not change this answer, and the reason is worth
+stating rather than leaving to be inferred. It is an inter-process call into the
+Play Store app already on the device: VisualCat opens no socket for it, sends no
+identifier, and reaches no VisualCat-operated endpoint, so nothing is collected
+and nothing is shared. What the app keeps is three local values in its own
+settings file — the version code the reader last declined, when to ask again, and
+when the store was last asked — which never leave the device and are not user data
+collected by the app. Google's own handling of the request is Play Store
+behaviour under the user's existing account relationship, not a VisualCat data
+flow.
+
 Do not justify the Data Safety answer from manifest permissions alone. Re-audit the
 resolved release package and network behavior for every Play submission.
 
@@ -190,6 +201,13 @@ Wireless debugging transport and reader-visible background capture:
 
 VisualCat does not expose a general ADB shell UI. The application adapter opens
 only its fixed `logcat` stream and disconnects when Live capture ends.
+
+Google's in-app update client adds **no permission at all** to the merged
+manifest. It contributes one non-exported activity
+(`com.google.android.play.core.common.PlayCoreDialogWrapperActivity`) and the
+`com.google.android.gms.version` meta-data. VisualCat does not declare
+`REQUEST_INSTALL_PACKAGES` and never installs anything itself; the Play Store
+performs the download and the install in its own interface after the user agrees.
 
 ### Foreground-service declaration
 
@@ -230,7 +248,8 @@ do not add it to the current API-36 build pre-emptively.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version: `2.0.9` → `20009` |
+| versionCode | Derived from the release version and an explicit build counter: `major*1000000 + minor*10000 + patch*100 + build`, so `2.0.9` → `2000900` and `2.1.0` with `-p:VisualCatBuildNumber=3` → `2010003`. See `docs/RELEASE-CHECKLIST.md`. |
+| inAppUpdatePriority | Set per release through the Play Developer API before rollout; it cannot be changed afterwards. See `docs/RELEASE-CHECKLIST.md`. |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
 | ABIs | `arm64-v8a`, `x86_64` |
@@ -246,6 +265,12 @@ explore it as a zoomable severity-by-time heat map with filters, ranked message
 templates and byte-faithful source context. Full-device Live capture can pair
 with Android Wireless debugging; VisualCat-only capture works without setup.
 Everything is processed on the device.
+```
+
+Release notes for the next release (362/500 characters):
+
+```text
+VisualCat now tells you when a newer version is on Google Play, and offers to update from the status lane. It will not interrupt or install over a running Live capture: a downloaded update waits until you stop recording, because installing restarts the app. You can also ask any time from More, Check for updates. Nothing about you or your logs is sent anywhere.
 ```
 
 Release notes for `2.0.9` (396/500 characters):

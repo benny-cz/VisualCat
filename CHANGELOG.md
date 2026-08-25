@@ -13,6 +13,34 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Added
+- Android builds installed from Google Play now notice when a newer VisualCat is
+  published and offer it in the status lane. The check is an inter-process call
+  into the Play Store app; VisualCat opens no socket, sends no identifier and
+  reaches no VisualCat server, and a build Play did not install is never checked
+  automatically. A new **Check for updates…** command asks on demand on both
+  platforms — and on a side-loaded build says so honestly and offers the GitHub
+  releases page instead of pretending Play can help.
+- An update is never allowed to cost a recording. No offer is raised over a
+  running Live capture, the Play flow that takes over the screen is never started
+  during one, and an update that has finished downloading waits, saying that
+  stopping the capture is what installs it, because installing restarts the app.
+
+### Changed
+- The Android version-code scheme gained an explicit build counter
+  (`major*1000000 + minor*10000 + patch*100 + build`, so 2.0.9 is `2000900`).
+  The previous scheme could not express two builds of one version, so a second
+  `2.1.0-alpha` upload would have been refused by Google Play. Every new code is
+  higher than every code the old scheme could produce, so no installed build is
+  stranded.
+
+### Fixed
+- A long status message no longer runs off the right edge of the Android command
+  bar. It was in a column sized to its own content, so the ellipsis it asked for
+  could never apply; on a phone the text painted straight through the wordmark
+  and off the screen. The same message is also no longer echoed into the command
+  bar on Android, where the status lane below already shows it in full.
+
 ## [2.0.9] - 2026-08-25
 
 ### Added

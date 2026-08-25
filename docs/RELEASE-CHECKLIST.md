@@ -63,6 +63,50 @@ be published from an unmerged commit or one that would fail a pull request:
 - [ ] Play Console Data Safety, App access, permissions, privacy policy, and store description match the audited AAB rather than an older direct-`READ_LOGS` build.
 - [ ] If targetSdk is ever raised to 37+, Android 17 local-network permission behavior is re-designed and physically tested before release.
 
+## Version codes, tracks, and in-app updates
+
+Google Play orders uploads by `versionCode` alone and **refuses a code it has
+already accepted, on any track**. The project derives it from the release version
+and an explicit build counter:
+
+```
+versionCode = major * 1000000 + minor * 10000 + patch * 100 + VisualCatBuildNumber
+```
+
+so 2.0.9 is `2000900`, and `-p:VisualCatBuildNumber=3` on 2.1.0 gives `2010003`.
+Each field owns two digits and the build fails rather than wrap. The prerelease
+suffix is **not** an input, so two builds of the same version — `v2.1.0-beta.1`
+and `v2.1.0-beta.2` — need the counter bumped or Play rejects the second.
+
+**Promote, do not rebuild.** Move the same artifact and the same version code from
+closed to open to production. That is what makes the pre-launch report and the
+testers' feedback apply to the build that reaches users, and it keeps the codes
+dense. Rebuilding for the stable release is legal but requires bumping
+`VisualCatBuildNumber` and wastes the pre-launch report; record the reason if you
+do it.
+
+| Play track | Tag | Channel the app reports | Suggested `inAppUpdatePriority` |
+|---|---|---|---|
+| Internal testing | untagged `workflow_dispatch` | `Development` — never prompts | — |
+| Closed testing | `v2.1.0-alpha.N` | `Alpha` | 3 |
+| Open testing | `v2.1.0-beta.N` | `Beta` | 2 |
+| Production, routine | `v2.1.0` | `Stable` | 1 |
+| Production, data-loss or security fix | `v2.1.0` | `Stable` | 5 |
+
+`inAppUpdatePriority` is set **per release**, through the Google Play Developer
+API only (`edits.tracks.releases[].inAppUpdatePriority`); the Play Console UI does
+not expose it, and **it cannot be changed once the release is rolled out**. The
+app reads it to decide whether an update may escalate past a dismissal, or take
+the screen. Default low and escalate deliberately.
+
+- [ ] Version code is unique and higher than every code previously uploaded on any track.
+- [ ] `inAppUpdatePriority` is set for this release before rolling out — it cannot be corrected afterwards.
+- [ ] The release is promoted rather than rebuilt, or `VisualCatBuildNumber` was bumped and the reason recorded.
+- [ ] In-app update is verified end to end against the previous build through **internal app sharing**, which is the only way to exercise the real Play client. Upload build N, install it from the internal-app-sharing link, upload build N+1, then launch build N. Both builds must carry an alpha or beta version — a `Development` build does not prompt, so the test would silently prove nothing:
+      `pwsh ./tools/package-android.ps1 -Format aab -Version 2.1.0-alpha.1` then the same with `-Version 2.1.0-alpha.2 -p:VisualCatBuildNumber=2`.
+- [ ] A staged production rollout is at 100% before anyone concludes an update "did not appear": a release held at 20% is offered only to the fraction Play has admitted, and the app cannot tell that apart from being up to date — nor should it try.
+- [ ] The Play Core dependency still declares no permission and no exported component. The packaging script asserts the permissions; check components by hand when the binding version moves.
+
 ## Release records
 
 > **Historical transport note:** the records through v2.0.6 below predate the

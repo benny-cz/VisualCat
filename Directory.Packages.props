@@ -16,6 +16,22 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <PackageVersion Include="Xamarin.AndroidX.Annotation" Version="$(XamarinAndroidXAnnotationVersion)" />
     <PackageVersion Include="Xamarin.AndroidX.Core" Version="1.17.0.2" />
+    <!-- Google Play's in-app update client, binding the same Java app-update 2.1.0 that every
+         later binding revision wraps. The Java library is licensed under the Play Core SDK
+         Terms of Service rather than Apache-2.0 — see docs/THIRD-PARTY-NOTICES.md — while the
+         Microsoft binding is MIT. The app-update.aar is embedded in the nupkg, so no Maven
+         download happens at build time and CI stays deterministic.
+
+         Pinned at .18 rather than the newest .19 for a specific reason: .19 moves to
+         GooglePlayServices.Basement 118.10.0.2, which requires Xamarin.AndroidX.Core 1.19.0.1
+         and drags AndroidX Lifecycle to 2.11 — where Avalonia.Android's own
+         Lifecycle.Process 2.10.0.2 declares a hard [2.10.0.2, 2.10.1) constraint. Restore
+         fails closed on NU1605/NU1608, which is the correct outcome: the update check is not
+         worth re-flooring this app's AndroidX stack under Avalonia. Binding .18 asks for
+         AndroidX.Core 1.17.0.2, the exact version already pinned here, so the Java code is
+         identical and the dependency graph does not move at all. Revisit when Avalonia ships
+         against AndroidX Lifecycle 2.11. -->
+    <PackageVersion Include="Xamarin.Google.Android.Play.App.Update" Version="2.1.0.18" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
   </ItemGroup>

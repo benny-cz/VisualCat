@@ -189,6 +189,18 @@ and `StorageFileBridge`. UI/graphics selection and the smaller Android scope are
 recorded in [ADR 0002](docs/adr/0002-ui.md) and
 [ADR 0016](docs/adr/0016-android.md).
 
+Google Play's in-app update check follows that same seam, and is worth naming
+because it is the one platform capability that is not about capture. The Play
+client lives entirely in `VisualCat.Android/PlayAppUpdateService.cs` and is owned
+by the activity rather than by the view, since Android rebuilds `MainView` on
+every recreation while a Play offer can start exactly one flow. Everything that
+decides *behaviour* — the per-channel throttles, the snooze, and the rule that an
+update may never end a live capture — is in `VisualCat.App/Platform/AppUpdatePolicy.cs`,
+which has no Avalonia and no Android in it. That split is not tidiness: Play never
+offers an update to a build it did not install, so the real path cannot run in CI
+or in the developer loop, and the policy layer is the only part that can be held
+to account by a test. See [ADR 0019](docs/adr/0019-app-updates.md).
+
 ## Where to make a change
 
 | Change | Start here | Also update |

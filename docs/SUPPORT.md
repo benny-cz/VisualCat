@@ -100,6 +100,37 @@ ADB device states (`device`, `unauthorized`, `offline`, unknown) are surfaced
 rather than retried as parser failures. Signing, notarization, and store
 credentials are release-operator secrets and are not committed to the repository.
 
+## Keeping VisualCat up to date
+
+**Installed from Google Play.** VisualCat asks the Play Store whether a newer
+build is available and, when there is one, offers **Update** in the status lane
+at the bottom of the screen. Play does the download and the install in its own
+interface, after you agree. A production build asks about once a day; the alpha
+and beta testing channels ask more often, because a tester on an old build is not
+testing anything. **Dismiss** puts the offer away — for a week on a production
+build, less on a testing channel — and a newer release asks again. **More ▾ →
+Check for updates…** asks immediately, whenever you want.
+
+Two things the app deliberately will not do. It will not install an update while
+a Live capture is running: installing restarts VisualCat, which would end the
+recording without saving it properly, so a downloaded update waits and says so.
+And it will not tell you that you are on the newest build when it could not reach
+the Play Store — "could not be reached" and "nothing newer" are different answers
+and it gives you the one that is true. If an update you know exists is not
+offered, the usual reason is a staged rollout: Play offers a partial rollout only
+to the fraction of users it has admitted so far.
+
+**Installed from a GitHub release, or built yourself.** Google Play cannot update
+a build it did not install, and VisualCat does not contact GitHub or anywhere
+else to look for one — checking the internet on your behalf is not something a
+local-first log viewer should do without being asked. **Check for updates…** says
+so plainly and offers to open
+[the releases page](https://github.com/benny-cz/VisualCat/releases) in your
+browser, where you can download the newer APK and install it the same way you
+installed this one. Desktop releases work the same way: download the new archive.
+
+See `PRIVACY.md` for exactly what the Play check does and does not send.
+
 ## Desktop distribution limits
 
 The initial Windows and macOS binaries are unsigned, and the macOS binaries are

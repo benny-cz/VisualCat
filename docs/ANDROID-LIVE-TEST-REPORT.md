@@ -7214,3 +7214,71 @@ rotation was restored to enabled and font scale remained 1.0. VisualCat is
 installed with the signed 2.0.8 candidate and foregrounded on the persisted
 session; there are zero app-owned `logcat` readers, capture services and active
 VisualCat notifications.
+
+---
+
+## 22. Play in-app update — Samsung physical-device pass
+
+**Device:** Samsung SM-G990B (`RFCRC0A9GND`), Android 16, 1080x2340, portrait,
+gesture navigation. Confirmed by `getprop ro.product.model` / `ro.serialno`
+rather than by the `adb devices -l` listing, per the standing warning about
+stale transport entries.
+
+**Why this pass needs a stand-in.** Google Play never offers an update to a build
+it did not install, so no `adb install` deploy — and no CI job — can reach the
+real client. The behaviour that decides what the reader sees therefore lives in
+`AppUpdatePolicy`, covered by unit tests off-device, and this pass drives Play
+Core's own `FakeAppUpdateManager` through the identical adapter and UI. The
+build is `-p:VisualCatFakeAppUpdate=true -p:Version=2.1.0-beta.1`: the fake
+manager is opted into explicitly, and the channel is real rather than forced,
+because a build that lied about its channel would not be exercising the rules it
+is meant to demonstrate. End-to-end validation against the live Play client
+still requires internal app sharing and remains a release-checklist item.
+
+| Case | Result |
+|---|---|
+| Cold start, beta channel, update available | Offer rendered in the notice lane: *"VisualCat 2.1.1 is available on Google Play. You are on the beta channel."* with **Update** and **Dismiss**. Both 108 px / 48 dp tall. |
+| Version name decoded from the version code | Fake offered version code `2010100`; the app named it **2.1.1** without Play supplying any name. |
+| Tap **Update**, flexible flow | *"Downloading VisualCat 2.1.1 · 23.3 MB of 31.0 MB."* — no action button, and the version survived the transition into install-state reporting. |
+| Download completes | *"VisualCat 2.1.1 is downloaded. Installing restarts the app."* with **Install**. |
+| **Live capture running while an update is downloaded** | Install withheld. Lane read *"VisualCat 2.1.1 is downloaded. Stop the capture to install it — installing restarts the app."* with **no action button**, over a capture receiving 17 lines/s. |
+| Capture stopped | *"Stopped · 2,975 entries kept"*, and **Install** returned immediately in the same lane. |
+| **Dismiss** | `settings.json` recorded `updateDismissedVersionCode 2010100`, `updateSnoozedUntilUtc` +24 h (the beta snooze) and `updateLastCheckedUtc`. |
+| Relaunch inside the snooze | No banner. The workspace restored its session with an empty lane. |
+| **More ▾ → Check for updates…** | Present beside its three siblings, described *"Ask Google Play whether a newer VisualCat is out"*. Bypassed the standing snooze and re-offered, as a question the reader typed must. |
+| Side-loaded build, real Play client | No update log line, no crash, no banner, and **no TCP socket owned by the app's uid** at any point. The automatic check never ran. |
+| Side-loaded build, manual check | Description changed to *"Open the GitHub releases page — this build cannot update itself"*; the lane said *"This build was installed from a file, so Google Play cannot update it. Releases are published on GitHub."* with **Open releases**, which opened Chrome. |
+
+**Two defects found and fixed during the pass**, both exposed rather than caused
+by the feature:
+
+- *The command bar painted the status message off the edge of the screen.* The
+  message sat in the brand row's trailing `Auto` column, which sizes to the
+  content, so the `CharacterEllipsis` it asked for could never engage. Any long
+  notice ran through the wordmark and out of the window; the update offer made
+  that the first thing a cold start showed. It now occupies the flexible column
+  with right-aligned text, so the trimming has a width to trim against. The same
+  message is no longer echoed there on Android at all, where the always-visible
+  lane below already carries it in full — it was on screen twice.
+- *The offered version lost its name as soon as the download began.* An
+  `InstallState` carries a status and a byte count but no version code, and the
+  adapter was reading the name back out of the shared cache, which a direct check
+  never wrote to. Mid-download the lane degraded to *"Downloading a newer
+  VisualCat"*. The adapter now keeps what its own last answer decoded, and the
+  registry gained a cache-only write so a view rebuilt by an activity recreation
+  can still render an offer without asking Play again.
+
+**Release packaging.** `tools/package-android.ps1 -Format both` passed against the
+Play upload keystore: version code **2000900** under the widened scheme, the
+permission list **unchanged** (no permission from the Play Core chain), all 196
+native libraries 16 KB aligned, APK Signature Scheme v3, and the pinned upload
+certificate. Signed-AAB size went from 35,278,156 to 35,532,567 bytes — **+248
+KiB, +0.72%** — measured by building the same commit with and without the package
+reference.
+
+**Not covered here, by construction:** the live Play client's own consent UI, a
+real staged rollout, `UpdateAvailability.DeveloperTriggeredUpdateInProgress`
+after a genuine interrupted Immediate flow, and a device with no Play Store. The
+first three need internal app sharing; the last needs non-GMS hardware. All four
+are release-checklist items rather than claims made here.
+

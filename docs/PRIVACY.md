@@ -66,6 +66,37 @@ Debug or explicitly opted-in non-Play builds may additionally declare
 external ADB grant. VisualCat's production Wireless ADB path never grants that
 permission to itself.
 
+## Update checks on Google Play
+
+A build installed from Google Play asks the Play Store whether a newer VisualCat
+is available. That check is an inter-process call into the Play Store app that
+is already on the device, through Google's in-app update client. VisualCat opens
+no socket for it, sends no identifier, and reaches no VisualCat-operated
+endpoint; the Play Store does whatever network work is required, under the
+account relationship the user already has with it, to service the app they
+installed from it. Nothing about the user, the device, or any session is sent
+anywhere by VisualCat, and no session, log, file name, or search ever forms part
+of the exchange. What comes back is a version code and whether an update may be
+started.
+
+The check runs at most once a day for a production build, and more often only on
+the alpha and beta testing channels, where testers are there to run the newest
+build. What the app remembers between launches is three values in its own local
+settings file: the version code the reader last declined, when they may next be
+asked, and when the store was last asked. These stay on the device.
+
+**A build that Google Play did not install is never checked automatically.** The
+APK attached to a GitHub release, and any developer build, cannot be updated in
+place by Play, and VisualCat does not contact GitHub or any other server to look
+for one either — that would be exactly the direct network egress this product
+does not do. Such a build answers the explicit **Check for updates…** command by
+saying so and offering to open the GitHub releases page in the system browser,
+which is an ordinary link the user chooses to follow.
+
+Downloading and installing an update is performed by the Play Store, in its own
+interface, after the user agrees to it. VisualCat never installs anything itself
+and does not hold `REQUEST_INSTALL_PACKAGES`.
+
 ## Diagnostics
 
 Redacted application diagnostics are local, bounded rolling JSON lines. Property

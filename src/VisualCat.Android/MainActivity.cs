@@ -2,6 +2,7 @@ using Android.App;
 using Android.Content;
 using Android.Content.PM;
 using Android.Runtime;
+using AndroidX.Activity.Result;
 using AndroidX.Core.App;
 using AndroidX.Core.Content;
 using Avalonia.Android;
@@ -50,6 +51,11 @@ public sealed class MainActivity : AvaloniaMainActivity
     private readonly HashSet<string> _consumedUris = new(StringComparer.Ordinal);
     private WirelessAdbService? _wirelessAdbService;
 
+    // Owned by the activity rather than by the view: Android rebuilds MainView on every
+    // recreation, and a Play offer can start exactly one flow before it goes stale.
+    private PlayAppUpdateService? _appUpdateService;
+    private ActivityResultLauncher? _updateLauncher;
+
     protected override void OnCreate(global::Android.OS.Bundle? savedInstanceState)
     {
         s_current = new WeakReference<MainActivity>(this);
@@ -95,6 +101,39 @@ public sealed class MainActivity : AvaloniaMainActivity
         PlatformSourceRegistry.ShareFileAsync = ShareCurrentAsync;
         PlatformSourceRegistry.ConsumeLaunchFilesAsync = ConsumeCurrentLaunchFilesAsync;
         PlatformSourceRegistry.SetGestureExclusions = ApplyGestureExclusions;
+
+        // AndroidX requires the launcher to be registered before the activity is STARTED, so
+        // this is OnCreate or nowhere. Registration is cheap and touches no Play code; the
+        // client itself is not constructed until something actually asks about an update, in
+        // keeping with how the Wireless ADB stack is installed as callbacks above.
+        try
+        {
+            _updateLauncher = PlayAppUpdateService.RegisterLauncher(this, OnUpdateFlowResult);
+#if VISUALCAT_FAKE_APP_UPDATE
+            // A build deployed with `adb install` is SideLoaded, which is correctly never
+            // checked — so the fake manager would prove nothing without this. The other half of
+            // the fake loop is the channel, which is not overridden anywhere: pass a real one at
+            // build time (-p:Version=2.1.0-beta.1), because a build that lies about its channel
+            // is not exercising the rules it is supposed to be demonstrating.
+            PlatformSourceRegistry.GetInstallOrigin = static () => AppInstallOrigin.PlayStore;
+#else
+            PlatformSourceRegistry.GetInstallOrigin = ResolveInstallOriginCurrent;
+#endif
+            PlatformSourceRegistry.CheckForAppUpdateAsync = CheckForAppUpdateCurrentAsync;
+            PlatformSourceRegistry.StartAppUpdateAsync = StartAppUpdateCurrentAsync;
+            PlatformSourceRegistry.CompleteAppUpdateAsync = CompleteAppUpdateCurrentAsync;
+            PlatformSourceRegistry.OpenAppStoreListingAsync = OpenAppStoreListingCurrentAsync;
+        }
+        catch (Exception exception)
+        {
+            // A binding or AndroidX problem here must cost the reader the update check and
+            // nothing else. Every hook stays null, so the shared layer behaves as it does on
+            // the desktop: it says nothing about updates at all.
+            global::Android.Util.Log.Warn(
+                "VisualCat.AppUpdate",
+                $"In-app updates are unavailable on this device: {exception.GetType().Name}");
+        }
+
         base.OnCreate(savedInstanceState);
     }
 
@@ -102,6 +141,12 @@ public sealed class MainActivity : AvaloniaMainActivity
     {
         base.OnResume();
         PlatformSourceRegistry.PublishAppResumed();
+
+        // Play's own requirement, and it is the activity's rather than the view's: a flexible
+        // download may have finished while the app was backgrounded, and an immediate flow
+        // interrupted by Back has to be resumed. Only a service that already exists is asked —
+        // an app that has never checked has nothing in flight to rejoin.
+        _appUpdateService?.OnActivityResumed();
     }
 
     public override void OnRequestPermissionsResult(
@@ -173,12 +218,108 @@ public sealed class MainActivity : AvaloniaMainActivity
             PlatformSourceRegistry.OpenWirelessDebuggingSettingsAsync = null;
             PlatformSourceRegistry.ConsumeLaunchFilesAsync = null;
             PlatformSourceRegistry.SetGestureExclusions = null;
+            PlatformSourceRegistry.GetInstallOrigin = null;
+            PlatformSourceRegistry.CheckForAppUpdateAsync = null;
+            PlatformSourceRegistry.StartAppUpdateAsync = null;
+            PlatformSourceRegistry.CompleteAppUpdateAsync = null;
+            PlatformSourceRegistry.OpenAppStoreListingAsync = null;
             _wirelessAdbService?.Dispose();
             _wirelessAdbService = null;
+
+            // Unregisters the install listener, which otherwise holds this activity for the
+            // life of the process.
+            _appUpdateService?.Dispose();
+            _appUpdateService = null;
+            _updateLauncher = null;
         }
 
         base.OnDestroy();
     }
+
+    /// <summary>
+    /// The Play client, created on first use so a binding problem cannot break plain startup.
+    /// </summary>
+    private PlayAppUpdateService? GetAppUpdateService()
+    {
+        if (_appUpdateService is not null)
+        {
+            return _appUpdateService;
+        }
+
+        if (_updateLauncher is not { } launcher)
+        {
+            return null;
+        }
+
+        _appUpdateService = new PlayAppUpdateService(this, launcher);
+        return _appUpdateService;
+    }
+
+    private static AppInstallOrigin ResolveInstallOriginCurrent() =>
+        PlayAppUpdateService.ResolveInstallOrigin(global::Android.App.Application.Context);
+
+    private static Task<AppUpdateStatus> CheckForAppUpdateCurrentAsync(CancellationToken cancellationToken)
+    {
+        if (s_current?.TryGetTarget(out var activity) != true ||
+            activity?.GetAppUpdateService() is not { } service)
+        {
+            return Task.FromResult(new AppUpdateStatus(AppUpdateState.Unknown));
+        }
+
+        return service.CheckAsync(cancellationToken);
+    }
+
+    private static Task<bool> StartAppUpdateCurrentAsync(AppUpdateFlow flow, CancellationToken cancellationToken)
+    {
+        if (s_current?.TryGetTarget(out var activity) != true ||
+            activity?._appUpdateService is not { } service)
+        {
+            // No client means nothing was ever offered. False asks the caller to check again,
+            // which is the correct next move rather than an error.
+            return Task.FromResult(false);
+        }
+
+        return service.StartAsync(flow, cancellationToken);
+    }
+
+    private static Task CompleteAppUpdateCurrentAsync(CancellationToken cancellationToken)
+    {
+        if (s_current?.TryGetTarget(out var activity) != true ||
+            activity?._appUpdateService is not { } service)
+        {
+            return Task.CompletedTask;
+        }
+
+        return service.CompleteAsync(cancellationToken);
+    }
+
+    private static Task OpenAppStoreListingCurrentAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (s_current?.TryGetTarget(out var activity) != true || activity is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        activity.RunOnUiThread(() =>
+        {
+            try
+            {
+                PlayAppUpdateService.OpenStoreListing(activity);
+            }
+            catch (Exception exception)
+            {
+                // Same shape as OpenWirelessDebuggingSettingsAsync's caller: a store that will
+                // not open is not worth an error report the reader cannot act on.
+                global::Android.Util.Log.Warn(
+                    "VisualCat.AppUpdate",
+                    $"Could not open the Play listing: {exception.GetType().Name}");
+            }
+        });
+        return Task.CompletedTask;
+    }
+
+    private void OnUpdateFlowResult(int resultCode) => _appUpdateService?.OnFlowResult(resultCode);
 
     private static bool HasSavedWirelessAdbIdentityCurrent()
     {

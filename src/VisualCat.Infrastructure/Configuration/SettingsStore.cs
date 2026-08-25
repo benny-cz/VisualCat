@@ -50,7 +50,21 @@ public sealed record ApplicationSettings(
     // reader's choice used to go with the view that owned it: a workspace left in Plot came
     // back in Split (audit 2, C5). It is the reader's choice, so it belongs beside the other
     // things about the workspace that survive being put down and picked up again.
-    string? WorkspaceDisplayMode = null);
+    string? WorkspaceDisplayMode = null,
+
+    // The version code the reader has already said no to. Google Play offers the same update
+    // on every launch, and an app that asks again each time is a nag rather than a service. A
+    // higher version code — or a release the publisher marked urgent — is a new question and
+    // may ask again.
+    long UpdateDismissedVersionCode = 0,
+
+    // When the reader may next be asked. "Later" has to mean something, and on Android it has
+    // to survive the process being killed, which is ordinary rather than exceptional there.
+    DateTimeOffset? UpdateSnoozedUntilUtc = null,
+
+    // When the store was last asked. A stable build asks about once a day; asking on every
+    // resume would be an IPC round trip for an answer that cannot have changed.
+    DateTimeOffset? UpdateLastCheckedUtc = null);
 
 public sealed class SettingsStore(string path)
 {
@@ -99,6 +113,17 @@ public sealed class SettingsStore(string path)
             throw;
         }
     }
+
+    /// <summary>
+    /// The furthest ahead an update timestamp may plausibly be before it is discarded.
+    /// </summary>
+    /// <remarks>
+    /// A snooze is at most seven days, so anything beyond a fortnight came from a clock that
+    /// was wrong when it was written, a restored backup, or an edited file. Left alone such a
+    /// value silences the update prompt for as long as it says — potentially for ever — and
+    /// there is nothing on screen that would explain why.
+    /// </remarks>
+    private static readonly TimeSpan MaximumUpdateSnooze = TimeSpan.FromDays(14);
 
     private static ApplicationSettings Validate(ApplicationSettings? settings)
     {
@@ -164,6 +189,17 @@ public sealed class SettingsStore(string path)
             // address the list that survived it.
             OpenSessionPaths = openSessions,
             OpenSessionIndex = Math.Clamp(settings.OpenSessionIndex, 0, Math.Max(0, openSessions.Length - 1)),
+
+            // Negative codes are not version codes, and a timestamp far in the future is a
+            // wrong clock rather than a preference. Both would silently suppress an update
+            // prompt with nothing on screen to say why.
+            UpdateDismissedVersionCode = Math.Max(settings.UpdateDismissedVersionCode, 0),
+            UpdateSnoozedUntilUtc = Plausible(settings.UpdateSnoozedUntilUtc),
+            UpdateLastCheckedUtc = Plausible(settings.UpdateLastCheckedUtc),
         };
     }
+
+    /// <summary>Drops a stored update timestamp that cannot have come from this device's clock.</summary>
+    private static DateTimeOffset? Plausible(DateTimeOffset? stamp) =>
+        stamp is { } value && value <= DateTimeOffset.UtcNow + MaximumUpdateSnooze ? stamp : null;
 }
