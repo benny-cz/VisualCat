@@ -118,7 +118,18 @@ internal readonly record struct MobileWorkspaceLayout(
     /// fixed 600 would have gone on sharing the row until they overlapped again.
     /// </remarks>
     internal static bool SharesARow(double width) =>
-        double.IsFinite(width) && width >= SharedRowBreakpoint * TextScale.Effective;
+        SharesARow(width, TextScale.Effective);
+
+    /// <summary>
+    /// Evaluates the breakpoint against a captured scale. Keeping this calculation pure also
+    /// lets concurrent layout tests describe a particular device without racing another test
+    /// that temporarily models a different accessibility scale.
+    /// </summary>
+    internal static bool SharesARow(double width, double effectiveTextScale) =>
+        double.IsFinite(width) &&
+        double.IsFinite(effectiveTextScale) &&
+        effectiveTextScale > 0 &&
+        width >= SharedRowBreakpoint * effectiveTextScale;
 
     /// <summary>
     /// A short viewport has width to spare and height to protect. Navigation moves to side

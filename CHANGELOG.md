@@ -39,6 +39,11 @@ screenshot says which build it came from.
   instead of sampling a process-wide allocation counter. Coverage collectors
   and test-host background work could contaminate that counter and make the
   Windows and Ubuntu CI jobs fail even when the source reused its buffer.
+- Stateful headless UI tests now run serially and evaluate responsive
+  breakpoints against an explicit text scale. Parallel tests were replacing the
+  same platform callbacks, accessibility scale, and temporary-session root,
+  intermittently failing Windows CI or writing into a directory another test
+  had already removed.
 - Closing a session tab, or the application, while **Load all** is still walking
   the view no longer waits for that walk to finish. The session lifetime is
   cancelled before disposal takes the load lock, so the tab closes at once

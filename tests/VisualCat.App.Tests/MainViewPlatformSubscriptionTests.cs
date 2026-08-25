@@ -159,6 +159,8 @@ public sealed class MainViewPlatformSubscriptionTests
         finally
         {
             PlatformSourceRegistry.PlatformFontScale = scale;
+            PlatformSourceRegistry.PublishDisplayConfigurationChanged();
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
             await replaced.DisposeAsync();
             await live.DisposeAsync();
         }

@@ -967,13 +967,13 @@ public sealed partial class LiveTestRemediationTests
 
         // The viewport is wide enough to share a row at all - which is why the strip is
         // hosted there in the first place, and why deciding on it looked right.
-        Assert.True(MobileWorkspaceLayout.SharesARow(viewport));
+        Assert.True(MobileWorkspaceLayout.SharesARow(viewport, effectiveTextScale: 1));
 
         // The strip's own budget is not, so the capture controls keep a row of their own.
-        Assert.False(MobileWorkspaceLayout.SharesARow(strip));
+        Assert.False(MobileWorkspaceLayout.SharesARow(strip, effectiveTextScale: 1));
 
         // And a viewport that really can hold both still does.
-        Assert.True(MobileWorkspaceLayout.SharesARow(964 - toolbar));
+        Assert.True(MobileWorkspaceLayout.SharesARow(964 - toolbar, effectiveTextScale: 1));
     }
 
     // --------------------------------------------------------------- F-36 ---
@@ -1089,32 +1089,23 @@ public sealed partial class LiveTestRemediationTests
     {
         // The application toolbar is about 274 dp and the workspace strip about 320 dp, so a
         // 434 dp portrait workspace is 168 dp short of holding both.
-        Assert.False(MobileWorkspaceLayout.SharesARow(434));
-        Assert.False(MobileWorkspaceLayout.SharesARow(360));
-        Assert.False(MobileWorkspaceLayout.SharesARow(599));
+        Assert.False(MobileWorkspaceLayout.SharesARow(434, effectiveTextScale: 1));
+        Assert.False(MobileWorkspaceLayout.SharesARow(360, effectiveTextScale: 1));
+        Assert.False(MobileWorkspaceLayout.SharesARow(599, effectiveTextScale: 1));
 
         // The landscape viewports §6 and §7 built the compact layout for keep it.
-        Assert.True(MobileWorkspaceLayout.SharesARow(600));
-        Assert.True(MobileWorkspaceLayout.SharesARow(780));
-        Assert.True(MobileWorkspaceLayout.SharesARow(801));
-        Assert.True(MobileWorkspaceLayout.SharesARow(964));
+        Assert.True(MobileWorkspaceLayout.SharesARow(600, effectiveTextScale: 1));
+        Assert.True(MobileWorkspaceLayout.SharesARow(780, effectiveTextScale: 1));
+        Assert.True(MobileWorkspaceLayout.SharesARow(801, effectiveTextScale: 1));
+        Assert.True(MobileWorkspaceLayout.SharesARow(964, effectiveTextScale: 1));
 
         // An unmeasured viewport must not be assumed to be roomy.
-        Assert.False(MobileWorkspaceLayout.SharesARow(double.NaN));
+        Assert.False(MobileWorkspaceLayout.SharesARow(double.NaN, effectiveTextScale: 1));
 
         // And the number moves with the reader's text size, because every control it
         // measures does: at 1.3x the same five controls need a landscape phone exactly.
-        var user = TextScale.User;
-        try
-        {
-            TextScale.User = 1.3;
-            Assert.False(MobileWorkspaceLayout.SharesARow(779));
-            Assert.True(MobileWorkspaceLayout.SharesARow(781));
-        }
-        finally
-        {
-            TextScale.User = user;
-        }
+        Assert.False(MobileWorkspaceLayout.SharesARow(779, effectiveTextScale: 1.3));
+        Assert.True(MobileWorkspaceLayout.SharesARow(781, effectiveTextScale: 1.3));
     }
 
     // --------------------------------------------------------------- F-35 ---
@@ -1456,6 +1447,13 @@ public sealed partial class LiveTestRemediationTests
         window.UpdateLayout();
         try
         {
+            // Other tests model platform callbacks in this same process. Establish the
+            // baseline through the real callback so this assertion never inherits their
+            // last simulated device scale.
+            PlatformSourceRegistry.PlatformFontScale = 1;
+            PlatformSourceRegistry.PublishDisplayConfigurationChanged();
+            Dispatcher.UIThread.RunJobs();
+
             view.OpenCommandSheet();
             window.UpdateLayout();
             var before = SheetLabel(view).FontSize;
@@ -1470,7 +1468,7 @@ public sealed partial class LiveTestRemediationTests
             var after = SheetLabel(view).FontSize;
             Assert.True(
                 after > before * 1.4,
-                FormattableString.Invariant($"the sheet stayed at {before} while the reader asked for 1.5x"));
+                FormattableString.Invariant($"the sheet stayed at {after} (from {before}) while the reader asked for 1.5x"));
         }
         finally
         {
