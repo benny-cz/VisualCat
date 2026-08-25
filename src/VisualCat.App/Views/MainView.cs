@@ -25,6 +25,10 @@ namespace VisualCat.App.Views;
 public sealed partial class MainView : UserControl, IAsyncDisposable
 {
     private readonly WorkspaceViewModel _viewModel = new();
+
+    /// <summary>The workspace this view presents. Exposed for tests.</summary>
+    internal WorkspaceViewModel Workspace => _viewModel;
+
     private readonly TabControl _tabs = new();
     private readonly TextBlock _message = new();
     private readonly Border _emptyState = new();
@@ -107,6 +111,70 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         "VisualCat",
         "Diagnostics");
 
+    /// <summary>One view's registration on the platform's static event surface.</summary>
+    private sealed class PlatformEventSubscription(
+        Action<IReadOnlyList<IncomingFile>> launchFiles,
+        Action appResumed,
+        Action appPaused,
+        Action displayConfiguration,
+        Action superseded)
+    {
+        public void Attach()
+        {
+            PlatformSourceRegistry.LaunchFilesReceived += launchFiles;
+            PlatformSourceRegistry.AppResumed += appResumed;
+            PlatformSourceRegistry.AppPaused += appPaused;
+            PlatformSourceRegistry.DisplayConfigurationChanged += displayConfiguration;
+        }
+
+        public void Detach()
+        {
+            PlatformSourceRegistry.LaunchFilesReceived -= launchFiles;
+            PlatformSourceRegistry.AppResumed -= appResumed;
+            PlatformSourceRegistry.AppPaused -= appPaused;
+            PlatformSourceRegistry.DisplayConfigurationChanged -= displayConfiguration;
+        }
+
+        /// <summary>Another view has taken this one's place and it will never be seen again.</summary>
+        public void Supersede()
+        {
+            Detach();
+            superseded();
+        }
+    }
+
+    /// <summary>The one view currently answering the platform, or null before the first.</summary>
+    /// <remarks>
+    /// <para>
+    /// Android builds a replacement <see cref="MainView"/> whenever it recreates the
+    /// activity — for a configuration change this app does not declare, for "Don't keep
+    /// activities", after a low-memory activity kill — and, unlike the desktop host, it has
+    /// no window-closed moment at which to dispose the view it replaces. Those platform
+    /// events are static, so the replaced view stayed subscribed to them for the life of the
+    /// process. On a device that is not a theoretical leak: with two views attached, both
+    /// answered <c>AppResumed</c> by resuming live views and re-running queries for a
+    /// workspace nobody could see, and both answered <c>AppPaused</c> by writing their own
+    /// open-workspace list to the same settings file — so the abandoned view's stale tab set
+    /// could be the one that survived and got restored.
+    /// </para>
+    /// <para>
+    /// Handing the subscriptions to the newest view makes "one view answers the platform"
+    /// true by construction, on every host, without depending on a disposal hook that one of
+    /// the two platforms does not have. It also stops rooting the replaced view from a static
+    /// field, so the workspace it holds — and the segment mappings under it — become
+    /// collectable once its own captures finish.
+    /// </para>
+    /// </remarks>
+    private static PlatformEventSubscription? s_platformEvents;
+
+    private readonly PlatformEventSubscription _platformEvents;
+
+    private static void AttachToPlatform(PlatformEventSubscription subscription)
+    {
+        Interlocked.Exchange(ref s_platformEvents, subscription)?.Supersede();
+        subscription.Attach();
+    }
+
     public MainView(IEnumerable<string>? startupPaths = null)
     {
         _startupPaths = startupPaths?.ToArray() ?? [];
@@ -145,10 +213,20 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 Dispatcher.UIThread.Post(ApplyDisplayConfigurationChange);
             }
         };
-        PlatformSourceRegistry.LaunchFilesReceived += _launchFilesHandler;
-        PlatformSourceRegistry.AppResumed += _appResumedHandler;
-        PlatformSourceRegistry.AppPaused += _appPausedHandler;
-        PlatformSourceRegistry.DisplayConfigurationChanged += _displayConfigurationHandler;
+        _platformEvents = new PlatformEventSubscription(
+            _launchFilesHandler,
+            _appResumedHandler,
+            _appPausedHandler,
+            _displayConfigurationHandler,
+
+            // A superseded view is off screen for good, and its workspace does not know
+            // that: left watching, it goes on answering every progress report by reopening
+            // the session — new segment mappings and a full query set — to redraw a frame
+            // that has no surface to land on. Suspension is the same state the platform
+            // asks for when the app is backgrounded, and this one is never lifted, because
+            // nothing will ever resume this view.
+            () => _viewModel.SuspendLiveViews());
+        AttachToPlatform(_platformEvents);
         Content = Build();
         SizeChanged += (_, eventArgs) =>
         {
@@ -2683,10 +2761,13 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        PlatformSourceRegistry.LaunchFilesReceived -= _launchFilesHandler;
-        PlatformSourceRegistry.AppResumed -= _appResumedHandler;
-        PlatformSourceRegistry.AppPaused -= _appPausedHandler;
-        PlatformSourceRegistry.DisplayConfigurationChanged -= _displayConfigurationHandler;
+        // Clear the shared slot only while this view is still the one in it: a replacement
+        // may already have taken the subscriptions over, and dropping its registration here
+        // would leave the live view deaf to the platform. Detaching this view's own handlers
+        // is unconditional and safe either way — they are this instance's delegates, and
+        // removing a handler that is no longer subscribed does nothing.
+        Interlocked.CompareExchange(ref s_platformEvents, null, _platformEvents);
+        _platformEvents.Detach();
         StopNoticeTimer();
         StopObservingSafeArea();
 
@@ -2706,6 +2787,12 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         await _viewModel.DisposeAsync();
         if (_diagnostics is not null)
         {
+            // Unpublished before it is closed, the way ConfigureDiagnosticsAsync does it for
+            // the same reason. RecordFailure reaches the sink through a static handle, so
+            // leaving it published meant every later failure wrote into a disposed logger and
+            // swallowed the ObjectDisposedException — and the handle went on holding the
+            // logger for the life of the process.
+            _viewModel.ConfigureDiagnostics(null);
             await _diagnostics.DisposeAsync();
             _diagnostics = null;
         }

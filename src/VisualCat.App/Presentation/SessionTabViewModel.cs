@@ -104,6 +104,54 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private readonly string _sessionPath;
     private readonly SessionViewStore _viewStore;
     private readonly SemaphoreSlim _loadLock = new(1, 1);
+
+    /// <summary>
+    /// Cancelled at the top of <see cref="DisposeAsync"/>, before it waits for
+    /// <see cref="_loadLock"/>.
+    /// </summary>
+    /// <remarks>
+    /// Every reader that can hold the load lock for an unbounded time takes a token linked
+    /// to this one. Paging every row of a view is the case that mattered: it holds the lock
+    /// across the whole walk, its only cancellation lived in the view that started it, and
+    /// nothing cancelled that when the tab closed — so <see cref="DisposeAsync"/> queued
+    /// behind a load that was still appending rows to the session it was tearing down, and
+    /// the tab stayed on screen until the walk finished because
+    /// <c>WorkspaceViewModel.CloseAsync</c> raises <c>TabRemoved</c> only after disposal
+    /// returns. Closing the application went the same way, with no window left to explain
+    /// why the process would not exit.
+    /// </remarks>
+    private readonly CancellationTokenSource _lifetime = new();
+
+    /// <summary>
+    /// A source cancelled by <paramref name="cancellationToken"/> or by the session
+    /// closing, or null when the session has already closed.
+    /// </summary>
+    /// <remarks>
+    /// The null answer is not only the <see cref="IsDisposed"/> check: disposal can also
+    /// complete between that check and this call, and
+    /// <see cref="CancellationTokenSource.CreateLinkedTokenSource(CancellationToken, CancellationToken)"/>
+    /// throws <see cref="ObjectDisposedException"/> on a disposed source — including one
+    /// that was cancelled before it was disposed, which is the order
+    /// <see cref="DisposeAsync"/> uses. Callers treat null the way they treat a session
+    /// that closed underneath them, which is what it is.
+    /// </remarks>
+    private CancellationTokenSource? LinkToLifetime(CancellationToken cancellationToken)
+    {
+        if (IsDisposed)
+        {
+            return null;
+        }
+
+        try
+        {
+            return CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        }
+        catch (ObjectDisposedException)
+        {
+            return null;
+        }
+    }
+
     private CancellationTokenSource _queryCancellation = new();
     private SessionSnapshot? _snapshot;
     private HeatMapResult? _heatMap;
@@ -633,6 +681,13 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
     public async Task LoadSnapshotAsync(bool final, CancellationToken cancellationToken = default)
     {
+        // A live capture's progress reporter republishes through the dispatcher, so a
+        // republication raised before the tab closed can still arrive after it has.
+        if (IsDisposed)
+        {
+            return;
+        }
+
         var refreshUnchangedSnapshot = false;
         var announceOpened = (VisualCat.Domain.Sessions.SessionDescriptor?)null;
         await _loadLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -847,10 +902,26 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     /// </summary>
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
+        // See LoadEntryPagesAsync: a queued refresh can land after the tab has closed, and
+        // disposal has already taken the query cancellation apart by then.
+        if (IsDisposed)
+        {
+            return;
+        }
+
         var detailRange = _detailRange;
         var detailLevel = _detailLevel;
         var generation = Interlocked.Increment(ref _queryGeneration);
-        var previous = Interlocked.Exchange(ref _queryCancellation, CancellationTokenSource.CreateLinkedTokenSource(cancellationToken));
+
+        // Linked to the session lifetime as well as to the caller, so a refresh that wins
+        // the race against disposal is born cancelled rather than running a query set
+        // against a snapshot that is about to be released.
+        if (LinkToLifetime(cancellationToken) is not { } replacement)
+        {
+            return;
+        }
+
+        var previous = Interlocked.Exchange(ref _queryCancellation, replacement);
         previous.Cancel();
         previous.Dispose();
         var token = _queryCancellation.Token;
@@ -1218,6 +1289,14 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
     private async Task LoadEntryPagesAsync(bool loadAll, CancellationToken cancellationToken)
     {
+        // A view reacts to this tab through the dispatcher, so a request raised before the
+        // tab closed can still arrive after it has. LinkToLifetime below declines those too;
+        // taking it here as well keeps a late arrival from claiming the in-progress flag.
+        if (IsDisposed)
+        {
+            return;
+        }
+
         // Button events can be delivered twice before the first query reaches the lock.
         // Treat paging as one operation rather than queuing surprise extra pages.
         if (Interlocked.CompareExchange(ref _entryLoadInProgress, 1, 0) != 0)
@@ -1226,14 +1305,27 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         }
 
         var lockHeld = false;
+
+        // Linked to the session lifetime so that closing the tab ends the walk instead of
+        // queueing behind it. The caller's own token still means what it meant: a reader
+        // who presses Stop gets the cancellation they asked for, and the rows already
+        // loaded stay on screen.
+        using var linked = LinkToLifetime(cancellationToken);
+        if (linked is null)
+        {
+            Interlocked.Exchange(ref _entryLoadInProgress, 0);
+            return;
+        }
+
+        var token = linked.Token;
         try
         {
             await Dispatcher.UIThread.InvokeAsync(NotifyEntryLoadState);
-            await _loadLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await _loadLock.WaitAsync(token).ConfigureAwait(false);
             lockHeld = true;
             while (true)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                token.ThrowIfCancellationRequested();
                 var snapshot = _snapshot;
                 var viewport = Viewport;
                 var cursor = _nextEntryCursor;
@@ -1254,8 +1346,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                         cursor,
                         pageSize,
                         generation,
-                        cancellationToken),
-                    cancellationToken).ConfigureAwait(false);
+                        token),
+                    token).ConfigureAwait(false);
                 if (generation != Volatile.Read(ref _queryGeneration) ||
                     snapshot.Generation != _snapshot?.Generation ||
                     !Equals(cursor, _nextEntryCursor))
@@ -1280,6 +1372,13 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     return;
                 }
             }
+        }
+        catch (OperationCanceledException) when (IsDisposed && !cancellationToken.IsCancellationRequested)
+        {
+            // The session closed underneath this walk. That is not the caller's
+            // cancellation and must not be reported as one: the view that started the load
+            // turns an unexpected exception into a "Failed ·" status line, and there is
+            // neither anything to say nor anyone left to say it to.
         }
         finally
         {
@@ -1606,7 +1705,14 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         int after = 5,
         CancellationToken cancellationToken = default)
     {
-        await _loadLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        // See LoadEntryPagesAsync: a queued request can land after the tab has closed.
+        using var linked = LinkToLifetime(cancellationToken);
+        if (linked is null)
+        {
+            return;
+        }
+
+        await _loadLock.WaitAsync(linked.Token).ConfigureAwait(false);
         try
         {
             var snapshot = _snapshot;
@@ -1719,7 +1825,13 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(entries);
-        await _loadLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        // See LoadEntryPagesAsync: a queued request can land after the tab has closed. The
+        // caller is copying to the clipboard, and a closed session has nothing to copy — so
+        // unlike the others this one says so rather than answering with nothing.
+        using var linked = LinkToLifetime(cancellationToken)
+            ?? throw new ObjectDisposedException(nameof(SessionTabViewModel));
+        await _loadLock.WaitAsync(linked.Token).ConfigureAwait(false);
         try
         {
             var snapshot = _snapshot;
@@ -1739,7 +1851,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             var builder = new StringBuilder();
             foreach (var entry in selected)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                linked.Token.ThrowIfCancellationRequested();
                 if (entry.Raw.Length > 16 * 1024 * 1024)
                 {
                     throw new InvalidDataException("A selected raw record exceeds the clipboard safety limit.");
@@ -1747,7 +1859,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
                 var bytes = new byte[entry.Raw.Length];
                 stream.Position = entry.Raw.Offset;
-                await stream.ReadExactlyAsync(bytes, cancellationToken).ConfigureAwait(false);
+                await stream.ReadExactlyAsync(bytes, linked.Token).ConfigureAwait(false);
                 builder.Append(Encoding.UTF8.GetString(bytes));
             }
 
@@ -2030,6 +2142,11 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             Dispatcher.UIThread.Post(StopCaptureHeartbeat);
         }
 
+        // First, and before anything here waits on the load lock. Every reader that can
+        // hold that lock for an unbounded time is linked to this, so cancelling it turns
+        // the wait below from "however long a walk over the whole session takes" into a
+        // wait for those readers to notice and leave.
+        _lifetime.Cancel();
         _queryCancellation.Cancel();
         _queryCancellation.Dispose();
         var templateDebounce = Interlocked.Exchange(ref _templateDebounce, null);
@@ -2062,6 +2179,10 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         }
 
         _loadLock.Dispose();
+
+        // Last: every reader linked to this token has left the lock by now, so nothing can
+        // still be building a linked source from it.
+        _lifetime.Dispose();
     }
 
     private async Task UpdateFilterAsync(FilterSpec filter)

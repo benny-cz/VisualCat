@@ -30,11 +30,23 @@ public sealed class SegmentSnapshot : IDisposable
 {
     private const int FilterCacheCapacity = 64;
 
+    /// <summary>
+    /// How many derived aggregates one segment keeps. Each is far larger than a bitmap — a
+    /// facet tally holds one entry per distinct value in the segment — so this is small where
+    /// <see cref="FilterCacheCapacity"/> is generous. One filter needs seven: the level and
+    /// timestamp summary plus one tally per facet dimension, so this holds a couple of
+    /// filters' worth and evicts the rest.
+    /// </summary>
+    private const int AggregateCacheCapacity = 16;
+
     private readonly MappedColumn?[] _columns = new MappedColumn?[SegmentFileContract.ColumnCount];
     private readonly Lock _columnLock = new();
     private readonly Dictionary<string, (RankBitmap Bitmap, LinkedListNode<string> Node)> _filterCache = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _filterLru = [];
     private readonly Lock _filterLock = new();
+    private readonly Dictionary<string, (object Value, LinkedListNode<string> Node)> _aggregateCache = new(StringComparer.Ordinal);
+    private readonly LinkedList<string> _aggregateLru = [];
+    private readonly Lock _aggregateLock = new();
     private Dictionary<LogLevel, RankBitmap>? _severity;
     private int _references = 1;
     private bool _disposed;
@@ -276,6 +288,71 @@ public sealed class SegmentSnapshot : IDisposable
         }
     }
 
+    /// <summary>
+    /// Caches a value derived from this segment's immutable contents.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A published segment never changes, so anything computed from it under a given filter
+    /// is a constant. Statistics and the facet tallies are exactly that, and they were being
+    /// recomputed for every segment in the session on every published generation: seven full
+    /// passes over every entry ever captured, several seconds of them once a capture reached
+    /// a few million entries, while the heat map beside them answered in three milliseconds
+    /// off rank bitmaps. Caching the per-segment contribution here rather than in the query
+    /// engine keeps the engine stateless and makes invalidation structural — compaction
+    /// replaces a segment with a new instance, and disposal releases the cache with the
+    /// mappings.
+    /// </para>
+    /// <para>
+    /// <paramref name="cacheable"/> exists because these values are unbounded in a way
+    /// bitmaps are not. A tally over a high-cardinality dimension can hold an entry per
+    /// entry in the segment, which is worth neither the memory nor the eviction pressure it
+    /// would put on the rest of the cache, so an oversized result is returned and forgotten.
+    /// </para>
+    /// </remarks>
+    public T GetOrCreateAggregate<T>(string key, Func<T> factory, Func<T, bool>? cacheable = null)
+        where T : class
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        ArgumentNullException.ThrowIfNull(factory);
+        lock (_aggregateLock)
+        {
+            if (_aggregateCache.TryGetValue(key, out var existing))
+            {
+                _aggregateLru.Remove(existing.Node);
+                _aggregateLru.AddFirst(existing.Node);
+                return (T)existing.Value;
+            }
+        }
+
+        // Built outside the lock: this is the expensive pass the cache exists to avoid, and
+        // holding the lock across it would serialize every segment in the session behind
+        // whichever one is currently being summarized.
+        var created = factory();
+        if (cacheable is not null && !cacheable(created))
+        {
+            return created;
+        }
+
+        lock (_aggregateLock)
+        {
+            if (_aggregateCache.TryGetValue(key, out var raced))
+            {
+                return (T)raced.Value;
+            }
+
+            var node = _aggregateLru.AddFirst(key);
+            _aggregateCache.Add(key, (created, node));
+            while (_aggregateCache.Count > AggregateCacheCapacity && _aggregateLru.Last is { } last)
+            {
+                _aggregateCache.Remove(last.Value);
+                _aggregateLru.RemoveLast();
+            }
+
+            return created;
+        }
+    }
+
     public NormalizedEntry ReadEntry(
         int index,
         Guid sessionId,
@@ -368,6 +445,12 @@ public sealed class SegmentSnapshot : IDisposable
         {
             _filterCache.Clear();
             _filterLru.Clear();
+        }
+
+        lock (_aggregateLock)
+        {
+            _aggregateCache.Clear();
+            _aggregateLru.Clear();
         }
     }
 

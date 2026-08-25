@@ -168,23 +168,28 @@ public static class SessionQueryEngine
         InstantUs? last = null;
         long timed = 0;
 
+        // One fingerprint for the whole pass rather than one per segment: it hashes the
+        // entire filter, and with the scans below now answered from cache it would otherwise
+        // be a visible share of the query's remaining cost.
+        var fingerprint = filter.Fingerprint();
+        var storageOrder = LogLevels.StorageOrder;
         foreach (var segment in snapshot.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var active = ActiveBitmap(snapshot, segment, filter);
-            var (start, end) = RangeIndices(segment, filter.TimeRange);
-            for (var index = start; index < end; index++)
+            var summary = LevelSummary(snapshot, segment, filter, fingerprint, cancellationToken);
+            if (summary.Timed == 0)
             {
-                if (!active[index])
-                {
-                    continue;
-                }
+                continue;
+            }
 
-                var timestamp = new InstantUs(segment.TimestampAt(index));
-                first = first is null || timestamp < first ? timestamp : first;
-                last = last is null || timestamp > last ? timestamp : last;
-                timed++;
-                Increment(levels, segment.LevelAt(index));
+            timed += summary.Timed;
+            var segmentFirst = new InstantUs(summary.First);
+            var segmentLast = new InstantUs(summary.Last);
+            first = first is null || segmentFirst < first ? segmentFirst : first;
+            last = last is null || segmentLast > last ? segmentLast : last;
+            for (var position = 0; position < storageOrder.Length; position++)
+            {
+                levels[storageOrder[position]] += summary.Levels[position];
             }
         }
 
@@ -197,12 +202,14 @@ public static class SessionQueryEngine
                 IncludedTags = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
                 ExcludedTags = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
             },
+            "tags",
             (segment, index) => snapshot.Tags[(int)segment.TagIdAt(index)],
             StringComparer.Ordinal,
             cancellationToken);
         var pids = CountFacet(
             snapshot,
             filter with { IncludedPids = ImmutableHashSet<int>.Empty, ExcludedPids = ImmutableHashSet<int>.Empty },
+            "pids",
             static (segment, index) => segment.PidAt(index),
             null,
             cancellationToken);
@@ -213,16 +220,19 @@ public static class SessionQueryEngine
                 IncludedProcesses = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
                 ExcludedProcesses = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
             },
+            "processes",
             (segment, index) =>
             {
                 var pid = segment.PidAt(index);
                 return snapshot.ResolveProcessName(pid, new InstantUs(segment.TimestampAt(index))) ?? $"PID {pid}";
             },
             StringComparer.Ordinal,
-            cancellationToken);
+            cancellationToken,
+            volatileAcrossGenerations: true);
         var tids = CountFacet(
             snapshot,
             filter with { IncludedTids = ImmutableHashSet<int>.Empty, ExcludedTids = ImmutableHashSet<int>.Empty },
+            "tids",
             static (segment, index) => segment.TidAt(index),
             null,
             cancellationToken);
@@ -233,6 +243,7 @@ public static class SessionQueryEngine
                 IncludedBuffers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
                 ExcludedBuffers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
             },
+            "buffers",
             (segment, index) => snapshot.Buffers[(int)segment.BufferIdAt(index)],
             StringComparer.Ordinal,
             cancellationToken);
@@ -243,6 +254,7 @@ public static class SessionQueryEngine
                 IncludedTemplates = ImmutableHashSet<uint>.Empty,
                 ExcludedTemplates = ImmutableHashSet<uint>.Empty,
             },
+            "templates",
             static (segment, index) => segment.TemplateIdAt(index),
             null,
             cancellationToken);
@@ -777,26 +789,148 @@ public static class SessionQueryEngine
             .Select(static pair => new FacetValue<T>(pair.Key, pair.Value))
             .ToArray();
 
+    /// <summary>
+    /// How many distinct values a per-segment tally may hold and still be worth keeping.
+    /// </summary>
+    /// <remarks>
+    /// A tally is one entry per distinct value in the segment, so a high-cardinality
+    /// dimension — thread ids on a busy device — can approach one entry per record. Past
+    /// this point the tally costs more memory than the scan it saves, and it would evict
+    /// every cheaper aggregate beside it, so it is used once and forgotten.
+    /// </remarks>
+    private const int MaximumCachedFacetValues = 8192;
+
+    /// <summary>
+    /// This segment's contribution to the level counts and the timestamp bounds, under one
+    /// filter. A published segment is immutable, so this is a constant and is cached on the
+    /// segment itself; see <see cref="SegmentSnapshot.GetOrCreateAggregate"/>.
+    /// </summary>
+    private sealed class SegmentLevelSummary
+    {
+        public required long[] Levels { get; init; }
+        public required long Timed { get; init; }
+        public required long First { get; init; }
+        public required long Last { get; init; }
+    }
+
+    private static SegmentLevelSummary LevelSummary(
+        SessionSnapshot snapshot,
+        SegmentSnapshot segment,
+        FilterSpec filter,
+        string fingerprint,
+        CancellationToken cancellationToken)
+    {
+        return segment.GetOrCreateAggregate(
+            "stats.levels|" + fingerprint,
+            () =>
+            {
+                var storageOrder = LogLevels.StorageOrder;
+                var counts = new long[storageOrder.Length];
+                var active = ActiveBitmap(snapshot, segment, filter);
+                var (start, end) = RangeIndices(segment, filter.TimeRange);
+                long timed = 0;
+                long first = 0;
+                long last = 0;
+                for (var index = start; index < end; index++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!active[index])
+                    {
+                        continue;
+                    }
+
+                    var timestamp = segment.TimestampAt(index);
+                    if (timed == 0)
+                    {
+                        first = timestamp;
+                        last = timestamp;
+                    }
+                    else
+                    {
+                        if (timestamp < first) { first = timestamp; }
+                        if (timestamp > last) { last = timestamp; }
+                    }
+
+                    timed++;
+                    var level = segment.LevelAt(index);
+                    for (var position = 0; position < storageOrder.Length; position++)
+                    {
+                        if (storageOrder[position] == level)
+                        {
+                            counts[position]++;
+                            break;
+                        }
+                    }
+                }
+
+                return new SegmentLevelSummary
+                {
+                    Levels = counts,
+                    Timed = timed,
+                    First = first,
+                    Last = last,
+                };
+            });
+    }
+
+    /// <summary>
+    /// Tallies one facet dimension across the session by folding each segment's own tally,
+    /// which is cached on the segment because a published segment cannot change.
+    /// </summary>
+    /// <remarks>
+    /// <c>volatileAcrossGenerations</c> is set where the selector reads something outside the
+    /// segment that a later generation can revise. Only the process dimension does: it
+    /// resolves a pid through the session's process-name table, and a capture keeps adding
+    /// observations to that table, so its key carries the table's size and a new sample
+    /// retires the cached tallies rather than leaving a stale attribution in place.
+    /// </remarks>
     private static Dictionary<T, long> CountFacet<T>(
         SessionSnapshot snapshot,
         FilterSpec filter,
+        string dimension,
         Func<SegmentSnapshot, int, T> selector,
         IEqualityComparer<T>? comparer,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool volatileAcrossGenerations = false)
         where T : notnull
     {
+        var key = string.Concat(
+            "facet.",
+            dimension,
+            "|",
+            filter.Fingerprint(),
+            volatileAcrossGenerations
+                ? "|pn=" + snapshot.ProcessNames.Count.ToString(CultureInfo.InvariantCulture)
+                : string.Empty);
+
         var values = new Dictionary<T, long>(comparer);
         foreach (var segment in snapshot.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var active = ActiveBitmap(snapshot, segment, filter);
-            var (start, end) = RangeIndices(segment, filter.TimeRange);
-            for (var index = start; index < end; index++)
-            {
-                if (active[index])
+            var tally = segment.GetOrCreateAggregate(
+                key,
+                () =>
                 {
-                    Increment(values, selector(segment, index));
-                }
+                    var counts = new Dictionary<T, long>(comparer);
+                    var active = ActiveBitmap(snapshot, segment, filter);
+                    var (start, end) = RangeIndices(segment, filter.TimeRange);
+                    for (var index = start; index < end; index++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (active[index])
+                        {
+                            Increment(counts, selector(segment, index));
+                        }
+                    }
+
+                    return counts;
+                },
+                static counts => counts.Count <= MaximumCachedFacetValues);
+
+            foreach (var (value, count) in tally)
+            {
+                values.TryGetValue(value, out var running);
+                values[value] = running + count;
             }
         }
 

@@ -147,6 +147,16 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     public void SuspendLiveViews() => _presence.IsWatching = false;
 
     /// <summary>
+    /// Whether this workspace still redraws itself when a live capture reports progress.
+    /// </summary>
+    /// <remarks>
+    /// Exposed for tests. The distinction matters off screen rather than on it: a workspace
+    /// that is still watching answers every progress report by reopening the session, which
+    /// is new segment mappings and a full query set for a frame nobody is going to see.
+    /// </remarks>
+    internal bool IsWatchingLiveViews => _presence.IsWatching;
+
+    /// <summary>
     /// Reports that the workspace is back on screen and brings every live tab up to date
     /// at once, so returning never shows a stale plot while the ordinary cadence catches
     /// up.

@@ -19,6 +19,37 @@ screenshot says which build it came from.
   capture continuing while VisualCat is backgrounded, then stopping and saving
   the local session.
 
+### Fixed
+- Statistics and facet counts no longer rescan the whole session on every
+  published snapshot. A published segment cannot change, so its contribution to
+  the level totals and to each facet tally is cached on the segment and folded
+  instead of recomputed, and the per-refresh cost stops growing with the
+  capture. One statistics pass over six million entries fell from about 1.4
+  seconds to about 3 milliseconds, and a live capture reaching twenty million
+  entries completed 656 view refreshes where it had managed 59. The process
+  facet is keyed on the session's process-name table as well, so a pid observed
+  under a new name retires the tallies that resolved it under the old one.
+- Following a growing file no longer allocates its one-mebibyte read buffer on
+  every poll. An idle follow spent about four mebibytes a second — some fifteen
+  gibibytes an hour — on the large-object heap, and the continuous gen2
+  collections that implies, to deliver nothing at all.
+- Closing a session tab, or the application, while **Load all** is still walking
+  the view no longer waits for that walk to finish. The session lifetime is
+  cancelled before disposal takes the load lock, so the tab closes at once
+  rather than staying on screen and unclosable until the last row arrives, and
+  shutdown no longer hangs with no window left to explain why. A reader's own
+  Stop still means what it meant, and the rows already loaded stay.
+- Android no longer leaves the previous `MainView` attached to the platform when
+  it recreates the activity. Two views were answering resume and pause: both
+  resumed live views and re-ran queries for a workspace nobody could see, and
+  both wrote their own open-workspace list to the same settings file, so the
+  abandoned view's stale tab set could be the one restored. The newest view
+  takes the subscriptions over, and the view it replaces stops watching its
+  workspace.
+- The diagnostics sink is now unpublished before it is closed, so a failure
+  recorded after shutdown no longer writes into a disposed logger and the static
+  handle no longer holds it for the life of the process.
+
 ## [2.0.8] - 2026-08-24
 
 ### Added

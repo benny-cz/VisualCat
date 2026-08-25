@@ -57,19 +57,30 @@ public sealed class GrowingFileLogSource : ILogSource, ISourceDefectSource
             _chunkBytes,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
         using var timer = new PeriodicTimer(_pollInterval);
+
+        // Hoisted out of the poll loop. Following a file means running this loop every
+        // _pollInterval for as long as the capture lasts, and the read buffer is a
+        // megabyte — comfortably a large-object allocation. Allocating it per iteration
+        // cost about four mebibytes a second, fifteen gibibytes an hour, and a continuous
+        // gen2 collection cadence while the followed file was idle and the loop was
+        // delivering nothing at all. The LOH is not compacted by default, so that is
+        // fragmentation as well as churn. One buffer for the life of the read costs one
+        // allocation instead.
+        var buffer = new byte[_chunkBytes];
         long offset = 0;
         while (!linked.IsCancellationRequested)
         {
-            var buffer = new byte[_chunkBytes];
             var read = await stream.ReadAsync(buffer, linked.Token).ConfigureAwait(false);
             if (read > 0)
             {
-                if (read != buffer.Length)
-                {
-                    Array.Resize(ref buffer, read);
-                }
-
-                yield return new SourceChunk(offset, buffer);
+                // The consumer keeps what it is handed past the next read, so the chunk
+                // has to be its own array rather than a window onto the shared buffer.
+                // Sized to the bytes actually read: a partial read used to allocate a
+                // full-sized array and then Array.Resize it, which is two allocations
+                // and a copy where one copy will do.
+                var chunk = GC.AllocateUninitializedArray<byte>(read);
+                buffer.AsSpan(0, read).CopyTo(chunk);
+                yield return new SourceChunk(offset, chunk);
                 offset += read;
                 continue;
             }
