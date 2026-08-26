@@ -215,6 +215,42 @@ public sealed class SessionStoreTests
         await Assert.ThrowsAnyAsync<IOException>(() => SessionStore.OpenAsync(session.Root));
     }
 
+    [Fact]
+    public async Task FinalizeWaitsForAWindowsScannerHoldingThePublishedManifest()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var session = new TemporarySession();
+        await using var writer = new SessionStoreWriter(session.Root, Settings(segmentEntries: 4), Identity());
+        writer.AddEntry(Entry(0));
+        await writer.PublishSnapshotAsync(Descriptor(), [], [], CancellationToken.None);
+
+        // Windows refuses an atomic replacement while any reader omitted delete sharing.
+        // Hold the manifest longer than the old 420 ms retry budget to model an indexer or
+        // antivirus scan; completing the import is preferable to losing it at the last step.
+        var manifestPath = Path.Combine(session.Root, "manifest.json");
+        using var heldByScanner = new FileStream(
+            manifestPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite);
+        var releaseScanner = Task.Run(async () =>
+        {
+            await Task.Delay(900);
+            heldByScanner.Dispose();
+        });
+
+        await writer.FinalizeAsync(Descriptor(), [], [], CancellationToken.None);
+        await releaseScanner;
+
+        using var snapshot = await SessionStore.OpenAsync(session.Root);
+        Assert.True(snapshot.Manifest.Finalized);
+        Assert.Single(snapshot.Segments);
+    }
+
     private static async Task WriteSessionAsync(string root, int segments, int perSegment)
     {
         await using var writer = new SessionStoreWriter(root, Settings(segmentEntries: 1024), Identity());

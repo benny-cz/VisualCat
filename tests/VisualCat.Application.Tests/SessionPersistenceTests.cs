@@ -369,6 +369,47 @@ public sealed class SessionPersistenceTests
         }
     }
 
+    [Fact]
+    public async Task PublishingACompletedDirectoryWaitsForATransientWindowsScanner()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-publish-{Guid.NewGuid():N}");
+        var source = Path.Combine(root, "ready.tmp");
+        var destination = Path.Combine(root, "ready.vcat");
+        Directory.CreateDirectory(source);
+        var payload = Path.Combine(source, "payload.bin");
+        await File.WriteAllBytesAsync(payload, [1, 2, 3]);
+        try
+        {
+            using var heldByScanner = new FileStream(
+                payload,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite);
+            var releaseScanner = Task.Run(async () =>
+            {
+                await Task.Delay(900);
+                heldByScanner.Dispose();
+            });
+
+            await FileSystemPublish.MoveDirectoryAsync(source, destination, CancellationToken.None);
+            await releaseScanner;
+
+            Assert.True(File.Exists(Path.Combine(destination, "payload.bin")));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
     private static string CreateFakeSession(string root, string name, DateTimeOffset updatedUtc, int bytes)
     {
         var path = Path.Combine(root, name);

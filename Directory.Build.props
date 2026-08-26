@@ -5,6 +5,9 @@
     <Authors>Marek Strihavka</Authors>
     <Product>VisualCat</Product>
     <VersionPrefix>2.0.9</VersionPrefix>
+    <!-- Android reserves two decimal digits for a rebuild of the same release
+         version. Keep this checked in so tags and local packaging are reproducible. -->
+    <VisualCatBuildNumber>0</VisualCatBuildNumber>
 
     <!-- The empty state prints the assembly's informational version, which is exactly what
          it should do — but the number it printed was 2.0.3 on a build made long after 2.0.3

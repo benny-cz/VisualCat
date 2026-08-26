@@ -248,8 +248,51 @@ public sealed class MainViewUpdateNoticeTests
 
             Assert.Equal("Downloading VisualCat 2.1.0 · 12.4 MB of 31.0 MB.", LaneText(view));
             Assert.Null(LaneAction(view));
-            Assert.Equal(MainView.NoticeKind.Completion, view.HoldingNoticeKind);
+            Assert.Equal(MainView.NoticeKind.Progress, view.HoldingNoticeKind);
             return Task.CompletedTask;
+        });
+
+    [AvaloniaFact]
+    public async Task AFailedUpdateUsesTheFailureTone() =>
+        await WithChannel(ReleaseChannel.Stable, view =>
+        {
+            view.RenderUpdateStatus(new AppUpdateStatus(AppUpdateState.Failed, Message: "The update did not start."));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(MainView.NoticeKind.Failure, view.HoldingNoticeKind);
+            return Task.CompletedTask;
+        });
+
+    /// <summary>A double tap cannot start two Play flows from one offer.</summary>
+    [AvaloniaFact]
+    public async Task ANoticeActionIgnoresDoubleTapsWhileItIsRunning() =>
+        await WithChannel(ReleaseChannel.Stable, async view =>
+        {
+            var invocations = 0;
+            // Set from the Avalonia test thread so the click handler drains before the view
+            // can be disposed; leaving a fire-and-forget UI continuation behind would itself
+            // contaminate the next isolated headless application.
+            var release = new TaskCompletionSource<bool>();
+            view.ShowNotice(
+                "VisualCat 2.1.0 is available on Google Play.",
+                MainView.NoticeKind.Completion,
+                new MainView.NoticeAction("Update", async () =>
+                {
+                    invocations++;
+                    await release.Task;
+                }));
+            Dispatcher.UIThread.RunJobs();
+
+            var action = LaneAction(view)!;
+            action.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            action.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(1, invocations);
+            Assert.False(action.IsEnabled);
+
+            release.SetResult(true);
+            await Task.Yield();
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(action.IsEnabled);
         });
 
     /// <summary>

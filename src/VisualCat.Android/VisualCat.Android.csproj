@@ -41,7 +41,7 @@
          because nothing constructs it. Enabling AndroidEnableProguard is the lever if that ever
          matters, and it is a separate change with its own verification. -->
     <VisualCatFakeAppUpdate Condition="'$(VisualCatFakeAppUpdate)' == ''">false</VisualCatFakeAppUpdate>
-    <DefineConstants Condition="'$(VisualCatFakeAppUpdate)' == 'true'">$(DefineConstants);VISUALCAT_FAKE_APP_UPDATE</DefineConstants>
+    <DefineConstants Condition="'$(VisualCatFakeAppUpdate)' == 'true' And '$(Configuration)' != 'Release'">$(DefineConstants);VISUALCAT_FAKE_APP_UPDATE</DefineConstants>
   </PropertyGroup>
   <PropertyGroup>
     <!-- Google Play orders uploads by versionCode alone and refuses to accept the
@@ -94,6 +94,12 @@
            Text="VersionPrefix '$(VersionPrefix)' has patch version $(AndroidReleasePatch); the Android version-code scheme allows 0-99. Widen the formula in VisualCat.Android.csproj before releasing it." />
     <Error Condition="$([MSBuild]::ValueOrDefault('$(VisualCatBuildNumber)', '0')) &gt; 99 Or $([MSBuild]::ValueOrDefault('$(VisualCatBuildNumber)', '0')) &lt; 0"
            Text="VisualCatBuildNumber is '$(VisualCatBuildNumber)'; the Android version-code scheme allows 0-99." />
+  </Target>
+  <!-- A fake Play manager in a package intended for users would turn every launch into a
+       fictional update offer. Fail closed even if a release command opts in by accident. -->
+  <Target Name="_VisualCatRejectFakeUpdateInRelease" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(Configuration)' == 'Release' And '$(VisualCatFakeAppUpdate)' == 'true'"
+           Text="VisualCatFakeAppUpdate is a device-test seam and cannot be enabled in Release." />
   </Target>
   <ItemGroup>
     <PackageReference Include="Avalonia.Android" />

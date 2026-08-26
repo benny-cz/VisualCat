@@ -370,6 +370,43 @@ public sealed class AppUpdatePolicyTests
         Assert.Contains("waits until the capture stops", prompt.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Some device policies allow only Play's immediate flow. The Store listing is not a safe
+    /// fallback during a recording because its Install button restarts the process too.
+    /// </summary>
+    [Fact]
+    public void AManualCheckCannotOpenPlayDuringACaptureWhenFlexibleUpdatesAreBlocked()
+    {
+        var prompt = AppUpdatePolicy.Decide(
+            Available(priority: 5) with { FlexibleAllowed = false, ImmediateAllowed = true },
+            ReleaseChannel.Stable,
+            liveCaptureRunning: true,
+            AppUpdateMemory.Empty,
+            Now,
+            manual: true);
+
+        Assert.NotNull(prompt);
+        Assert.Null(prompt.ActionLabel);
+        Assert.Equal(AppUpdatePromptAction.None, prompt.Action);
+        Assert.Contains("Stop the capture", prompt.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AFailedUpdateCannotOpenPlayDuringACapture()
+    {
+        var prompt = AppUpdatePolicy.Decide(
+            new AppUpdateStatus(AppUpdateState.Failed, Message: "The update did not start."),
+            ReleaseChannel.Stable,
+            liveCaptureRunning: true,
+            AppUpdateMemory.Empty,
+            Now);
+
+        Assert.NotNull(prompt);
+        Assert.Null(prompt.ActionLabel);
+        Assert.Equal(AppUpdatePromptAction.None, prompt.Action);
+        Assert.Contains("Stop the capture", prompt.Message, StringComparison.Ordinal);
+    }
+
     /// <summary>An interrupted install is also an install, and must wait for the recording too.</summary>
     [Fact]
     public void AnInterruptedUpdateIsNotResumableDuringACapture()

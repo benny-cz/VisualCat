@@ -53,10 +53,14 @@ jobs:
         run: dotnet build VisualCat.Desktop.slnx --no-restore --configuration Release
       - name: Test
         if: runner.os != 'Linux'
-        run: dotnet test VisualCat.Desktop.slnx --no-restore --no-build --configuration Release
+        # xUnit serialization applies inside one assembly; MSBuild otherwise launches all
+        # four test projects together. That let the heavy store suites starve the headless UI
+        # process while it was atomically replacing live manifests, producing intermittent
+        # Windows file-lock failures and the long-standing Ubuntu desktop-core instability.
+        run: dotnet test VisualCat.Desktop.slnx --no-restore --no-build --configuration Release -m:1
       - name: Test with coverage
         if: runner.os == 'Linux'
-        run: dotnet test VisualCat.Desktop.slnx --no-restore --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory TestResults
+        run: dotnet test VisualCat.Desktop.slnx --no-restore --no-build --configuration Release -m:1 --collect:"XPlat Code Coverage" --results-directory TestResults
       - name: Run README CLI smoke test
         if: runner.os == 'Linux'
         run: |
@@ -98,3 +102,18 @@ jobs:
       - name: Verify Android formatting
         run: dotnet format src/VisualCat.Android/VisualCat.Android.csproj --no-restore --verify-no-changes --verbosity diagnostic
       - run: dotnet build src/VisualCat.Android/VisualCat.Android.csproj --no-restore --configuration Release
+      - name: Verify Android release guards and prerelease version code
+        shell: pwsh
+        run: |
+          dotnet build src/VisualCat.Android/VisualCat.Android.csproj --no-restore --configuration Release -p:VisualCatFakeAppUpdate=true
+          if ($LASTEXITCODE -eq 0) { throw 'A Release build incorrectly accepted VisualCatFakeAppUpdate=true.' }
+
+          $properties = dotnet msbuild src/VisualCat.Android/VisualCat.Android.csproj -nologo `
+            -t:_VisualCatValidateVersionCode -p:Version=2.1.0-alpha.2 `
+            -p:VersionPrefix=2.1.0 -p:VisualCatBuildNumber=2 `
+            -getProperty:ApplicationVersion -getProperty:Version -getProperty:VersionPrefix | ConvertFrom-Json
+          if ($properties.Properties.Version -ne '2.1.0-alpha.2' -or
+              $properties.Properties.VersionPrefix -ne '2.1.0' -or
+              $properties.Properties.ApplicationVersion -ne '2010002') {
+            throw "Android prerelease version metadata is not reproducible: $($properties | ConvertTo-Json -Compress)"
+          }

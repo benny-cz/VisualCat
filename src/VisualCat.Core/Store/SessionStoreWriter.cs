@@ -874,7 +874,7 @@ public sealed class SessionStoreWriter : IAsyncDisposable
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            ReplaceWithRetry(temporary, path);
+            await ReplaceWithRetryAsync(temporary, path, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -899,9 +899,17 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     /// The window is milliseconds, but losing it failed the entire ingest, so a brief
     /// retry is worth far more than the certainty of giving up first time.
     /// </summary>
-    private static void ReplaceWithRetry(string temporary, string path)
+    private static async Task ReplaceWithRetryAsync(
+        string temporary,
+        string path,
+        CancellationToken cancellationToken)
     {
-        const int attempts = 8;
+        // Search indexers and real-time antivirus can retain a just-published manifest
+        // noticeably longer than a normal reader. The previous 420 ms linear budget still
+        // lost an otherwise complete import on a real workstation. Exponential backoff
+        // keeps the common sharing violation cheap while allowing about five seconds for
+        // an external scanner to release the file. Cancellation remains prompt throughout.
+        const int attempts = 17;
         for (var attempt = 1; ; attempt++)
         {
             try
@@ -912,7 +920,8 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             catch (Exception exception) when (
                 attempt < attempts && exception is UnauthorizedAccessException or IOException)
             {
-                Thread.Sleep(attempt * 15);
+                var delayMilliseconds = 25 * (1 << Math.Min(attempt - 1, 4));
+                await Task.Delay(delayMilliseconds, cancellationToken).ConfigureAwait(false);
             }
         }
     }

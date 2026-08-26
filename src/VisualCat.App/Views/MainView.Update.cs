@@ -189,7 +189,7 @@ public sealed partial class MainView
             return;
         }
 
-        ShowNotice("Asking Google Play about updates…");
+        ShowNotice("Asking Google Play about updates…", NoticeKind.Progress);
         try
         {
             var status = await check(_updateLifetime.Token).ConfigureAwait(true);
@@ -280,9 +280,15 @@ public sealed partial class MainView
         }
 
         _pendingUpdatePrompt = null;
+        var noticeKind = _lastUpdateStatus.State switch
+        {
+            AppUpdateState.Failed => NoticeKind.Failure,
+            AppUpdateState.Downloading => NoticeKind.Progress,
+            _ => prompt.Persistent ? NoticeKind.Completion : NoticeKind.Information,
+        };
         ShowNotice(
             prompt.Message,
-            prompt.Persistent ? NoticeKind.Completion : NoticeKind.Information,
+            noticeKind,
             prompt.ActionLabel is null
                 ? null
                 : new NoticeAction(prompt.ActionLabel, () => RunUpdateActionAsync(prompt.Action)),
@@ -354,6 +360,18 @@ public sealed partial class MainView
                     break;
 
                 case AppUpdatePromptAction.OpenStore:
+                    // The capture may have started after this button was rendered. Opening the
+                    // listing is not itself an install, but it exposes Play's install button,
+                    // which restarts the process without VisualCat's Stop-and-save drain.
+                    if (_viewModel.ActiveLiveCapture is not null)
+                    {
+                        ShowNotice(
+                            "Stop the capture before opening Google Play — installing an update restarts VisualCat.",
+                            NoticeKind.Completion);
+                        _updateNoticeRevision = _noticeRevision;
+                        break;
+                    }
+
                     if (PlatformSourceRegistry.OpenAppStoreListingAsync is { } openStore)
                     {
                         await openStore(_updateLifetime.Token).ConfigureAwait(true);
@@ -437,7 +455,13 @@ public sealed partial class MainView
             return;
         }
 
-        await launcher.LaunchUriAsync(new Uri(AppUpdatePolicy.ReleasesUrl)).ConfigureAwait(true);
+        if (!await launcher.LaunchUriAsync(new Uri(AppUpdatePolicy.ReleasesUrl)).ConfigureAwait(true))
+        {
+            ShowNotice(
+                $"The browser did not open. Releases are published at {AppUpdatePolicy.ReleasesUrl}",
+                NoticeKind.Failure);
+            _updateNoticeRevision = 0;
+        }
     }
 
     /// <summary>What this view remembers about update prompts, from the loaded settings.</summary>

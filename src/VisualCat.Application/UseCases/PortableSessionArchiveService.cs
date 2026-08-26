@@ -60,7 +60,8 @@ public static class PortableSessionArchiveService
                 }
             }
 
-            File.Move(temporaryArchive, output, true);
+            await FileSystemPublish.MoveFileAsync(temporaryArchive, output, overwrite: true, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch
         {
@@ -154,7 +155,8 @@ public static class PortableSessionArchiveService
                     string.Join("; ", report.Issues.Where(static issue => issue.IsError).Select(static issue => issue.Message)));
             }
 
-            Directory.Move(temporary, destination);
+            await FileSystemPublish.MoveDirectoryAsync(temporary, destination, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch
         {

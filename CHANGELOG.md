@@ -13,6 +13,8 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+## [2.0.9] - 2026-08-26
+
 ### Added
 - Android builds installed from Google Play now notice when a newer VisualCat is
   published and offer it in the status lane. The check is an inter-process call
@@ -25,6 +27,10 @@ screenshot says which build it came from.
   running Live capture, the Play flow that takes over the screen is never started
   during one, and an update that has finished downloading waits, saying that
   stopping the capture is what installs it, because installing restarts the app.
+- Added a concise, privacy-safe Android video for Google Play's
+  `FOREGROUND_SERVICE_DATA_SYNC` declaration. It demonstrates user-started Live
+  capture continuing while VisualCat is backgrounded, then stopping and saving
+  the local session.
 
 ### Changed
 - The Android version-code scheme gained an explicit build counter
@@ -35,6 +41,35 @@ screenshot says which build it came from.
   stranded.
 
 ### Fixed
+- An update path with no safe flexible-download flow no longer offers to open the
+  Play Store during a Live capture. The Store's own Install action can restart the
+  process just like an immediate in-app update, so the app now waits for Stop in
+  both cases and re-checks capture state when the button is tapped.
+- Update downloads and manual checks now use a persistent progress treatment,
+  failures use the error treatment, and action buttons ignore double taps while a
+  Play operation is already running. A Store or browser launch that fails is
+  reported instead of leaving the reader with an inert tap.
+- Disposed Play clients no longer publish a late listener callback into a rebuilt
+  activity, and listener teardown tolerates the Store process disappearing first.
+- Android release packaging now passes signing passwords through temporary
+  password files. This preserves whitespace exactly for `jarsigner`, keeps the
+  values off the child-process command line, and fixes AAB signing with the real
+  Play upload credentials.
+- Release packaging derives `VersionPrefix` from the requested semantic version,
+  passes the checked-in Android build counter explicitly, and verifies the AAB's
+  version code as well as the APK's. Release builds also fail closed if the
+  device-only fake Play manager is enabled accidentally.
+- CI and release preflight now serialize test projects as well as tests inside
+  the headless UI assembly. Running the store stress suites beside Avalonia could
+  starve its atomic manifest replacements into intermittent Windows file-lock
+  failures and destabilize the Ubuntu desktop-core job.
+- The Avalonia headless suite now keeps one compositor for the test assembly, as
+  recommended by Avalonia 12 for flaky teardown/re-initialization. Long runs no
+  longer occasionally rebuild the renderer from a thread that does not own it.
+- Finalizing a session, saving it, or extracting a portable archive now waits
+  through a bounded Windows search-indexer or antivirus lock. A brief scan of a
+  newly written manifest or directory can no longer discard an otherwise
+  complete import at its final atomic rename, and cancellation remains prompt.
 - Dismissing a downloaded update now means something. The prompt to install one
   is repeated on every return to the app for as long as the update is pending, so
   Dismiss used to be undone by the next glance at the screen — and the only answer
@@ -47,16 +82,6 @@ screenshot says which build it came from.
   could never apply; on a phone the text painted straight through the wordmark
   and off the screen. The same message is also no longer echoed into the command
   bar on Android, where the status lane below already shows it in full.
-
-## [2.0.9] - 2026-08-25
-
-### Added
-- Added a concise, privacy-safe Android video for Google Play's
-  `FOREGROUND_SERVICE_DATA_SYNC` declaration. It demonstrates user-started Live
-  capture continuing while VisualCat is backgrounded, then stopping and saving
-  the local session.
-
-### Fixed
 - Statistics and facet counts no longer rescan the whole session on every
   published snapshot. A published segment cannot change, so its contribution to
   the level totals and to each facet tally is cached on the segment and folded

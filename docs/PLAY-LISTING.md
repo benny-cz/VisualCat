@@ -248,7 +248,7 @@ do not add it to the current API-36 build pre-emptively.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version and an explicit build counter: `major*1000000 + minor*10000 + patch*100 + build`, so `2.0.9` → `2000900` and `2.1.0` with `-p:VisualCatBuildNumber=3` → `2010003`. See `docs/RELEASE-CHECKLIST.md`. |
+| versionCode | Derived from the release version and an explicit build counter: `major*1000000 + minor*10000 + patch*100 + build`, so `2.0.9` → `2000900` and `2.1.0` with `-VisualCatBuildNumber 3` → `2010003`. See `docs/RELEASE-CHECKLIST.md`. |
 | inAppUpdatePriority | Set per release through the Play Developer API before rollout; it cannot be changed afterwards. See `docs/RELEASE-CHECKLIST.md`. |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
@@ -267,16 +267,10 @@ with Android Wireless debugging; VisualCat-only capture works without setup.
 Everything is processed on the device.
 ```
 
-Release notes for the next release (362/500 characters):
+Release notes for `2.0.9` (458/500 characters):
 
 ```text
-VisualCat now tells you when a newer version is on Google Play, and offers to update from the status lane. It will not interrupt or install over a running Live capture: a downloaded update waits until you stop recording, because installing restarts the app. You can also ask any time from More, Check for updates. Nothing about you or your logs is sent anywhere.
-```
-
-Release notes for `2.0.9` (396/500 characters):
-
-```text
-Long captures now stay fast by reusing completed statistics instead of rescanning millions of entries. Closing a tab or the app during Load all now cancels promptly instead of hanging. Android activity recreation no longer leaves an old view running hidden queries or restoring stale tabs. Following a growing file also avoids repeated 1 MB allocations, reducing memory churn during idle periods.
+VisualCat now offers Google Play updates from the status lane and More → Check for updates, without interrupting or installing over a Live capture. Long captures stay fast by reusing completed statistics, and following growing files avoids repeated 1 MB allocations. Closing a tab or the app during Load all cancels promptly, while Android activity recreation no longer leaves an old view running hidden work. Nothing about you or your logs is sent anywhere.
 ```
 
 Release notes for `2.0.8` (443/500 characters):

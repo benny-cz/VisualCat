@@ -7301,3 +7301,46 @@ after a genuine interrupted Immediate flow, and a device with no Play Store. The
 first three need internal app sharing; the last needs non-GMS hardware. All four
 are release-checklist items rather than claims made here.
 
+### 22.2 Release audit and final 2.0.9 candidate
+
+The last two implementation commits and the untracked verification plan were
+audited against the merged code rather than taken as evidence by themselves.
+The audit and final release gate found and corrected six release-relevant gaps: a Store fallback could
+still expose an install during Live when Play disallowed flexible download; AAB
+signing split whitespace-containing passwords into extra `jarsigner` arguments;
+an explicitly requested prerelease did not override the checked-in
+`VersionPrefix` used by the Android version code; and a Release command could
+opt into the fake update manager. Long Release verification also reproduced two
+short Windows scanner locks at atomic publication boundaries: one while sealing
+a session manifest and one while publishing an extracted portable session. The
+policy now withholds every install route during capture, signing uses temporary
+password files, package metadata is derived and verified explicitly, Release
+fails closed on the fake seam, and completed session writes use a bounded,
+cancellation-aware backoff instead of losing the import to a transient lock.
+
+The same Samsung (`RFCRC0A9GND`, API 36) was clean-installed twice:
+
+| Case | Result |
+|---|---|
+| Fake beta offer | `2.1.0-beta.1` / code `2010001` offered fake `2.1.1`; the offer was complete, readable and had 48 dp **Update** and **Dismiss** actions. |
+| Flexible flow | Download completed and became an **Install** offer. The action button is disabled while its asynchronous step runs, and unit coverage proves a second tap cannot start a second flow. |
+| Downloaded update plus active Live | A full-device capture reached 85 lines/s. The lane said to stop the capture and carried **no install action**. **Filters**, **Plot**, **Split**, **Details**, and **Follow** were 48 dp tall with vertically centred content. |
+| Stop | The session sealed with 2,703 entries; the foreground service and active notification disappeared, and **Install** returned immediately without a resume. |
+| Exact signed Release APK | Clean install reported `versionName=2.0.9`, `versionCode=2000900`, target API 36 and no `DEBUGGABLE` flag. A side-loaded cold start made no Play query and raised no update banner. |
+| Manual check on the side-loaded Release | **More → Check for updates…** explained that the file-installed build cannot self-update and offered **Open releases** rather than contacting Play. |
+| Release VisualCat-only Live | The foreground data-sync service was visible 865 ms after the final Start tap. Scope guidance immediately explained why an idle own-app capture can be quiet; Stop removed the service and notification. |
+
+`tools/package-android.ps1 -Format both -Version 2.0.9` passed with the real Play
+upload key after the password-file correction. Both artifacts declare code
+`2000900`; carry API 31–36, arm64-v8a and x86_64; have all 194 native libraries
+16 KB aligned; contain the explicit Release permission allowlist with no
+`READ_LOGS`; and use upload certificate SHA-256
+`a715b0309589aa83dd21548d1959af4bb97b8df06d97fdae32715fbd6530e184`.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `VisualCat-Android-v2.0.9.aab` | 35,537,210 | `5b59a74bbf260ce70ad8f7352ab3a8a63884a2f14f5384ec16b61968bb2ff5b1` |
+| `VisualCat-Android-v2.0.9.apk` | 35,672,392 | `b9f0c6560838ccc929df3f6faf7dd4f239729251c760c3d124a402772c1c2415` |
+
+The remaining real-Play exclusions above still apply; the fake manager validates
+VisualCat's adapter, policy and UI, not Google's production consent surface.

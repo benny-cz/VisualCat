@@ -241,6 +241,14 @@ public static class AppUpdatePolicy
                 Persistent: true,
                 Snoozable: true),
 
+            // A Store listing can install and restart the app just as surely as the in-app
+            // immediate flow can. Do not put that escape hatch beside a running recording.
+            AppUpdateState.Failed when liveCaptureRunning => new AppUpdatePrompt(
+                $"{status.Message ?? "The update did not start."} Stop the capture before opening Google Play to retry.",
+                ActionLabel: null,
+                AppUpdatePromptAction.None,
+                Persistent: true),
+
             AppUpdateState.Failed => new AppUpdatePrompt(
                 status.Message ?? "The update did not start. Try again from the Play Store.",
                 "Open Play",
@@ -342,12 +350,19 @@ public static class AppUpdatePolicy
             // Play knows about a newer build but will not let this app start either flow —
             // an unmetered-only preference, a device policy. Sending the reader to the store
             // is the honest remaining move; offering an Update button that cannot work is not.
-            return new AppUpdatePrompt(
-                $"{subject} is available, but Google Play cannot start the update from here.",
-                "Open Play",
-                AppUpdatePromptAction.OpenStore,
-                Persistent: true,
-                Snoozable: true);
+            return liveCaptureRunning
+                ? new AppUpdatePrompt(
+                    $"{subject} is available, but Google Play cannot download it while this capture is running. Stop the capture to continue.",
+                    ActionLabel: null,
+                    AppUpdatePromptAction.None,
+                    Persistent: true,
+                    Snoozable: true)
+                : new AppUpdatePrompt(
+                    $"{subject} is available, but Google Play cannot start the update from here.",
+                    "Open Play",
+                    AppUpdatePromptAction.OpenStore,
+                    Persistent: true,
+                    Snoozable: true);
         }
 
         if (liveCaptureRunning)

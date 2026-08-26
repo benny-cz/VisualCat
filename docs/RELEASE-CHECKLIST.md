@@ -73,7 +73,7 @@ and an explicit build counter:
 versionCode = major * 1000000 + minor * 10000 + patch * 100 + VisualCatBuildNumber
 ```
 
-so 2.0.9 is `2000900`, and `-p:VisualCatBuildNumber=3` on 2.1.0 gives `2010003`.
+so 2.0.9 is `2000900`, and `-VisualCatBuildNumber 3` on 2.1.0 gives `2010003`.
 Each field owns two digits and the build fails rather than wrap. The prerelease
 suffix is **not** an input, so two builds of the same version — `v2.1.0-beta.1`
 and `v2.1.0-beta.2` — need the counter bumped or Play rejects the second.
@@ -103,7 +103,7 @@ the screen. Default low and escalate deliberately.
 - [ ] `inAppUpdatePriority` is set for this release before rolling out — it cannot be corrected afterwards.
 - [ ] The release is promoted rather than rebuilt, or `VisualCatBuildNumber` was bumped and the reason recorded.
 - [ ] In-app update is verified end to end against the previous build through **internal app sharing**, which is the only way to exercise the real Play client. Upload build N, install it from the internal-app-sharing link, upload build N+1, then launch build N. Both builds must carry an alpha or beta version — a `Development` build does not prompt, so the test would silently prove nothing:
-      `pwsh ./tools/package-android.ps1 -Format aab -Version 2.1.0-alpha.1` then the same with `-Version 2.1.0-alpha.2 -p:VisualCatBuildNumber=2`.
+      `pwsh ./tools/package-android.ps1 -Format aab -Version 2.1.0-alpha.1` then the same with `-Version 2.1.0-alpha.2 -VisualCatBuildNumber 2`.
 - [ ] A staged production rollout is at 100% before anyone concludes an update "did not appear": a release held at 20% is offered only to the fraction Play has admitted, and the app cannot tell that apart from being up to date — nor should it try.
 - [ ] The Play Core dependency still declares no permission and no exported component. The packaging script asserts the permissions; check components by hand when the binding version moves.
 

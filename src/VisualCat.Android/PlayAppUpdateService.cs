@@ -319,7 +319,7 @@ internal sealed class PlayAppUpdateService : Java.Lang.Object, IInstallStateUpda
     /// <summary>Play reported progress on a flexible download.</summary>
     public void OnStateUpdate(InstallState? state)
     {
-        if (state is null)
+        if (_disposed || state is null)
         {
             return;
         }
@@ -497,8 +497,20 @@ internal sealed class PlayAppUpdateService : Java.Lang.Object, IInstallStateUpda
             return;
         }
 
-        _manager.UnregisterListener(this);
-        _listening = false;
+        try
+        {
+            _manager.UnregisterListener(this);
+        }
+        catch (Exception exception)
+        {
+            // Play can tear its binder down before the activity finishes disposing. The
+            // listener is already unreachable with this service, so cleanup remains complete.
+            global::Android.Util.Log.Info(LogTag, $"Update listener was already gone: {exception.GetType().Name}");
+        }
+        finally
+        {
+            _listening = false;
+        }
     }
 
     protected override void Dispose(bool disposing)
@@ -506,15 +518,7 @@ internal sealed class PlayAppUpdateService : Java.Lang.Object, IInstallStateUpda
         if (disposing && !_disposed)
         {
             _disposed = true;
-            try
-            {
-                StopListening();
-            }
-            catch (Java.Lang.Throwable)
-            {
-                // A Play client whose process is going away refuses the call, and there is
-                // nothing left for the unregistration to protect.
-            }
+            StopListening();
 
             _offer = null;
         }
@@ -590,6 +594,11 @@ internal sealed class PlayAppUpdateService : Java.Lang.Object, IInstallStateUpda
     /// </remarks>
     internal void OnFlowResult(int resultCode)
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         switch (resultCode)
         {
             case (int)Result.Ok:

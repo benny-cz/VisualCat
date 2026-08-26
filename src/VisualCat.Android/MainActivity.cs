@@ -298,30 +298,33 @@ public sealed class MainActivity : AvaloniaMainActivity
         return service.CompleteAsync(cancellationToken);
     }
 
-    private static Task OpenAppStoreListingCurrentAsync(CancellationToken cancellationToken)
+    private static async Task OpenAppStoreListingCurrentAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (s_current?.TryGetTarget(out var activity) != true || activity is null)
         {
-            return Task.CompletedTask;
+            throw new InvalidOperationException("The Play Store cannot be opened because VisualCat is no longer active.");
         }
 
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken));
         activity.RunOnUiThread(() =>
         {
             try
             {
                 PlayAppUpdateService.OpenStoreListing(activity);
+                completion.TrySetResult(true);
             }
             catch (Exception exception)
             {
-                // Same shape as OpenWirelessDebuggingSettingsAsync's caller: a store that will
-                // not open is not worth an error report the reader cannot act on.
                 global::Android.Util.Log.Warn(
                     "VisualCat.AppUpdate",
                     $"Could not open the Play listing: {exception.GetType().Name}");
+                completion.TrySetException(new InvalidOperationException(
+                    "Google Play could not be opened on this device.", exception));
             }
         });
-        return Task.CompletedTask;
+        await completion.Task.ConfigureAwait(false);
     }
 
     private void OnUpdateFlowResult(int resultCode) => _appUpdateService?.OnFlowResult(resultCode);

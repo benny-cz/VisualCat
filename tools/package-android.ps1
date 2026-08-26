@@ -48,10 +48,16 @@
 
         major * 1000000 + minor * 10000 + patch * 100 + build
 
-    so 2.0.9 -> 2000900 and 2.1.0 built with -p:VisualCatBuildNumber=3 -> 2010003.
+    so 2.0.9 -> 2000900 and 2.1.0 built with -VisualCatBuildNumber 3 -> 2010003.
     Play refuses a code it has already seen on any track, so a second build of the
     same version needs the build counter bumped rather than this parameter set;
     overriding here is for re-uploading an unchanged version.
+
+.PARAMETER VisualCatBuildNumber
+    The 0-99 counter reserved for rebuilding the same three-part release version.
+    Defaults to VisualCatBuildNumber in Directory.Build.props, then zero. This is
+    passed explicitly to MSBuild so a tag whose prerelease suffix differs from the
+    checked-in version still receives the intended, reproducible versionCode.
 
 .PARAMETER Output
     Directory that receives the final named artifacts. Defaults to
@@ -77,6 +83,7 @@ param(
     [string]$KeyPassword = $env:ANDROID_KEY_PASSWORD,
     [string]$Version,
     [string]$VersionCode,
+    [int]$VisualCatBuildNumber = -1,
     [string]$Output = 'artifacts/android',
     [switch]$SkipBuild
 )
@@ -110,12 +117,46 @@ $requiredUploadCertificateSha256 = 'a715b0309589aa83dd21548d1959af4bb97b8df06d97
 
 # --- inputs --------------------------------------------------------------
 
+$props = Get-Content -Raw -LiteralPath (Join-Path $repository 'Directory.Build.props')
 if (-not $Version) {
-    $props = Get-Content -Raw -LiteralPath (Join-Path $repository 'Directory.Build.props')
     if ($props -notmatch '<VersionPrefix>\s*(?<version>[^<]+?)\s*</VersionPrefix>') {
         throw 'Directory.Build.props does not declare <VersionPrefix>, so -Version is required.'
     }
     $Version = $Matches['version']
+}
+
+$semanticVersionPattern = '^(?<prefix>(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*))(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
+if ($Version -notmatch $semanticVersionPattern) {
+    throw "Version '$Version' is not a three-part semantic version with an optional prerelease/build suffix."
+}
+$versionPrefix = $Matches['prefix']
+$versionMajor = [int64]$Matches['major']
+$versionMinor = [int64]$Matches['minor']
+$versionPatch = [int64]$Matches['patch']
+
+if ($VisualCatBuildNumber -eq -1) {
+    $VisualCatBuildNumber = if ($props -match '<VisualCatBuildNumber>\s*(?<build>\d+)\s*</VisualCatBuildNumber>') {
+        [int]$Matches['build']
+    } else {
+        0
+    }
+}
+if ($VisualCatBuildNumber -lt 0 -or $VisualCatBuildNumber -gt 99) {
+    throw "VisualCatBuildNumber is '$VisualCatBuildNumber'; the Android version-code scheme allows 0-99."
+}
+if ($versionMinor -gt 99 -or $versionPatch -gt 99) {
+    throw "Version '$Version' cannot use the Android version-code scheme; minor and patch must each be 0-99."
+}
+
+$derivedVersionCode = ($versionMajor * 1000000) + ($versionMinor * 10000) + ($versionPatch * 100) + $VisualCatBuildNumber
+$expectedVersionCode = if ($VersionCode) {
+    if ($VersionCode -notmatch '^[1-9]\d*$') { throw "VersionCode '$VersionCode' is not a positive integer." }
+    [int64]$VersionCode
+} else {
+    $derivedVersionCode
+}
+if ($expectedVersionCode -gt 2100000000) {
+    throw "Android versionCode $expectedVersionCode exceeds Google Play's 2100000000 ceiling."
 }
 
 if (-not $KeyPassword) { $KeyPassword = $StorePassword }
@@ -395,6 +436,24 @@ function Get-SignerCertificateDigest {
 # --- build ---------------------------------------------------------------
 
 $results = [Collections.Generic.List[object]]::new()
+$signingSecretDirectory = $null
+$storePasswordFile = $null
+$keyPasswordFile = $null
+try {
+    if (-not $SkipBuild) {
+        # The .NET Android signer accepts the documented file: prefix for both APKs and
+        # App Bundles. Literal passwords are unsafe here in addition to being fragile:
+        # jarsigner tokenizes an MSBuild property containing whitespace and reports the
+        # password fragments as extra aliases. Files preserve every character and keep
+        # credentials out of the child process's command line.
+        $signingSecretDirectory = Join-Path ([IO.Path]::GetTempPath()) "visualcat-signing-$([Guid]::NewGuid().ToString('N'))"
+        [IO.Directory]::CreateDirectory($signingSecretDirectory) | Out-Null
+        $storePasswordFile = Join-Path $signingSecretDirectory 'store-password.txt'
+        $keyPasswordFile = Join-Path $signingSecretDirectory 'key-password.txt'
+        $utf8NoBom = [Text.UTF8Encoding]::new($false)
+        [IO.File]::WriteAllText($storePasswordFile, $StorePassword, $utf8NoBom)
+        [IO.File]::WriteAllText($keyPasswordFile, $KeyPassword, $utf8NoBom)
+    }
 
 foreach ($packageFormat in $formats) {
     $artifact = Join-Path $outputRoot "VisualCat-Android-v$Version.$packageFormat"
@@ -419,13 +478,15 @@ foreach ($packageFormat in $formats) {
         '--configuration', 'Release'
         '--output', $stagingPath
         "-p:Version=$Version"
+        "-p:VersionPrefix=$versionPrefix"
+        "-p:VisualCatBuildNumber=$VisualCatBuildNumber"
         "-p:ApplicationDisplayVersion=$Version"
         "-p:AndroidPackageFormat=$packageFormat"
         '-p:AndroidKeyStore=true'
         "-p:AndroidSigningKeyStore=$Keystore"
-        "-p:AndroidSigningStorePass=$StorePassword"
+        "-p:AndroidSigningStorePass=file:$storePasswordFile" # gitleaks:allow -- only a temporary filename; the credential is never embedded.
         "-p:AndroidSigningKeyAlias=$KeyAlias"
-        "-p:AndroidSigningKeyPass=$KeyPassword"
+        "-p:AndroidSigningKeyPass=file:$keyPasswordFile" # gitleaks:allow -- only a temporary filename; the credential is never embedded.
     )
     if ($VersionCode) { $arguments += "-p:ApplicationVersion=$VersionCode" }
 
@@ -443,6 +504,20 @@ foreach ($packageFormat in $formats) {
     Copy-Item -LiteralPath $signed.FullName -Destination $artifact -Force
     $results.Add([pscustomobject]@{ Format = $packageFormat; Path = $artifact })
 }
+}
+finally {
+    # Each file is an exact path created above; remove it individually so cleanup never
+    # performs a recursive delete against a computed directory.
+    if ($storePasswordFile -and (Test-Path -LiteralPath $storePasswordFile)) {
+        Remove-Item -LiteralPath $storePasswordFile -Force
+    }
+    if ($keyPasswordFile -and (Test-Path -LiteralPath $keyPasswordFile)) {
+        Remove-Item -LiteralPath $keyPasswordFile -Force
+    }
+    if ($signingSecretDirectory -and (Test-Path -LiteralPath $signingSecretDirectory)) {
+        Remove-Item -LiteralPath $signingSecretDirectory -Force
+    }
+}
 
 # --- verify --------------------------------------------------------------
 
@@ -457,7 +532,6 @@ if ($projectText -notmatch '<TargetFramework>\s*(?<framework>[^<]+?)\s*</TargetF
 $intermediate = Join-Path $repository "src/VisualCat.Android/obj/Release/$($Matches['framework'])"
 $tools = Get-AndroidBuildEnvironment -IntermediatePath $intermediate
 
-$expectedVersionCode = $VersionCode
 $signingCertificate = $null
 $summary = [Collections.Generic.List[string]]::new()
 
@@ -562,6 +636,13 @@ foreach ($result in $results) {
         if ($manifestText -notmatch [regex]::Escape($Version)) {
             throw "$name does not declare versionName '$Version'."
         }
+        if ($manifestText -notmatch 'android:versionCode="(?<code>\d+)"') {
+            throw "$name does not declare an Android versionCode in its base manifest."
+        }
+        $versionCodeFound = [int64]$Matches['code']
+        if ($versionCodeFound -ne $expectedVersionCode) {
+            throw "$name declares versionCode $versionCodeFound but $expectedVersionCode was requested."
+        }
         foreach ($permission in $requiredReleasePermissions) {
             if ($manifestText -notmatch [regex]::Escape($permission)) {
                 throw "$name is missing required Play/Release permission '$permission' in its base manifest."
@@ -614,7 +695,8 @@ foreach ($result in $results) {
 
         $libraries = Test-PackagePageAlignment -Package $result.Path -LibraryPrefix 'base/lib/'
 
-        $summary.Add("- ``$name`` ($size): signed App Bundle for $expectedApplicationId $Version, " +
+        $summary.Add("- ``$name`` ($size): signed App Bundle for $expectedApplicationId $Version " +
+            "(versionCode $versionCodeFound), " +
             "$libraries native libraries 16 KB aligned")
         $summary.Add("  - signed by $($signer.Subject), valid until $($signer.Expires.ToString('yyyy-MM-dd'))")
         $summary.Add("  - Play/Release permissions verified: Wireless ADB and user-visible background-capture permissions present; READ_LOGS absent")

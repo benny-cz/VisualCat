@@ -66,7 +66,8 @@ public static class SessionSaveService
                     $"Saved session verification failed: {string.Join("; ", report.Issues.Select(static issue => issue.Message))}");
             }
 
-            Directory.Move(temporary, destinationRoot);
+            await FileSystemPublish.MoveDirectoryAsync(temporary, destinationRoot, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch
         {
@@ -148,6 +149,7 @@ public static class SessionSaveService
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        File.Move(temporary, path, true);
+        await FileSystemPublish.MoveFileAsync(temporary, path, overwrite: true, cancellationToken)
+            .ConfigureAwait(false);
     }
 }

@@ -22,6 +22,7 @@ public sealed partial class MainView
     private DispatcherTimer? _noticeTimer;
     private NoticeKind _noticeKind;
     private long _noticeRevision;
+    private bool _noticeActionInFlight;
 
     /// <summary>
     /// One thing the reader can do about the message, offered beside it.
@@ -44,6 +45,12 @@ public sealed partial class MainView
         /// no cost — a copy, a filter. It gets a reading window and then gets out of the way.
         /// </summary>
         Information,
+
+        /// <summary>
+        /// Work is still running and the lane is the reader's only progress indicator. It
+        /// remains until the operation replaces it with a result.
+        /// </summary>
+        Progress,
 
         /// <summary>
         /// A record that something durable happened outside the app: a file written, a
@@ -132,9 +139,21 @@ public sealed partial class MainView
         };
         action.Click += async (_, _) =>
         {
-            if (_noticeActionHandler is { } handler)
+            if (_noticeActionInFlight || _noticeActionHandler is not { } handler)
+            {
+                return;
+            }
+
+            _noticeActionInFlight = true;
+            action.IsEnabled = false;
+            try
             {
                 await handler();
+            }
+            finally
+            {
+                _noticeActionInFlight = false;
+                action.IsEnabled = _noticeActionHandler is not null;
             }
         };
 
@@ -229,6 +248,7 @@ public sealed partial class MainView
         {
             actionButton.Content = action?.Label;
             actionButton.IsVisible = action is not null;
+            actionButton.IsEnabled = action is not null && !_noticeActionInFlight;
             AutomationProperties.SetName(actionButton, action?.Label ?? string.Empty);
             _noticeActionHandler = action?.Invoke;
         }
@@ -346,7 +366,8 @@ public sealed partial class MainView
 
     private void ApplyNoticeTheme()
     {
-        if (_noticeHost is not { } host || _noticeText is not { } text || _noticeDismiss is not { } dismiss)
+        if (_noticeHost is not { } host || _noticeText is not { } text ||
+            _noticeDismiss is not { } dismiss || _noticeAction is not { } action)
         {
             return;
         }
@@ -365,6 +386,9 @@ public sealed partial class MainView
         dismiss.Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark));
         dismiss.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
         dismiss.Background = new SolidColorBrush(WorkspacePalette.Surface(dark));
+        action.Foreground = new SolidColorBrush(accent);
+        action.BorderBrush = new SolidColorBrush(accent);
+        action.Background = new SolidColorBrush(WorkspacePalette.Surface(dark));
     }
 
     private void StopNoticeTimer()
