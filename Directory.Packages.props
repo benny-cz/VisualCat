@@ -6,10 +6,10 @@
   <ItemGroup>
     <PackageVersion Include="Avalonia" Version="12.1.0" />
     <PackageVersion Include="Avalonia.Android" Version="12.1.0" />
-    <PackageVersion Include="Avalonia.Desktop" Version="12.1.0" />
+    <PackageVersion Include="Avalonia.Desktop" Version="12.1.1" />
     <PackageVersion Include="Avalonia.Headless" Version="12.1.0" />
     <PackageVersion Include="Avalonia.Headless.XUnit" Version="12.1.0" />
-    <PackageVersion Include="Avalonia.Skia" Version="12.1.0" />
+    <PackageVersion Include="Avalonia.Skia" Version="12.1.1" />
     <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.0" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.301" />
