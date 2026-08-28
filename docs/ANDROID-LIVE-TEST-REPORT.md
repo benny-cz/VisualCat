@@ -10,8 +10,8 @@ against a physical Android device.
 > identity storage, saved reconnect, transport resume, Stop cleanup, and the
 > Release manifest's removal of `READ_LOGS`.
 
-**Status: COMPLETE through F-48 / §20.13 — all implementation and physical-device
-steps are closed; the two remaining limits are declared, not promoted to passes.**
+**Status: COMPLETE through F-48 / §23 — all implementation and physical-device
+steps are closed; remaining limits are declared, not promoted to passes.**
 Results are written continuously, including across interrupted test processes.
 Completed passes and declared gaps remain authoritative.
 
@@ -7344,3 +7344,389 @@ upload key after the password-file correction. Both artifacts declare code
 
 The remaining real-Play exclusions above still apply; the fake manager validates
 VisualCat's adapter, policy and UI, not Google's production consent surface.
+
+---
+
+## 23. Phone timeline/details splitter — Samsung physical-device pass
+
+This pass implements and verifies
+[`MOBILE-TIMELINE-SPLITTER-IMPLEMENTATION-PLAN.md`](../MOBILE-TIMELINE-SPLITTER-IMPLEMENTATION-PLAN.md)
+against the Samsung configuration that motivated it. The app was clean-installed
+once, then replaced in place with each final Release build so settings migration,
+activity recreation and durable split restoration were exercised rather than
+simulated.
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-28 |
+| Device | Samsung SM-G990B, serial `RFCRC0A9GND` |
+| Android | 16 / API 36, `arm64-v8a` |
+| Display | 1080 × 2340 px; native 480 dpi and restored 360 dpi override |
+| App | `2.0.9-dev`, code `2000900`, target API 36; locally built Release |
+| APK SHA-256 | `b13c20eef8e96c032d044c4308249d53e28ad2a956d2643df57c91758cdf7bdb` |
+| Evidence | `artifacts/live-test/mobile-timeline-splitter-20260828/` |
+
+### 23.1 Geometry and allocation
+
+At the device's ordinary 360 dpi override (480 × 1040 dp logical), automatic
+Split allocated the timeline itself 472 px / **209.8 dp**, the minimap 86 px /
+38.2 dp, and the analysis pane 947 px / 420.9 dp with approximately four entry
+rows. The divider's automation node was 216 × 108 px: exactly **96 × 48 dp**,
+while its grid lane remained 12 dp. A downward one-finger drag enlarged the
+timeline to 788 px / **350.2 dp** and reduced analysis to 631 px / 280.4 dp.
+
+Both stops were exercised. The upper stop left the timeline at exactly 297 px /
+**132 dp**; the lower stop enlarged it to 978 px / 434.7 dp while retaining the
+analysis chrome plus one usable row. The status band stayed fixed at
+`[45,2242][1035,2279]`, and neither pane painted into it. Selecting a warning
+cell in the enlarged heat map produced the visible selection marker and
+`1 in this bar`, proving that the new target did not consume plot taps.
+
+At native 480 dpi (360 × 780 dp logical), the same node measured 288 × 144 px,
+again exactly **96 × 48 dp**. The shorter viewport correctly clamped automatic
+timeline height to 132 dp and a drag to the opposite stop reached 158 dp while
+preserving one entry row. This is a viewport constraint, not a density-dependent
+target or an overpaint.
+
+### 23.2 Persistence and composition transitions
+
+One completed drag produced one durable write. Force-stop/cold launch restored
+the exact manual geometry (`[27,587][1053,1565]` timeline and
+`[432,1631][648,1739]` divider target). The same share was ignored while the
+divider was inapplicable and restored on return across all of these transitions:
+
+- Details → Split and Plot → Split;
+- Filters open → closed;
+- portrait → wide landscape → portrait;
+- Home/background → foreground and process force-stop → cold launch;
+- native density → override density after cold recreation; and
+- system font scale 1.0 → 1.3 → 1.0.
+
+The divider was absent in Details, Filters and wide side-by-side landscape. At
+1.3 system font scale it remained 216 × 108 px / 96 × 48 dp and the stored share
+was clamped only for the current chrome. Switching to Insights before reset also
+found a device-only stale-presenter case during this pass; the final build now
+uses selected-tab state as the authoritative chrome-measurement guard. Resetting
+from Insights returned to the same automatic allocation instead of pinning the
+plot to 132 dp.
+
+The visible **Appearance & timeline → Reset plot and details split → Apply**
+route was exercised on device. A subsequent cold launch reproduced the automatic
+geometry, proving that reset persisted as `null`; double tap and **Home** are
+covered by physical and headless input respectively.
+
+### 23.3 Timeline, minimap and Android Back gestures
+
+UI Automator injected a genuine two-pointer pinch inside the resized timeline;
+the viewport changed from 2.754 s to approximately 198 ms and the minimap brush
+narrowed accordingly. A separate minimap drag outside the centred grip moved
+the viewport, and Entries/Insights/Entry remained tappable outside the target.
+The reverse synthetic pinch was accepted by the injector but rendered as a pan,
+so it is not promoted to a separate pinch-in hardware pass; ordinary pinch zoom
+and the absence of splitter interference are directly evidenced.
+
+Gesture navigation was temporarily enabled and then restored to the owner's
+original three-button mode. The final app publishes full-width exclusion bands,
+keeps the minimap whole, and trims the timeline from the top to a total of exactly
+200 dp. At the enlarged override-density position Android reported the accepted
+lower timeline band plus minimap as
+`SkRegion((0,1203,1080,1566)(0,1576,1080,1663))` (the unrelated Samsung edge
+handle is a separate region). A right-edge swipe within that protected band
+panned from the early two-second window to the late two-second window and kept
+VisualCat focused. Background/foreground and cold relaunch both republished the
+same region; before the resume fix, Android had cleared it while unchanged
+Avalonia bounds caused publication to be skipped.
+
+The top of a plot taller than the remaining platform budget deliberately keeps
+Android Back, exactly as the budget policy requires. Back therefore remains
+available outside the minimap and protected lower plot band rather than being
+disabled for the full workspace.
+
+### 23.4 Automated and build gates
+
+- Focused allocator, state, settings, interaction, accessibility and gesture
+  tests: **34 passed**.
+- Complete `VisualCat.App.Tests` rerun: **379 passed, 0 failed**.
+- Domain: **47 passed**; Core: **101 passed**; Application: **56 passed**.
+- Serialized full solution gate: **583 passed, 0 failed**.
+- Two unrelated timing assertions observed only under long concurrent runs were
+  rerun individually and passed; the complete 379-test UI suite then passed.
+- Final Android Release build: **0 warnings, 0 errors**.
+
+The device was left with its original 360 dpi override, font scale 1.0,
+three-button navigation, automatic screen rotation, and portrait orientation.
+
+## 24. Splitter drag tracking — Samsung physical-device follow-up
+
+The owner reported that the divider shipped in §23 was "very hard or impossible
+to drag it down or up" in ordinary use, which §23's own synthetic gestures had
+not reproduced. This pass finds why, fixes it, and re-verifies the feature.
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-28 |
+| Device | Samsung SM-G990B, serial `RFCRC0A9GND` |
+| Android | 16 / API 36, `arm64-v8a` |
+| Display | 1080 × 2340 px, 360 dpi override (480 × 1040 dp logical) |
+| App | `2.0.9-dev`, code `2000900`; locally built Debug, installed in place |
+| Navigation | Three-button, as the device was found |
+
+### 24.1 The defect
+
+`Thumb.DragDelta` reports the pointer's offset from the press **in the thumb's
+own coordinate space**, and it is cumulative rather than incremental. A probe
+against a stationary `MobilePaneSplitter` returned `5, 10, 15` for three 5 dp
+moves, not `5, 5, 5`.
+
+The divider summed those vectors. That is only correct while a layout pass lands
+between every two pointer events, because the control travels with the boundary
+it moves and re-bases the vector each time. Two events inside one frame are
+therefore counted twice, and a drag held against a hard stop cannot re-base at
+all, so every further event re-adds the whole rejected excursion. §23 never saw
+it: `input swipe` and UI Automator deliver gestures slowly enough that a layout
+pass always intervenes.
+
+Measured on the device, before the fix, at identical 60 px distances:
+
+| Gesture | Requested | Divider moved |
+|---|---:|---:|
+| 900 ms drag | +60 px | +60 px |
+| 40 ms flick | +60 px | +48 px |
+| 30 ms flick | +60 px | **0 px** |
+| 25 ms flick | +60 px | **0 px** |
+
+A finger is fast. The feature worked for the injector and not for its owner.
+
+### 24.2 The fix
+
+The divider now measures the pointer in its parent's coordinate space, which
+stands still while the panes resize, and reports absolute travel since the
+press. Each position is derived from the press baseline instead of summed, so a
+coalesced, dropped or duplicated event cannot leave the boundary offset from the
+finger. The release position is applied before the drag closes, so a flick whose
+moves were coalesced away still lands where the finger finished. A drag is also
+no longer answered by recomposing the whole phone layout — only rows 2-5 are
+re-resolved — which is what a large live session needs to keep up.
+
+Re-measured on the device:
+
+| Gesture | Requested | Divider moved |
+|---|---:|---:|
+| 30 ms flick | +60 px | **+60 px** |
+| Far-left grab at `x=80`, 400 ms | −70 px | −69 px |
+| Far-right grab at `x=1000`, 400 ms | +70 px | +69 px |
+| Held 500 px past the stop, returned 100 px | −100 px | −101 px |
+
+The last row is the one the owner could not perform at all: overshooting the
+stop used to bank travel the boundary never made and could never give back.
+
+### 24.3 The target is now the whole boundary, not a pill in the middle
+
+A 96 dp target centred on a 480 dp screen asks the reader to find one fifth of
+the width. The divider is now full width with a shaped hit area: the visible
+20 dp gap between the minimap frame and the tab strip is grabbable across the
+whole line, and the marked 96 dp grip additionally reaches the full 48 dp.
+
+This makes the neighbours *better* off than in §23, because the full-width band
+lies entirely in the gap. Measured node edges: minimap ends at 1277 px, the
+band spans 1278–1323 px, the tab strip begins at 1324 px.
+
+- The minimap keeps every pixel of its own area outside the marked grip. A brush
+  drag at `x=300` panned the timeline from 18:34:30 to 18:40:20.
+- Entries, Insights and Entry remained tappable, including a tap 6 px inside the
+  strip's top edge at `y=1330`.
+- The divider's automation node measured 1026 × 108 px — **456 × 48 dp** — so
+  the 48 dp accessible height is unchanged.
+
+The grip is also drawn on a full-width hairline now, and its accent state is
+limited to keyboard focus: a touch drag used to leave it lit permanently, next
+to the tab strip's accent underline, where it read as a selection.
+
+### 24.4 Re-verified feature behaviour
+
+- Maximum plot: timeline 693 px / **308 dp**, past the 214 dp preferred height,
+  with the analysis pane keeping its chrome and one entry row.
+- One completed drag wrote one value: `"mobileTimelineShare": 0.41604197901049483`.
+- Cold relaunch restored the same normalised share.
+- Details → Split returned to the identical position, share untouched.
+- Rotation to landscape removed the divider from the tree entirely and preserved
+  the share; rotating back restored the exact bounds.
+- Double tap restored automatic sizing and persisted `"mobileTimelineShare": null`.
+- At the enlarged plot, `dumpsys window` reported
+  `mSystemGestureExclusion=SkRegion((1038,310,1080,651)(0,916,1080,1280)(0,1291,1080,1377))`.
+  The minimap band is whole at 86 px and the timeline is trimmed from the top to
+  364 px: **exactly 450 px = 200.0 dp**, against the device's own
+  `system_gesture_exclusion_limit_dp=200`. The first rectangle is the unrelated
+  Samsung edge handle.
+
+### 24.5 Automated gates
+
+- `MobilePaneSplitTests`: **32 passed**, including two regressions that fail on
+  the previous implementation — a drag held against a stop must come straight
+  back off it, and the boundary must follow the finger across many moves.
+- `VisualCat.App.Tests`: **387 passed, 0 failed**.
+- Domain **47**, Core **101**, Application **56**, all passing.
+- Desktop and Android builds: 0 warnings, 0 errors.
+
+The device was left with its 360 dpi override, font scale 1.0, three-button
+navigation and free rotation, as found.
+
+## 25. Landscape column divider — Samsung physical-device pass
+
+§23 and §24 built the divider for the stacked portrait boundary. The landscape
+composition puts the plot and the details in columns instead, and the owner
+asked for the same control there. The implementation plan had scoped that out as
+"a reasonable follow-up but a different interaction and persistence axis"; this
+pass implements it and verifies it on the same device.
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-28 |
+| Device | Samsung SM-G990B, serial `RFCRC0A9GND` |
+| Android | 16 / API 36, `arm64-v8a` |
+| Display | 1080 × 2340 px, 360 dpi override (1040 × 480 dp logical in landscape) |
+| App | `2.0.9-dev`, code `2000900`; locally built Debug, installed in place |
+
+### 25.1 What changed
+
+The root grid's landscape column model went from `21*,29*` to `21*,Auto,29*`.
+The middle column is the divider's lane; the analysis pane moved to column 2 and
+every band that spans the workspace — the command shell, the filter drawer, the
+chip bar, the status line — spans three columns instead of two. Nothing else
+about the composition moved.
+
+The divider is the same control on a second axis, so it inherits §24's fix: it
+reports absolute travel since the press rather than summing per-event deltas.
+Its hit area is the same cross, rotated — the whole boundary line is grabbable
+at 20 dp across, and the marked 96 dp grip reaches the full 48 dp.
+
+The two axes keep **separate** stored shares. A height share cannot drive a
+width split: portrait is bounded by a readable lane band and entry rows,
+landscape by the plot's 88 dp label gutter and the message column beside it.
+
+### 25.2 Measured
+
+The divider's automation node was `[948,210][1056,925]` — **48 dp** wide,
+spanning the pane band. Drags tracked the finger exactly:
+
+| Gesture | Requested | Divider moved |
+|---|---:|---:|
+| 500 ms drag right | +200 px | +200 px |
+| 500 ms drag left | −120 px | −120 px |
+| 500 ms drag right | +300 px | +300 px |
+| 35 ms flick left | −90 px | −90 px |
+| 400 ms grab at the top of the line, `y=250` | +150 px | +150 px |
+| 400 ms grab at the bottom of the line, `y=880` | −100 px | −100 px |
+
+Both stops hold and release cleanly. At the far right the plot column reached a
+1355 px / **602 dp** timeline; at the far left it stopped at 473 px / **210 dp**,
+which still draws six labelled severity lanes, two axis labels and the minimap,
+and is well clear of the 120 dp width at which `TimelineControl.Geometry()`
+refuses to draw.
+
+A swipe starting inside the divider's rectangle but outside the cross — 40 px off
+centre, near the top — moved the divider **0 px** in both directions, so the plot
+and the details keep their own area everywhere except the marked grip.
+
+### 25.3 The header defect the divider exposed
+
+At the narrow stop the plot header read `DENSITY · 15.72 min · 3.42 s` with the
+resolution cut mid-glyph at the plot's right edge. The two header tiers assumed a
+plot at least as wide as the narrowest viewport that composes side by side, and
+the divider makes a narrower one reachable on purpose. This is the same silent
+truncation as F-11, so the header now drops a whole fact rather than part of one:
+it renders `DENSITY · 15.72 min` at that width, verified on the device.
+
+### 25.4 Persistence and orientation
+
+- One completed landscape drag wrote one value:
+  `"mobileTimelineWidthShare": 0.2412280701754386`, beside an untouched
+  `"mobileTimelineShare": 0.4399748688811188`.
+- A cold relaunch in landscape restored the divider to the same column.
+- Rotating landscape → portrait → landscape returned both dividers to their exact
+  positions, each share applied only on its own axis.
+- A double tap on the landscape grip reset **only** the width share to `null`;
+  the portrait share was untouched.
+- **Appearance & timeline** offers its reset whenever either boundary is
+  overridden, and clears both.
+
+### 25.5 Automated gates
+
+Re-verified on a second device in section 26.
+
+- `MobilePaneSplitTests`: **36 passed**.
+- `VisualCat.App.Tests`: **391 passed, 0 failed**.
+- Domain **47**, Core **101**, Application **56**, all passing.
+- Desktop and Android builds: 0 warnings, 0 errors.
+
+## 26. Both dividers on a second device — Motorola recheck
+
+§24 and §25 were verified on the Samsung the feature was designed against. This
+pass re-runs both axes on a device with a different display, a different density
+and a different aspect ratio, to separate the behaviour from that one geometry.
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-28 |
+| Device | Motorola edge 60 pro, serial `ZY22M4T2Z4` |
+| Android | 16, `arm64-v8a`, three-button navigation |
+| Display | 1220 × 2712 px at 450 dpi — 434 × 964 dp portrait, 964 × 434 dp landscape |
+| App | `2.0.9-dev`; upgraded in place over the `2.0.7-dev` build the device carried |
+
+`adb devices -l` listed only this device, and `getprop ro.product.model` /
+`ro.serialno` confirmed it before anything was concluded from a measurement.
+
+### 26.1 Portrait
+
+The automatic allocation resolved the timeline to **131.9 dp** — the readable
+plot minimum, reached from the opposite direction than on the Samsung, because
+this viewport's entries floor wants more than the band can give. The divider's
+node spanned the full workspace width at exactly **48 dp**, and its full-width
+band again landed in the gap: the minimap ends at 1230 px, the band spans
+1232–1289, the tab strip begins at 1289.
+
+| Gesture | Requested | Divider moved |
+|---|---:|---:|
+| 500 ms drag | +120 px | +121 px |
+| 500 ms drag | −70 px | −70 px |
+| 500 ms drag | +200 px | +200 px |
+| 30 ms flick | −60 px | −60 px |
+| 400 ms grab at the far left of the line, `x=60` | −90 px | −90 px |
+| 400 ms grab at the far right of the line, `x=1160` | +130 px | +129 px |
+| Held 800 px past the stop, returned 150 px | −150 px | −151 px |
+
+### 26.2 Landscape
+
+The column divider measured **48 dp** wide across the pane band. Its grip zone
+sits below the tab strip, so the tabs keep their whole area.
+
+| Gesture | Requested | Divider moved |
+|---|---:|---:|
+| 500 ms drag right | +180 px | +180 px |
+| 500 ms drag left | −110 px | −111 px |
+| 500 ms drag right | +250 px | +251 px |
+| 30 ms flick left | −140 px | −140 px |
+| 400 ms grab at the top of the line, `y=460` | +160 px | +159 px |
+| 400 ms grab at the bottom of the line, `y=1000` | −120 px | −119 px |
+
+Stops: the plot column reached **526 dp** at one end and **211 dp** at the other,
+where the heat map still drew six labelled lanes, two axis labels and the
+minimap. At that narrow stop the header read `DENSITY · 1.18 min` — the
+resolution dropped whole, confirming §25.3 on a second density.
+
+A swipe starting inside the divider's rectangle but off the cross moved it
+**0 px**, and tapping the tab strip beside it switched tabs.
+
+### 26.3 State and platform
+
+- Rotation landscape → portrait → landscape returned both dividers to their exact
+  positions (`1614,427` both times), each share applied only on its own axis.
+- A cold relaunch in landscape restored the same column.
+- Settings held both values apart: `"mobileTimelineShare": 0.4442970822281167`
+  and `"mobileTimelineWidthShare": 0.6405367983810842`.
+- With the plot at its widest, `dumpsys window` reported
+  `mSystemGestureExclusion=SkRegion((0,442,2577,945)(0,953,2577,1012))` — 503 px
+  of trimmed timeline plus 59 px of whole minimap, **199.8 dp** against this
+  device's own `system_gesture_exclusion_limit_dp=200`.
+
+The device was left on free rotation, as found.

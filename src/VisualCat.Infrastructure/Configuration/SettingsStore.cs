@@ -64,7 +64,18 @@ public sealed record ApplicationSettings(
 
     // When the store was last asked. A stable build asks about once a day; asking on every
     // resume would be an IPC round trip for an answer that cannot have changed.
-    DateTimeOffset? UpdateLastCheckedUtc = null);
+    DateTimeOffset? UpdateLastCheckedUtc = null,
+
+    // The aggregate plot-pane share in stacked phone Split mode. It includes the minimap and
+    // excludes the divider lane. Null means automatic size-class allocation; keeping a ratio
+    // rather than dp lets the choice survive rotation, density and split-screen changes.
+    double? MobileTimelineShare = null,
+
+    // The same for the side-by-side landscape composition, where the reader is moving a
+    // column edge. The two axes are stored apart because their limits are unrelated: a
+    // height share is about lane bands and entry rows, a width share about the plot's label
+    // gutter and the message column beside it.
+    double? MobileTimelineWidthShare = null);
 
 public sealed class SettingsStore(string path)
 {
@@ -196,10 +207,22 @@ public sealed class SettingsStore(string path)
             UpdateDismissedVersionCode = Math.Max(settings.UpdateDismissedVersionCode, 0),
             UpdateSnoozedUntilUtc = Plausible(settings.UpdateSnoozedUntilUtc),
             UpdateLastCheckedUtc = Plausible(settings.UpdateLastCheckedUtc),
+            MobileTimelineShare = StoredShare(settings.MobileTimelineShare),
+            MobileTimelineWidthShare = StoredShare(settings.MobileTimelineWidthShare),
         };
     }
 
     /// <summary>Drops a stored update timestamp that cannot have come from this device's clock.</summary>
     private static DateTimeOffset? Plausible(DateTimeOffset? stamp) =>
         stamp is { } value && value <= DateTimeOffset.UtcNow + MaximumUpdateSnooze ? stamp : null;
+
+    /// <summary>
+    /// Keeps a pane share only inside the band it can mean anything in. Anything else becomes
+    /// automatic rather than a surprising extreme; the runtime clamps again against the
+    /// viewport it actually has.
+    /// </summary>
+    private static double? StoredShare(double? share) =>
+        share is { } value && double.IsFinite(value) && value is >= 0.05 and <= 0.95
+            ? value
+            : null;
 }

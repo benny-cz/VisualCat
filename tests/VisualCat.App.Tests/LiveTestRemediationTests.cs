@@ -515,15 +515,38 @@ public sealed partial class LiveTestRemediationTests
             var timeline = fixture.View.GetLogicalDescendants().OfType<TimelineControl>().Single();
             var minimap = fixture.View.GetLogicalDescendants().OfType<MinimapControl>().Single();
 
-            foreach (var control in new Control[] { timeline, minimap })
+            Assert.True(timeline.IsEffectivelyVisible, timeline.GetType().Name);
+            Assert.True(minimap.IsEffectivelyVisible, minimap.GetType().Name);
+            Assert.Contains(claimed, rectangle => Covers(rectangle, minimap, fixture.Window));
+
+            // The minimap is kept whole and the remaining budget protects the bottom of the
+            // timeline. Android used to truncate this implicitly after 200 dp; making it
+            // explicit keeps the same useful area on every device and at every split.
+            var scale = fixture.Window.RenderScaling <= 0 ? 1 : fixture.Window.RenderScaling;
+            Assert.True(
+                claimed.Sum(static rectangle => rectangle.Height) <=
+                Math.Floor(EdgeGestureGuard.MaximumExclusionHeightDp * scale));
+            var timelineBottom = timeline.TranslatePoint(
+                new Point(0, timeline.Bounds.Height),
+                fixture.Window)!.Value.Y;
+            Assert.Contains(
+                claimed,
+                rectangle => Math.Abs(rectangle.Bottom - Math.Ceiling(timelineBottom * scale)) <= 1);
+            Assert.All(claimed, rectangle =>
             {
-                Assert.True(control.IsEffectivelyVisible, control.GetType().Name);
-                Assert.Contains(claimed, rectangle => Covers(rectangle, control, fixture.Window));
-            }
+                Assert.Equal(0, rectangle.X);
+                Assert.Equal((int)Math.Ceiling(fixture.Window.Bounds.Width * scale), rectangle.Right);
+            });
 
             // Only those two. The exclusion budget is finite and Back has to keep working
             // everywhere else on the screen.
             Assert.Equal(2, claimed.Count);
+
+            var publications = published.Count;
+            Platform.EdgeGestureGuard.Republish();
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(published.Count > publications);
+            Assert.Equal(claimed, published[^1]);
 
             Platform.EdgeGestureGuard.Reset();
             Assert.Empty(published[^1]);
@@ -898,11 +921,26 @@ public sealed partial class LiveTestRemediationTests
             wide.Window.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
 
-            // The landscape composition §6 and §7 built is untouched.
+            // The landscape composition §6 and §7 built still puts the plot and the pane in
+            // columns beside each other. The third column between them is the divider's lane,
+            // which is what makes that boundary movable; the panes themselves are unmoved.
             var wideRoot = wide.View.GetVisualDescendants()
                 .OfType<Grid>()
                 .First(grid => grid.ColumnDefinitions.Count > 0);
-            Assert.Equal(2, wideRoot.ColumnDefinitions.Count);
+            var wideTimeline = wide.View.GetVisualDescendants().OfType<TimelineControl>().Single();
+            var wideAnalysis = wide.View.GetVisualDescendants()
+                .OfType<TabControl>()
+                .Single(control => AutomationProperties.GetName(control) == "Session detail views")
+                .GetVisualAncestors()
+                .OfType<Grid>()
+                .First();
+            Assert.Equal(3, wideRoot.ColumnDefinitions.Count);
+            Assert.Equal(0, Grid.GetColumn(wideTimeline));
+            Assert.Equal(2, Grid.GetColumn(wideAnalysis));
+            Assert.Equal(
+                MobilePaneSplitter.LaneExtent,
+                wideRoot.ColumnDefinitions[1].ActualWidth,
+                1);
         }
         finally
         {

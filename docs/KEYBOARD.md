@@ -35,6 +35,23 @@ The timeline itself is focusable and has an accessible help description.
 | F | Toggle follow-latest mode |
 | J / K | Select the next / previous matching entry |
 
+## Phone Split divider
+
+When the plot/details grip is focused in a phone Split workspace:
+
+| Shortcut | Action |
+|---|---|
+| Up / Down | Move the stacked (portrait) divider by 16 dp |
+| Left / Right | Move the side-by-side (landscape) divider by 16 dp |
+| Home | Return that orientation to responsive automatic sizing |
+
+Each orientation has its own divider and its own remembered position, so
+resizing one never moves the other.
+
+The divider is exposed to automation as a named range control, so assistive
+technology can also set its value directly. The same reset is available without
+a keyboard under **Appearance & timeline**.
+
 ## Accessibility behavior
 
 - Interactive filters, panes, lists, source controls, and timeline actions have

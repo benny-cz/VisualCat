@@ -397,40 +397,18 @@ public sealed partial class SessionWorkspaceView : UserControl
         var stackedCompact = wideComposition && timelineVisible && analysisVisible &&
                              !MobileWorkspaceLayout.SharesARow(settled.Width);
 
-        // The drawer, the plot and the analysis pane all live in rows 2..5. Exactly one
-        // composition of that band is in force at a time.
-        if (filtersOpen)
-        {
-            _root.RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
-            _root.RowDefinitions[3].Height = new GridLength(0);
-            _root.RowDefinitions[5].Height = new GridLength(0);
-        }
-        else if (wideComposition && !stackedCompact)
-        {
-            _root.RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
-            _root.RowDefinitions[3].Height = new GridLength(0);
-            _root.RowDefinitions[5].Height = timelineVisible && hasOverview && layout.MinimapHeight > 0
-                ? new GridLength(layout.MinimapHeight, GridUnitType.Pixel)
-                : new GridLength(0);
-        }
-        else
-        {
-            _root.RowDefinitions[2].Height = timelineVisible
-                ? new GridLength(
-                    _mobileWorkspaceState.DisplayMode == MobileWorkspaceDisplayMode.Plot ? 1 : layout.TimelineWeight,
-                    GridUnitType.Star)
-                : new GridLength(0);
-            _root.RowDefinitions[3].Height = timelineVisible && hasOverview && layout.MinimapHeight > 0
-                ? new GridLength(layout.MinimapHeight, GridUnitType.Pixel)
-                : new GridLength(0);
-            _root.RowDefinitions[5].Height = analysisVisible
-                ? new GridLength(
-                    _mobileWorkspaceState.DisplayMode == MobileWorkspaceDisplayMode.Details ? 1 : layout.AnalysisWeight,
-                    GridUnitType.Star)
-                : new GridLength(0);
-        }
-
         var minimapVisible = timelineVisible && hasOverview && layout.MinimapHeight > 0;
+        var composition = filtersOpen
+            ? MobilePaneComposition.Filters
+            : timelineVisible && !analysisVisible
+                ? MobilePaneComposition.Plot
+                : !timelineVisible && analysisVisible
+                    ? MobilePaneComposition.Details
+                    : timelineVisible && analysisVisible && wideComposition && !stackedCompact
+                        ? MobilePaneComposition.SplitWide
+                        : timelineVisible && analysisVisible
+                            ? MobilePaneComposition.SplitStacked
+                            : MobilePaneComposition.Unavailable;
         if (_minimapFrame is { } minimapFrame)
         {
             minimapFrame.IsVisible = minimapVisible;
@@ -513,7 +491,8 @@ public sealed partial class SessionWorkspaceView : UserControl
             ControlSlot.Hold(fit, timelineVisible);
         }
 
-        EnforceEntriesFloor();
+        UpdateAnalysisChromeMeasurement();
+        ApplyMobilePaneAllocation(layout, composition, minimapVisible ? layout.MinimapHeight : 0);
         ApplyInputPaneRoom();
     }
 
@@ -534,15 +513,19 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// <summary>The floor in Details, where the plot is hidden and the list is the pane.</summary>
     private const int DetailsEntryRowFloor = 6;
 
-    /// <summary>The floor in a short viewport, which has about a third of the height.</summary>
-    private const int CompactEntryRowFloor = 3;
+    private const int ManualEntryRowFloor = 1;
+    private double _analysisChromeHeight;
+    private MobilePaneAllocation _lastMobilePaneAllocation;
+    private (MobileWorkspaceLayout Layout, MobilePaneComposition Composition, double MinimapHeight)?
+        _lastMobileComposition;
 
-    private double _entriesFloorApplied;
+    private bool _splitDragActive;
+    private double _splitDragInitialPlotHeight;
+    private double _splitDragTotalHeight;
+    private double? _splitDragInitialShare;
+    private bool _splitDragChanged;
 
-    /// <summary>
-    /// Reserves the entries list its floor out of the workspace band, taking the difference
-    /// from the plot.
-    /// </summary>
+    /// <summary>Refreshes the allocator when arranged analysis chrome changes.</summary>
     /// <remarks>
     /// The pane's chrome is read from the arranged tree rather than restated here: the tab
     /// strip, the count line and the action rows all size themselves, and a constant copied
@@ -552,55 +535,433 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// </remarks>
     private void EnforceEntriesFloor()
     {
-        if (!_mobile || _root.RowDefinitions.Count < 7 || _analysisGrid is not { } analysis)
+        if (!_mobile || _root.RowDefinitions.Count < 7 || _analysisGrid is null)
         {
             return;
         }
 
-        if (_mobileFiltersOpen ||
-            _mobileWorkspaceState.DisplayMode == MobileWorkspaceDisplayMode.Plot ||
-            !analysis.IsVisible ||
-
-            // In the wide composition the analysis pane is a column beside the plot rather
-            // than a band under it: it already spans every row there is, so a minimum on one
-            // of them adds to the grid's height instead of taking from a neighbour, and the
-            // status line goes off the bottom.
-            //
-            // Which is why the short viewport's answer is not here. Measured in landscape
-            // with the pane holding the whole band: analysis tab strip 42 dp, count-and-sort
-            // row 42 dp, Load-more footer 42 dp, and 75 dp — 1.3 rows — of actual log
-            // (audit 3, D2). There is no row above to take from; what the list is short of is
-            // the chrome in its own column, so that is where it is taken from. See
-            // ConfigureWideMobileComposition, which gives the footer's band back to the list.
-            _mobileLayoutMode == MobileWorkspaceMode.CompactHeight)
+        if (UpdateAnalysisChromeMeasurement())
         {
-            SetEntriesFloor(0);
-            return;
+            // The resolver consumes the measurement and owns every resulting row write. A
+            // tolerance in the measurement and in ApplyMobilePaneAllocation makes this settle
+            // after the one extra arrange pass the old entries-floor implementation needed.
+            ApplyMobileLayout(Bounds.Size);
+        }
+    }
+
+    private bool UpdateAnalysisChromeMeasurement()
+    {
+        // Android can keep the Entries presenter effectively visible, with its last arranged
+        // bounds, for a pass after another tab is selected. Subtracting those stale bounds
+        // from the newly expanded Insights pane turns its content into "chrome" and pins the
+        // next automatic split to the plot floor. Selection is the authoritative signal.
+        if (_analysisGrid is not { IsVisible: true } analysis ||
+            analysis.Bounds.Height <= 0 ||
+            _mobileAnalysisTabs is { SelectedIndex: not 0 } ||
+            !_entries.IsEffectivelyVisible ||
+            _entries.Bounds.Height <= 0)
+        {
+            return false;
         }
 
         var chrome = analysis.Bounds.Height - _entries.Bounds.Height;
-        if (!double.IsFinite(chrome) || chrome <= 0 || analysis.Bounds.Height <= 0)
+        if (!double.IsFinite(chrome) || chrome <= 0 || Math.Abs(chrome - _analysisChromeHeight) < 0.5)
         {
-            // Nothing has been arranged yet, so there is nothing to measure. The layout pass
-            // that arranges it calls back here.
-            return;
+            return false;
         }
 
-        var rows = _mobileLayoutMode == MobileWorkspaceMode.CompactHeight
-            ? CompactEntryRowFloor
-            : _mobileWorkspaceState.DisplayMode == MobileWorkspaceDisplayMode.Details
-                ? DetailsEntryRowFloor
-                : SplitEntryRowFloor;
-        var wanted = chrome + (rows * _entryRowMinimumHeight);
+        _analysisChromeHeight = chrome;
+        return true;
+    }
 
-        // The plot keeps a band it can still be read in; below that the reader is better
-        // served by switching to Details than by a two-row heat map.
+    /// <summary>
+    /// Re-resolves rows 2-5 from the last composition, without recomposing the workspace.
+    /// </summary>
+    /// <remarks>
+    /// A drag asks for a new boundary many times a second, and the only thing that changed
+    /// between two of those questions is the requested share. Recomposing the whole phone
+    /// layout for each one is what makes a fast gesture on a large session drop frames, and
+    /// dropped frames are what a reader feels as a divider that will not follow the finger.
+    /// </remarks>
+    private void RefreshMobilePaneAllocation()
+    {
+        if (_lastMobileComposition is { } cached)
+        {
+            ApplyMobilePaneAllocation(cached.Layout, cached.Composition, cached.MinimapHeight);
+        }
+    }
+
+    private void ApplyMobilePaneAllocation(
+        MobileWorkspaceLayout layout,
+        MobilePaneComposition composition,
+        double minimapHeight)
+    {
+        _lastMobileComposition = (layout, composition, minimapHeight);
         var band = Bounds.Height - _root.RowDefinitions[0].ActualHeight
                    - _root.RowDefinitions[1].ActualHeight
                    - _root.RowDefinitions[6].ActualHeight;
-        var ceiling = band > 0 ? Math.Max(0, band - MinimumReadablePlotHeight) : wanted;
-        SetEntriesFloor(Math.Min(wanted, ceiling));
+        var allocation = MobilePaneAllocator.Resolve(new MobilePaneAllocationRequest(
+            composition,
+            AvailableBandHeight: Math.Max(0, band),
+            TimelineWeight: layout.TimelineWeight,
+            AnalysisWeight: layout.AnalysisWeight,
+            MinimapHeight: minimapHeight,
+            SplitterLaneHeight: MobilePaneSplitter.LaneExtent,
+            AnalysisChromeHeight: _analysisChromeHeight,
+            EntryRowHeight: _entryRowMinimumHeight,
+            PreferredEntryRows: composition == MobilePaneComposition.Details
+                ? DetailsEntryRowFloor
+                : SplitEntryRowFloor,
+            ManualEntryRows: ManualEntryRowFloor,
+            TimelineShare: _mobilePaneSplitState.TimelineShare));
+
+        _lastMobilePaneAllocation = allocation;
+        ApplyTrack(_root.RowDefinitions[2], allocation.Timeline);
+        ApplyTrack(_root.RowDefinitions[3], allocation.Minimap);
+        ApplyTrack(_root.RowDefinitions[4], allocation.Splitter);
+        ApplyTrack(_root.RowDefinitions[5], allocation.Analysis);
+        ApplyLimits(
+            _root.RowDefinitions[5],
+            allocation.AnalysisMinimumHeight,
+            allocation.AnalysisMaximumHeight);
+
+        if (_mobilePaneSplitter is { } splitter)
+        {
+            var interactive = allocation.SplitterVisible && allocation.SplitterEnabled && !_failureVisible;
+            splitter.SetRange(
+                allocation.MinimumTimelineShare,
+                allocation.MaximumTimelineShare,
+                allocation.ResolvedTimelineShare);
+            splitter.SetInteractive(interactive);
+        }
     }
+
+    /// <summary>Resolves and applies the side-by-side column widths and their divider.</summary>
+    private void ApplyMobileWidthAllocation(bool sideBySide, double availableWidth)
+    {
+        if (_root.ColumnDefinitions.Count < 3 && sideBySide)
+        {
+            return;
+        }
+
+        var allocation = MobilePaneAllocator.ResolveWidth(new MobilePaneWidthRequest(
+            sideBySide,
+            AvailableWidth: availableWidth,
+            PlotWeight: WidePlotWeight,
+            AnalysisWeight: WideAnalysisWeight,
+            SplitterLaneWidth: MobilePaneSplitter.LaneExtent,
+            PlotMinimumWidth: MobilePaneAllocator.MinimumReadableTimelineWidth,
+            AnalysisMinimumWidth: MobilePaneAllocator.MinimumUsableAnalysisWidth,
+            PlotShare: _mobilePaneWidthSplitState.TimelineShare));
+
+        _lastMobileWidthAllocation = allocation;
+        if (_root.ColumnDefinitions.Count >= 3)
+        {
+            ApplyTrack(_root.ColumnDefinitions[0], allocation.Plot);
+            ApplyTrack(_root.ColumnDefinitions[1], allocation.Splitter);
+            ApplyTrack(_root.ColumnDefinitions[2], allocation.Analysis);
+        }
+
+        if (_mobileWidthSplitter is { } splitter)
+        {
+            var interactive = sideBySide && allocation.SplitterVisible &&
+                              allocation.SplitterEnabled && !_failureVisible;
+            splitter.SetRange(
+                allocation.MinimumPlotShare,
+                allocation.MaximumPlotShare,
+                allocation.ResolvedPlotShare);
+            splitter.SetInteractive(interactive);
+        }
+    }
+
+    /// <summary>The automatic side-by-side weights, kept where the allocator can read them.</summary>
+    private const double WidePlotWeight = 21;
+
+    private const double WideAnalysisWeight = 29;
+
+    private MobilePaneWidthAllocation _lastMobileWidthAllocation;
+    private bool _widthDragActive;
+    private double _widthDragInitialPlotWidth;
+    private double _widthDragTotalWidth;
+    private double? _widthDragInitialShare;
+    private bool _widthDragChanged;
+
+    private void BeginMobileWidthDrag()
+    {
+        if (_mobileWidthSplitter is not { IsEffectivelyEnabled: true } ||
+            !_lastMobileWidthAllocation.SplitterEnabled ||
+            _root.ColumnDefinitions.Count < 3)
+        {
+            return;
+        }
+
+        var plot = _root.ColumnDefinitions[0].ActualWidth;
+        var analysis = _root.ColumnDefinitions[2].ActualWidth;
+        if (!double.IsFinite(plot) || !double.IsFinite(analysis) || plot + analysis <= 0)
+        {
+            return;
+        }
+
+        _widthDragActive = true;
+        _widthDragInitialPlotWidth = plot;
+        _widthDragTotalWidth = plot + analysis;
+        _widthDragInitialShare = _mobilePaneWidthSplitState.TimelineShare;
+        _widthDragChanged = false;
+    }
+
+    private void ContinueMobileWidthDrag(double offsetFromPress)
+    {
+        if (!_widthDragActive || !double.IsFinite(offsetFromPress))
+        {
+            return;
+        }
+
+        _widthDragChanged |= ApplyUserTimelineWidthShare(
+            (_widthDragInitialPlotWidth + offsetFromPress) / _widthDragTotalWidth);
+    }
+
+    private void CompleteMobileWidthDrag()
+    {
+        if (!_widthDragActive)
+        {
+            return;
+        }
+
+        _widthDragActive = false;
+        if (_widthDragChanged &&
+            !NullableShareEquals(_widthDragInitialShare, _mobilePaneWidthSplitState.TimelineShare))
+        {
+            SplitWidthShareChanged?.Invoke(_mobilePaneWidthSplitState.TimelineShare);
+        }
+    }
+
+    private void NudgeMobileWidthSplit(double horizontalDelta)
+    {
+        if (!_lastMobileWidthAllocation.SplitterEnabled || _root.ColumnDefinitions.Count < 3)
+        {
+            return;
+        }
+
+        var plot = _root.ColumnDefinitions[0].ActualWidth;
+        var analysis = _root.ColumnDefinitions[2].ActualWidth;
+        if (plot + analysis <= 0)
+        {
+            return;
+        }
+
+        NotifyWidthShareChange(() => ApplyUserTimelineWidthShare((plot + horizontalDelta) / (plot + analysis)));
+    }
+
+    private void SetMobileTimelineWidthShareFromAutomation(double share) =>
+        NotifyWidthShareChange(() => ApplyUserTimelineWidthShare(share));
+
+    private void NotifyWidthShareChange(Func<bool> change)
+    {
+        var before = _mobilePaneWidthSplitState.TimelineShare;
+        if (change() && !NullableShareEquals(before, _mobilePaneWidthSplitState.TimelineShare))
+        {
+            SplitWidthShareChanged?.Invoke(_mobilePaneWidthSplitState.TimelineShare);
+        }
+    }
+
+    private bool ApplyUserTimelineWidthShare(double requestedShare)
+    {
+        if (!_lastMobileWidthAllocation.SplitterEnabled || !double.IsFinite(requestedShare))
+        {
+            return false;
+        }
+
+        var changed = _mobilePaneWidthSplitState.Set(Math.Clamp(requestedShare, 0.05, 0.95));
+        ApplyMobileLayout(Bounds.Size);
+
+        // A reader dragging against a hard stop chose that stop, so the effective value is
+        // committed for this gesture; a later viewport-only clamp still leaves it alone.
+        if (_lastMobileWidthAllocation.SplitterEnabled)
+        {
+            changed |= _mobilePaneWidthSplitState.Set(_lastMobileWidthAllocation.ResolvedPlotShare);
+        }
+
+        return changed;
+    }
+
+    private static void ApplyTrack(ColumnDefinition column, MobilePaneTrack track)
+    {
+        var unit = track.Unit == MobilePaneTrackUnit.Star ? GridUnitType.Star : GridUnitType.Pixel;
+        if (column.Width.GridUnitType == unit && Math.Abs(column.Width.Value - track.Value) < 0.25)
+        {
+            return;
+        }
+
+        column.Width = new GridLength(track.Value, unit);
+    }
+
+    private static void ApplyTrack(RowDefinition row, MobilePaneTrack track)
+    {
+        var unit = track.Unit == MobilePaneTrackUnit.Star ? GridUnitType.Star : GridUnitType.Pixel;
+        if (row.Height.GridUnitType == unit && Math.Abs(row.Height.Value - track.Value) < 0.25)
+        {
+            return;
+        }
+
+        row.Height = new GridLength(track.Value, unit);
+    }
+
+    private static void ApplyLimits(RowDefinition row, double minimum, double maximum)
+    {
+        minimum = double.IsFinite(minimum) ? Math.Max(0, minimum) : 0;
+        maximum = double.IsFinite(maximum) ? Math.Max(minimum, maximum) : double.PositiveInfinity;
+
+        // RowDefinition validates each assignment against the other bound. Change whichever
+        // side has to move outwards first, then the side that moves inwards.
+        if (minimum > row.MaxHeight)
+        {
+            SetMaximum(row, maximum);
+            SetMinimum(row, minimum);
+        }
+        else if (maximum < row.MinHeight)
+        {
+            SetMinimum(row, minimum);
+            SetMaximum(row, maximum);
+        }
+        else
+        {
+            SetMinimum(row, minimum);
+            SetMaximum(row, maximum);
+        }
+    }
+
+    private static void SetMinimum(RowDefinition row, double value)
+    {
+        if (!NearlyEqual(row.MinHeight, value))
+        {
+            row.MinHeight = value;
+        }
+    }
+
+    private static void SetMaximum(RowDefinition row, double value)
+    {
+        if (!NearlyEqual(row.MaxHeight, value))
+        {
+            row.MaxHeight = value;
+        }
+    }
+
+    private static bool NearlyEqual(double left, double right) =>
+        left.Equals(right) || double.IsFinite(left) && double.IsFinite(right) && Math.Abs(left - right) < 0.25;
+
+    private void BeginMobileSplitDrag()
+    {
+        if (_mobilePaneSplitter is not { IsEffectivelyEnabled: true } ||
+            !_lastMobilePaneAllocation.SplitterEnabled)
+        {
+            return;
+        }
+
+        var plot = _root.RowDefinitions[2].ActualHeight + _root.RowDefinitions[3].ActualHeight;
+        var analysis = _root.RowDefinitions[5].ActualHeight;
+        if (!double.IsFinite(plot) || !double.IsFinite(analysis) || plot + analysis <= 0)
+        {
+            return;
+        }
+
+        _splitDragActive = true;
+        _splitDragInitialPlotHeight = plot;
+        _splitDragTotalHeight = plot + analysis;
+        _splitDragInitialShare = _mobilePaneSplitState.TimelineShare;
+        _splitDragChanged = false;
+    }
+
+    /// <summary>
+    /// Resolves the boundary from the finger's total travel since the press.
+    /// </summary>
+    /// <remarks>
+    /// Every position is derived from the same press baseline rather than summed, so a
+    /// dropped, coalesced or duplicated pointer event cannot leave the divider offset from
+    /// the finger, and a drag held against a hard stop comes straight back off it.
+    /// </remarks>
+    private void ContinueMobileSplitDrag(double offsetFromPress)
+    {
+        if (!_splitDragActive || !double.IsFinite(offsetFromPress))
+        {
+            return;
+        }
+
+        var requested = (_splitDragInitialPlotHeight + offsetFromPress) / _splitDragTotalHeight;
+        _splitDragChanged |= ApplyUserTimelineShare(requested);
+    }
+
+    private void CompleteMobileSplitDrag()
+    {
+        if (!_splitDragActive)
+        {
+            return;
+        }
+
+        _splitDragActive = false;
+        if (_splitDragChanged && !NullableShareEquals(_splitDragInitialShare, _mobilePaneSplitState.TimelineShare))
+        {
+            SplitShareChanged?.Invoke(_mobilePaneSplitState.TimelineShare);
+        }
+    }
+
+    private void NudgeMobileSplit(double verticalDelta)
+    {
+        var plot = _root.RowDefinitions[2].ActualHeight + _root.RowDefinitions[3].ActualHeight;
+        var analysis = _root.RowDefinitions[5].ActualHeight;
+        if (!_lastMobilePaneAllocation.SplitterEnabled || plot + analysis <= 0)
+        {
+            return;
+        }
+
+        var before = _mobilePaneSplitState.TimelineShare;
+        var changed = ApplyUserTimelineShare((plot + verticalDelta) / (plot + analysis));
+        if (changed && !NullableShareEquals(before, _mobilePaneSplitState.TimelineShare))
+        {
+            SplitShareChanged?.Invoke(_mobilePaneSplitState.TimelineShare);
+        }
+    }
+
+    private void SetMobileTimelineShareFromAutomation(double share)
+    {
+        var before = _mobilePaneSplitState.TimelineShare;
+        var changed = ApplyUserTimelineShare(share);
+        if (changed && !NullableShareEquals(before, _mobilePaneSplitState.TimelineShare))
+        {
+            SplitShareChanged?.Invoke(_mobilePaneSplitState.TimelineShare);
+        }
+    }
+
+    private bool ApplyUserTimelineShare(double requestedShare)
+    {
+        if (!_lastMobilePaneAllocation.SplitterEnabled || !double.IsFinite(requestedShare))
+        {
+            return false;
+        }
+
+        requestedShare = Math.Clamp(requestedShare, 0.05, 0.95);
+        var changed = _mobilePaneSplitState.Set(requestedShare);
+        if (_splitDragActive)
+        {
+            RefreshMobilePaneAllocation();
+        }
+        else
+        {
+            ApplyMobileLayout(Bounds.Size);
+        }
+
+        // A user dragging against a hard stop chose that stop. Commit the effective value for
+        // this gesture; later viewport-only clamps still leave an already stored share alone.
+        if (_lastMobilePaneAllocation.SplitterEnabled)
+        {
+            changed |= _mobilePaneSplitState.Set(_lastMobilePaneAllocation.ResolvedTimelineShare);
+        }
+
+        return changed;
+    }
+
+    private static bool NullableShareEquals(double? left, double? right) =>
+        left is null && right is null ||
+        left is { } l && right is { } r && Math.Abs(l - r) < 0.0001;
 
     /// <summary>Where the load-more control currently lives, so it is only ever moved once.</summary>
     private bool? _loadMoreInHeader;
@@ -771,20 +1132,6 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
     }
 
-    /// <summary>Below this the plot states a shape it cannot draw, so it yields entirely.</summary>
-    private const double MinimumReadablePlotHeight = 132;
-
-    private void SetEntriesFloor(double floor)
-    {
-        if (Math.Abs(_entriesFloorApplied - floor) < 0.5)
-        {
-            return;
-        }
-
-        _entriesFloorApplied = floor;
-        _root.RowDefinitions[5].MinHeight = floor;
-    }
-
     /// <summary>Whether the reader is currently working inside the filter drawer.</summary>
     private bool FilterDrawerHoldsFocus() =>
         _mobileFiltersOpen &&
@@ -812,26 +1159,33 @@ public sealed partial class SessionWorkspaceView : UserControl
         var splitTimeline = enabled && timelineVisible && analysisVisible &&
                             MobileWorkspaceLayout.SharesARow(availableWidth);
         var stackedCompact = enabled && timelineVisible && analysisVisible && !splitTimeline;
-        _root.ColumnDefinitions = new ColumnDefinitions(splitTimeline ? "21*,29*" : "*");
+
+        // Three columns rather than two: the middle one is the divider's lane, and it is the
+        // column model's only change. Every band that spans the workspace spans it too.
+        var columnCount = splitTimeline ? 3 : 1;
+        if (_root.ColumnDefinitions.Count != columnCount)
+        {
+            _root.ColumnDefinitions = new ColumnDefinitions(splitTimeline ? "21*,Auto,29*" : "*");
+        }
 
         if (_mobileFilterShell is { } topStrip)
         {
             Grid.SetColumn(topStrip, 0);
-            Grid.SetColumnSpan(topStrip, splitTimeline ? 2 : 1);
+            Grid.SetColumnSpan(topStrip, columnCount);
         }
 
         if (_mobileFilterPanel is { } drawer)
         {
             Grid.SetColumn(drawer, 0);
-            Grid.SetColumnSpan(drawer, splitTimeline ? 2 : 1);
+            Grid.SetColumnSpan(drawer, columnCount);
         }
 
         Grid.SetColumn(_chipBar, 0);
-        Grid.SetColumnSpan(_chipBar, splitTimeline ? 2 : 1);
+        Grid.SetColumnSpan(_chipBar, columnCount);
         if (_statusBar is { } workspaceStatus)
         {
             Grid.SetColumn(workspaceStatus, 0);
-            Grid.SetColumnSpan(workspaceStatus, splitTimeline ? 2 : 1);
+            Grid.SetColumnSpan(workspaceStatus, columnCount);
         }
 
         // In the wide composition the plot and the analysis pane are columns, so the plot
@@ -856,9 +1210,11 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             Grid.SetRow(analysis, enabled && !stackedCompact ? 2 : 5);
             Grid.SetRowSpan(analysis, enabled && !stackedCompact ? 4 : 1);
-            Grid.SetColumn(analysis, splitTimeline ? 1 : 0);
+            Grid.SetColumn(analysis, splitTimeline ? 2 : 0);
             Grid.SetColumnSpan(analysis, 1);
         }
+
+        ApplyMobileWidthAllocation(splitTimeline, availableWidth);
 
         if (_mobileFilterShell is { } filterShell &&
             _mobileQuickActions is { } quickActions)

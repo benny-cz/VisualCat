@@ -148,6 +148,15 @@ public sealed partial class SessionWorkspaceView : UserControl
             card.IsVisible = failed;
         }
 
+        if (failed)
+        {
+            // Visibility alone makes a peer off-screen; it does not necessarily remove an
+            // already-created peer from Android's control view. Keep all four interaction
+            // flags in sync so a failed session cannot leave a dead divider focus target.
+            _mobilePaneSplitter?.SetInteractive(false);
+            _mobileWidthSplitter?.SetInteractive(false);
+        }
+
         // The panes are hidden rather than covered: a screen reader walks the tree, and an
         // overlay drawn on top of a workspace still leaves every dead control reachable.
         foreach (var suppressed in new[]
@@ -158,6 +167,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                      (Control)_timeline,
                      _minimapFrame,
                      _rowSplitter,
+                     _mobileWidthSplitter,
                      _analysisGrid,
                  })
         {

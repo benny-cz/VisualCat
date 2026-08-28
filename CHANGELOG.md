@@ -13,6 +13,32 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Added
+- Phone Split workspaces now have a touch-sized, accessible divider between the
+  plot and details, in **both orientations** — a horizontal one in portrait and a
+  vertical one between the landscape columns. The whole boundary line is
+  draggable, not just the marked grip. Each orientation keeps its own remembered
+  position, because their limits are unrelated: portrait is bounded by readable
+  lane bands and entry rows, landscape by the plot's label gutter and the message
+  column beside it. Both preserve the minimap with the plot, survive mode
+  changes, rotation and restarts, support keyboard and range automation, and
+  return to responsive automatic sizing by double tap, **Home**, or
+  **Appearance & timeline**.
+
+### Fixed
+- The timeline header no longer runs past the right edge of a narrow plot. It
+  drops a whole fact — the resolution, then the duration — rather than letting
+  the last one be cut mid-glyph, which the landscape divider made reachable.
+- The phone plot/details divider now follows a fast drag. It tracked the pointer
+  by summing per-event deltas, which are measured inside the divider itself and
+  so are only correct when a layout pass lands between two touch events: a quick
+  flick moved the divider a fraction of the distance or not at all, and a drag
+  taken past a limit could not be brought back. Positions are now measured
+  against the press in a frame that does not move with the divider.
+- Android back-gesture exclusions now stay within the platform height budget,
+  keep the minimap whole, protect the useful lower plot band, span the narrow
+  edge margins reliably, and are republished when the activity resumes.
+
 ## [2.0.9] - 2026-08-26
 
 ### Added

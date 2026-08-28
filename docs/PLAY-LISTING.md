@@ -40,7 +40,7 @@ WHAT YOU CAN DO
 • Capture this device live and watch the heat map build as records arrive.
 • Zoom and pan from the whole session down to individual records, with a full-session minimap for orientation.
 • Filter by severity, time and text or regular expression.
-• Switch between Plot, Split and Details views.
+• Switch between Plot, Split and Details views, and drag the divider in Split to give the plot or the records as much of the screen as you want.
 • Inspect ranked message templates under Insights to collapse repetitive spam into useful patterns.
 • Inspect byte-faithful source context around any entry.
 • Share a verified portable session through Android's normal share sheet and reopen it on Windows, Linux or macOS.

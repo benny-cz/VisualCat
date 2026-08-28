@@ -173,6 +173,23 @@ composition is split across `SessionWorkspaceView*.cs` partials by concern
 failure state), keeping each behavior area reviewable without introducing a
 second UI tree.
 
+Every phone pane size is decided in one place. `Views/MobilePaneAllocation.cs`
+holds a pure resolver with no Avalonia in it: it takes the workspace band, the
+size-class weights, the measured analysis chrome and the reader's stored share,
+and returns the grid tracks for the plot, the minimap, the divider lane and the
+details pane. `ApplyMobileLayout` applies that result and writes nothing of its
+own. The reason is the one a `GridSplitter` cannot satisfy — the plot is two grid
+tracks, the timeline and its minimap, so the boundary the reader moves is not the
+boundary between the two tracks a splitter sits between, and mobile recomposition
+rewrites those tracks on rotation, mode changes and overview arrival anyway. With
+one writer the drag path and the recomposition path resolve through identical
+code and cannot disagree, and every limit — the readable plot minimum, the
+rendering cliffs, the entry-row floors — is unit-testable without a visual tree.
+`Views/MobilePaneSplitter.cs` is the control that reports the drag; it owns no
+sizes. The two orientations are separate axes with separate stored shares,
+because a height share is bounded by lane bands and entry rows while a width
+share is bounded by the plot's label gutter and the message column beside it.
+
 Dialogs are `DialogBody<TResult>` content rather than windows, because one of the
 two platforms has no windows: `MainView` is the `IDialogHost` and presents a body
 either as a modal `Window` (desktop) or as an in-page card on the overlay layer

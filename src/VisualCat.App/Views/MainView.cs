@@ -2198,7 +2198,11 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 NoticeKind.Failure,
                 new NoticeAction("Review", () => ReviewRecoveredSessionAsync(viewModel)));
         workspace.RestoreDisplayMode(displayMode);
+        workspace.RestoreMobileTimelineShare(_settings.MobileTimelineShare);
+        workspace.RestoreMobileTimelineWidthShare(_settings.MobileTimelineWidthShare);
         workspace.DisplayModeChanged += PersistWorkspaceDisplayMode;
+        workspace.SplitShareChanged += PersistMobileTimelineShare;
+        workspace.SplitWidthShareChanged += PersistMobileTimelineWidthShare;
         workspace.CompactEditorChanged += _ => UpdateCompactCommandComposition();
         workspace.ExportRequested += range => _ = ExportAsync(range);
         workspace.StopRequested += () => _viewModel.StopAsync(viewModel);
@@ -2683,6 +2687,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     _settings.TimelineMinimumUsPerPixel,
                     _settings.TimelinePixelSnap,
                     _settings.TimelineMinimumBarWidth);
+                workspace.RestoreMobileTimelineShare(_settings.MobileTimelineShare);
+                workspace.RestoreMobileTimelineWidthShare(_settings.MobileTimelineWidthShare);
             }
         }
     }

@@ -140,6 +140,7 @@ public sealed class MainActivity : AvaloniaMainActivity
     protected override void OnResume()
     {
         base.OnResume();
+        EdgeGestureGuard.Republish();
         PlatformSourceRegistry.PublishAppResumed();
 
         // Play's own requirement, and it is the activity's rather than the view's: a flexible

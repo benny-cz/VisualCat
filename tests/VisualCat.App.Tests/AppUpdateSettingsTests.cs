@@ -64,6 +64,8 @@ public sealed class AppUpdateSettingsTests
             Assert.Equal(0, loaded.UpdateDismissedVersionCode);
             Assert.Null(loaded.UpdateSnoozedUntilUtc);
             Assert.Null(loaded.UpdateLastCheckedUtc);
+            Assert.Null(loaded.MobileTimelineShare);
+            Assert.Null(loaded.MobileTimelineWidthShare);
         }
         finally
         {
@@ -106,6 +108,35 @@ public sealed class AppUpdateSettingsTests
         {
             await store.SaveAsync(new ApplicationSettings(UpdateDismissedVersionCode: -12));
             Assert.Equal(0, (await store.LoadAsync()).UpdateDismissedVersionCode);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(0.05, 0.05)]
+    [InlineData(0.62, 0.62)]
+    [InlineData(0.95, 0.95)]
+    [InlineData(-1, null)]
+    [InlineData(0.01, null)]
+    [InlineData(0.99, null)]
+    public async Task MobileTimelineShareRoundTripsOnlyInsideItsStorageRange(
+        double value,
+        double? expected)
+    {
+        var path = TempSettingsPath();
+        try
+        {
+            var store = new SettingsStore(path);
+            await store.SaveAsync(new ApplicationSettings(
+                MobileTimelineShare: value,
+                MobileTimelineWidthShare: value));
+
+            var loaded = await store.LoadAsync();
+            Assert.Equal(expected, loaded.MobileTimelineShare);
+            Assert.Equal(expected, loaded.MobileTimelineWidthShare);
         }
         finally
         {

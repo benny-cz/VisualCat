@@ -138,6 +138,40 @@ public sealed partial class MainView
         _lastWorkspacePersist = PersistOpenWorkspaceAsync(version, _settings);
     }
 
+    /// <summary>Records a completed phone plot/details resize or an explicit reset.</summary>
+    private void PersistMobileTimelineShare(double? share)
+    {
+        if (!_settingsLoaded ||
+            _restoringWorkspace ||
+            SharesEqual(_settings.MobileTimelineShare, share))
+        {
+            return;
+        }
+
+        _settings = _settings with { MobileTimelineShare = share };
+        var version = Interlocked.Increment(ref _workspacePersistVersion);
+        _lastWorkspacePersist = PersistOpenWorkspaceAsync(version, _settings);
+    }
+
+    /// <summary>Records a completed landscape plot/details resize or an explicit reset.</summary>
+    private void PersistMobileTimelineWidthShare(double? share)
+    {
+        if (!_settingsLoaded ||
+            _restoringWorkspace ||
+            SharesEqual(_settings.MobileTimelineWidthShare, share))
+        {
+            return;
+        }
+
+        _settings = _settings with { MobileTimelineWidthShare = share };
+        var version = Interlocked.Increment(ref _workspacePersistVersion);
+        _lastWorkspacePersist = PersistOpenWorkspaceAsync(version, _settings);
+    }
+
+    private static bool SharesEqual(double? left, double? right) =>
+        left is null && right is null ||
+        left is { } l && right is { } r && Math.Abs(l - r) < 0.0001;
+
     private async Task PersistOpenWorkspaceAsync(long version, ApplicationSettings snapshot)
     {
         // One dispatcher turn coalesces AddTab + SelectionChanged + chip updates into one disk

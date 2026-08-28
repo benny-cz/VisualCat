@@ -508,6 +508,11 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
     private readonly CheckBox _pixelSnap = new() { Content = "Snap timeline cells to device pixels" };
     private readonly CheckBox _diagnostics = new() { Content = "Write redacted structured diagnostics" };
     private readonly ApplicationSettings _settings;
+    private bool _resetMobileTimelineShare;
+
+    /// <summary>Whether either phone boundary is currently held at a reader's choice.</summary>
+    private static bool HasSplitOverride(ApplicationSettings settings) =>
+        settings.MobileTimelineShare is not null || settings.MobileTimelineWidthShare is not null;
 
     public AppearanceDialog(ApplicationSettings settings)
         : base("Appearance & timeline")
@@ -588,6 +593,40 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
             TextWrapping = TextWrapping.Wrap,
             Opacity = 0.72,
         });
+        form.Children.Add(new TextBlock { Text = "Phone plot and details split" });
+        var resetMobileSplit = new Button
+        {
+            Content = HasSplitOverride(settings)
+                ? "Reset plot and details split"
+                : "Automatic sizing is active",
+            IsEnabled = HasSplitOverride(settings),
+            MinHeight = Mobile ? 48 : 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        AutomationProperties.SetName(resetMobileSplit, "Reset plot and details split");
+        AutomationProperties.SetHelpText(
+            resetMobileSplit,
+            HasSplitOverride(settings)
+                ? "Restores automatic phone Split workspace sizing when you apply these settings."
+                : "The phone Split workspace is already using automatic sizing.");
+        resetMobileSplit.Click += (_, _) =>
+        {
+            _resetMobileTimelineShare = true;
+            resetMobileSplit.Content = "Automatic sizing selected";
+            resetMobileSplit.IsEnabled = false;
+            AutomationProperties.SetHelpText(
+                resetMobileSplit,
+                "Automatic phone Split workspace sizing will be restored when you apply these settings.");
+        };
+        form.Children.Add(resetMobileSplit);
+        form.Children.Add(new TextBlock
+        {
+            Text = "In Split mode, drag the grip between the plot and the tabs to resize them - " +
+                   "downwards in portrait, sideways in landscape. This action returns both to " +
+                   "the responsive default.",
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.72,
+        });
         form.Children.Add(new TextBlock { Text = "Default export order" });
         form.Children.Add(Pick("Default export order", _exportOrder, ExportOrderChoices, settings.ExportOrder, out _exportOrderChoice));
         form.Children.Add(new TextBlock { Text = "Normalized CSV encoding" });
@@ -643,6 +682,9 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
             ExportOrder = _exportOrderChoice?.Value ?? Value(_exportOrder, ExportOrderChoices),
             ExportEncoding = _exportEncodingChoice?.Value ?? Value(_exportEncoding, ExportEncodingChoices),
             DiagnosticsEnabled = _diagnostics.IsChecked == true,
+            MobileTimelineShare = _resetMobileTimelineShare ? null : _settings.MobileTimelineShare,
+            MobileTimelineWidthShare =
+                _resetMobileTimelineShare ? null : _settings.MobileTimelineWidthShare,
         });
         buttons.Children.Add(save);
 

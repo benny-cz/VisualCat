@@ -129,7 +129,9 @@ Desktop packages are not code-signed or notarized. The
 
 The Android companion is the same engine and the same workspace, sized for a
 phone. Open a capture from the device's own storage, or read this device's
-logcat live — no cable, no host machine, and nothing leaves the device.
+logcat live — no cable, no host machine, and nothing leaves the device. Split
+mode's divider is draggable in both orientations, so the plot and the records
+can be given whatever share of the screen the question needs.
 
 ![VisualCat on Android: importing a million-line logcat and finding the crash](docs/assets/android-demo.gif)
 

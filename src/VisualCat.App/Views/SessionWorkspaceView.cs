@@ -247,6 +247,8 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Grid? _mobileFilterBody;
     private Control? _filterHost;
     private Control? _rowSplitter;
+    private MobilePaneSplitter? _mobilePaneSplitter;
+    private MobilePaneSplitter? _mobileWidthSplitter;
     private Button? _mobileFit;
     private Grid? _mobileModeSelector;
     private Grid? _entryPrimaryActions;
@@ -288,6 +290,8 @@ public sealed partial class SessionWorkspaceView : UserControl
     private TextBlock? _statusChevron;
     private MobileWorkspaceMode? _mobileLayoutMode;
     private readonly MobileWorkspaceState _mobileWorkspaceState = new();
+    private readonly MobilePaneSplitState _mobilePaneSplitState = new();
+    private readonly MobilePaneSplitState _mobilePaneWidthSplitState = new();
     private bool _mobileFiltersOpen;
     private bool _compactEditorActive;
     private bool _compactCommandsExternallyHosted;
@@ -460,6 +464,9 @@ public sealed partial class SessionWorkspaceView : UserControl
             minimapFrame.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
         }
 
+        _mobilePaneSplitter?.ApplyTheme(dark);
+        _mobileWidthSplitter?.ApplyTheme(dark);
+
         if (_entryFooter is { } entryFooter)
         {
             entryFooter.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
@@ -576,6 +583,12 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// <summary>Raised when the reader picks a different phone workspace mode.</summary>
     internal event Action<string>? DisplayModeChanged;
 
+    /// <summary>Raised only after the reader completes a split adjustment or resets it.</summary>
+    internal event Action<double?>? SplitShareChanged;
+
+    /// <summary>The same, for the side-by-side boundary the landscape composition uses.</summary>
+    internal event Action<double?>? SplitWidthShareChanged;
+
     /// <summary>
     /// Raised while a compact-height query is being edited, so the shell can yield its shared
     /// command row to the drawer and the IME instead of leaving Reset and Done underneath it.
@@ -669,11 +682,65 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// <summary>The workspace mode currently in force, in its stored form.</summary>
     internal string CurrentDisplayMode => _mobileWorkspaceState.Persisted;
 
+    /// <summary>The requested aggregate plot share, excluding the divider lane.</summary>
+    internal double? CurrentMobileTimelineShare => _mobilePaneSplitState.TimelineShare;
+
+    /// <summary>The requested plot-column share in the side-by-side composition.</summary>
+    internal double? CurrentMobileTimelineWidthShare => _mobilePaneWidthSplitState.TimelineShare;
+
     internal void RestoreDisplayMode(string? persisted)
     {
         if (_mobile && _mobileWorkspaceState.Restore(persisted))
         {
             ApplyMobileLayout(Bounds.Size);
+        }
+    }
+
+    /// <summary>Restores a durable preference without turning layout clamps into user input.</summary>
+    internal void RestoreMobileTimelineShare(double? persisted)
+    {
+        if (_mobile && _mobilePaneSplitState.Restore(persisted))
+        {
+            ApplyMobileLayout(Bounds.Size);
+        }
+    }
+
+    /// <summary>Restores automatic sizing, optionally reporting the reader's explicit reset.</summary>
+    internal void ResetMobileTimelineShare(bool notify = true)
+    {
+        if (!_mobile || !_mobilePaneSplitState.Reset())
+        {
+            return;
+        }
+
+        ApplyMobileLayout(Bounds.Size);
+        if (notify)
+        {
+            SplitShareChanged?.Invoke(null);
+        }
+    }
+
+    /// <summary>Restores a durable side-by-side preference without applying a layout clamp.</summary>
+    internal void RestoreMobileTimelineWidthShare(double? persisted)
+    {
+        if (_mobile && _mobilePaneWidthSplitState.Restore(persisted))
+        {
+            ApplyMobileLayout(Bounds.Size);
+        }
+    }
+
+    /// <summary>Restores automatic side-by-side sizing.</summary>
+    internal void ResetMobileTimelineWidthShare(bool notify = true)
+    {
+        if (!_mobile || !_mobilePaneWidthSplitState.Reset())
+        {
+            return;
+        }
+
+        ApplyMobileLayout(Bounds.Size);
+        if (notify)
+        {
+            SplitWidthShareChanged?.Invoke(null);
         }
     }
 
@@ -1710,6 +1777,38 @@ public sealed partial class SessionWorkspaceView : UserControl
             _rowSplitter = rowSplitter;
             Grid.SetRow(rowSplitter, 4);
             root.Children.Add(rowSplitter);
+        }
+        else
+        {
+            var splitter = _mobilePaneSplitter = new MobilePaneSplitter(MobilePaneAxis.Rows);
+            splitter.DragStarted += (_, _) => BeginMobileSplitDrag();
+            splitter.DragOffsetChanged += ContinueMobileSplitDrag;
+            splitter.DragCompleted += (_, _) => CompleteMobileSplitDrag();
+            splitter.NudgeRequested += NudgeMobileSplit;
+            splitter.ResetRequested += () => ResetMobileTimelineShare();
+            splitter.AutomationValueRequested += SetMobileTimelineShareFromAutomation;
+            splitter.SetInteractive(false);
+            _rowSplitter = splitter;
+            splitter.ZIndex = 50;
+            Grid.SetRow(splitter, 4);
+            root.Children.Add(splitter);
+
+            // The landscape composition is two columns rather than four rows, so its boundary
+            // is a column edge and needs its own divider, its own limits and its own stored
+            // share. Only one of the two is ever interactive.
+            var widthSplitter = _mobileWidthSplitter = new MobilePaneSplitter(MobilePaneAxis.Columns);
+            widthSplitter.DragStarted += (_, _) => BeginMobileWidthDrag();
+            widthSplitter.DragOffsetChanged += ContinueMobileWidthDrag;
+            widthSplitter.DragCompleted += (_, _) => CompleteMobileWidthDrag();
+            widthSplitter.NudgeRequested += NudgeMobileWidthSplit;
+            widthSplitter.ResetRequested += () => ResetMobileTimelineWidthShare();
+            widthSplitter.AutomationValueRequested += SetMobileTimelineWidthShareFromAutomation;
+            widthSplitter.SetInteractive(false);
+            widthSplitter.ZIndex = 50;
+            Grid.SetRow(widthSplitter, 2);
+            Grid.SetRowSpan(widthSplitter, 4);
+            Grid.SetColumn(widthSplitter, 1);
+            root.Children.Add(widthSplitter);
         }
 
         // A pane that overruns its cell paints over the band below it, which on a short

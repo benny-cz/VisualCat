@@ -365,7 +365,7 @@ public sealed class TimelineControl : Control
         var normalizationLabel = _normalization == "PerRow" ? "PER-ROW" : "GLOBAL";
         var compactHeader = geometry.Width < 700;
         var header = compactHeader
-            ? $"DENSITY  ·  {FormatDuration(_result.Viewport.Range.DurationUs)}  ·  {FormatResolution(resolution)}"
+            ? NarrowestHeaderThatFits(geometry.Width, resolution)
             : $"EVENT DENSITY  ·  {FormatDuration(_result.Viewport.Range.DurationUs)}  ·  {FormatResolution(resolution)}  ·  " +
               $"{normalizationLabel} {_intensityScale.ToUpperInvariant()}";
         DrawText(context, header, new Point(geometry.Left, 9), 10, muted);
@@ -1106,6 +1106,35 @@ public sealed class TimelineControl : Control
         _selection = new TimelineCellSelection(_result.Columns[column], level.Value, _result.Counts[level.Value][column]);
         CellSelected?.Invoke(this, _selection);
         InvalidateVisual();
+    }
+
+    /// <summary>
+    /// The most the header can say in the width it has, dropping whole facts rather than
+    /// letting the last one be cut off mid-glyph.
+    /// </summary>
+    /// <remarks>
+    /// The two original tiers assumed a plot at least as wide as the narrowest viewport that
+    /// composes side by side. The landscape divider lets the reader make the plot column
+    /// narrower than that on purpose, and the resolution then ran past the plot's right edge
+    /// with nothing to say it had been cut — the same silent truncation as F-11.
+    /// </remarks>
+    private string NarrowestHeaderThatFits(double width, double resolution)
+    {
+        var duration = FormatDuration(_result!.Viewport.Range.DurationUs);
+        foreach (var candidate in new[]
+                 {
+                     $"DENSITY  ·  {duration}  ·  {FormatResolution(resolution)}",
+                     $"DENSITY  ·  {duration}",
+                     "DENSITY",
+                 })
+        {
+            if (MeasureTextWidth(candidate, 10) <= width)
+            {
+                return candidate;
+            }
+        }
+
+        return "DENSITY";
     }
 
     /// <summary>
