@@ -21,7 +21,7 @@ burst, and the exact records behind it. Every image and clip in this repository
 uses the same seeded synthetic log — no device-derived or private data is
 distributed. It also runs [on the phone](#analysis-on-the-phone)._
 
-> **Status:** `2.0.9` is the current stable release. Download the checksummed,
+> **Status:** `2.0.10` is the current stable release. Download the checksummed,
 > self-contained desktop and CLI archives or the release-key-signed Android APK
 > from the [latest GitHub release](https://github.com/benny-cz/VisualCat/releases/latest),
 > or build from source with the quick start below.
@@ -87,7 +87,7 @@ generation.
 
 ### Release downloads
 
-VisualCat `2.0.9` is available from the
+VisualCat `2.0.10` is available from the
 [latest release](https://github.com/benny-cz/VisualCat/releases/latest). Each
 stable `v*` tag publishes:
 
@@ -104,7 +104,7 @@ NuGet.org publication is not currently configured. After downloading the
 `.nupkg` into `./packages`, install that exact release from the local feed with:
 
 ```shell
-dotnet tool install --global VisualCat.Cli --version 2.0.9 --add-source ./packages
+dotnet tool install --global VisualCat.Cli --version 2.0.10 --add-source ./packages
 ```
 
 Desktop packages are not code-signed or notarized. The

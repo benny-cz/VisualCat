@@ -248,7 +248,7 @@ do not add it to the current API-36 build pre-emptively.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version and an explicit build counter: `major*1000000 + minor*10000 + patch*100 + build`, so `2.0.9` → `2000900` and `2.1.0` with `-VisualCatBuildNumber 3` → `2010003`. See `docs/RELEASE-CHECKLIST.md`. |
+| versionCode | Derived from the release version and an explicit build counter: `major*1000000 + minor*10000 + patch*100 + build`, so `2.0.10` → `2001000` and `2.1.0` with `-VisualCatBuildNumber 3` → `2010003`. See `docs/RELEASE-CHECKLIST.md`. |
 | inAppUpdatePriority | Set per release through the Play Developer API before rollout; it cannot be changed afterwards. See `docs/RELEASE-CHECKLIST.md`. |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
@@ -265,6 +265,12 @@ explore it as a zoomable severity-by-time heat map with filters, ranked message
 templates and byte-faithful source context. Full-device Live capture can pair
 with Android Wireless debugging; VisualCat-only capture works without setup.
 Everything is processed on the device.
+```
+
+Release notes for `2.0.10` (467/500 characters):
+
+```text
+Phone Split workspaces now have a touch-friendly divider between the timeline and details in portrait and landscape. Each orientation remembers its own position across rotation and restart; double-tap, Home, or Appearance & timeline restores automatic sizing. Fast drags track your finger accurately, narrow timeline headers stay readable, and Android back gestures remain reliable within the platform exclusion limit. Nothing about you or your logs is sent anywhere.
 ```
 
 Release notes for `2.0.9` (458/500 characters):
