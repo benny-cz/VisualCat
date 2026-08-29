@@ -10,7 +10,7 @@ against a physical Android device.
 > identity storage, saved reconnect, transport resume, Stop cleanup, and the
 > Release manifest's removal of `READ_LOGS`.
 
-**Status: COMPLETE through A-05 / §27 — all implementation and physical-device
+**Status: COMPLETE through I-05 / §28 — all implementation and physical-device
 steps are closed; remaining limits are declared, not promoted to passes.**
 Results are written continuously, including across interrupted test processes.
 Completed passes and declared gaps remain authoritative.
@@ -19,8 +19,10 @@ Sections 1–20 record the original run, its remediation and the subsequent
 independent device continuations. §5.1 remains the single status table for every
 finding, and the newest pass is always the last section. §27 is an independent
 audit of this whole report on the one configuration §§24–26 never reached — a
-gesture-navigation phone — and it found four defects the divider work and the
-text-scale setting had left; its working log is
+gesture-navigation phone — and it found six defects the divider work and the
+text-scale setting had left. §28 re-audits the whole report again on the Samsung
+at the owner's own display-size override, a 480 × 1040 dp viewport no earlier pass
+has used. The working log for both is
 [`ANDROID-AUDIT-CONTINUATION.md`](ANDROID-AUDIT-CONTINUATION.md).
 
 This report is context-agnostic. Device identity, artifact provenance, oracles,
@@ -1480,9 +1482,22 @@ Found by the independent Pixel 5 audit (§27) — a gesture-navigation phone at 
 |---|---|---|---|---|
 | A-02 The phone divider is not protected from the Back gesture, so dragging it near either edge leaves the app | Major | Android platform | **Done** | **Yes — Pixel 5 API 34 Release, both edges, slow and flicked; §27.2** |
 | A-03 The in-app *Text scale* setting never reaches an open session workspace | Major | Shell + accessibility | **Done** | **Yes — Pixel 5 API 34 Release, 1.25× → 1.55×; §27.3** |
+| A-06 A short viewport chose its pane composition with the command row's question, so **Split** drew no analysis pane at all | Major | Layout | **Done** | **Yes — Pixel 5 API 34 Release, 850.9 dp landscape at 1.55×; §27.6** |
+| A-07 The load-more band was arranged past the pane's bottom edge, through its own label and across the status line | Major | Layout | **Done** | **Yes — Pixel 5 API 34 Release, 136 dp analysis band; §27.7** |
 | A-05 The footer's load-more label is clipped mid-glyph at a large text scale | Minor | Layout + copy | **Done** | **Yes — Pixel 5 API 34 Release, 1.55×; §27.5** |
 | A-04 The compact count line cuts a number in half instead of dropping a fact | Minor | Layout + copy | **Done** | **Yes — Pixel 5 API 34 Release, landscape; §27.4** |
 | A-01 The documentation gate fails on the released tree | Minor | Docs | **Done** | n/a (host gate) |
+
+Found by the Samsung continuation (§28) — the same phone as §§6, 8, 13, 16–18 and
+23–25, but at the owner's own display-size override, a **480 × 1040 dp** viewport
+no earlier pass has used; same vocabulary, same rules.
+
+| Finding | Severity | Area | Status | Device-verified |
+|---|---|---|---|---|
+| I-04 One self-sized touch target rounds below the floor again — `Zoom in` at 47.6 dp — because F-48's remedy was a literal at one call site | Polish | Touch geometry | **Done** | **Yes — Samsung API 36 Release, 47.6 dp → 49.3 dp; §28.3** |
+| I-01 A-01 was one commit from recurring: §27's working log was staged for deletion while §27 links to it | Minor | Docs | **Done** | n/a (host gate) |
+| I-02 A-06 and A-07 were absent from §5.1, the table §5 calls the single source of truth | Minor | Docs | **Done** | n/a |
+| I-05 A cold `ACTION_VIEW` of an already-open document opens a second tab | Minor | Android intent | **Deferred** | Reproduced — Samsung API 36 Release; §28.6 |
 
 ### 5.2 Per-finding remediation record
 
@@ -1835,7 +1850,17 @@ them or assume they were missed.
    both legs on a Release build: idle 0.04 % / 0.11 %, capture **1.29 % mean over
    six 600-second windows** with the screen off. The hours-long half is honest
    about what it is — one hour of flat, non-drifting samples, not twelve.
-5. **F-40 — a dialog body still does not re-resolve its own typography.** The
+5. **I-05 — a cold `ACTION_VIEW` still opens a second tab for an already-open
+   document.** Reproduced in §28.4; the warm path dedupes correctly and the cold
+   path cannot, because `MainActivity._consumedUris` is process-local while the
+   sessions it dedupes against are persisted. Fixing it needs the session to
+   remember the *document* rather than the materialized copy — an origin persisted
+   in `SessionDescriptor`, which is a change to the format
+   [`SESSION-FORMAT.md`](SESSION-FORMAT.md) documents — and a staleness policy the
+   copy-every-time code never has to state, since a document that has grown must
+   not be answered with the old copy. §1.1/9 already declares cold delivery
+   unexecuted; this names what was found there and what a fix requires.
+6. **F-40 — a dialog body still does not re-resolve its own typography.** The
    sheet around it does: scrim, panel, border, heading, height cap and fade all
    answer a theme, size or text-size change, and the command sheet — a menu that
    holds nothing the reader has half-finished — is given a whole new body. A
@@ -7927,3 +7952,124 @@ widening it. At 1.55× in landscape this phone's analysis pane is 136 dp and sho
 its tabs, its action row and a partly visible log row rather than a whole one;
 that is the viewport, not a defect, and the same scale in portrait shows the whole
 workspace.
+
+---
+
+## 28. Samsung continuation — the owner's own display size, API 36
+
+§27 audited the report on a Pixel 5 at 393 × 777 dp. This pass re-audits it on the
+Samsung, which every earlier pass ran at *480 dpi, 3.0 px/dp* → 360 × 780 dp. The
+owner has since set a display-size override of **360 dpi**, so the same phone is
+now **480 × 1040 dp** — wider than the Pixel's 393 and the Motorola's 434, and the
+first viewport in this report to sit between the two thresholds A-06 turns on.
+The working log, with every measurement, is
+[`ANDROID-AUDIT-CONTINUATION.md`](ANDROID-AUDIT-CONTINUATION.md).
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-29 |
+| Device | Samsung Galaxy S21 FE / `SM-G990B` (`r9q`), serial `RFCRC0A9GND` |
+| Android | 16 / API 36, `arm64-v8a`, **three-button** navigation |
+| Display | 1080 × 2340 px, physical 480 dpi, **override 360 dpi** (2.25 px/dp) |
+| Viewport | 480 × 1040 dp portrait, 1040 × 480 dp landscape |
+| App | `2.0.10-dev`, code `2001000`; locally built **Release**, debug-signed, `flags=0x0` — no `DEBUGGABLE` |
+| Session under test | 199,990 entries (18 MB), opened by `ACTION_VIEW` on a MediaStore `content://` URI |
+
+### 28.1 What held
+
+Every F-01…F-48 and A-01…A-07 remedy was re-checked; all hold. Specifically at
+this viewport:
+
+- **A-06 and A-07, at the shape they were found in.** `wm size 1080x1575` at font
+  scale 1.55 gives a **700 × 480 dp** landscape — deliberately between
+  `FitsSideBySide` (532 dp) and `SharesARow` (600 × 1.55 = 930 dp), the window
+  §27.6's defect lived in. The panes now resolve side by side: `TabControl`
+  322.2 × 306.7 dp, list 298.2 × 152.0 dp with rows, and the load-more band
+  298.2 × 48.0 dp **inside** the pane rather than past its bottom edge.
+- **F-41** on a second device: the analysis tabs are 119.1 dp each at 1.55×, grown
+  with the scale, and the middle one reads `Insig…` — an ellipsis with the whole
+  word `Insights` kept as its automation name, which is F-41's stated contract.
+- **F-42**, **A-04** and **A-05**: the footer reads `Load 500 more · 199,490
+  remaining` whole in portrait, drops to `Load 500 more` at 700 dp, and to `+500`
+  in the header composition; the count line steps `199,990 view · …` →
+  `199,990 view` → `199,990`.
+- **F-31**: the numeric spin buttons measured 48.0 dp on both axes in both
+  settings sheets — the panes an earlier pass recorded as never swept.
+
+### 28.2 I-04 — a self-sized touch target below the floor, again
+
+In the filter drawer, in **both** orientations, `Zoom in` exported
+`[183,1221][290,1329]` — 107 px, **47.56 dp** — while `Zoom out`, one gap away,
+exported 108 px and 48.00. Its logical edges land at 182.5 and 290.5 px and
+Android rounds each **inward and independently**: precisely the mechanism §20.13
+wrote down for F-48, at a control F-48's fix never reached.
+
+F-48's remedy was `TouchTarget.Minimum + 1` written inline at the one control that
+had been measured. The mechanism is arithmetic, not a property of severity chips,
+so the remedy is now named where the floor is named —
+`TouchTarget.MinimumWithEdgeReserve` and `TouchTarget.SelfSized`/`SelfSizedHere`,
+carrying the reason — and applied to every control that resolves its **own** size:
+the two time-lens zoom buttons, the two source-context pan buttons, the severity
+chip (the literal replaced), the session close target and, since it shares the
+shape though it measured clean, the numeric spin buttons. Controls stretched to a
+row or column are deliberately left alone; they take their container's edges.
+
+Two host contracts hold it, and the first fails on the unfixed source with all
+four controls named (`Zoom out`, `Zoom in`, `Pan source left/right by one page`
+*"reserves only 48 dp"*).
+
+**Device evidence, rebuilt Release:** `Zoom in` **47.56 → 49.33 dp**, spin buttons
+**48.00 → 49.33 dp** on both axes, session close targets 49.3–49.8 dp. Across the
+workspace, the filter drawer and both settings sheets, in both orientations:
+**0 clickable nodes under 48 dp and 0 overlapping clickable pairs.**
+
+### 28.3 I-01 and I-02 — the record
+
+**I-01.** §27's own working log was **staged for deletion** in the working tree
+while §27 links to it twice; `verify-docs.ps1` failed on that tree with
+`link target 'ANDROID-AUDIT-CONTINUATION.md' does not exist` — A-01's exact
+shape, one commit from recurring. The deletion was never committed, so `main` was
+clean and CI never saw it. The file is restored intact and the gate reads **103
+relative links across 45 Markdown files, all consistent**.
+
+**I-02.** §§27.6–27.7 recorded A-06 and A-07 but never added them to §5.1, the
+table §5 calls "the single source of truth for remediation status" and tells a
+resumer to read first. Both are now rows.
+
+### 28.4 I-05 — deferred, with its mechanism recorded
+
+A cold `ACTION_VIEW` of a document already open in a restored session opens a
+**second tab**; the same delivery to a warm activity correctly reuses the first.
+`MainActivity._consumedUris` — the whole of the exact-URI contract §5.4/3 relies
+on — is a process-local set, while the sessions it dedupes against are persisted.
+This is the area §1.1 gap 9 declares unexecuted ("**Cold delivery** … remain
+unexecuted"), and it stays declared: a correct fix needs the session to remember
+the document rather than the copy (an origin persisted in `SessionDescriptor` — a
+change to the documented session format) *and* a staleness policy the current
+copy-every-time code never has to state. Deduping without answering staleness
+would replace an explainable behaviour with a wrong one. §28.6 of the working log
+records exactly what a fix would take.
+
+### 28.5 Gates
+
+| Gate | Result |
+|---|---|
+| `tools/verify-docs.ps1` | **Pass** — 103 relative links across 45 files |
+| `dotnet build VisualCat.slnx` and Android `-c Release` | **0 warnings, 0 errors** |
+| Domain / Core / Application / App | **47 / 101 / 56 / 411 — 615 passed, 0 failed** (613 before; 2 added) |
+| `PhoneSelfSizedTouchTargetsAllReserveForPlatformEdgeRounding` against the unfixed source | **fails**, naming all four controls |
+| `git diff --check` | clean |
+
+### 28.6 Declared limits
+
+One device, one API level, one ABI, **three-button** navigation, Release but
+debug-signed. A-02's gesture-exclusion work is Pixel evidence (§27.2) and was not
+re-exercised here, because this phone publishes no Back strips to conflict with.
+The 1.55× measurements use Android's own font scale; the in-app **Text scale**
+route (A-03) was verified on the Pixel and is guarded by
+`TheReadersOwnTextScaleReachesTheOpenSession`, not re-driven here. §1.1's coverage
+gaps and §5.4's deliberate deferrals were re-read and stand, with I-05 added to
+the second list. Two measurements that looked like defects were the
+scrolled-node artefact recorded after the fourth pass — a node scrolled outside
+its host reports layout bounds, not visible ones — and were resolved by scrolling
+and re-measuring, not by a code change.

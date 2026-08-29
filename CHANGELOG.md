@@ -36,6 +36,15 @@ screenshot says which build it came from.
   (`Load 500 more · 49,656 remainir`), and the load-more band itself, which was
   arranged past the bottom of a short details pane and drawn across the status
   line.
+- Small square phone controls that size themselves — the time lens's zoom pair
+  and the source view's two pan buttons — no longer report a touch target below
+  the 48 dp floor. Android rounds a control's two edges to whole pixels
+  independently, so one that asks for exactly 48 dp and happens to start
+  mid-pixel loses part of a pixel at each end: on a Samsung the **Zoom in**
+  button measured 47.6 dp while **Zoom out**, one gap away, measured 48.0. The
+  reserve that a severity chip was given in 2.0.8 is now a named rule the whole
+  family shares, rather than a number written at the one control that had been
+  measured.
 
 ## [2.0.10] - 2026-08-28
 

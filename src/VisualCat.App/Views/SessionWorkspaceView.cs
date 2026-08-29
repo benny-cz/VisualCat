@@ -1244,7 +1244,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 // nominally 48 dp chip exported as 131 px = 47.6 dp, while its siblings
                 // happened to round to 132 px. One logical dp of reserve keeps every
                 // physical target above the 48 dp floor without changing this row's wrap.
-                Width = _mobile ? TouchTarget.Minimum + 1 : 28,
+                Width = _mobile ? TouchTarget.MinimumWithEdgeReserve : 28,
                 Height = _mobile ? 48 : 26,
                 Padding = new Thickness(0),
                 FontWeight = FontWeight.Bold,
@@ -1323,9 +1323,14 @@ public sealed partial class SessionWorkspaceView : UserControl
                 touchTarget.MinHeight = 48;
             }
 
-            zoomOut.MinWidth = 48;
+            // These three resolve their own width from a one-glyph label, so they are
+            // exactly the case TouchTarget.MinimumWithEdgeReserve exists for: zoomIn's
+            // logical edges landed on 182.5 and 290.5 px on a 2.25 px/dp Samsung and Android
+            // rounded both inward, exporting 47.6 dp from a control asked for 48 (F-48's
+            // arithmetic, at a control F-48's own fix never reached).
+            zoomOut.MinWidth = TouchTarget.MinimumWithEdgeReserve;
             fit.MinWidth = 56;
-            zoomIn.MinWidth = 48;
+            zoomIn.MinWidth = TouchTarget.MinimumWithEdgeReserve;
 
             var queryRow = _mobileQueryRow = new Grid
             {

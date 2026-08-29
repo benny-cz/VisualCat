@@ -61,6 +61,66 @@ public sealed class SamsungResponsiveLayoutTests
         }
     }
 
+    /// <summary>
+    /// Every phone control that resolves its <em>own</em> width from its content reserves more
+    /// than the bare 48 dp floor.
+    /// </summary>
+    /// <remarks>
+    /// F-48 measured a severity chip at 47.6 dp on a Pixel and fixed that one control with a
+    /// literal <c>+ 1</c>. The arithmetic it wrote down is general — Android rounds a node's
+    /// two edges to physical pixels independently, so any self-sized control at a fractional
+    /// origin can lose a pixel from each end — and a later Samsung pass duly measured the
+    /// time-lens <c>Zoom in</c> at 47.6 dp while its neighbour <c>Zoom out</c>, which happened
+    /// to start on a whole pixel, measured 48.0. This walks the whole family instead of the
+    /// control that was measured most recently, so the next one added is caught here rather
+    /// than on a device.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task PhoneSelfSizedTouchTargetsAllReserveForPlatformEdgeRounding()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = true;
+        try
+        {
+            const string log = "01-01 00:00:00.000000   100   101 I Worker         : message\n";
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(log, width: 393, height: 851);
+            fixture.Window.UpdateLayout();
+
+            var filters = fixture.View.GetLogicalDescendants()
+                .OfType<Button>()
+                .Single(button => AutomationProperties.GetName(button) == "Open search and timeline filters");
+            filters.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+            fixture.Window.UpdateLayout();
+
+            // Named rather than discovered, because the contract is "this control sizes itself
+            // to the floor", which no property exposes: a stretched control legitimately
+            // reports the floor and takes its container's edges.
+            string[] selfSized = ["Zoom out", "Zoom in", "Pan source left by one page", "Pan source right by one page"];
+            var reserved = fixture.View.GetLogicalDescendants()
+                .OfType<Button>()
+                .Where(button => selfSized.Contains(AutomationProperties.GetName(button)))
+                .ToArray();
+
+            Assert.Equal(selfSized.Length, reserved.Length);
+            Assert.All(
+                reserved,
+                button =>
+                {
+                    // Some of the family pin an exact Width and some a MinWidth; what the
+                    // contract is about is the width the control resolves for itself, which is
+                    // whichever of the two it actually states.
+                    var reserve = double.IsNaN(button.Width) ? button.MinWidth : button.Width;
+                    Assert.True(
+                        reserve >= TouchTarget.MinimumWithEdgeReserve,
+                        $"{AutomationProperties.GetName(button)} reserves only {reserve:0.#} dp");
+                });
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
     [AvaloniaFact]
     public async Task PhoneSeverityFilterTargetsReserveForPlatformEdgeRounding()
     {

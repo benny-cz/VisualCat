@@ -45,7 +45,7 @@ public sealed partial class MainView
         // finding F-26). One close target plus a gutter of trailing room is both the fix and
         // the right shape: the strip now ends in a margin instead of ending in a control cut
         // off by the screen edge.
-        Margin = new Thickness(0, 0, TouchTarget.Minimum + 10, 7),
+        Margin = new Thickness(0, 0, TouchTarget.MinimumWithEdgeReserve + 10, 7),
     };
 
     private readonly Dictionary<SessionTabViewModel, TabChip> _chips = [];
@@ -235,7 +235,10 @@ public sealed partial class MainView
             Margin = new Thickness(mobile ? 2 : 0, 0, 0, 0),
             CornerRadius = new CornerRadius(0, 7, 7, 0),
             Padding = new Thickness(0),
-            MinWidth = TouchTarget.For(mobile, 26),
+            // The close target resolves its own width from a single glyph, so it carries the
+            // edge reserve rather than the bare floor; the strip's trailing margin above is
+            // stated as one of these plus a gutter and follows it.
+            MinWidth = TouchTarget.SelfSized(mobile, 26),
             MinHeight = TouchTarget.For(mobile, 30),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,

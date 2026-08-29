@@ -20,8 +20,37 @@ internal static class TouchTarget
     /// <summary>The floor, in logical pixels, on a platform where a finger is the pointer.</summary>
     internal const double Minimum = 48;
 
+    /// <summary>
+    /// The size a control must reserve when it sizes <em>itself</em> to the floor.
+    /// </summary>
+    /// <remarks>
+    /// A control laid out at exactly <see cref="Minimum"/> can still export an accessibility
+    /// node below it. Android rounds a node's two edges to physical pixels
+    /// <em>independently</em>, so a control whose logical origin is fractional loses part of a
+    /// pixel at each end: a severity chip measured 47.6 dp on a Pixel at 2.75 px/dp (F-48),
+    /// and the time-lens <c>Zoom in</c> button measured 47.6 dp on a Samsung at 2.25 px/dp
+    /// while its neighbour <c>Zoom out</c>, which happened to start on a whole pixel, measured
+    /// 48.0. The defect is the arithmetic, not the device, so the answer cannot be a literal
+    /// written at whichever call site was measured last.
+    ///
+    /// One logical dp is the reserve. It is under half a physical pixel at every density the
+    /// product ships on — so it cannot be seen, and it changes no wrap, spacing or rhythm —
+    /// and it is more than the most two inward-rounded edges can take.
+    ///
+    /// Only a control that resolves its own width or height needs it. One stretched to a row
+    /// or a column takes that container's edges, and those are measured against the container.
+    /// </remarks>
+    internal const double MinimumWithEdgeReserve = Minimum + 1;
+
     /// <summary>The floor on this platform: <see cref="Minimum"/> on touch, or <paramref name="desktop"/>.</summary>
     internal static double For(bool touch, double desktop = 0) => touch ? Minimum : desktop;
+
+    /// <summary>
+    /// The self-sizing floor on this platform: <see cref="MinimumWithEdgeReserve"/> on touch,
+    /// or <paramref name="desktop"/>.
+    /// </summary>
+    internal static double SelfSized(bool touch, double desktop = 0) =>
+        touch ? MinimumWithEdgeReserve : desktop;
 
     /// <summary>
     /// Forces the touch floor on or off, for tests that need to exercise it.
@@ -38,4 +67,10 @@ internal static class TouchTarget
     /// <summary>The floor on the platform the app is actually running on.</summary>
     internal static double Here(double desktop = 0) =>
         For(TouchOverride ?? OperatingSystem.IsAndroid(), desktop);
+
+    /// <summary>
+    /// The self-sizing floor on the platform the app is actually running on.
+    /// </summary>
+    internal static double SelfSizedHere(double desktop = 0) =>
+        SelfSized(TouchOverride ?? OperatingSystem.IsAndroid(), desktop);
 }

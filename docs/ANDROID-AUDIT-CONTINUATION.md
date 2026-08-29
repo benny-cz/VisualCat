@@ -512,3 +512,289 @@ Declared, not promoted to passes:
    visible log row — no full row. That is the viewport, not a defect: the same
    scale in portrait shows the whole workspace. Below about 1.3× nothing here is
    near a limit.
+
+
+---
+
+## Pass 28 — Samsung SM-G990B, API 36, at the owner's own display size
+
+Continuation of this log. §27 above is the Pixel 5 gesture-navigation audit; this
+pass re-audits the whole report on a Samsung at a **viewport no pass in the
+report has used**, and carries its own restore points.
+
+### 28.0 Run header
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-29 |
+| Device | Samsung Galaxy S21 FE / `SM-G990B` (`r9q`), serial `RFCRC0A9GND` |
+| Android | 16 / API 36, `arm64-v8a` |
+| Navigation | `settings get secure navigation_mode` = **0** — three-button |
+| Display | 1080 × 2340 px, physical density 480, **override density 360** (2.25 px/dp) |
+| Viewport | **480 × 1040 dp portrait**, 1040 × 480 dp landscape |
+| Repo commit at start | `1840623` — *Answer the phone workspace's own settings and the platform's gestures* |
+
+**Why this viewport is new.** Every earlier Samsung pass (§§6, 8, 13, 16, 17, 18,
+23, 24, 25) recorded *480 dpi, 3.0 px/dp* → **360 × 780 dp**. The owner has since
+set a display-size override of 360 dpi, so the same phone is now **480 × 1040 dp**
+— wider than the Pixel's 393 dp and the Motorola's 434 dp, and the first pass to
+land between the two thresholds A-06 turns on:
+`MobilePaneAllocation.FitsSideBySide` = 532 dp and
+`MobileWorkspaceLayout.SharesARow` = 600 dp × text scale. Portrait sits *below*
+both; landscape sits *above* both by a wide margin. That is exactly the pair of
+levers §27.6 got wrong once.
+
+### 28.1 Checkpoint — report analysed, host gates run
+
+Read §§1–27 and the §5.1 status table. Findings:
+
+| # | Issue | Evidence | Status |
+|---|---|---|---|
+| **I-01** | **A-01 was one commit from recurring.** §27's own working log — this file — was **staged for deletion** in the working tree while §27 links to it twice. `verify-docs.ps1` failed on that tree: `link target 'ANDROID-AUDIT-CONTINUATION.md' does not exist` × 2. The deletion was never committed, so `main` itself is clean and CI never saw it. | `git status` → `D docs/ANDROID-AUDIT-CONTINUATION.md`; gate output at 28.1 | **Fixed** — deletion reverted, file restored from `HEAD` intact (514 lines), gate now reads *102 relative links across 45 Markdown files, all consistent*. |
+| **I-02** | **A-06 and A-07 are absent from §5.1.** §5 calls that table "the single source of truth for remediation status", and §§27.6–27.7 record two defects found and fixed that never reached it. A resumer following §5's own "How to resume" instruction would not learn they exist. | §5.1 vs §27.6/§27.7 | Open — see 28.2 |
+| **I-03** | Every §27 fix is present in the tree and covered by tests. `EdgeGestureGuard`/`IEdgeGestureSurface`, `FitsSideBySide`, `EnforceLoadMoreFooterFit`, `NarrowestThatFits`/`NarrowestSummaryThatFits`, `ApplyAppearance` all resolve, with `PixelGestureAndTextScaleTests` guarding them. | `grep` sweep at 28.1 | **No defect** |
+
+**Host gates on the restored tree, before any change of mine:**
+
+| Gate | Result |
+|---|---|
+| `dotnet build VisualCat.slnx` | **0 warnings, 0 errors** |
+| `VisualCat.Domain.Tests` / `Core` / `Application` / `App` | **47 / 101 / 56 / 409 — 613 passed, 0 failed** |
+| `tools/verify-docs.ps1` | **Pass** — 102 links, 45 files (§27's 99/44 plus this restored file's own 3) |
+
+**Next action:** add A-06/A-07 to §5.1 (I-02), then install the current-tree
+Release build on the device and sweep this new viewport in both orientations.
+
+### 28.2 Device sweep on the current tree — what held
+
+Clean install of the current tree's **Release** APK (`2.0.10-dev`, code `2001000`,
+`flags=0x0` — no `DEBUGGABLE`), after `adb uninstall`. Session opened by
+`ACTION_VIEW` on a MediaStore `content://` URI: **199,990 entries**, 18 MB.
+
+| State | Result |
+|---|---|
+| Home, portrait 480 dp | 0 of 6 clickable nodes under 48 dp, 0 overlapping pairs |
+| Workspace, portrait 480 × 1040 dp | 0 of 13 under 48 dp, 0 overlaps; footer reads `Load 500 more · 199,490 remaining` whole, with F-42's spaced separator |
+| Workspace, landscape 1040 × 480 dp | 0 of 11 under 48 dp, 0 overlaps; panes side by side; count line `199,990 view`; load-more in the header as `+500` |
+| Landscape at Android font scale **1.55×** | Command groups share one row (1040 ≥ 600 × 1.55); tabs **119.1 dp** each, grown with the scale — **F-41 confirmed on a second device** |
+
+**A-06 regression-tested at the viewport it lived in.** `wm size 1080x1575` at
+1.55× gives a **700 × 480 dp** landscape — deliberately *between* the two
+thresholds: `FitsSideBySide` (532 dp) says two columns, `SharesARow`
+(600 × 1.55 = 930 dp) says one command row cannot fit. That is exactly the window
+where §27.6's defect drew no analysis pane at all. The device now draws the pane
+side by side: `TabControl` **322.2 × 306.7 dp**, list **298.2 × 152.0 dp** with
+rows, load-more band **298.2 × 48.0 dp** *inside* the pane. **A-06 and A-07 both
+hold at a viewport and a device §27 never used.**
+
+At 1.55× the middle analysis tab renders `Insig…`. That is F-41's *fix*, not a
+defect: the header is a `CharacterEllipsis` `TextBlock` and the dump confirms the
+automation name is the whole word `Insights`. §5.2's F-41 record states exactly
+this contract.
+
+### 28.3 I-04 — the time-lens `Zoom in` button is 47.6 dp wide
+
+**A genuine recurrence of F-48's defect class at a control F-48's fix never
+reached.** Measured in the filter drawer, on the Release build, at 2.25 px/dp:
+
+| Control | Bounds (px) | Width |
+|---|---|---|
+| `Zoom out` | `[61,1221][169,1329]` | 108 px = **48.00 dp** |
+| `Zoom in` | `[183,1221][290,1329]` | 107 px = **47.56 dp** |
+| every severity chip (F-48's fix) | 111 px | **49.33 dp** |
+
+Reproduced in **both orientations** — landscape `[282,903][389,1011]` is the same
+107 px. `Zoom in`'s logical left lands at 81.11 dp → 182.5 px and its right at
+129.11 dp → 290.5 px; Android rounds the two edges **independently and inward**,
+which is precisely the mechanism §20.13 wrote down for F-48. `Zoom out` starts on
+a whole pixel and survives.
+
+F-48's remedy was `TouchTarget.Minimum + 1` written inline at **one** call site —
+the severity chip. Four controls in the product size *themselves* to exactly the
+floor and were never given the reserve:
+
+| Control | Site |
+|---|---|
+| `zoomOut`, `zoomIn` | `SessionWorkspaceView.cs` — `MinWidth = 48` |
+| `panLeft`, `panRight` (source context) | `SessionWorkspaceView.RawContext.cs` — `Width = 48` |
+
+**Next action:** give the reserve a name in `TouchTarget`, apply it at every site
+where a control sizes itself to the floor, add a failing-first host test, then
+re-measure on the device.
+
+### 28.4 I-04 — the remediation
+
+**Decision.** F-48 wrote its remedy as a literal `+ 1` at the one control that had
+been measured. The mechanism it documented is arithmetic, not a property of that
+control, so the remedy is given a name and applied to the whole family that shares
+the shape.
+
+`TouchTarget.MinimumWithEdgeReserve` (= `Minimum + 1`) and `TouchTarget.SelfSized`
+now state the rule where the floor itself is stated, with the reason on them: a
+control that resolves its **own** width can lose part of a physical pixel at each
+independently-rounded edge, and one logical dp is under half a physical pixel at
+every density the product ships on — enough to survive the rounding, too little to
+see. A control stretched to a row or column takes that container's edges and
+needs nothing.
+
+| Site | Was | Now |
+|---|---|---|
+| `SessionWorkspaceView.cs` — `zoomOut`, `zoomIn` | `MinWidth = 48` | `MinWidth = TouchTarget.MinimumWithEdgeReserve` |
+| `SessionWorkspaceView.RawContext.cs` — `panLeft`, `panRight` | `Width = 48` | `Width = TouchTarget.MinimumWithEdgeReserve` |
+| `SessionWorkspaceView.cs` — severity chip | `TouchTarget.Minimum + 1` (F-48's literal) | the named constant |
+| `MainView.TabStrip.cs` — session close target | `TouchTarget.For(mobile, 26)` | `TouchTarget.SelfSized(mobile, 26)` |
+| `MainView.TabStrip.cs` — strip trailing margin | `Minimum + 10` | `MinimumWithEdgeReserve + 10` — the margin is documented as *one close target plus a gutter*, so it follows the target it reserves for |
+
+Deliberately **not** changed: `copyRaw` and `openInspector` state
+`MinWidth = TouchTarget.Minimum` but are `HorizontalAlignment.Stretch` inside `*`
+columns, so they take the grid's edges; and the many `MinHeight = 48` rows, whose
+height is imposed by the row and which measured exactly 48.00 dp on the device in
+both orientations. Widening those would move the product's vertical rhythm to buy
+nothing measurable.
+
+**Host contract, failing first.**
+`SamsungResponsiveLayoutTests.PhoneSelfSizedTouchTargetsAllReserveForPlatformEdgeRounding`
+names the family rather than rediscovering it (no property distinguishes
+"self-sized" from "stretched"), and asserts on whichever of `Width`/`MinWidth` the
+control actually states. Against the unfixed source it fails with all four:
+
+```
+Error: Pan source left by one page reserves only 48 dp
+Error: Pan source right by one page reserves only 48 dp
+Error: Zoom out reserves only 48 dp
+Error: Zoom in reserves only 48 dp
+```
+
+**Host gates after the fix:** build **0 warnings, 0 errors**; suite **614 passed,
+0 failed** (47 / 101 / 56 / **410** — the 409 baseline plus this contract).
+`CHANGELOG.md` `[Unreleased] → Fixed` carries the entry, in the file's voice and
+without finding IDs.
+
+**Next action:** install the rebuilt Release APK and re-measure `Zoom in` on the
+device, then sweep the panes no pass has opened at this viewport — the settings
+sheets, the source-context view and the Insights/Entry tabs.
+
+### 28.5 Device verification of I-04, and one measurement that was not a defect
+
+Rebuilt Release APK installed with `adb install -r` (`2.0.10-dev`, `2001000`).
+Filter drawer, portrait, same session:
+
+| Control | Before | After |
+|---|---:|---:|
+| `Zoom in` | **47.56 dp** | **49.33 dp** |
+| `Zoom out` | 48.00 dp | 49.33 dp |
+| every severity chip | 49.33 dp | 49.33 dp (unchanged) |
+
+**0 of 26 clickable nodes under 48 dp**, 0 overlapping pairs. I-04 is
+device-verified.
+
+**A false positive worth recording.** The first landscape re-measure reported
+`Zoom out` and `Zoom in` at **49.33 × 17.78 dp** and flagged both. They were not
+clipped: with two session tabs open at 1.55× the drawer's body had scrolled them
+below its viewport, and Avalonia's automation peer reports a node's *layout*
+bounds, not its visible ones. Swiping the drawer body up moved them to
+`[160,868][271,976]` — **49.33 × 48.00 dp**, whole and reachable. This is exactly
+the trap recorded after the fourth pass: compare a small number against the
+scroller's own bounds and re-measure after scrolling before believing it.
+
+### 28.6 I-05 — a cold `ACTION_VIEW` of an already-open document opens a second tab
+
+**New finding, in the area §1.1 gap 9 declares unexecuted** ("Exact-URI
+redelivery through Android's Downloads provider passed in a *warm* activity.
+**Cold delivery** … remain unexecuted"). Severity **Minor**. Not fixed — see the
+decision below.
+
+**Oracle.** One session open from `content://media/external/file/1000000573`:
+
+| Delivery | Tabs after |
+|---|---|
+| Same URI again, activity **warm** | **1** — correctly reused |
+| `am force-stop`, then the same URI, activity **cold** | **2** — duplicate |
+
+**Mechanism.** `MainActivity._consumedUris` is a process-local `HashSet<string>`
+guarding `MaterializeIncomingAsync`. It is the whole of the exact-URI contract
+§5.4/3 relies on, and it is scoped to the process while the sessions it dedupes
+against are persisted across processes. On a cold start the set is empty, so the
+URI is materialized again — into a fresh `{timestamp}-{guid}-{name}` cache copy,
+because the destination name is deliberately unique — and imported as a new
+session beside the restored one. Nothing downstream can notice: the app layer
+only ever sees the cache path, and `SessionDescriptor.SourceDescription` records
+that per-copy path, so two copies of one document are two unrelated identities.
+
+**Why this is recorded rather than fixed.** A correct fix needs the session to
+remember the *document* it came from, not the copy: an origin carried on
+`IncomingFile`, persisted in `SessionDescriptor` — a change to the documented
+session format in [`SESSION-FORMAT.md`](SESSION-FORMAT.md) — and matched on
+restore. It also needs a staleness policy the current code never has to state,
+because it copies every time: a document that has *grown* since the tab was
+opened should not be silently answered with the old copy, so reuse has to be
+conditioned on the provider's size and last-modified. Neither question is settled
+by this audit's evidence, and a partial fix — deduping without answering
+staleness — would replace an explainable behaviour with a wrong one. This is the
+same call §5.4/5 made about F-40's residue: not a change to make from inside a
+remediation.
+
+**What it would take**, so a later session does not re-derive it: add
+`Origin` to `IncomingFile`; thread it through `MainView.OpenIncomingAsync` into
+`WorkspaceViewModel.ImportFileCoreAsync`; persist it on `SessionDescriptor`
+alongside `SourceDescription`; on an incoming file, select an open tab whose
+origin matches instead of importing, unless the provider reports the document
+changed. `MainActivity._consumedUris` then becomes redundant.
+
+### 28.7 Completing the rule — the numeric spin buttons
+
+Sweeping the settings sheets (the panes the fourth pass recorded as *never swept*,
+both of which failed then) found no defect at this viewport: **More** is 10 of 10
+controls at or above the floor, and **Appearance & timeline** is 20 of 20 once
+scrolled. Four apparent failures there were the same scrolled-node artefact as
+28.5 — `Increase/Decrease minimum bar width` read `48.00 × 10.2 dp` clipped at the
+screen edge and `48.00 × 48.00 dp` after a scroll, and the CSV-encoding pair read
+28 dp for the same reason.
+
+The spin buttons themselves measured **exactly 48.00 dp (108 px)** on both axes —
+no defect. But they are the same shape I-04 is about: `PrepareSpinButtons` gives
+them `TouchTarget.Here()`, and a spin button resolves its own box from its glyph.
+Leaving them on the bare floor would repeat exactly the criticism this pass makes
+of F-48 — a rule applied only to the control that was measured last. `Prepare`
+now takes `TouchTarget.SelfSizedHere()`, and
+`AndroidAuditFix2Tests.NumericSpinnersReserveAboveTheTouchFloorOnTouch` holds it
+there. The test's own remark says this is the rule being applied where the shape
+is, not a defect being chased, so a later reader does not go looking for a device
+measurement that never existed.
+
+**Host gates:** build **0 warnings, 0 errors**; suite **615 passed, 0 failed**
+(47 / 101 / 56 / **411**).
+
+**Next action:** install the rebuilt Release and re-sweep both orientations and
+both settings sheets, then restore the device and run the documentation gate.
+
+### 28.8 Final device verification and hand-back
+
+Rebuilt Release installed (`2.0.10-dev`, `2001000`). Every pane swept on the final
+build, both orientations:
+
+| Pane | Clickable nodes | Under 48 dp | Overlapping pairs |
+|---|---:|---:|---:|
+| Workspace, portrait 480 × 1040 dp | 15 | **0** | **0** |
+| Workspace, landscape 1040 × 480 dp | 15 | **0** | **0** |
+| Filter drawer, portrait | 26 | **0** | **0** |
+| Filter drawer, landscape (after scrolling to the time lens) | 26 | **0** | **0** |
+| **More** sheet | 10 | **0** | — |
+| **Session cache** sheet | 8 | **0** | — |
+| **Appearance & timeline** sheet (scrolled) | 17 on-screen | **0** | — |
+
+Measured deltas: `Zoom in` **47.56 → 49.33 dp**; `Zoom out` 48.00 → 49.33; every
+numeric spin button **48.00 × 48.00 → 49.33 × 49.33 dp**; session close targets
+49.33 and 49.78 dp; severity chips unchanged at 49.33.
+
+**Hand-back.** Device restored to the baseline recorded in 28.0:
+`font_scale 1.0`, `wm user-rotation free`, `wm size reset`, and — after a
+`wm density reset` briefly cleared it — the owner's **override density 360**
+put back. The 18 MB test corpus is removed from `/sdcard/Download` and its
+MediaStore row deleted. The app is left installed at `2.0.10-dev` with the
+sessions it holds; `.codex-artifacts/` is git-ignored, so no UI dump or
+screenshot enters the repository.
+
+**Status: this pass is complete.** I-01, I-02 and I-04 are fixed and recorded;
+I-04 is device-verified; I-05 is reproduced, deferred and specified. §28 of the
+report is the durable record; this log is its working detail.

@@ -848,6 +848,56 @@ public sealed class AndroidAuditFix2Tests
         Assert.DoesNotContain(spinners, static name => name!.Contains("PathIcon", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// A spin button resolves its own box, so on touch it reserves above the floor rather
+    /// than sitting exactly on it.
+    /// </summary>
+    /// <remarks>
+    /// F-31 gave these the floor after they measured 34 x 46 dp. The floor alone is not
+    /// enough for a control that sizes itself: Android rounds a node's two edges to physical
+    /// pixels independently, and elsewhere in the product that turned an exact 48 into an
+    /// exported 47.6 dp. These measured 48.0 on the device, so this is the rule being applied
+    /// where the shape is, not a defect being chased.
+    /// </remarks>
+    [AvaloniaFact]
+    public void NumericSpinnersReserveAboveTheTouchFloorOnTouch()
+    {
+        var previous = TouchTarget.TouchOverride;
+        TouchTarget.TouchOverride = true;
+        try
+        {
+            var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            var dialog = new SessionCacheDialog(root, new ApplicationSettings());
+            var window = new Window { Content = dialog, Width = 380, Height = 620 };
+            window.Show();
+            window.UpdateLayout();
+
+            var days = Named<NumericUpDown>(dialog, "Maximum age (days)");
+            var spinners = days.GetVisualDescendants()
+                .OfType<Button>()
+                .Where(static button => !string.IsNullOrEmpty(AutomationProperties.GetName(button)))
+                .ToArray();
+
+            Assert.Equal(2, spinners.Length);
+            Assert.All(
+                spinners,
+                button =>
+                {
+                    Assert.True(
+                        button.MinWidth >= TouchTarget.MinimumWithEdgeReserve,
+                        $"{AutomationProperties.GetName(button)} is {button.MinWidth:0.#} dp wide");
+                    Assert.True(
+                        button.MinHeight >= TouchTarget.MinimumWithEdgeReserve,
+                        $"{AutomationProperties.GetName(button)} is {button.MinHeight:0.#} dp tall");
+                });
+        }
+        finally
+        {
+            TouchTarget.TouchOverride = previous;
+        }
+    }
+
     // ---------------------------------------------------------------- ---
 
     private static Task UsingPhoneWorkspace(

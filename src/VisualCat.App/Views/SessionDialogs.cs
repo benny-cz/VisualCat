@@ -272,8 +272,10 @@ internal static class SheetForm
     private static bool Prepare(NumericUpDown field, string label)
     {
         // Zero on the desktop, where a pointer is not a thumb and the spinners are the size
-        // the theme drew them.
-        var floor = TouchTarget.Here();
+        // the theme drew them. On touch it is the self-sizing floor: a spin button resolves
+        // its own box from its glyph, so it is exposed to the same independently-rounded
+        // edges that exported 47.6 dp from a control asked for 48 elsewhere in the product.
+        var floor = TouchTarget.SelfSizedHere();
         var prepared = 0;
         foreach (var button in field.GetVisualDescendants().OfType<Button>())
         {

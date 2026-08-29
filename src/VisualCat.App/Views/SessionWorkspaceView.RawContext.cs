@@ -512,7 +512,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             {
                 Content = "←",
                 MinHeight = 48,
-                Width = 48,
+                Width = TouchTarget.MinimumWithEdgeReserve,
             };
             panLeft.Click += (_, _) => PanRawContext(-1);
             ToolTip.SetTip(panLeft, "Pan source left by one page");
@@ -522,7 +522,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             {
                 Content = "→",
                 MinHeight = 48,
-                Width = 48,
+                Width = TouchTarget.MinimumWithEdgeReserve,
             };
             panRight.Click += (_, _) => PanRawContext(1);
             ToolTip.SetTip(panRight, "Pan source right by one page");
