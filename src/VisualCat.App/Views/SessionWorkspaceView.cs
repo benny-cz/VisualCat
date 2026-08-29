@@ -338,12 +338,21 @@ public sealed partial class SessionWorkspaceView : UserControl
                 : "Ctrl+F focuses search; Enter applies it; F3 or N moves between matches.");
         SizeChanged += (_, eventArgs) => ApplyMobileLayout(eventArgs.NewSize);
 
-        // The two controls whose main gesture is a horizontal drag, and the only two that
-        // reach far enough across the screen to collide with a platform edge gesture. On
-        // gesture navigation a pan started in the plot's outer 49 px used to go Back and
-        // leave the app (finding F-28); this claims those touches for the plot.
+        // The controls whose whole purpose is a drag, and which reach far enough across the
+        // screen to collide with a platform edge gesture. On gesture navigation a pan started
+        // in the plot's outer 49 px used to go Back and leave the app (finding F-28); this
+        // claims those touches for the plot.
         Platform.EdgeGestureGuard.Track(_timeline);
         Platform.EdgeGestureGuard.Track(_minimap);
+
+        // The stacked divider spans the same width and answered the same way once its target
+        // became the whole boundary: a drag started in its last 17.8 dp at either end went
+        // Back and left the app for the launcher (A-02). It claims only its grab band, and
+        // the side-by-side divider claims nothing — see MobilePaneSplitter.EdgeGestureArea.
+        if (_mobilePaneSplitter is { } paneSplitter)
+        {
+            Platform.EdgeGestureGuard.Track(paneSplitter);
+        }
 
         // The entries floor is computed from the pane's own arranged chrome, so it is
         // re-checked after every arrange rather than guessed before the first one. The
@@ -351,7 +360,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         // has actually moved, so it settles in one further pass instead of oscillating.
         if (_mobile)
         {
-            LayoutUpdated += (_, _) => EnforceEntriesFloor();
+            LayoutUpdated += (_, _) =>
+            {
+                EnforceEntriesFloor();
+                TrackLoadMoreRoom();
+                EnforceLoadMoreFooterFit();
+            };
         }
         ActualThemeVariantChanged += (_, _) => ApplyThemeSurfaces();
         ApplyThemeSurfaces();

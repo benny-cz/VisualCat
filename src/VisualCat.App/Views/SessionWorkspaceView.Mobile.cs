@@ -394,8 +394,12 @@ public sealed partial class SessionWorkspaceView : UserControl
                               _mobileWorkspaceState.DisplayMode is not MobileWorkspaceDisplayMode.Details;
         var analysisVisible = !filtersOpen &&
                               _mobileWorkspaceState.DisplayMode is not MobileWorkspaceDisplayMode.Plot;
+        // The pane question, not the command row's (A-06): whether both panes can have their
+        // own minimum width. See MobilePaneAllocator.FitsSideBySide.
         var stackedCompact = wideComposition && timelineVisible && analysisVisible &&
-                             !MobileWorkspaceLayout.SharesARow(settled.Width);
+                             !MobilePaneAllocator.FitsSideBySide(
+                                 settled.Width,
+                                 MobilePaneSplitter.LaneExtent);
 
         var minimapVisible = timelineVisible && hasOverview && layout.MinimapHeight > 0;
         var composition = filtersOpen
@@ -1025,6 +1029,15 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// <summary>The narrowest the compact count line is worth showing at.</summary>
     private const double SummaryFloor = 72;
 
+    /// <summary>The gap the compact count line keeps between itself and the last tab.</summary>
+    private const double SummaryLead = 6;
+
+    /// <summary>
+    /// The width the count line may actually draw in, so it can choose what to say rather
+    /// than be cut off saying it. Unbounded whenever it is not sharing the tab strip's row.
+    /// </summary>
+    private double _summaryRoom = double.PositiveInfinity;
+
     /// <summary>What the analysis tab strip spends on itself before its tabs get anything.</summary>
     private const double TabStripSlack = 16;
 
@@ -1094,12 +1107,26 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// </param>
     private void MoveSummaryIntoTabStrip(bool intoTabs, double roomBesideTheTabs)
     {
+        // What the line may actually draw in: the host's cap, less the lead it keeps off the
+        // last tab. The text it chooses is resolved against this (A-04), so the room has to
+        // be recorded on every pass — including the passes where nothing else moves, which
+        // are the ones a rotation and a divider drag arrive as.
+        var cap = Math.Max(SummaryFloor, roomBesideTheTabs);
+        var room = intoTabs ? cap - SummaryLead : double.PositiveInfinity;
+        var roomMoved = Math.Abs(_summaryRoom - room) > 0.5;
+        _summaryRoom = room;
+
         if (_mobileSummaryHost is not { } host || _entryHeader is not { } header ||
             _summaryInTabStrip == intoTabs)
         {
             if (intoTabs && _mobileSummaryHost is { } existing)
             {
-                existing.MaxWidth = Math.Max(SummaryFloor, roomBesideTheTabs);
+                existing.MaxWidth = cap;
+            }
+
+            if (roomMoved)
+            {
+                UpdateSummaryText();
             }
 
             return;
@@ -1113,10 +1140,10 @@ public sealed partial class SessionWorkspaceView : UserControl
         _summaryInTabStrip = intoTabs;
         if (intoTabs)
         {
-            host.MaxWidth = Math.Max(SummaryFloor, roomBesideTheTabs);
+            host.MaxWidth = cap;
             host.Children.Add(_summary);
             host.IsVisible = true;
-            _summary.Margin = new Thickness(6, 0, 0, 0);
+            _summary.Margin = new Thickness(SummaryLead, 0, 0, 0);
             _summary.TextWrapping = TextWrapping.NoWrap;
             _summary.TextTrimming = TextTrimming.CharacterEllipsis;
             _summary.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -1130,6 +1157,10 @@ public sealed partial class SessionWorkspaceView : UserControl
             header.Children.Insert(0, _summary);
             _summary.HorizontalAlignment = HorizontalAlignment.Stretch;
         }
+
+        // The placement decides which of the two forms is used at all, so the text is
+        // resolved after the move rather than before it.
+        UpdateSummaryText();
     }
 
     /// <summary>Whether the reader is currently working inside the filter drawer.</summary>
@@ -1156,8 +1187,13 @@ public sealed partial class SessionWorkspaceView : UserControl
         // they do in an ordinary portrait workspace, and the pane gets the whole width; the
         // compact row structure and its shorter chrome still apply, because those save height
         // and height is what is actually short.
+        //
+        // The threshold is the one the panes themselves state, not the command row's, and the
+        // two are not the same number (A-06). See MobilePaneAllocator.FitsSideBySide.
         var splitTimeline = enabled && timelineVisible && analysisVisible &&
-                            MobileWorkspaceLayout.SharesARow(availableWidth);
+                            MobilePaneAllocator.FitsSideBySide(
+                                availableWidth,
+                                MobilePaneSplitter.LaneExtent);
         var stackedCompact = enabled && timelineVisible && analysisVisible && !splitTimeline;
 
         // Three columns rather than two: the middle one is the divider's lane, and it is the

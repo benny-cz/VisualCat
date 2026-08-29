@@ -24,8 +24,18 @@ namespace VisualCat.App.Platform;
 /// axis the plot exists to show. Android's answer is
 /// <c>View.setSystemGestureExclusionRects</c>: the app names the rectangles where its own
 /// gesture wins. The budget is 200 dp of exclusion height per edge, so this deliberately
-/// covers only the two controls that consume a horizontal drag — about 145 dp together —
-/// and leaves Back working everywhere else on the screen, including the whole entries list.
+/// covers only the surfaces a drag is the whole point of, and leaves Back working everywhere
+/// else on the screen, including the whole entries list.
+/// </para>
+/// <para>
+/// The phone divider joined them once its target became the whole boundary rather than a
+/// pill in the middle (§24.3). On the Pixel the system's own strips are 82 px — 29.8 dp —
+/// wide, and the divider reaches 17.8 dp into each of them, so grabbing the line near either
+/// end and pulling it down with any sideways component went Back and left the app entirely:
+/// F-28 again, on the control built after it was fixed. Neither device §§24–26 ran on could
+/// see it, because both use three-button navigation. The divider claims only its grab band —
+/// 20 dp, not its 48 dp target — because that band is the only part of it a drag can start
+/// in away from the centred grip.
 /// </para>
 /// <para>
 /// Nothing here runs on a platform that has not installed
@@ -33,6 +43,32 @@ namespace VisualCat.App.Platform;
 /// check per layout pass.
 /// </para>
 /// </remarks>
+/// <summary>
+/// A tracked control that claims less than its whole rectangle, or claims it ahead of the
+/// larger surfaces.
+/// </summary>
+/// <remarks>
+/// The plot and the minimap are draggable everywhere inside themselves, so their whole
+/// rectangle is the honest claim. The phone divider is not: only a thin band along the
+/// boundary is grabbable away from its centred grip, and that band is all that needs to win
+/// against the platform. Claiming the divider's whole 48 dp would spend nearly two and a half
+/// times the budget on area no finger can start a drag in — budget the plot then loses.
+/// </remarks>
+internal interface IEdgeGestureSurface
+{
+    /// <summary>
+    /// The part of the control, in its own coordinates, whose drag must beat the platform's
+    /// edge gesture. An empty rectangle claims nothing.
+    /// </summary>
+    Rect EdgeGestureArea { get; }
+
+    /// <summary>
+    /// Whether the claim is small enough — and the consequence of losing it severe enough —
+    /// that it must be granted whole before the larger surfaces are served.
+    /// </summary>
+    bool ClaimedWhole { get; }
+}
+
 public static class EdgeGestureGuard
 {
     internal const double MaximumExclusionHeightDp = 200;
@@ -129,13 +165,15 @@ public static class EdgeGestureGuard
             if (Measure(control) is { } rectangle)
             {
                 var scale = TopLevel.GetTopLevel(control)?.RenderScaling ?? 1;
-                measured.Add((rectangle, control is MinimapControl, scale > 0 ? scale : 1));
+                var whole = control is MinimapControl or IEdgeGestureSurface { ClaimedWhole: true };
+                measured.Add((rectangle, whole, scale > 0 ? scale : 1));
             }
         }
 
         // Android silently keeps the lowest rectangles once the 200 dp per-edge budget is
-        // exceeded. Make that policy explicit: the small, entirely draggable minimap stays
-        // whole, then the timeline gets what remains and is trimmed from its label-heavy top.
+        // exceeded. Make that policy explicit: the small, entirely draggable surfaces — the
+        // minimap, and the divider's grab band — stay whole, then the timeline gets what
+        // remains and is trimmed from its label-heavy top.
         var ordered = measured
             .OrderByDescending(static item => item.Preferred)
             .ThenByDescending(static item => item.Rectangle.Bottom)
@@ -196,7 +234,16 @@ public static class EdgeGestureGuard
             return null;
         }
 
-        var origin = control.TranslatePoint(default, root);
+        // A control that grabs only part of itself says so; everything else claims all of it.
+        var claim = control is IEdgeGestureSurface surface
+            ? surface.EdgeGestureArea
+            : new Rect(control.Bounds.Size);
+        if (claim.Width <= 0 || claim.Height <= 0)
+        {
+            return null;
+        }
+
+        var origin = control.TranslatePoint(claim.TopLeft, root);
         if (origin is not { } topLeft)
         {
             return null;
@@ -212,7 +259,7 @@ public static class EdgeGestureGuard
         var left = 0;
         var top = (int)Math.Floor(topLeft.Y * scale);
         var right = (int)Math.Ceiling(root.Bounds.Width * scale);
-        var bottom = (int)Math.Ceiling((topLeft.Y + control.Bounds.Height) * scale);
+        var bottom = (int)Math.Ceiling((topLeft.Y + claim.Height) * scale);
         return new PixelRect(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
     }
 

@@ -538,9 +538,12 @@ public sealed partial class LiveTestRemediationTests
                 Assert.Equal((int)Math.Ceiling(fixture.Window.Bounds.Width * scale), rectangle.Right);
             });
 
-            // Only those two. The exclusion budget is finite and Back has to keep working
-            // everywhere else on the screen.
-            Assert.Equal(2, claimed.Count);
+            // Those two and the divider's grab band, and nothing else. The exclusion budget is
+            // finite and Back has to keep working everywhere else on the screen. This read
+            // `2` until the divider's target became the whole boundary and answered the same
+            // way the plot used to (A-02); the band is asserted in
+            // PixelGestureAndTextScaleTests.
+            Assert.Equal(3, claimed.Count);
 
             var publications = published.Count;
             Platform.EdgeGestureGuard.Republish();
@@ -1602,13 +1605,20 @@ public sealed partial class LiveTestRemediationTests
     /// and the swap was one character for one character, so <c>more; 49,656</c> became
     /// <c>more· 49,656</c>: the semicolon's spacing on a mark that carries its own.
     /// </summary>
+    /// <remarks>
+    /// Sized so the whole sentence fits the footer band. Since A-05 the label gives up the
+    /// remaining count rather than being clipped mid-glyph when it does not fit, and this
+    /// assertion is about the separator inside that clause — so the test has to be in a
+    /// viewport that keeps it. The headless font is wider per character than any phone's, so
+    /// the width here is not the device's.
+    /// </remarks>
     [AvaloniaFact]
     public async Task TheLoadMoreLabelSpacesItsSeparatorLikeEveryOtherOne()
     {
         SessionWorkspaceView.PhoneCompositionOverride = true;
         try
         {
-            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(ManyEntryLog(600), 393, 777);
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(ManyEntryLog(600), 600, 777);
             fixture.Window.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
 

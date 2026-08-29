@@ -155,6 +155,45 @@ internal static class MobilePaneAllocator
     /// </summary>
     internal const double MinimumUsefulTravel = 12;
 
+    /// <summary>
+    /// Whether a short viewport can give both panes their own minimum width, and so compose
+    /// them side by side rather than stacking them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This used to be asked as <c>MobileWorkspaceLayout.SharesARow</c>, which answers a
+    /// different question — whether two <em>command groups</em> fit on one row — and needs
+    /// 600 dp where two panes need 532. The two part company as soon as the reader raises
+    /// their text size, because both scale: on a Pixel 5 in landscape, 850.9 × 392.7 dp, a
+    /// 1.55× scale put the command-row threshold at 930 dp, so the panes stacked into a
+    /// 143 dp band. Stacked, that band cannot seat both: the plot keeps its readable floor
+    /// and the analysis pane resolves to <em>nothing</em>, so **Split** drew a plot and no
+    /// details at all while its own button stayed selected (A-06). Widening the same
+    /// viewport to 945 dp brought the details straight back, which is the wrong lever
+    /// entirely — the viewport was already wide, it was the question that was wrong.
+    /// </para>
+    /// <para>
+    /// Deliberately <em>not</em> scaled by the reader's text size, which is where the first
+    /// attempt at this fix went wrong on the same device. The command row scales because not
+    /// fitting there is a hard failure — five controls drawn on top of each other, with one
+    /// of them unreachable (F-34). Two columns that are narrower than their comfort width are
+    /// not a hard failure: the allocator keeps them above
+    /// <see cref="TimelineRenderingWidthFloor"/>, and the workspace this viewport actually
+    /// has is 777 dp wide and 143 dp tall once stacked. Scaling turned a comfort target into
+    /// a cliff, and what fell off it was the whole analysis pane. A narrow column beats no
+    /// column.
+    /// </para>
+    /// <para>
+    /// This is also why the rule is width alone: a composition chosen from a band height that
+    /// is itself decided by the composition would have two answers and could alternate
+    /// between them on consecutive layout passes.
+    /// </para>
+    /// </remarks>
+    internal static bool FitsSideBySide(double width, double laneWidth) =>
+        double.IsFinite(width) &&
+        double.IsFinite(laneWidth) &&
+        width >= MinimumReadableTimelineWidth + MinimumUsableAnalysisWidth + Math.Max(0, laneWidth);
+
     internal static MobilePaneAllocation Resolve(MobilePaneAllocationRequest request)
     {
         var band = FiniteNonNegative(request.AvailableBandHeight);

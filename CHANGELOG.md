@@ -13,6 +13,30 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Fixed
+- Dragging the phone Split divider near either edge of the screen no longer
+  leaves the app. On a phone using gesture navigation the system's own Back
+  strips are about 30 dp wide and the divider — whose whole boundary line became
+  draggable in 2.0.10 — reaches into both, so a drag with any sideways component
+  went Back and dropped the reader on the launcher. The divider now claims its
+  grab band from the platform the way the plot and the minimap already do.
+- The app's own **Text scale** setting now reaches the session you are reading,
+  not only the chrome around it. Raising it grew the command bar, the tab titles
+  and the status line and left the log at exactly the size it was, until some
+  unrelated configuration change happened to flush it; Android's own text-size
+  control had always worked. Both now take the same path.
+- A short, wide workspace composes its plot and details side by side whenever
+  both fit, rather than when two command groups happen to fit on one row. The two
+  are different widths and both grow with your text size, so at a large text
+  scale a landscape phone stacked them into a band that could seat neither and
+  **Split** drew a plot with no details at all.
+- Three labels that had to live in whatever width was left now drop a whole fact
+  rather than being cut through the middle of a word or a number: the compact
+  count line (`50,156 view · 5…`), the load-more button
+  (`Load 500 more · 49,656 remainir`), and the load-more band itself, which was
+  arranged past the bottom of a short details pane and drawn across the status
+  line.
+
 ## [2.0.10] - 2026-08-28
 
 ### Added

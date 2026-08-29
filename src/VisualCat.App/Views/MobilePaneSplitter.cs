@@ -27,7 +27,7 @@ internal enum MobilePaneAxis
 /// A thin mobile divider with a phone-sized hit target. It reports intent and never mutates
 /// grid tracks itself; <see cref="MobilePaneAllocator"/> remains the only size authority.
 /// </summary>
-internal sealed class MobilePaneSplitter : Thumb, ICustomHitTest
+internal sealed class MobilePaneSplitter : Thumb, ICustomHitTest, Platform.IEdgeGestureSurface
 {
     internal const double LaneExtent = 12;
     internal const double HitTargetExtent = 48;
@@ -108,6 +108,38 @@ internal sealed class MobilePaneSplitter : Thumb, ICustomHitTest
     internal event Action<double>? AutomationValueRequested;
 
     internal MobilePaneAxis Axis => _axis;
+
+    /// <summary>
+    /// The band along the boundary whose drag must beat Android's Back gesture.
+    /// </summary>
+    /// <remarks>
+    /// Only the stacked divider claims anything. It runs the full width of the workspace and
+    /// so reaches into both of the platform's edge strips; a drag started there is a Back
+    /// gesture, and with nothing open to dismiss that leaves the app for the launcher.
+    /// <para>
+    /// The claim is the grab band and not the 48 dp target, because away from the centred
+    /// grip — which is where the edges are — the band is the only part
+    /// <see cref="HitTest"/> answers. It is also what keeps the claim affordable: 20 dp
+    /// against a 200 dp per-edge budget the plot and the minimap are already spending.
+    /// </para>
+    /// <para>
+    /// The side-by-side divider claims nothing, and needs to claim nothing: the allocator
+    /// never resolves it closer than <c>MinimumReadableTimelineWidth</c> (220 dp) to one edge
+    /// or <c>MinimumUsableAnalysisWidth</c> (300 dp) to the other, so it cannot reach a strip
+    /// about 30 dp wide. Claiming it anyway would publish a full-width band as tall as the
+    /// whole pane and take Back away from the workspace to protect nothing.
+    /// </para>
+    /// </remarks>
+    public Rect EdgeGestureArea => _axis == MobilePaneAxis.Rows && Bounds.Width > 0
+        ? new Rect(
+            0,
+            Math.Max(0, (Bounds.Height - LaneBandExtent) / 2),
+            Bounds.Width,
+            Math.Min(LaneBandExtent, Bounds.Height))
+        : default;
+
+    /// <summary>The band is small, and losing it costs the reader the whole app.</summary>
+    public bool ClaimedWhole => true;
 
     internal void ApplyTheme(bool dark)
     {

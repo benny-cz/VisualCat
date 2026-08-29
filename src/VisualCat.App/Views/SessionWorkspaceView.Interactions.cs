@@ -1332,6 +1332,129 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
     }
 
+    /// <summary>The width the footer label may draw in, unbounded until the band is arranged.</summary>
+    private double _loadMoreRoom = double.PositiveInfinity;
+
+    /// <summary>The footer band's own height, remembered while the band is not shown.</summary>
+    private double _entryFooterBand;
+
+    /// <summary>
+    /// Drops the load-more band when the pane cannot seat it and a row of log together.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The entry panel's rows are Auto/star/Auto, and Avalonia gives an Auto row its desired
+    /// height even when the grid has less to give. On a 136 dp analysis pane — a 393 dp
+    /// landscape phone at a 1.55× text scale — the tab strip, the action row and this band
+    /// add up to 144 dp, and the band was drawn cut through its own middle, across the status
+    /// line below it (A-07). A list whose last row is partly visible is ordinary; a button
+    /// drawn through its middle is not, and the same overrun is what F-32 was about.
+    /// </para>
+    /// <para>
+    /// Hysteresis, because hiding the band is itself what makes room for it: the band returns
+    /// only when the list can hold a row <em>and</em> the band, so the two states cannot
+    /// alternate on consecutive layout passes.
+    /// </para>
+    /// </remarks>
+    private void EnforceLoadMoreFooterFit()
+    {
+        if (!_mobile ||
+            _entryFooter is not { } footer ||
+            footer.Child is null ||
+            !_loadMore.IsVisible ||
+            _analysisGrid is not { Bounds.Height: > 0 })
+        {
+            return;
+        }
+
+        if (footer.IsVisible)
+        {
+            if (footer.Bounds.Height > 0)
+            {
+                _entryFooterBand = footer.Bounds.Height;
+            }
+
+            if (_entries.Bounds.Height < _entryRowMinimumHeight)
+            {
+                footer.IsVisible = false;
+            }
+
+            return;
+        }
+
+        if (_entryFooterBand > 0 &&
+            _entries.Bounds.Height >= _entryRowMinimumHeight + _entryFooterBand)
+        {
+            footer.IsVisible = true;
+        }
+    }
+
+    /// <summary>
+    /// The most the footer's load-more label can say in the band it was given.
+    /// </summary>
+    /// <remarks>
+    /// Under the list the control stretches across the analysis pane, so its width is the
+    /// pane's rather than its own content's — and at a large text scale the sentence outgrew
+    /// it and was clipped mid-glyph: a 393 dp phone at 1.55× drew
+    /// <c>Load 500 more · 49,656 remainir</c>, with no ellipsis and no sign that anything was
+    /// missing (A-05). Same rule as everywhere else a label has to live in a leftover width:
+    /// give up the remaining count whole, then fall back to the compact form the header row
+    /// already uses.
+    /// </remarks>
+    private string NarrowestLoadMoreThatFits(string fullLabel, string shortLabel, bool loading)
+    {
+        if (loading)
+        {
+            return fullLabel;
+        }
+
+        var trunk = fullLabel.Split(" · ", StringSplitOptions.None)[0];
+        return NarrowestThatFits([fullLabel, trunk, shortLabel], _loadMoreRoom, MeasureLoadMoreWidth);
+    }
+
+    /// <summary>How wide a footer label would draw, in the face and size it will draw in.</summary>
+    private double MeasureLoadMoreWidth(string text) =>
+        new FormattedText(
+            text,
+            DisplayCulture.Current,
+            FlowDirection.LeftToRight,
+            new Typeface(_loadMore.FontFamily, _loadMore.FontStyle, _loadMore.FontWeight),
+            _loadMore.FontSize,
+            Brushes.White).WidthIncludingTrailingWhitespace;
+
+    /// <summary>
+    /// Re-resolves the footer label when the band it lives in changes width.
+    /// </summary>
+    /// <remarks>
+    /// The control stretches in the footer, so its width is imposed by the pane and does not
+    /// answer its own content — which is what makes re-resolving on layout safe rather than a
+    /// loop. In the header row it sizes to itself and already carries the compact label, so
+    /// nothing here applies.
+    /// </remarks>
+    private void TrackLoadMoreRoom()
+    {
+        if (_loadMoreInHeader != false)
+        {
+            return;
+        }
+
+        var width = _loadMore.Bounds.Width;
+        var room = double.IsFinite(width) && width > 0
+            ? Math.Max(
+                0,
+                width
+                - _loadMore.Padding.Left - _loadMore.Padding.Right
+                - _loadMore.BorderThickness.Left - _loadMore.BorderThickness.Right)
+            : double.PositiveInfinity;
+        if (Math.Abs(room - _loadMoreRoom) <= 0.5)
+        {
+            return;
+        }
+
+        _loadMoreRoom = room;
+        UpdateEntryLoadControls();
+    }
+
     private void UpdateEntryLoadControls()
     {
         var loaded = _viewModel.LoadedEntryCount;
@@ -1347,7 +1470,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             // The footer's frame is only worth a band while it is holding the control; in the
             // short composition the control has moved into the header row (see MoveLoadMore).
-            footer.IsVisible = _loadMore.IsVisible && footer.Child is not null;
+            // Whether the pane can seat the band at all is EnforceLoadMoreFooterFit's, and it
+            // answers on the next layout pass, so this must not assert a band it can't have.
+            footer.IsVisible = _loadMore.IsVisible &&
+                               footer.Child is not null &&
+                               (footer.IsVisible || _entryFooterBand <= 0 || !_mobile ||
+                                _entries.Bounds.Height >= _entryRowMinimumHeight + _entryFooterBand);
 
             // The footer sits at the end of what is loaded, so it says how far the end is:
             // "Load next 500" beside 59 640 unread rows answers a question nobody asked.
@@ -1364,9 +1492,13 @@ public sealed partial class SessionWorkspaceView : UserControl
             // different separator, and swapping the character in place left `more· 49,656`
             // — the semicolon's own spacing, on a mark that carries its own (F-42). Every
             // other separator in the product is ` · `.
+            var shortLabel = $"+{Math.Min(Math.Max(remaining, 1), SessionTabViewModel.EntryPageSize):N0}";
             _loadMore.Content = _loadMoreInHeader == true && !loading
-                ? $"+{Math.Min(Math.Max(remaining, 1), SessionTabViewModel.EntryPageSize):N0}"
-                : fullLabel.Replace("; ", " · ", StringComparison.Ordinal);
+                ? shortLabel
+                : NarrowestLoadMoreThatFits(
+                    fullLabel.Replace("; ", " · ", StringComparison.Ordinal),
+                    shortLabel,
+                    loading);
             AutomationProperties.SetName(_loadMore, fullLabel);
             AutomationProperties.SetHelpText(_loadMore, fullLabel);
             ToolTip.SetTip(_loadMore, fullLabel);

@@ -424,3 +424,6 @@ coverage-report/
 # Reproducible large fixtures generated from samples/README.md
 samples/logcat_large.txt
 samples/logcat_verylarge.txt
+
+# Local device-verification scratch (UI dumps, screenshots) — never committed.
+.codex-artifacts/

@@ -611,15 +611,78 @@ public sealed partial class SessionWorkspaceView : UserControl
             " · ",
             new[] { $"{inView:N0} {scope}", $"{stats.TotalMatching:N0} match", sessionPart }
                 .Where(static part => part is { Length: > 0 }));
-        var compactSummary = sessionTotal is { } compactTotal
-            ? $"{inView:N0} view · {compactTotal:N0}"
-            : $"{inView:N0} view";
         _summary.Text = _mobile
-            ? _summaryInTabStrip ? compactSummary : mobileSummary
+            ? _summaryInTabStrip
+                ? NarrowestSummaryThatFits(inView, sessionTotal, _summaryRoom, MeasureSummaryWidth)
+                : mobileSummary
             : full;
         AutomationProperties.SetName(_summary, full);
         ToolTip.SetTip(_summary, full);
     }
+
+    /// <summary>
+    /// The most the count line can say in the room the tab strip leaves it, dropping whole
+    /// facts rather than letting the last one be cut off mid-digit.
+    /// </summary>
+    /// <remarks>
+    /// The compact form is the one that shares a row with the three analysis tabs, and it
+    /// used to be a single string leaning on <see cref="TextTrimming.CharacterEllipsis"/>.
+    /// In a 393 dp landscape workspace the row leaves it 80 dp and it rendered
+    /// <c>50,156 view · 5…</c> — and a half-drawn number is worse than a half-drawn word,
+    /// because <c>5…</c> is itself a plausible count (A-04). §25.3 settled the rule when the
+    /// landscape divider exposed the same shape in the plot header; this is
+    /// <c>TimelineControl.NarrowestHeaderThatFits</c> applied to the other line that has to
+    /// live in whatever width is left. The trimming stays as the last resort, for a room too
+    /// small even for the bare number.
+    /// </remarks>
+    internal static string NarrowestSummaryThatFits(
+        long inView,
+        long? sessionTotal,
+        double room,
+        Func<string, double> measure) =>
+        NarrowestThatFits(
+            sessionTotal is { } total
+                ? [$"{inView:N0} view · {total:N0}", $"{inView:N0} view", $"{inView:N0}"]
+                : [$"{inView:N0} view", $"{inView:N0}"],
+            room,
+            measure);
+
+    /// <summary>
+    /// The first candidate that draws inside <paramref name="room"/>, or the shortest one when
+    /// none of them does.
+    /// </summary>
+    /// <remarks>
+    /// The product's answer to a label that will not fit is to say less, not to say half of
+    /// something — established when the landscape divider let a reader make the plot narrower
+    /// than any viewport had been (§25.3) and applied since to every line that has to live in
+    /// whatever width is left. Candidates are longest first; the caller writes them, because
+    /// what is worth giving up is a question about the sentence rather than about the width.
+    /// </remarks>
+    internal static string NarrowestThatFits(
+        IReadOnlyList<string> candidates,
+        double room,
+        Func<string, double> measure)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (measure(candidate) <= room)
+            {
+                return candidate;
+            }
+        }
+
+        return candidates[^1];
+    }
+
+    /// <summary>How wide the count line would draw, in the face and size it will draw in.</summary>
+    private double MeasureSummaryWidth(string text) =>
+        new FormattedText(
+            text,
+            DisplayCulture.Current,
+            FlowDirection.LeftToRight,
+            new Typeface(_summary.FontFamily, _summary.FontStyle, _summary.FontWeight),
+            _summary.FontSize,
+            Brushes.White).WidthIncludingTrailingWhitespace;
 
     /// <summary>Moves the viewport onto the span the current filter actually matches.</summary>
     private void FitToMatches()

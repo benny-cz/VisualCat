@@ -362,17 +362,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// </remarks>
     private void ApplyDisplayConfigurationChange()
     {
-        var before = TextScale.Effective;
+        // ApplyAppearance owns the "did the effective scale move?" decision, so the platform's
+        // route and the reader's own Text scale control cannot answer it differently.
         ApplyAppearance();
-        if (Math.Abs(TextScale.Effective - before) > 0.001)
-        {
-            RebuildWorkspaceViews();
-
-            // Every workspace is rebuilt at the new scale; a sheet over them was left at the
-            // old one, and it is the surface in front (F-40).
-            RefreshOverlays();
-        }
-
         UpdateMobileChrome(Bounds.Size);
     }
 
@@ -2673,10 +2665,29 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // (audit 2, B5). Views read the result while they are built; Android recreates the
         // activity when the scale changes, and the persisted workspace is what keeps the
         // reader's place across that (see C5).
+        var scaleBefore = TextScale.Effective;
         TextScale.Platform = PlatformSourceRegistry.PlatformFontScale ?? 1;
         TextScale.User = _settings.TextScale;
         FontSize = TextScale.Of(14);
         ApplyTextScaleToShell();
+
+        // A workspace resolves every font size in it while it is being built, so a changed
+        // scale reaches the screen by building it again and no other way — whichever control
+        // the reader used to change it. Only the platform's route used to answer that, so
+        // More → Appearance & timeline → Text scale grew the command bar, the tab titles and
+        // the status line and left the log those exist to frame at exactly the size it was;
+        // the setting was answered by the chrome and ignored by the one surface it is raised
+        // to make readable (A-03). Rebuilding is also how a sheet in front of them stops
+        // being the odd one out (F-40).
+        if (Math.Abs(TextScale.Effective - scaleBefore) > 0.001)
+        {
+            // CreateWorkspaceView applies the display settings and restores both stored
+            // shares, so the loop below would only repeat what the new views already have.
+            RebuildWorkspaceViews();
+            RefreshOverlays();
+            return;
+        }
+
         foreach (var item in _tabItems.Values)
         {
             if (item.Content is SessionWorkspaceView workspace)

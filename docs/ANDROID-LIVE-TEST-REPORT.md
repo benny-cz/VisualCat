@@ -10,14 +10,18 @@ against a physical Android device.
 > identity storage, saved reconnect, transport resume, Stop cleanup, and the
 > Release manifest's removal of `READ_LOGS`.
 
-**Status: COMPLETE through F-48 / §23 — all implementation and physical-device
+**Status: COMPLETE through A-05 / §27 — all implementation and physical-device
 steps are closed; remaining limits are declared, not promoted to passes.**
 Results are written continuously, including across interrupted test processes.
 Completed passes and declared gaps remain authoritative.
 
 Sections 1–20 record the original run, its remediation and the subsequent
 independent device continuations. §5.1 remains the single status table for every
-finding, and the newest pass is always the last section.
+finding, and the newest pass is always the last section. §27 is an independent
+audit of this whole report on the one configuration §§24–26 never reached — a
+gesture-navigation phone — and it found four defects the divider work and the
+text-scale setting had left; its working log is
+[`ANDROID-AUDIT-CONTINUATION.md`](ANDROID-AUDIT-CONTINUATION.md).
 
 This report is context-agnostic. Device identity, artifact provenance, oracles,
 and observations are all recorded here; nothing depends on a previous session.
@@ -1468,6 +1472,17 @@ rules.
 | F-46 Large-text landscape home clips provenance below the system bar | Minor | Responsive home layout | **Done** | **Device-verified — Pixel 5 API 34 Release; §20.9** |
 | F-47 Tall landscape IME collapses the setup sheet to its title | Major | Extreme-height sheet + IME | **Done** | **Device-verified — Pixel 5 API 34 Release; §20.10** |
 | F-48 One 48 dp severity toggle rounds down to 47.6 dp on Pixel | Polish | Filter touch geometry | **Done** | **Device-verified — Pixel 5 API 34 Release; §20.13** |
+
+Found by the independent Pixel 5 audit (§27) — a gesture-navigation phone at API
+34, the configuration §§24–26 never ran on; same vocabulary, same rules.
+
+| Finding | Severity | Area | Status | Device-verified |
+|---|---|---|---|---|
+| A-02 The phone divider is not protected from the Back gesture, so dragging it near either edge leaves the app | Major | Android platform | **Done** | **Yes — Pixel 5 API 34 Release, both edges, slow and flicked; §27.2** |
+| A-03 The in-app *Text scale* setting never reaches an open session workspace | Major | Shell + accessibility | **Done** | **Yes — Pixel 5 API 34 Release, 1.25× → 1.55×; §27.3** |
+| A-05 The footer's load-more label is clipped mid-glyph at a large text scale | Minor | Layout + copy | **Done** | **Yes — Pixel 5 API 34 Release, 1.55×; §27.5** |
+| A-04 The compact count line cuts a number in half instead of dropping a fact | Minor | Layout + copy | **Done** | **Yes — Pixel 5 API 34 Release, landscape; §27.4** |
+| A-01 The documentation gate fails on the released tree | Minor | Docs | **Done** | n/a (host gate) |
 
 ### 5.2 Per-finding remediation record
 
@@ -7349,9 +7364,10 @@ VisualCat's adapter, policy and UI, not Google's production consent surface.
 
 ## 23. Phone timeline/details splitter — Samsung physical-device pass
 
-This pass implements and verifies
-[`MOBILE-TIMELINE-SPLITTER-IMPLEMENTATION-PLAN.md`](../MOBILE-TIMELINE-SPLITTER-IMPLEMENTATION-PLAN.md)
-against the Samsung configuration that motivated it. The app was clean-installed
+This pass implements and verifies `MOBILE-TIMELINE-SPLITTER-IMPLEMENTATION-PLAN.md`
+— a working plan removed from the repository once the work landed, so this section
+and §§24–26 are now its record — against the Samsung configuration that motivated
+it. The app was clean-installed
 once, then replaced in place with each final Release build so settings migration,
 activity recreation and durable split restoration were exercised rather than
 simulated.
@@ -7730,3 +7746,184 @@ A swipe starting inside the divider's rectangle but off the cross moved it
   device's own `system_gesture_exclusion_limit_dp=200`.
 
 The device was left on free rotation, as found.
+
+## 27. Independent Pixel 5 audit — gesture navigation, API 34
+
+§§24–26 built and verified both phone dividers on a Samsung and a Motorola. Both
+are API 36 and, as those sections record, **three-button navigation**. This pass
+re-audits the whole report on the configuration they never reached: a Google
+Pixel 5, Android 14 / API 34, 440 dpi, `settings get secure navigation_mode` = 2
+— **gesture navigation**, the platform F-28 was found on. Device confirmed by
+`getprop ro.product.model` / `ro.serialno`, not by the `adb devices` listing.
+
+The working log, with every measurement and every probe, is
+[`ANDROID-AUDIT-CONTINUATION.md`](ANDROID-AUDIT-CONTINUATION.md). It was written
+continuously and names its own next action, so an interrupted session resumes
+from it.
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-29 |
+| Device | Google Pixel 5 `redfin`, serial `0A031FDD400365` |
+| Android | 14 / API 34, `arm64-v8a`, **gesture navigation** |
+| Display | 1080 × 2340 px at 440 dpi — 393 × 777 dp portrait, 850.9 × 392.7 dp landscape |
+| App | `2.0.10-dev`, code `2001000`; locally built **Release**, debug-signed, no `DEBUGGABLE` flag |
+| Session under test | 50,156 entries, opened by `ACTION_VIEW` on a `content://` URI |
+
+**Where the report stood.** Every F-01…F-48 row was `Done`, the host suite was
+595/595 green, and both builds were clean. One host gate was not: A-01.
+
+### 27.1 A-01 — the documentation gate failed on the released tree
+
+`tools/verify-docs.ps1` asserts that every relative Markdown link resolves. §23
+opens by linking to the implementation plan it executes; the release commit
+deleted the plan and left the link, so the gate failed on `main` at `d959187`.
+The reference is kept and the link dropped — §§23–26 are the plan's record now —
+and the local device-verification scratch area is added to `.gitignore`, the same
+practice §20 used to keep UI hierarchies out of the repository. **99 relative
+links across 44 Markdown files, all consistent.**
+
+### 27.2 A-02 — the divider was not protected from the Back gesture
+
+§24.3 widened the divider's target to the whole boundary. On this phone the
+platform's own strips are `type=systemGestures frame=[0,0][82,2340]` and
+`[998,0][1080,2340]` — **82 px, 29.8 dp** each — and the divider node
+`[33,1162][1047,1294]` reaches **17.8 dp into both**. `EdgeGestureGuard.Track`
+was called for the timeline and the minimap only.
+
+| Gesture (400 ms) | Before | After |
+|---|---|---|
+| Centre `x=540`, +100 px | +100 px | +100 px |
+| Left edge `x=45`, 155 px right and 60 px down | **left the app for the launcher** | −60 px, app kept |
+| Right edge `x=1035`, 155 px left and 60 px down | **left the app for the launcher** | +60 px, app kept |
+| The same drifting gesture inside the plot (already excluded) | app kept | app kept |
+
+The control is the point: identical finger movement, safe over the plot, out of
+the app over the divider — the only difference an exclusion rectangle.
+
+`EdgeGestureGuard` gained `IEdgeGestureSurface`, so a tracked control can claim
+**part** of itself and say the claim must be granted whole. The stacked divider
+claims its 20 dp grab band — not its 48 dp target, because away from the centred
+grip, which is where the edges are, the band is all `HitTest` answers. The
+side-by-side divider claims nothing and needs nothing: the allocator never
+resolves it closer than 220 dp to one edge or 300 dp to the other. Verified
+before the change — a horizontal drag at the bottom of the landscape divider
+moved it −167 px against a requested −168 and never left the app.
+
+The device now publishes three rectangles where it published two —
+`SkRegion((0,733,1080,1106)(0,1120,1080,1208)(0,1210,1080,1266))`, the band
+centred exactly on the divider — for **188 dp of the 200 dp budget**, so nothing
+was trimmed to pay for it. Fast edge flicks (30 ms, 25 ms), a drag held against
+the stop and the return straight off it were all re-run at the edges.
+
+### 27.3 A-03 — the in-app *Text scale* never reached an open session
+
+Two routes change `TextScale.Effective`. Android's own text-size control went
+through `ApplyDisplayConfigurationChange`, which rebuilt every workspace;
+**More → Appearance & timeline → Text scale** went through `ApplyAppearance`,
+which re-stated four shell labels and stopped. `RebuildWorkspaceViews`'s own
+documentation states the rule the second route broke: a workspace resolves every
+font size while it is being built, and a changed scale reaches the screen that way
+*and no other*.
+
+Measured with the 50,156-entry session open, `1.00× → 1.25×`, **Apply**:
+
+| | Before | After |
+|---|---:|---:|
+| `Open log`, `More`, tab title, status line (shell) | 102.2 / 70.5 / 105.1 / 16.7 dp | **121.1 / 81.5 / 125.8 / 20.7 dp** |
+| `Filters`, `Plot`, `Entries`, `Time ↑`, `Load 500 more` (workspace) | 76.0 / 70.9 / 117.1 / 126.2 / 328.7 dp | **unchanged, every one** |
+| `No filters · showing everything in view` | 13.1 dp | **13.1 dp** |
+
+Then Android's own font scale was set to 1.15 with nothing else touched, and that
+same label went to **18.5 dp** — 13.1 × 1.25 × 1.15 — collecting in one step the
+25% the reader had asked for and been shown no answer to. The machinery worked;
+the reader's own control did not call it.
+
+The decision now lives in `ApplyAppearance`, where both routes pass through it,
+and `ApplyDisplayConfigurationChange` is that call plus the chrome reflow it
+always did. Re-measured on the device at `1.25× → 1.55×`: the workspace label went
+16.7 → **20.0 dp** with the shell, and the screenshot shows the mode strip, the
+chip line, the analysis tabs, the count line and the entry rows all at the new
+size.
+
+### 27.4 A-04 — the compact count line cut a number in half
+
+In the compact composition the count line shares the tab strip's row and gets
+what the tabs leave — 80.0 dp here — and rendered `50,156 view · 5…`. The
+accessibility name kept the whole string, so this was a sighted reader's defect
+only, but a half-drawn *number* is worse than a half-drawn word: `5…` is itself a
+plausible count. §25.3 settled the rule when the landscape divider exposed the
+same shape in the plot header. `NarrowestSummaryThatFits` applies it here:
+`50,156 view · 50,156` → `50,156 view` → `50,156`. The device now reads
+**`50,156 view`**, whole, in 58.2 dp.
+
+### 27.5 A-05 — the load-more label was clipped mid-glyph at a large text scale
+
+Found by fixing A-03, because raising the text scale is what puts the label under
+pressure and until A-03 the workspace never answered that control at all. At
+1.55× the footer read `Load 500 more · 49,656 remainir` — cut inside the last
+word, no ellipsis. Under the list the control stretches across the pane, so a
+label that outgrows the pane has nowhere to go. The same ladder now applies:
+`Load 500 more · 49,656 remaining` → `Load 500 more` → `+500`, with the room
+re-resolved whenever the band changes width. `NarrowestThatFits` is one helper
+shared with the count line.
+
+### 27.6 A-06 — a short viewport chose its pane composition with the command row's question
+
+With **Split** selected at 1.55×, the landscape workspace drew the plot, the
+minimap and the status line and **no analysis pane at all** — no tab strip, no
+rows — while the mode button stayed selected.
+
+`stackedCompact` asked `MobileWorkspaceLayout.SharesARow(width)`, which is about
+two **command groups** on one row and wants `600 × TextScale.Effective` = 930 dp
+at 1.55×. The viewport is 850.9 dp, so the panes stacked into a **143 dp** band,
+where `ResolveStacked`'s fallback keeps the plot at its readable floor and the
+analysis pane resolves to **0 dp**. Proved by moving the wrong lever:
+`wm size 1080x2600` gives the same phone a 945.5 dp landscape, past the
+*command-row* threshold, and the details came straight back.
+
+`MobilePaneAllocator.FitsSideBySide` now states the panes' own question from the
+two minimums the allocator already owns plus the divider's lane — 532 dp — and
+both call sites use it. It is deliberately **not** scaled by text size, which is
+where the first attempt at this fix went wrong on the same device: the command
+row scales because not fitting there is a hard failure (F-34, five controls drawn
+on top of each other), while two columns narrower than their comfort width are
+not — the allocator keeps them above `TimelineRenderingWidthFloor`. Scaling turned
+a comfort target into a cliff, and the whole analysis pane fell off it. A narrow
+column beats no column.
+
+### 27.7 A-07 — the load-more band was drawn through its own middle
+
+Exposed by A-06, which is what put an analysis pane back on a 136 dp band. The
+entry panel's rows are `Auto,*,Auto`, and Avalonia gives an `Auto` row its desired
+height even when the grid has less to give: tab strip 48 + action row 48 + band 48
+= 144 dp in 136, so the list got 0 dp and the band was arranged 53 px past the
+pane's bottom edge, clipped through its own label and across the status line —
+the same overrun F-32 was about. `EnforceLoadMoreFooterFit` drops the band when
+the list cannot hold a row beside it and restores it only when the list can hold a
+row *and* the band, so the two states cannot alternate. The device now shows the
+log row that band was covering.
+
+### 27.8 Gates
+
+| Gate | Result |
+|---|---|
+| `tools/verify-docs.ps1` | **Pass** — 99 relative links across 44 files |
+| `dotnet build VisualCat.slnx` (Debug) and Android (Release) | **0 warnings, 0 errors** |
+| `VisualCat.App.Tests` | **409 passed, 0 failed** (391 before; 18 added) |
+| Domain / Core / Application | **47 / 101 / 56**, all passing |
+| `TheReadersOwnTextScaleReachesTheOpenSession` against the unfixed `MainView` | **fails** — *"'No filters · showing everything in view' stayed at 11 (from 11) while the reader asked for 1.5x"* |
+| `ThePlotAndTheMinimapClaimTheirOwnEdgeGestures` | updated: the claim count is **3**, not 2 — the assertion encoded the policy A-02 corrects |
+
+At the reader's ordinary settings, on the shipping build, in both orientations:
+**0 of 22 interactive nodes under 48 dp and 0 overlapping clickable pairs.**
+
+### 27.9 Declared limits
+
+One device, one API level, one ABI, gesture navigation, Release but debug-signed.
+The original run's §1.1 gaps are untouched by this pass, and §5.4's deliberate
+deferrals were re-read and stand — A-03 narrows F-40's residue rather than
+widening it. At 1.55× in landscape this phone's analysis pane is 136 dp and shows
+its tabs, its action row and a partly visible log row rather than a whole one;
+that is the viewport, not a defect, and the same scale in portrait shows the whole
+workspace.
