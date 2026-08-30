@@ -251,6 +251,8 @@ desktop syslog formats are outside the v2 scope.
 - [Privacy statement](docs/PRIVACY.md)
 - [Platform support](docs/SUPPORT.md)
 - [Reproducible performance notes](docs/PERFORMANCE.md)
+- [Windows live test plan](docs/WINDOWS-LIVE-TEST-PLAN.md)
+- [Android live test plan](docs/ANDROID-LIVE-TEST-PLAN.md)
 - [Third-party notices](docs/THIRD-PARTY-NOTICES.md)
 - [Release checklist](docs/RELEASE-CHECKLIST.md)
 

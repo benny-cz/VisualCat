@@ -52,6 +52,8 @@ $requiredFiles = @(
     'docs/SECURITY.md'
     'docs/PRIVACY.md'
     'docs/SUPPORT.md'
+    'docs/WINDOWS-LIVE-TEST-PLAN.md'
+    'docs/ANDROID-LIVE-TEST-PLAN.md'
     'docs/THIRD-PARTY-NOTICES.md'
     'docs/RELEASE-NOTES.md'
     'docs/RELEASE-CHECKLIST.md'

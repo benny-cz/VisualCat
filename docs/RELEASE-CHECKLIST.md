@@ -47,10 +47,14 @@ be published from an unmerged commit or one that would fail a pull request:
 - [ ] Sanitized golden corpus and sample scripts reconcile reviewed counts.
 - [ ] Corruption checks reject altered manifest, column, bitmap, and raw data.
 - [ ] Reference ingest, reopen, heat-map, search, cancellation, and memory measurements are recorded.
+- [ ] The exact Windows candidate satisfies every applicable release schedule and
+      exit criterion in the [Windows live test plan](WINDOWS-LIVE-TEST-PLAN.md);
+      the release record names its run ID, coverage gaps, findings, evidence hash
+      index, and cleanup result.
 - [ ] Four-hour host-ADB soak and Android Wireless-ADB soak/reconnect/disconnect matrices complete without an orphan process, leaked stream, persistent debugging connection, or sustained post-warm-up memory growth. Exercise enough log traffic to prove the bounded Wireless-ADB receive pump recycles/reconnects rather than allowing the third-party queue to grow without limit.
 - [ ] File, portable, growing-file, partial, degraded, and incompatible sessions are manually exercised.
 - [ ] Keyboard, contrast, text scaling, focus, and screen-reader labels are reviewed.
-- [ ] Windows package is signed; macOS package is signed/notarized; Linux packages are validated.
+- [ ] Windows and macOS signing/notarization state matches the release decision and public docs; any intentionally unsigned artifact has explicit risk approval and tested OS-warning instructions; Linux packages are validated.
 - [ ] Android own-app and Wireless-debugging full-device modes are tested on physical hardware, including first pairing, saved reconnect, Stop/disconnect, background/resume, rotation, and revoked/stale pairing recovery.
 - [ ] Cancel is exercised during Wireless-ADB discovery/connection and during the low-level pairing handshake. Discovery/connection must unwind promptly; pairing may remain visibly `Cancelling…` until LibADB's local socket handshake returns, but Live must not start afterward and no authenticated ADB connection may remain.
 - [ ] Android Live warning/setup UX matches the Release transport: the scope chooser contains no normal-Play `READ_LOGS` promise/jargon, choosing a scope does not trigger a redundant second disclosure before capture, saved pairing hides the new-code form until explicit recovery, and Back/scrim dismissal during pairing follows the same visible `Cancelling…` lifecycle as the Cancel button.
