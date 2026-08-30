@@ -977,6 +977,15 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             return null;
         }
 
+        // An empty file is not a file in the wrong format, and advising the reader to check
+        // that it is a logcat capture rather than a bug report is advice about a file that has
+        // no contents to be either (V2-12).
+        if (Unwrap(exception).Message.StartsWith("This file is empty", StringComparison.Ordinal))
+        {
+            return "Nothing was written to it. Check the capture that produced it, or pick a " +
+                   "different file.";
+        }
+
         // No Markdown: this is read by a plain TextBlock, so backticks around logcat and .vcat
         // rendered as literal backticks in the failure card (finding 20).
         return OperatingSystem.IsAndroid()

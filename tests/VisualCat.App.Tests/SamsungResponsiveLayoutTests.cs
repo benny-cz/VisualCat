@@ -172,15 +172,52 @@ public sealed class SamsungResponsiveLayoutTests
     [AvaloniaFact]
     public async Task HomeHeroCanScrollWhenLargeTextExceedsAShortLandscapeViewport()
     {
-        await using var view = new MainView();
-        var heading = view.GetLogicalDescendants()
-            .OfType<TextBlock>()
-            .Single(static block => block.Text == "SEE THE SHAPE OF YOUR LOG");
-        var scroller = heading.GetLogicalAncestors().OfType<ScrollViewer>().Single();
+        var platform = TextScale.Platform;
+        try
+        {
+            // The viewport F-46 is about: a Samsung in landscape at a text size that makes the
+            // hero taller than the screen it has to fit in.
+            TextScale.Platform = 2.0;
+            await using var view = new MainView();
+            var window = new Window { Content = view, Width = 393, Height = 330 };
+            window.Show();
+            for (var pass = 0; pass < 4; pass++)
+            {
+                window.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+            }
 
-        Assert.Equal(ScrollBarVisibility.Auto, scroller.VerticalScrollBarVisibility);
-        Assert.Equal(ScrollBarVisibility.Disabled, scroller.HorizontalScrollBarVisibility);
-        Assert.Equal(Avalonia.Layout.VerticalAlignment.Center, scroller.VerticalContentAlignment);
+            try
+            {
+                var heading = view.GetLogicalDescendants()
+                    .OfType<TextBlock>()
+                    .Single(static block => block.Text == "SEE THE SHAPE OF YOUR LOG");
+                var scroller = heading.GetLogicalAncestors().OfType<ScrollViewer>().Single();
+
+                Assert.Equal(ScrollBarVisibility.Disabled, scroller.HorizontalScrollBarVisibility);
+
+                // The behaviour, not the property. VerticalContentAlignment was asserted here
+                // and never did anything: a ScrollViewer's presenter measures its child against
+                // infinity and arranges it from the top, so the hero was top-aligned in a tall
+                // viewport (V2-02) while still being genuinely scrollable in a short one. The
+                // centring is done by a host that is never shorter than the viewport, and this
+                // is the half of it F-46 was written for.
+                Assert.True(
+                    scroller.Extent.Height > scroller.Viewport.Height + 0.5,
+                    $"hero should scroll: extent {scroller.Extent.Height}, viewport {scroller.Viewport.Height}");
+
+                // Nothing above the first line, so the top of the hero is reachable.
+                Assert.Equal(0, scroller.Offset.Y, 3);
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+        finally
+        {
+            TextScale.Platform = platform;
+        }
     }
 
     [AvaloniaFact]
@@ -207,9 +244,34 @@ public sealed class SamsungResponsiveLayoutTests
         Assert.Equal(0, host.Padding.Bottom);
 
         view.ApplyNoticeLayout(compactHeight: false);
-        Assert.Equal(108, scroller.MaxHeight);
         Assert.Equal(6, host.Padding.Top);
         Assert.Equal(6, host.Padding.Bottom);
+
+        // The lane opens at two lines and discloses the rest, rather than spending four lines
+        // of the workspace on a scroll container that still cuts the message off (V2-11). The
+        // full 108 dp budget is what expanding reaches, not what the lane costs by default.
+        Assert.True(
+            scroller.MaxHeight < 108,
+            $"the lane should open collapsed, not at {scroller.MaxHeight}");
+
+        var expand = view.GetLogicalDescendants()
+            .OfType<Button>()
+            .Single(button => AutomationProperties.GetName(button) is
+                "Show the whole message" or "Show less of the message");
+        expand.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.True(
+            scroller.MaxHeight >= 108,
+            $"the expanded lane should be at least the old budget, not {scroller.MaxHeight}");
+
+        // Every word is still in the tree throughout, which is what a screen reader reads and
+        // what F-33 was written to protect.
+        Assert.Equal(message, text.Text);
+        Assert.Equal(0, text.MaxLines);
+
+        // A new message starts collapsed again; carrying the expansion over would give a
+        // one-line confirmation a four-line lane.
+        view.ShowNotice("Copied the raw text of 1 entry.", MainView.NoticeKind.Information);
+        Assert.True(scroller.MaxHeight < 108);
     }
 
     [AvaloniaFact]

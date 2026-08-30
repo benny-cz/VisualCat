@@ -22,8 +22,17 @@
   <uses-permission android:name="android.permission.READ_PHONE_STATE" tools:node="remove" />
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove" />
+  <!-- Predictive back, explicitly, on every API level this app supports rather than only on
+       the ones where Android turns it on by itself. Android 15 enables it by default for a
+       target of API 35 or later and stops calling Activity.onBackPressed entirely; below that
+       it stays off unless asked for. Leaving it implicit is what let one navigation
+       mechanism be exercised on the API-36 device and a different one on the API-34 device,
+       which is how a stock gesture Back walked past an open sheet to the launcher on a Pixel
+       while a key Back closed the same sheet correctly (V2-21). MainActivity registers its
+       own OnBackPressedCallback, so the app's layer stack answers the press either way. -->
   <application
     android:allowBackup="false"
+    android:enableOnBackInvokedCallback="true"
     android:icon="@mipmap/ic_launcher"
     android:roundIcon="@mipmap/ic_launcher_round"
     android:usesCleartextTraffic="false">

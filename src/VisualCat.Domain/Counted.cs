@@ -20,6 +20,9 @@ public static class Counted
     /// <summary>"no entries", "1 entry", "12,345 entries".</summary>
     public static string EntriesOrNone(long count) => OrNone(count, "entry", "entries");
 
+    /// <summary>"1 line", "1,200 lines".</summary>
+    public static string Lines(long count) => Of(count, "line", "lines");
+
     /// <summary>"1 session", "46 sessions".</summary>
     public static string Sessions(long count) => Of(count, "session", "sessions");
 

@@ -19,6 +19,8 @@ public sealed partial class MainView
     private ScrollViewer? _noticeScroller;
     private Button? _noticeDismiss;
     private Button? _noticeAction;
+    private Button? _noticeExpand;
+    private bool _noticeExpanded;
     private DispatcherTimer? _noticeTimer;
     private NoticeKind _noticeKind;
     private long _noticeRevision;
@@ -157,16 +159,40 @@ public sealed partial class MainView
             }
         };
 
+        // A four-line scroll container is the worst of both: it spends the workspace's height
+        // on a message and still cuts the message off, and the reader has to scroll inside a
+        // notice to finish reading it (V2-11). Two lines is a lane; the rest is a disclosure.
+        var expand = _noticeExpand = new Button
+        {
+            Content = "More",
+            IsVisible = false,
+            MinHeight = TouchTarget.Here(),
+            Padding = new Thickness(10, 0),
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+        AutomationProperties.SetName(expand, "Show the whole message");
+        expand.Click += (_, _) =>
+        {
+            _noticeExpanded = !_noticeExpanded;
+            ApplyNoticeLayout(_noticeCompactHeight);
+        };
+
         var content = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
             ColumnSpacing = 8,
         };
         content.Children.Add(scroller);
-        Grid.SetColumn(action, 1);
+        Grid.SetColumn(expand, 1);
+        content.Children.Add(expand);
+        Grid.SetColumn(action, 2);
         content.Children.Add(action);
-        Grid.SetColumn(dismiss, 2);
+        Grid.SetColumn(dismiss, 3);
         content.Children.Add(dismiss);
+
+        // Whether the message overflows is only knowable once it has been laid out, and it
+        // changes with the text size and the viewport as well as with the message.
+        scroller.LayoutUpdated += (_, _) => UpdateNoticeDisclosure();
 
         var host = _noticeHost = new Border
         {
@@ -181,6 +207,20 @@ public sealed partial class MainView
             Child = content,
         };
         AutomationProperties.SetName(host, "Application status");
+
+        // The lane is docked below the workspace, so its height comes out of the workspace's
+        // band. Every open workspace is told how much, so the plot can give it up instead of
+        // the analysis pane sliding 140 px up the screen under the reader's finger (V2-20).
+        // Both signals are needed: the lane changes height with the message, and it appears
+        // and disappears without changing size.
+        host.SizeChanged += (_, _) => PublishNoticeReserve();
+        host.PropertyChanged += (_, eventArgs) =>
+        {
+            if (eventArgs.Property == IsVisibleProperty)
+            {
+                PublishNoticeReserve();
+            }
+        };
 
         // The lane reports the result of something the reader started and then looked away
         // from, so a screen reader has to speak it without being asked. A failure interrupts;
@@ -208,8 +248,68 @@ public sealed partial class MainView
             return;
         }
 
-        scroller.MaxHeight = compactHeight ? TouchTarget.Minimum : NoticeTextMaximumHeight;
+        _noticeCompactHeight = compactHeight;
+        scroller.MaxHeight = compactHeight
+            ? TouchTarget.Minimum
+            : _noticeExpanded
+                ? ExpandedNoticeHeight
+                : CollapsedNoticeHeight;
         host.Padding = compactHeight ? new Thickness(10, 0) : new Thickness(10, 6);
+        UpdateNoticeDisclosure();
+    }
+
+    private bool _noticeCompactHeight;
+
+    /// <summary>
+    /// Two lines of the lane's own type, which is what it costs the workspace by default.
+    /// </summary>
+    /// <remarks>
+    /// Derived from the drawn font size rather than written as a constant, so a reader who has
+    /// raised their text size gets two lines of <em>their</em> text rather than a fixed band
+    /// that holds one and a half of it.
+    /// </remarks>
+    /// <summary>
+    /// What the lane may grow to once the reader has asked to see the whole message.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="NoticeTextMaximumHeight"/> was a budget for a lane that was always that tall,
+    /// and it still cut the restricted-capture notice's last line in half when expanded. A cap
+    /// is not a height: a short message takes what it needs and nothing more, so raising it
+    /// costs the workspace nothing except in the one state the reader explicitly asked for.
+    /// A quarter of the shell keeps two thirds of the screen for the log even then.
+    /// </remarks>
+    private double ExpandedNoticeHeight =>
+        Math.Max(NoticeTextMaximumHeight, Bounds.Height * 0.25);
+
+    private double CollapsedNoticeHeight =>
+        Math.Ceiling((_noticeText?.FontSize ?? TextScale.Of(12.5)) * 1.4 * 2);
+
+    /// <summary>
+    /// Offers <em>More</em> exactly when there is more, and takes it away again when there is
+    /// not — a message that fits must not carry a control that reveals nothing.
+    /// </summary>
+    private void UpdateNoticeDisclosure()
+    {
+        if (_noticeExpand is not { } expand || _noticeScroller is not { } scroller)
+        {
+            return;
+        }
+
+        var overflows = scroller.Extent.Height > scroller.Viewport.Height + 0.5;
+        var offer = !_noticeCompactHeight && (overflows || _noticeExpanded);
+        if (expand.IsVisible != offer)
+        {
+            expand.IsVisible = offer;
+        }
+
+        var label = _noticeExpanded ? "Less" : "More";
+        if (expand.Content as string != label)
+        {
+            expand.Content = label;
+            AutomationProperties.SetName(
+                expand,
+                _noticeExpanded ? "Show less of the message" : "Show the whole message");
+        }
     }
 
     /// <summary>
@@ -267,6 +367,11 @@ public sealed partial class MainView
         {
             _noticeText.Text = text;
         }
+
+        // A new message starts collapsed. Carrying the previous one's expansion over would
+        // give an unrelated one-line confirmation a four-line lane and a Less button.
+        _noticeExpanded = false;
+        ApplyNoticeLayout(_noticeCompactHeight);
 
         if (_noticeHost is { } host)
         {
@@ -340,6 +445,18 @@ public sealed partial class MainView
     internal NoticeKind? HoldingNoticeKind =>
         string.IsNullOrWhiteSpace(_noticeText?.Text) ? null : _noticeKind;
 
+    /// <summary>Whether the lane is holding a message that begins with these words.</summary>
+    /// <remarks>
+    /// Revision bookkeeping is the right instrument for retracting a message and the wrong one
+    /// for rewriting one at the end of a long operation: anything that raised a notice in
+    /// between — a cancellation report, a completion — advances the revision without
+    /// necessarily leaving its own message on screen. What the caller actually needs to know
+    /// is whether the words it wrote are still the words the reader is looking at (V2-11).
+    /// </remarks>
+    internal bool IsHoldingNoticeStartingWith(string prefix) =>
+        _noticeText?.Text is { Length: > 0 } showing &&
+        showing.StartsWith(prefix, StringComparison.Ordinal);
+
     /// <summary>
     /// Clears the lane the way the reader does, running the notice's own dismissal callback.
     /// </summary>
@@ -389,6 +506,19 @@ public sealed partial class MainView
         action.Foreground = new SolidColorBrush(accent);
         action.BorderBrush = new SolidColorBrush(accent);
         action.Background = new SolidColorBrush(WorkspacePalette.Surface(dark));
+    }
+
+    /// <summary>Tells every open workspace how much height the lane is taking from it.</summary>
+    private void PublishNoticeReserve()
+    {
+        var reserve = _noticeHost is { IsVisible: true } host ? host.Bounds.Height : 0;
+        foreach (var item in _tabItems.Values)
+        {
+            if (item.Content is SessionWorkspaceView workspace)
+            {
+                workspace.SetNoticeReserve(reserve);
+            }
+        }
     }
 
     private void StopNoticeTimer()

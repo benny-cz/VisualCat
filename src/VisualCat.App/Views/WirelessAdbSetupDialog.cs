@@ -50,6 +50,30 @@ internal sealed class OnDeviceLogAccessDialog : DialogBody<OnDeviceLogAccessChoi
     private readonly RadioButton _fullDevice;
     private readonly RadioButton _visualCatOnly;
 
+    /// <summary>
+    /// The operational detail behind the choice, kept out of the way until it is asked for.
+    /// </summary>
+    /// <remarks>
+    /// This paragraph is ninety words and it used to sit <em>above</em> the two radio buttons
+    /// it supports. At the reader's own text size the card is 464 x 853 dp, the paragraph fills
+    /// all of it, and at <c>font_scale</c> 1.8 the second option left the accessibility tree
+    /// entirely while at 2.0 neither option was painted at all — so a reader running large
+    /// text had exactly two discoverable actions, cancel or begin a Wireless-debugging pairing
+    /// they may not want, and the zero-setup path was unreachable (V2-18, reproduced
+    /// independently on a Pixel at 393 dp and a Motorola at 434 dp).
+    ///
+    /// The decision goes first and the essay goes behind a disclosure. What stays on screen
+    /// unconditionally is the sentence that actually answers "is this safe" — nothing is
+    /// uploaded — because that is the claim a reader is entitled to without a second tap. The
+    /// rest is what happens operationally once they have chosen, and it is one control away.
+    /// </remarks>
+    private const string FullDisclosure =
+        "Full-device capture uses Android Wireless debugging only on this device, uses the connection only to " +
+        "read the Android log, and closes it when Live stops. Android leaves Wireless debugging enabled until " +
+        "you turn it off in Settings. While Live runs, Android shows a private ongoing notification so capture " +
+        "can continue with the screen off and you can Stop and save. Android may end background capture after " +
+        "its six-hour service limit; everything already received is kept.";
+
     internal OnDeviceLogAccessDialog()
         : base("Choose what Live captures")
     {
@@ -58,7 +82,7 @@ internal sealed class OnDeviceLogAccessDialog : DialogBody<OnDeviceLogAccessChoi
         ScrollsInternally = true;
 
         var mobile = OperatingSystem.IsAndroid();
-        var touch = mobile ? 48 : 0;
+        var touch = TouchTarget.For(mobile);
         var hasSavedPairing = PlatformSourceRegistry.HasSavedWirelessAdbIdentity?.Invoke() == true;
         const string fullDeviceLabel = "Full-device capture";
 
@@ -92,19 +116,49 @@ internal sealed class OnDeviceLogAccessDialog : DialogBody<OnDeviceLogAccessChoi
         var fullDeviceDescription = Description(
             hasSavedPairing ? "Recommended · already paired" : "Recommended · setup required",
             hasSavedPairing
-                ? "Turn on Wireless debugging and reconnect with the saved pairing. No new code is normally needed. " +
-                  "VisualCat closes its connection when Live stops; Android leaves Wireless debugging on until you turn it off."
-                : "For logs from other apps and system components, VisualCat uses Android Wireless debugging. Pairing is usually " +
-                  "needed only once, no computer or root is required, and VisualCat closes its connection when Live stops.");
+                ? "Turn on Wireless debugging and reconnect with the saved pairing. No new code is normally needed."
+                : "For logs from other apps and system components. Pairing is usually needed only once; no computer or root is required.");
 
         var restrictedDescription = Description(
             "No setup",
             "Starts immediately, but Android exposes only VisualCat's own log lines. If VisualCat is idle, " +
-            "Live may show few or no new lines; other apps and most system components are not visible.");
+            "Live may show few or no new lines.");
+
+        var disclosure = new TextBlock
+        {
+            Text = FullDisclosure,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            FontSize = TextScale.Of(12),
+            Opacity = 0.82,
+            Margin = new Thickness(0, 2, 0, 0),
+            IsVisible = false,
+        };
+
+        // A disclosure, not a tooltip and not a paragraph: the words are reachable at every
+        // text scale in one tap, and they cost the card one 48 dp row until they are asked for.
+        var moreDetail = new Button
+        {
+            MinHeight = touch,
+            Padding = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Background = Avalonia.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Content = "How full-device capture works  ▾",
+        };
+        AutomationProperties.SetName(moreDetail, "How full-device capture works");
+        AutomationProperties.SetHelpText(moreDetail, FullDisclosure);
+        moreDetail.Click += (_, _) =>
+        {
+            disclosure.IsVisible = !disclosure.IsVisible;
+            moreDetail.Content = disclosure.IsVisible
+                ? "How full-device capture works  ▴"
+                : "How full-device capture works  ▾";
+        };
 
         var body = new StackPanel
         {
-            Spacing = 14,
+            Spacing = 12,
             Children =
             {
                 new TextBlock
@@ -114,19 +168,20 @@ internal sealed class OnDeviceLogAccessDialog : DialogBody<OnDeviceLogAccessChoi
                     FontSize = TextScale.Of(15),
                     FontWeight = Avalonia.Media.FontWeight.SemiBold,
                 },
-                new TextBlock
-                {
-                    Text = "Nothing is uploaded. Full-device capture uses Android Wireless debugging only on this device, " +
-                           "uses the connection only to read the Android log, and closes its connection when Live stops. " +
-                           "Android leaves Wireless debugging enabled until you turn it off in Settings. While Live runs, " +
-                           "Android shows a private ongoing notification so capture can continue with the screen off and " +
-                           "you can Stop and save. Android may end background capture after its six-hour service limit; " +
-                           "everything already received is kept.",
-                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-                    Opacity = 0.82,
-                },
+
+                // The decision comes before its support. Ordering it the other way is what put
+                // both options below the fold of a card that gave no sign it scrolled (V2-18).
                 Choice(_fullDevice, fullDeviceDescription),
                 Choice(_visualCatOnly, restrictedDescription),
+                new TextBlock
+                {
+                    Text = "Nothing is uploaded. Everything stays on this device.",
+                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                    FontSize = TextScale.Of(12),
+                    Opacity = 0.82,
+                },
+                moreDetail,
+                disclosure,
             },
         };
 

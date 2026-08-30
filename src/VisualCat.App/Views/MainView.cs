@@ -304,6 +304,20 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             // The gesture is raised on the top level, so the handler belongs there; a
             // descendant never sees it.
             TopLevel.GetTopLevel(this)?.AddHandler(TopLevel.BackRequestedEvent, OnBackRequested);
+
+            // Escape belongs to the shell while a layer is open, and it has to be claimed
+            // where the route actually starts. See OnShellKeyDown.
+            TopLevel.GetTopLevel(this)?.AddHandler(
+                KeyDownEvent,
+                OnShellKeyDown,
+                Avalonia.Interactivity.RoutingStrategies.Tunnel);
+
+            // The host's own back contract, where there is one. Avalonia raises the event
+            // above from the callback it registers itself; a stock gesture-navigation Pixel
+            // reached the launcher past an open sheet anyway (V2-21), so the shell installs
+            // its layer stack where the platform asks about it directly rather than trusting
+            // one route to be the only one.
+            Platform.PlatformSourceRegistry.TryNavigateBack = TryNavigateBack;
             ObserveSafeArea();
             ObserveOverlayInputPane();
 
@@ -338,6 +352,12 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         DetachedFromVisualTree += (_, _) =>
         {
             TopLevel.GetTopLevel(this)?.RemoveHandler(TopLevel.BackRequestedEvent, OnBackRequested);
+            TopLevel.GetTopLevel(this)?.RemoveHandler(KeyDownEvent, OnShellKeyDown);
+            if (Platform.PlatformSourceRegistry.TryNavigateBack == TryNavigateBack)
+            {
+                Platform.PlatformSourceRegistry.TryNavigateBack = null;
+            }
+
             StopObservingSafeArea();
             StopObservingOverlayInputPane();
         };
@@ -761,7 +781,34 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         _commandBar.InvalidateMeasure();
     }
 
-    private ScrollViewer BuildEmptyState(bool dark)
+    /// <summary>
+    /// The hero, centred when it fits and scrollable when it does not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two defects, one cause. The hero block ended 45 % of the way down a 849 dp workspace
+    /// and left 559 dp of empty ground under it — which on a phone does not read as airy, it
+    /// reads as a screen that failed to finish drawing, with both primary calls to action
+    /// above the part of the screen a thumb reaches most easily (V2-02). And a light-grey
+    /// scrollbar thumb sat permanently at the right edge, half-clipped by the panel, on a
+    /// screen that could not scroll by one pixel: 340 px of thumb in a 1 911 px track, which
+    /// claims about 5.6 screens of content that does not exist (V2-01).
+    /// </para>
+    /// <para>
+    /// <c>ScrollViewer.VerticalContentAlignment</c> does not centre on the scroll axis — the
+    /// presenter measures its child against infinity and arranges it from the top — so the
+    /// alignment that was already asked for could never take effect. A host that is told to be
+    /// at least as tall as the viewport is the idiom that works: the content centres inside it
+    /// while it fits, the host grows past the viewport when the reader's text size needs it,
+    /// and the extent is then honest in both states.
+    /// </para>
+    /// <para>
+    /// The scrollbar itself is not the affordance a touch platform uses. It is hidden here and
+    /// replaced by the fade every other scrolling surface in the product already uses, which
+    /// also means nothing can be drawn inside the 48 dp corner radius again.
+    /// </para>
+    /// </remarks>
+    private FadingScrollHost BuildEmptyState(bool dark)
     {
         var mobile = OperatingSystem.IsAndroid();
         var levelLegend = BuildSeverityLegend(dark, mobile);
@@ -808,18 +855,38 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             },
         };
 
-        // Center the ordinary phone/desktop hero, but make it genuinely scrollable whenever
-        // large text or a short landscape viewport needs more height. Centering an oversized
-        // StackPanel directly in the host clips equal portions above and below the viewport;
-        // on Pixel 5 at 130% that put the provenance behind the gesture bar (F-46).
-        return new ScrollViewer
+        content.VerticalAlignment = VerticalAlignment.Center;
+
+        // Centering an oversized StackPanel directly in the host clips equal portions above
+        // and below the viewport; on Pixel 5 at 130% that put the provenance behind the
+        // gesture bar (F-46). The host is what keeps both behaviours: never shorter than the
+        // viewport, so the hero centres; free to grow past it, so nothing is clipped.
+        var centering = new Panel { Children = { content } };
+        var scroller = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = mobile
+                ? ScrollBarVisibility.Hidden
+                : ScrollBarVisibility.Auto,
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Content = content,
+            Content = centering,
         };
+
+        // Written from the arranged viewport rather than bound, and guarded, because this runs
+        // from a layout pass: an unguarded write would invalidate the layout it was just told
+        // about and never settle.
+        scroller.LayoutUpdated += (_, _) =>
+        {
+            var target = scroller.Viewport.Height;
+            if (target > 0 && Math.Abs(centering.MinHeight - target) > 0.5)
+            {
+                centering.MinHeight = target;
+            }
+        };
+
+        // The empty state sits on the shell's own ground, not on a card, and the whole
+        // block is rebuilt on a theme change, so the fade never has to be repainted in place.
+        return new FadingScrollHost(scroller, dark, horizontal: false, raised: false);
     }
 
     /// <summary>
@@ -1229,6 +1296,22 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 new CommandDescriptor(menuLabel, description, action, canExecute, IsSetting: false, group));
         }
 
+        // A session command that earns no toolbar button of its own: it applies to a minority
+        // of files and it is a disclosure rather than an action. It reaches the desktop More
+        // menu and the phone command sheet, which is every route the reader has to a
+        // secondary command.
+        void Secondary(
+            string menuLabel,
+            Func<Task> action,
+            string? description = null,
+            Func<bool>? canExecute = null,
+            CommandGroup group = CommandGroup.ThisSession)
+        {
+            _toolbarSettings.Add(MenuAction(menuLabel, action));
+            _secondaryCommands.Add(
+                new CommandDescriptor(menuLabel, description, action, canExecute, IsSetting: false, group));
+        }
+
         void Setting(string menuLabel, Func<Task> action, string? description = null)
         {
             _toolbarSettings.Add(MenuAction(menuLabel, action));
@@ -1287,7 +1370,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 // The sheet promised "the filtered entries" and then opened a dialog whose
                 // default answer is the entries in view — a different and usually much
                 // smaller set (audit 2, E4). The command opens a question; it says so.
-                "Choose which entries to write, then save a CSV",
+                // Says what happens, including the case where there is only one answer. The
+                // sheet used to promise a chooser unconditionally and skip it whenever the
+                // plot was fitted (V2-15).
+                "Save entries as CSV, choosing the scope when more than one applies",
                 CanExportSelectedSession);
         }
         else
@@ -1309,6 +1395,15 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 canExecute: CanSaveOrShareSelectedSession);
             Flexible("Export", "Export CSV…", () => ExportAsync(), canExecute: CanExportSelectedSession);
         }
+
+        // Where the lines ADR 0009 keeps as unknown are actually readable. Offered only when
+        // the open session has some, so it is never a command that opens an empty pane
+        // (V2-14).
+        Secondary(
+            "Lines not on the timeline…",
+            ShowUnparsedLinesAsync,
+            "Stack-trace frames and records with no usable timestamp",
+            CanShowUnparsedLines);
 
         Setting("Appearance & timeline…", ShowAppearanceAsync, "Theme, text size, and how the plot is drawn");
         Setting("Session cache…", ShowSessionCacheAsync, "What this device is storing, and for how long");
@@ -1359,6 +1454,40 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
     private bool CanExportSelectedSession() =>
         _viewModel.Selected?.Snapshot is not null && _viewModel.Selected.Viewport is not null;
+
+    private bool CanShowUnparsedLines() =>
+        _viewModel.Selected is { Snapshot: not null } tab && tab.OffTimelineCount > 0;
+
+    /// <summary>
+    /// Stops the restricted capture the notice is about and reopens the scope chooser.
+    /// </summary>
+    /// <remarks>
+    /// The notice's own instruction was "Stop this capture, tap Live again, and choose
+    /// full-device access" — three steps, in a sentence that did not fit on the screen. One
+    /// control does all three (V2-11).
+    /// </remarks>
+    /// <summary>The opening words of the restricted-scope notice, so it can be recognised.</summary>
+    private const string RestrictedScopeNoticeLead = "Only VisualCat's own log lines are being captured";
+
+    private async Task SwitchLiveScopeFromNoticeAsync()
+    {
+        if (_viewModel.Selected is { } capturing && capturing.IsLiveCaptureActive)
+        {
+            await _viewModel.StopAsync(capturing);
+        }
+
+        await StartOnDeviceWithAccessSetupAsync();
+    }
+
+    private async Task ShowUnparsedLinesAsync()
+    {
+        if (_viewModel.Selected is not { Snapshot: not null } tab)
+        {
+            return;
+        }
+
+        await ShowDialogAsync(new UnparsedLinesDialog(tab));
+    }
 
     /// <summary>
     /// Keeps a session-dependent command enabled only while there is a session for it to act
@@ -1746,6 +1875,13 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
+        // A scope that ignores the filter writes the session, not the view of it. Until this
+        // existed, every export ran through the workspace's filter unconditionally and
+        // "everything in this session" was not a thing the product could produce (V2-15).
+        var exportFilter = scope.IgnoresFilter
+            ? VisualCat.Domain.Filters.FilterSpec.All
+            : tab.Filter;
+
         var file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = $"Export {scope.Label.ToLowerInvariant()}",
@@ -1772,7 +1908,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     tab.Snapshot,
                     path,
                     scope.Range,
-                    tab.Filter,
+                    exportFilter,
                     _settings.ExportOrder == "Chronological"
                         ? VisualCat.Domain.Queries.EntryOrder.Chronological
                         : VisualCat.Domain.Queries.EntryOrder.SourceSequence,
@@ -1808,17 +1944,59 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return null;
         }
 
-        var inView = new ExportScope(viewportRange, "Entries in view", tab.MatchesInView);
-        if (sessionRange is not { } whole ||
-            whole.StartInclusive >= viewportRange.StartInclusive && whole.EndExclusive <= viewportRange.EndExclusive)
+        // Three answers, in the order the reader is most likely to want them, and only the
+        // ones that are actually different from each other. The More sheet promises a
+        // question — "Choose which entries to write, then save a CSV" — and used to skip
+        // straight to the platform picker whenever the plot happened to be fitted, which is
+        // the state every import and every reopen starts in (V2-15).
+        var scopes = new List<ExportScope>(3);
+        var filtered = tab.Filter.Fingerprint() != VisualCat.Domain.Filters.FilterSpec.All.Fingerprint();
+        var matching = tab.Statistics?.TotalMatching;
+        var viewCoversAll = sessionRange is not { } covered ||
+            (covered.StartInclusive >= viewportRange.StartInclusive &&
+             covered.EndExclusive <= viewportRange.EndExclusive);
+
+        if (!viewCoversAll)
         {
-            // The view already is the whole matching set; there is no second answer to offer.
-            return inView with { Label = "Entries matching the filter", EstimatedRows = tab.Statistics?.TotalMatching };
+            scopes.Add(new ExportScope(
+                viewportRange,
+                "What is in view",
+                tab.MatchesInView,
+                "Only the entries the plot is currently showing."));
         }
 
-        return await ShowDialogAsync(new ExportScopeDialog(
-            inView,
-            new ExportScope(whole, "All entries matching the filter", tab.Statistics?.TotalMatching)));
+        if (sessionRange is { } whole)
+        {
+            scopes.Add(new ExportScope(
+                whole,
+                filtered ? "Everything matching the current filter" : "Everything in this session",
+                matching,
+                filtered
+                    ? "Every entry the current filter admits, across the whole session."
+                    : "Every entry in the session, across its whole time range."));
+
+            // Offered only when the filter is actually hiding something, because otherwise it
+            // is the same answer twice with two different names.
+            if (filtered && tab.Snapshot?.TimedRange is { } untouched)
+            {
+                scopes.Add(new ExportScope(
+                    untouched,
+                    "Everything in this session",
+                    tab.Snapshot.Descriptor.Counters.TimedEntries,
+                    "Every entry, ignoring the filter this workspace has on.",
+                    IgnoresFilter: true));
+            }
+        }
+
+        return scopes.Count switch
+        {
+            0 => null,
+
+            // One answer is not a question. It is still disclosed, in the notice the export
+            // writes, and in the picker's own title.
+            1 => scopes[0],
+            _ => await ShowDialogAsync(new ExportScopeDialog(scopes)),
+        };
     }
 
     /// <summary>
@@ -2056,6 +2234,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // pinned over a capture that is plainly recording the whole device was the most
         // visible half of audit 3's A1. Only this lane's own message is retracted, and only
         // while it is still the one showing.
+        var scopeNoticeRevision = 0L;
         if (source is ISourceScopeReporter reporter)
         {
             var scopeNotice = 0L;
@@ -2070,19 +2249,25 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     var grant = PlatformSourceRegistry.FullDeviceLogGrantCommand;
                     var copyable = grant is { Length: > 0 } &&
                         report.Remedy?.Contains(grant, StringComparison.Ordinal) == true;
+
+                    // The remedy is a control, not the tail of a paragraph. It was the last
+                    // sentence of a notice taller than the lane, so on a phone the one action
+                    // the notice exists to offer was the part below the fold (V2-11).
                     ShowNotice(
-                        "Only VisualCat's own log lines are being captured — " +
+                        RestrictedScopeNoticeLead + " — " +
                         $"{report.Summary}.\n\n{report.Remedy}",
                         NoticeKind.Failure,
                         copyable
                             ? new NoticeAction("Copy command", () => CopyGrantCommandAsync(grant!))
-                            : null);
+                            : new NoticeAction("Switch scope", SwitchLiveScopeFromNoticeAsync));
                     scopeNotice = NoticeRevision;
+                    scopeNoticeRevision = scopeNotice;
                 }
                 else if (report.FullDevice && scopeNotice != 0)
                 {
                     RetractNotice(scopeNotice);
                     scopeNotice = 0;
+                    scopeNoticeRevision = 0;
                     ShowNotice(
                         "Log access was allowed after all — this capture is seeing the whole device.",
                         NoticeKind.Information);
@@ -2102,6 +2287,18 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
         finally
         {
+            // The notice was written while the capture was running and stayed in the present
+            // tense after it stopped: "are being captured", over a status line reading
+            // `Stopped · 47 entries kept`, until somebody dismissed it by hand (V2-11). A
+            // finished capture gets the past tense, and only while its own message is still
+            // the one on screen.
+            if (scopeNoticeRevision != 0 && IsHoldingNoticeStartingWith(RestrictedScopeNoticeLead))
+            {
+                ShowNotice(
+                    "This capture recorded VisualCat's own log lines only.",
+                    NoticeKind.Information);
+            }
+
             if (usesWirelessAdb && _noticeKind != NoticeKind.Failure)
             {
                 ShowNotice(
@@ -2184,6 +2381,14 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             _settings.TimelineMinimumBarWidth);
         workspace.NoticeRaised += (message, failure) =>
             ShowNotice(message, failure ? NoticeKind.Failure : NoticeKind.Information);
+        workspace.ConfirmAsync = async (title, message, confirmText) =>
+            await ShowDialogAsync(new ConfirmationDialog(title, message, confirmText));
+
+        // The chip in the count row is the direct route to the same card the More menu offers.
+        // Presentation is the shell's, so the workspace asks rather than presents (V2-13).
+        workspace.OffTimelineRequested += () => _ = ShowUnparsedLinesAsync();
+        workspace.AskForNumberAsync = async (title, question, initial, maximum) =>
+            await ShowDialogAsync(new NumberPromptDialog(title, question, initial, 1, maximum));
         workspace.PartialRecoveryRaised += message =>
             ShowNotice(
                 message,
@@ -2538,10 +2743,24 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     {
         var sessions = await TemporarySessionRetentionService.ScanAsync(WorkspaceViewModel.TemporarySessionRoot);
         var path = await ShowDialogAsync(new RecentSessionsDialog(sessions, CapturingSessionPaths()));
-        if (path is not null)
+        if (path is null)
         {
-            await RunAsync(() => _viewModel.OpenSessionAsync(path));
+            return;
         }
+
+        // The empty card offers the one action that changes what it is empty of, and the
+        // shell owns that action (V2-03).
+        if (string.Equals(path, RecentSessionsDialog.CaptureThisDevice, StringComparison.Ordinal))
+        {
+            if (OperatingSystem.IsAndroid() && PlatformSourceRegistry.CreateOnDeviceSource is not null)
+            {
+                await StartOnDeviceWithAccessSetupAsync();
+            }
+
+            return;
+        }
+
+        await RunAsync(() => _viewModel.OpenSessionAsync(path));
     }
 
     private async Task ShowAppearanceAsync()
@@ -2759,9 +2978,45 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// One press, one layer — claimed at the top level, where the route begins.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Android delivers a key Back as a <see cref="Key.Escape"/> key-down and then the platform
+    /// back callback. A dialog whose Cancel carries <c>IsCancel</c> answers that key-down
+    /// itself: Avalonia's <see cref="Button"/> registers a handler for Escape on the visual
+    /// root. So the press closed the card, and the back callback then found an empty overlay
+    /// stack and let the platform background the task — Back both dismissed the
+    /// <em>Choose what Live captures</em> card and left the app, in one press, on the one
+    /// dialog V2-18 exists to make reachable. The <em>More</em> sheet was unaffected because it
+    /// has no such button, which is why the earlier pass recorded Back as passing.
+    /// </para>
+    /// <para>
+    /// The handler is on the top level and tunnelling, for two reasons. Tunnelling runs before
+    /// the bubble phase, which is where <c>Button</c>'s root hook lives. And the top level is
+    /// the one element every key route passes through: with a card open and nothing focused
+    /// inside it, the route's source <em>is</em> the top level, so a handler on this view would
+    /// never see the key at all.
+    /// </para>
+    /// </remarks>
+    private void OnShellKeyDown(object? sender, KeyEventArgs eventArgs)
+    {
+        _ = sender;
+        if (eventArgs.Key != Key.Escape || _overlays.Count == 0)
+        {
+            return;
+        }
+
+        DismissTopOverlay();
+        NoteDismissedByEscape();
+        eventArgs.Handled = true;
+    }
+
     private void OnKeyDown(object? sender, KeyEventArgs eventArgs)
     {
         _ = sender;
+
         var control = eventArgs.KeyModifiers.HasFlag(KeyModifiers.Control);
         var shift = eventArgs.KeyModifiers.HasFlag(KeyModifiers.Shift);
         if (control && eventArgs.Key == Key.O)
@@ -2850,9 +3105,22 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private void ReportFailure(Exception exception)
     {
         WorkspaceViewModel.RecordFailure("shell.action", exception);
-        ShowNotice(
-            $"Could not complete that action · {WorkspaceViewModel.FriendlyMessage(exception)}",
-            NoticeKind.Failure);
+        var message = WorkspaceViewModel.FriendlyMessage(exception);
+
+        // Said once. A failed import already owns the whole workspace with a failure card
+        // that states the reason and the remedy, and the same sentence was appearing three
+        // times at once — the card, the session status line, and this lane, which is the one
+        // that then has to be dismissed by hand (V2-12). The lane is for results whose only
+        // other evidence is off screen; a full-page card is not off screen.
+        foreach (var tab in _viewModel.Tabs)
+        {
+            if (string.Equals(tab.FailureReason, message, StringComparison.Ordinal))
+            {
+                return;
+            }
+        }
+
+        ShowNotice($"Could not complete that action · {message}", NoticeKind.Failure);
     }
 
     public async ValueTask DisposeAsync()

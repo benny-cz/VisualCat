@@ -51,6 +51,17 @@ public sealed class SessionCoordinator
             : FormatDetector.Detect(samples);
         if (detection.PrimaryFormat == LogcatFormat.Unknown)
         {
+            // Emptiness is not a detection failure — there is nothing to detect. A zero-byte
+            // file produced the byte-for-byte identical card to 10 MiB of random noise, down
+            // to the paragraph advising the reader to check that it is a logcat capture and
+            // not a bug report, and the live-test plan lists an empty source specifically to
+            // probe this message (V2-12). Branching before the verdict is what lets the two
+            // cases say different, true things.
+            if (samples.Count == 0)
+            {
+                throw new InvalidDataException("This file is empty — there is nothing to import.");
+            }
+
             // States the fact only. What to do about it differs by platform — the desktop
             // import preview offers a format override and the Android companion has no such
             // control — so the remedy is added by whoever is talking to the user rather than

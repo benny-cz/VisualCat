@@ -192,7 +192,20 @@ internal static class SheetForm
             RowDefinitions = new RowDefinitions("*,Auto,Auto"),
             Margin = margin,
         };
-        root.Children.Add(scroller);
+
+        // A card that scrolls its own body says so. The in-page host only attaches
+        // FadingScrollHost on the path it wraps itself, so every dialog that declares
+        // ScrollsInternally — the Live scope chooser, Appearance & timeline, Session cache —
+        // had a scroller with no edge treatment at all: at font_scale 1.8 the scope chooser's
+        // two radio buttons were below the fold of a card that gave no sign there was a fold
+        // (V2-18). The fade is the same statement the sheet host already makes, made here so
+        // it cannot depend on which of the two paths built the scroller.
+        var fade = new FadingScrollHost(scroller, dark: true);
+        void ApplyFadeTheme() =>
+            fade.ApplyTheme(root.ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light);
+        root.ActualThemeVariantChanged += (_, _) => ApplyFadeTheme();
+        root.AttachedToVisualTree += (_, _) => ApplyFadeTheme();
+        root.Children.Add(fade);
         Grid.SetRow(divider, 1);
         root.Children.Add(divider);
         Grid.SetRow(decision, 2);
@@ -296,6 +309,17 @@ internal static class SheetForm
 
 public sealed class RecentSessionsDialog : DialogBody<string>
 {
+    /// <summary>
+    /// The result this dialog completes with when the reader chooses to start a capture rather
+    /// than open a stored one.
+    /// </summary>
+    /// <remarks>
+    /// A sentinel rather than a second result type, because every other outcome of this dialog
+    /// is a session path and the caller already switches on one. It cannot collide with a path:
+    /// no stored session is named by a token in angle brackets.
+    /// </remarks>
+    public const string CaptureThisDevice = "<capture-this-device>";
+
     private readonly ListBox _sessions = new();
     private readonly IReadOnlySet<string> _capturing;
 
@@ -361,46 +385,92 @@ public sealed class RecentSessionsDialog : DialogBody<string>
         cancel.Click += (_, _) => Complete(null);
         buttons.Children.Add(cancel);
 
+        // A first-run reader taps the third hero action and, with nothing stored, was given a
+        // 52 dp legend explaining a three-way status taxonomy for items they do not have, an
+        // empty list region, and an inert Open — and at no point did the card say there were
+        // no captures (V2-03). The one action that changes that is offered instead, so the
+        // dialog is never a dead end.
+        var empty = sessions.Count == 0;
+        if (empty)
+        {
+            var capture = new Button
+            {
+                Content = "Capture this device's log",
+                IsDefault = true,
+                MinHeight = TouchTarget.SelfSized(mobile),
+            };
+            capture.Click += (_, _) => Complete(CaptureThisDevice);
+            buttons.Children.Add(capture);
+        }
+
         // The dialog opens with nothing selected, and Open was enabled anyway: tapping it
         // was accepted and produced no result, no message and no state change (audit 2, C3).
-        // It is now exactly as available as the session it would open.
-        var open = new Button
+        // It is now exactly as available as the session it would open — and with nothing to
+        // open at all it is not rendered, which is the rule R-24 already applies to the More
+        // sheet (V2-03).
+        if (!empty)
         {
-            Content = "Open",
-            IsDefault = true,
-            MinHeight = mobile ? 48 : 0,
-            IsEnabled = false,
-        };
-        open.Click += (_, _) => OpenSelected();
-        _sessions.SelectionChanged += (_, _) => open.IsEnabled = _sessions.SelectedItem is TemporarySessionInfo;
-        buttons.Children.Add(open);
+            var open = new Button
+            {
+                Content = "Open",
+                IsDefault = true,
+                MinHeight = mobile ? 48 : 0,
+                IsEnabled = false,
+            };
+            AutomationProperties.SetHelpText(open, "Select a capture to open");
+            open.Click += (_, _) => OpenSelected();
+            _sessions.SelectionChanged += (_, _) => open.IsEnabled = _sessions.SelectedItem is TemporarySessionInfo;
+            buttons.Children.Add(open);
+        }
 
+        // Auto rather than star for the list row when there is no list: a card sized to a
+        // fixed bottom band put an empty region under 52 dp of legend and pinned it to the
+        // bottom 23 % of the display. An empty dialog is small and a full one is tall.
         var root = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,*,Auto,Auto"),
+            RowDefinitions = new RowDefinitions(sessions.Count == 0 ? "Auto,Auto,Auto,Auto" : "Auto,*,Auto,Auto"),
             Margin = new Thickness(12),
         };
         root.Children.Add(new TextBlock
         {
             // The desktop sentence pointed at Save session…, a command the Android build does
             // not register at all, so it described an action the reader could not take
-            // (finding 13).
-            Text = mobile
-                ? "These captures are stored in this app's private storage. Share… hands one to "
-                + "another app as a portable archive."
-                : "Temporary sessions are stored locally. Saving a session promotes it to a "
-                + "location you choose.",
+            // (finding 13). With nothing stored, neither sentence is about anything: the card
+            // says so instead, in the place the explanation would have been.
+            Text = empty
+                ? "No captures on this device yet."
+                : mobile
+                    ? "These captures are stored in this app's private storage. Share… hands one to "
+                    + "another app as a portable archive."
+                    : "Temporary sessions are stored locally. Saving a session promotes it to a "
+                    + "location you choose.",
+            FontWeight = empty ? FontWeight.SemiBold : FontWeight.Normal,
             Margin = new Thickness(0, 0, 0, 8),
             TextWrapping = TextWrapping.Wrap,
         });
-        Grid.SetRow(_sessions, 1);
-        root.Children.Add(_sessions);
+        if (empty)
+        {
+            root.Children.Add(new TextBlock
+            {
+                Text = "A capture records this device's log into this app's private storage. "
+                       + "Start one and it will be listed here.",
+                Margin = new Thickness(0, 22, 0, 8),
+                Opacity = 0.78,
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+        else
+        {
+            Grid.SetRow(_sessions, 1);
+            root.Children.Add(_sessions);
 
-        // Under the list, where a reader meets the words. It had existed only as a tooltip and
-        // as help text, neither of which a sighted touch user can reach (audit 3, E2).
-        var legend = SheetForm.SessionStateLegend();
-        Grid.SetRow(legend, 2);
-        root.Children.Add(legend);
+            // Under the list, where a reader meets the words. It had existed only as a tooltip
+            // and as help text, neither of which a sighted touch user can reach (audit 3, E2).
+            // It is help text for a populated list, so it arrives with one (V2-03).
+            var legend = SheetForm.SessionStateLegend();
+            Grid.SetRow(legend, 2);
+            root.Children.Add(legend);
+        }
         Grid.SetRow(buttons, 3);
         root.Children.Add(buttons);
         Content = root;

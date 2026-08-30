@@ -11,7 +11,22 @@ namespace VisualCat.App.Views;
 /// <param name="Range">The time range the export query is run over.</param>
 /// <param name="Label">How the chosen scope is named back to the reader.</param>
 /// <param name="EstimatedRows">Rows the workspace expects, or <c>null</c> when it cannot say.</param>
-internal sealed record ExportScope(TimeRange Range, string Label, long? EstimatedRows);
+/// <param name="Detail">The one line that says what the scope means.</param>
+/// <param name="IgnoresFilter">
+/// Whether this scope writes the whole session rather than what the filter admits.
+/// </param>
+/// <remarks>
+/// The filter used to be implicit and unconditional: every export ran through the workspace's
+/// filter, so "everything in this session" was not a scope the product could produce at all —
+/// and the one mistake B-14 is about is exporting a filtered view believing it was the whole
+/// session (V2-15). The scope now carries that decision rather than the caller assuming it.
+/// </remarks>
+internal sealed record ExportScope(
+    TimeRange Range,
+    string Label,
+    long? EstimatedRows,
+    string Detail = "",
+    bool IgnoresFilter = false);
 
 /// <summary>
 /// Asks what "export" means before the save dialog opens.
@@ -26,27 +41,31 @@ internal sealed record ExportScope(TimeRange Range, string Label, long? Estimate
 /// </remarks>
 internal sealed class ExportScopeDialog : DialogBody<ExportScope>
 {
-    internal ExportScopeDialog(ExportScope inView, ExportScope allMatching)
+    internal ExportScopeDialog(IReadOnlyList<ExportScope> scopes)
         : base("Export CSV")
     {
-        ArgumentNullException.ThrowIfNull(inView);
-        ArgumentNullException.ThrowIfNull(allMatching);
-        PreferredSize = new Size(520, 340);
-        MinimumSize = new Size(400, 280);
+        ArgumentNullException.ThrowIfNull(scopes);
+        if (scopes.Count == 0)
+        {
+            throw new ArgumentException("An export needs at least one scope to offer.", nameof(scopes));
+        }
+
+        PreferredSize = new Size(520, 380);
+        MinimumSize = new Size(400, 300);
         var mobile = OperatingSystem.IsAndroid();
 
         var options = new StackPanel { Spacing = 6 };
-        var viewOption = Option(inView, "Only the entries the plot is currently showing.", mobile);
-        var allOption = Option(
-            allMatching,
-            "Everything the current filter matches, across the whole session.",
-            mobile);
+        var buttonsByScope = new List<(RadioButton Option, ExportScope Scope)>(scopes.Count);
+        foreach (var scope in scopes)
+        {
+            var option = Option(scope, scope.Detail, mobile);
+            buttonsByScope.Add((option, scope));
+            options.Children.Add(option);
+        }
 
-        // The viewport is the scope the product used to take silently, so it stays the
-        // default — but now it is a stated choice with its own row count beside it.
-        viewOption.IsChecked = true;
-        options.Children.Add(viewOption);
-        options.Children.Add(allOption);
+        // The scope the product used to take silently is still the default — it is the first
+        // one the caller offers — but it is a stated choice with its own row count beside it.
+        buttonsByScope[0].Option.IsChecked = true;
 
         var buttons = new StackPanel
         {
@@ -59,7 +78,19 @@ internal sealed class ExportScopeDialog : DialogBody<ExportScope>
         cancel.Click += (_, _) => Complete(null);
         buttons.Children.Add(cancel);
         var confirm = new Button { Content = "Choose a file…", IsDefault = true, MinHeight = mobile ? 48 : 0 };
-        confirm.Click += (_, _) => Complete(viewOption.IsChecked == true ? inView : allMatching);
+        confirm.Click += (_, _) =>
+        {
+            foreach (var (option, scope) in buttonsByScope)
+            {
+                if (option.IsChecked == true)
+                {
+                    Complete(scope);
+                    return;
+                }
+            }
+
+            Complete(buttonsByScope[0].Scope);
+        };
         buttons.Children.Add(confirm);
 
         Content = new StackPanel
@@ -70,8 +101,7 @@ internal sealed class ExportScopeDialog : DialogBody<ExportScope>
             {
                 new TextBlock
                 {
-                    Text = "The sort order and the encoding come from Appearance & timeline; "
-                           + "the filter comes from this session's workspace.",
+                    Text = "The sort order and the encoding come from Appearance & timeline.",
                     TextWrapping = TextWrapping.Wrap,
                     Opacity = 0.75,
                     FontSize = TextScale.Of(12),

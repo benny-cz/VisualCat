@@ -195,6 +195,60 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             clear.IsVisible = hasChips;
         }
+
+        UpdateOffTimelineChip();
+    }
+
+    /// <summary>
+    /// States the population no time-based view can show, beside the ones that can.
+    /// </summary>
+    /// <remarks>
+    /// Untimed records and unparsed lines are counted by the filter and drawn by nothing: no
+    /// bar in the plot, no mark in the minimap, no row in the severity legend, no row in the
+    /// entries list. On a mixed-format file that made `3,425 match` larger than `2,225 in
+    /// session` with the explanation nowhere on screen (V2-13), and on a crash log it hid two
+    /// thirds of the file (V2-14). The chip is the label and the route in one: it names the
+    /// number and opens the card that lists the records.
+    /// </remarks>
+    private void UpdateOffTimelineChip()
+    {
+        if (_offTimelineChip is not { } chip)
+        {
+            return;
+        }
+
+        var untimed = _viewModel.UntimedEntryCount;
+        var unparsed = _viewModel.UnparsedLineCount;
+        if (untimed + unparsed <= 0)
+        {
+            chip.IsVisible = false;
+            return;
+        }
+
+        // One number when there is one population, and the sum when there are two — the chip
+        // shares a row with the filter chips and the count line, and three numbers there is
+        // one more than the row can hold.
+        var label = untimed > 0 && unparsed > 0
+            ? $"{untimed + unparsed:N0} off timeline"
+            : untimed > 0
+                ? $"{untimed:N0} untimed"
+                : $"{unparsed:N0} unparsed";
+        var spoken = untimed > 0 && unparsed > 0
+            ? $"{Counted.Of(untimed, "untimed record", "untimed records")} and " +
+              $"{Counted.Of(unparsed, "unparsed line", "unparsed lines")} are not on the timeline. Show them."
+            : untimed > 0
+                ? $"{Counted.Of(untimed, "record", "records")} carry no usable timestamp and are not on the timeline. Show them."
+                : $"{Counted.Lines(unparsed)} are not logcat records and are not on the timeline. Show them.";
+
+        chip.Content = label;
+        chip.IsVisible = true;
+        ToolTip.SetTip(chip, spoken);
+        AutomationProperties.SetName(chip, spoken);
+
+        var dark = ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
+        chip.Background = new SolidColorBrush(WorkspacePalette.Surface(dark));
+        chip.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
+        chip.Foreground = new SolidColorBrush(WorkspacePalette.TextMuted(dark));
     }
 
     /// <summary>
@@ -450,36 +504,70 @@ public sealed partial class SessionWorkspaceView : UserControl
 
     private static string Shorten(string value) => value.Length <= 28 ? value : value[..27] + "…";
 
+    /// <summary>
+    /// One active filter, as a single control the whole of which removes it.
+    /// </summary>
+    /// <remarks>
+    /// The chip used to be an inert <see cref="Border"/> carrying a label and a separate
+    /// <see cref="Button"/> for its <c>×</c>. That button was written with <c>MinWidth = 0</c>
+    /// and no <c>MinHeight</c>, and on the device it measured <b>15.6 × 16.4 dp</b> — a tenth
+    /// of the area of the 49 dp severity toggles beside it, and one of the only two
+    /// interactive nodes under the floor anywhere in the workspace (V2-05). Removing one
+    /// filter is the most common corrective action there is and it was the hardest thing on
+    /// the screen to hit; a miss landed on the 50 × 16 dp label, which was not clickable at
+    /// all, so nothing happened and the reader tried again.
+    ///
+    /// So the chip <em>is</em> the control. The glyph stays 16 dp because that is the right
+    /// size for it to look; the target is the whole chip, which clears the touch floor on its
+    /// height and is far past it on its width. One node, one name, one thing that happens.
+    /// </remarks>
     private void AddChip(string text, Func<Task>? remove = null)
     {
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-        content.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
-        if (remove is not null)
+        var dark = ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
+        var content = new StackPanel
         {
-            var close = new Button
+            Orientation = Orientation.Horizontal,
+            Spacing = 5,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        content.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
+        if (remove is null)
+        {
+            _chips.Children.Add(new Border
             {
-                Content = "×",
-                Padding = new Thickness(4, 0),
-                MinWidth = 0,
-                Background = Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            ToolTip.SetTip(close, "Remove this filter");
-            AutomationProperties.SetName(close, $"Remove filter {text}");
-            close.Click += (_, _) => _ = remove();
-            content.Children.Add(close);
+                Background = new SolidColorBrush(WorkspacePalette.ChipFill(dark)),
+                CornerRadius = new CornerRadius(3),
+                Margin = new Thickness(3, 1),
+                Padding = new Thickness(7, 2),
+                MinHeight = TouchTarget.For(_mobile),
+                Child = content,
+            });
+            return;
         }
 
-        _chips.Children.Add(new Border
+        content.Children.Add(new TextBlock
         {
-            Background = new SolidColorBrush(
-                WorkspacePalette.ChipFill(ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light)),
+            Text = "×",
+            Opacity = 0.85,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        var chip = new Button
+        {
+            Content = content,
+            Background = new SolidColorBrush(WorkspacePalette.ChipFill(dark)),
+            BorderThickness = new Thickness(0),
             CornerRadius = new CornerRadius(3),
             Margin = new Thickness(3, 1),
             Padding = new Thickness(7, 2),
-            Child = content,
-        });
+            MinHeight = TouchTarget.SelfSized(_mobile),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        ToolTip.SetTip(chip, "Remove this filter");
+        AutomationProperties.SetName(chip, $"Remove filter {text}");
+        chip.Click += (_, _) => _ = remove();
+        _chips.Children.Add(chip);
     }
 
     private void UpdateLevelChecks()

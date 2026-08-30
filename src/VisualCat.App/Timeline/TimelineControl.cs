@@ -20,8 +20,36 @@ public sealed record TimelineCellSelection(TimeRange Range, LogLevel Level, long
 /// </summary>
 public sealed record TimelineHoverInsight(TimeRange Range, LogLevel Level, string? TemplateText, long TemplateCount);
 
-public sealed class TimelineControl : Control
+public sealed class TimelineControl : Control, VisualCat.App.Platform.IEdgeGestureSurface
 {
+    /// <summary>
+    /// The plot's claim on the platform's edge gesture — its whole rectangle while a pan can
+    /// move it, and nothing at all when it cannot.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The claim exists because the heat map runs to 12 dp of both screen edges and its
+    /// documented gesture is drag-to-pan, so on a gesture-navigation phone a pan begun in the
+    /// outer band went Back and left the workspace for the launcher (F-28). It costs Android's
+    /// whole 200 dp per-edge exclusion budget between the plot, the minimap and the divider,
+    /// and what it costs the <em>reader</em> is system Back across that band — which is half of
+    /// V2-21.
+    /// </para>
+    /// <para>
+    /// At <c>Fit</c> there is nothing to pan to: the viewport already spans the session, and a
+    /// drag either does nothing or runs into the overscroll clamp. Claiming the edge there buys
+    /// the reader no gesture and takes a system one away. So the claim is made only while the
+    /// viewport is genuinely narrower than the session — which is exactly when a pan is worth
+    /// protecting — and a session sitting at Fit, the state every import and every reopen
+    /// starts in, leaves Back working everywhere on the screen.
+    /// </para>
+    /// </remarks>
+    Rect VisualCat.App.Platform.IEdgeGestureSurface.EdgeGestureArea =>
+        ClaimsEdgeGesture ? new Rect(Bounds.Size) : default;
+
+    /// <summary>The plot is large and is served after the small whole-claim surfaces.</summary>
+    bool VisualCat.App.Platform.IEdgeGestureSurface.ClaimedWhole => false;
+
     // Immutable, cached drawing resources: Render touches thousands of cells per frame,
     // so nothing in it may allocate per cell (R11, §15.2, §19.3).
     private static readonly Typeface MonoTypeface = new(
@@ -191,10 +219,26 @@ public sealed class TimelineControl : Control
             _selection = null;
         }
 
+        var claimedBefore = ClaimsEdgeGesture;
         _result = result;
         _sessionRange = sessionRange;
+
+        // A zoom or a pan changes whether the plot has anything to pan to, and neither raises
+        // a layout pass — which is the only thing EdgeGestureGuard watches. Without this, the
+        // claim would be whatever it was when the control was last arranged.
+        if (claimedBefore != ClaimsEdgeGesture)
+        {
+            VisualCat.App.Platform.EdgeGestureGuard.Republish();
+        }
+
         InvalidateVisual();
     }
+
+    /// <summary>Whether a pan can currently move the viewport at all.</summary>
+    private bool ClaimsEdgeGesture =>
+        _result is { } current &&
+        _sessionRange is { } range &&
+        current.Viewport.Range.DurationUs < range.DurationUs - 1;
 
     /// <summary>Explains why a session has no drawable data yet.</summary>
     public void SetEmptyState(string title, string detail)

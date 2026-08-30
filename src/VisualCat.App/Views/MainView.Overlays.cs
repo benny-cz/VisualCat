@@ -348,7 +348,16 @@ public sealed partial class MainView : IDialogHost
         {
             Background = new SolidColorBrush(Color.FromArgb(dark ? (byte)170 : (byte)120, 0, 0, 0)),
         };
-        scrim.PointerPressed += (_, eventArgs) =>
+        // Released, not pressed. A stock gesture-navigation Back begins as an ordinary
+        // ACTION_DOWN on whatever is under the finger and is only claimed by the system once
+        // it has travelled — Android then sends the app a cancel. Dismissing on the press
+        // meant an edge swipe over the scrim took the sheet down on touch-down, and the same
+        // gesture then arrived as Back with nothing left to peel, so the platform backgrounded
+        // the task: one gesture, two consumers, and the reader lands on the launcher. That is
+        // V2-21's first fault, and it is why key Back and a tapped scrim always looked right.
+        // A tap still dismisses; a gesture the system takes away never completes here.
+        scrim.PointerPressed += (_, eventArgs) => eventArgs.Handled = true;
+        scrim.PointerReleased += (_, eventArgs) =>
         {
             eventArgs.Handled = true;
             dismiss();
@@ -362,6 +371,11 @@ public sealed partial class MainView : IDialogHost
         var heading = new TextBlock
         {
             Text = title,
+
+            // Wrapped, not trimmed. "Choose what Live captures" clipped horizontally on the
+            // Pixel's 393 dp viewport at large text (§14.7), and a title is the one string on
+            // a card that has to survive every scale.
+            TextWrapping = TextWrapping.Wrap,
             FontSize = TextScale.Of(15),
             FontWeight = FontWeight.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
@@ -636,6 +650,11 @@ public sealed partial class MainView : IDialogHost
     {
         var covered = _overlays.Count > 0;
         _rootPanel.IsSealedForModal = covered;
+
+        // Nothing behind the scrim can be dragged, so nothing behind it has any business
+        // holding the platform's edge gesture — least of all while the reader has a layer
+        // open and Back is the gesture they are most likely to make (V2-21).
+        Platform.EdgeGestureGuard.Suspend(covered);
         AutomationProperties.SetAccessibilityView(
             _rootPanel,
             covered ? AccessibilityView.Raw : AccessibilityView.Content);
@@ -660,11 +679,24 @@ public sealed partial class MainView : IDialogHost
     /// Presents a dialog: a modal window where the platform has windows, and an in-page card
     /// where it does not.
     /// </summary>
+    /// <summary>
+    /// Forces the in-page dialog host on or off, for tests that need to exercise it.
+    /// </summary>
+    /// <remarks>
+    /// The phone has no windows and gets a card inside the page; the desktop opens a modal
+    /// <see cref="Window"/>. A headless run is neither, and it took the window path — so the
+    /// overlay stack, the sheet's Back contract and the modality seal had no test coverage at
+    /// all, which is how V2-23 reached a device. Null means "ask the platform", which is what
+    /// every shipping build does.
+    /// </remarks>
+    internal static bool? InPageDialogOverride { get; set; }
+
     public async Task<TResult?> ShowDialogAsync<TResult>(DialogBody<TResult> body)
     {
         ArgumentNullException.ThrowIfNull(body);
         body.Host = this;
-        if (!OperatingSystem.IsAndroid() && TopLevel.GetTopLevel(this) is Window owner)
+        var inPage = InPageDialogOverride ?? OperatingSystem.IsAndroid();
+        if (!inPage && TopLevel.GetTopLevel(this) is Window owner)
         {
             var window = new Window
             {
@@ -725,28 +757,53 @@ public sealed partial class MainView : IDialogHost
     /// </remarks>
     private void OnBackRequested(object? sender, RoutedEventArgs eventArgs)
     {
-        // The same press, already answered. Android delivers one Back as two events — a
-        // Key.Escape key-down and, about ten milliseconds later, this — and the key-down runs
-        // first. So the workspace gave up its filter drawer to the key-down, and this arrived
-        // to find nothing left to dismiss and let the platform background the task: Back both
-        // closed the drawer and left the app, with a half-typed query going with it
-        // (audit 3, C1). One press, one decision.
-        if (TakeDismissedByEscape())
+        _ = sender;
+        if (TryNavigateBack())
         {
             eventArgs.Handled = true;
-            return;
+        }
+    }
+
+    /// <summary>
+    /// Peels the topmost layer the reader has open, in the order they stack.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The one implementation of Back in the application. It answers the toolkit's
+    /// <see cref="TopLevel.BackRequestedEvent"/> and, on Android, the activity's own
+    /// <c>OnBackPressedDispatcher</c> callback — which exists because a stock
+    /// gesture-navigation Pixel walked past an open <em>More actions</em> sheet and an open
+    /// <em>Appearance</em> card straight to the launcher, while the identical layers closed
+    /// correctly for a <c>KEYCODE_BACK</c> press on the same build (V2-21). Two entry points
+    /// and one decision is what makes the answer independent of which of them the platform
+    /// used.
+    /// </para>
+    /// <para>
+    /// The order is the order the layers are drawn in: an in-page dialog or sheet is over the
+    /// workspace, and the workspace's own transient state — the filter drawer, an expanded
+    /// inspector — is under it. <see langword="false"/> means there was nothing open, and the
+    /// caller lets the platform do what it does everywhere else.
+    /// </para>
+    /// </remarks>
+    internal bool TryNavigateBack()
+    {
+        // The same press, already answered. Android delivers a key Back as two events — a
+        // Key.Escape key-down and, about ten milliseconds later, the back request — and the
+        // key-down runs first. So the workspace gave up its filter drawer to the key-down,
+        // and the request arrived to find nothing left to dismiss and let the platform
+        // background the task: Back both closed the drawer and left the app, with a half-typed
+        // query going with it (audit 3, C1). One press, one decision.
+        if (TakeDismissedByEscape())
+        {
+            return true;
         }
 
         if (DismissTopOverlay())
         {
-            eventArgs.Handled = true;
-            return;
+            return true;
         }
 
-        if (ActiveWorkspace is { } workspace && workspace.TryDismissTransientState())
-        {
-            eventArgs.Handled = true;
-        }
+        return ActiveWorkspace is { } workspace && workspace.TryDismissTransientState();
     }
 
     /// <summary>

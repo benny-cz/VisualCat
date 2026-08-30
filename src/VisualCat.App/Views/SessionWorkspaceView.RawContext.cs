@@ -576,9 +576,14 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         _rawSourceTools = tools;
+
+        // The codes in the gutter, decoded, on the pane rather than in a tooltip a touch
+        // device can never open (V2-04). Hidden until a line that is not an ordinary parsed
+        // entry is actually on screen; see ParseOutcomeLegend.
+        _rawOutcomeLegend = ParseOutcomeLegend.Caption(TextScale.Of(10));
         var section = new Grid
         {
-            RowDefinitions = new RowDefinitions(_mobile ? "Auto,Auto,Auto,Auto,*" : "Auto,Auto,Auto,Auto,Auto"),
+            RowDefinitions = new RowDefinitions(_mobile ? "Auto,Auto,Auto,Auto,Auto,*" : "Auto,Auto,Auto,Auto,Auto,Auto"),
         };
         section.Children.Add(header);
         Grid.SetRow(_sourceStatus, 1);
@@ -587,7 +592,9 @@ public sealed partial class SessionWorkspaceView : UserControl
         section.Children.Add(retry);
         Grid.SetRow(tools, 3);
         section.Children.Add(tools);
-        Grid.SetRow(scroller, 4);
+        Grid.SetRow(_rawOutcomeLegend, 4);
+        section.Children.Add(_rawOutcomeLegend);
+        Grid.SetRow(scroller, 5);
         section.Children.Add(scroller);
         return section;
     }
@@ -620,6 +627,13 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_rawSourceTools is { } tools)
         {
             tools.IsVisible = expanded && _mobile && _sourceStatus?.Text is not { Length: > 0 };
+        }
+
+        if (_rawOutcomeLegend is { } legend)
+        {
+            legend.IsVisible = expanded &&
+                               _sourceStatus?.Text is not { Length: > 0 } &&
+                               ParseOutcomeLegend.AppliesTo(_presentedRawText);
         }
 
         if (_rawScroller is { } scroller)
@@ -661,14 +675,28 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// row is already bound to, so it costs no query and cannot be outrun by a live
     /// snapshot; the source read that follows is the only asynchronous part.
     /// </summary>
+    /// <summary>
+    /// Opens an entry in the inspector without selecting it in the list, for tests.
+    /// </summary>
+    /// <remarks>
+    /// This is the state the cell-selection route leaves behind and the plain
+    /// select-then-filter route does not: an entry the reader is reading, with no list
+    /// selection of its own. V2-06 lives entirely in that state, and a headless run cannot
+    /// drive a timeline cell tap to reach it.
+    /// </remarks>
+    internal void InspectEntryForTest(NormalizedEntry entry)
+    {
+        _entries.SelectedItem = null;
+        _selectedEntryId = entry.EntryId;
+        _selectionFilterFingerprint = _viewModel.Filter.Fingerprint();
+        _selectedEntryInstant = entry.Timestamp;
+        SetInspectedEntry(entry);
+    }
+
     private void SetInspectedEntry(NormalizedEntry? entry)
     {
         _inspectedEntry = entry;
-        if (_openInspector is { } open)
-        {
-            open.IsEnabled = entry is not null;
-        }
-
+        SyncEntryActionAvailability();
         if (_copyMessage is { } copy)
         {
             copy.IsEnabled = entry is not null;
@@ -1092,6 +1120,11 @@ public sealed partial class SessionWorkspaceView : UserControl
         var raw = _presentedRawText;
         var marker = _viewModel.RawContextMarker;
         var dark = ActualThemeVariant != ThemeVariant.Light;
+        if (_rawOutcomeLegend is { } legend)
+        {
+            legend.IsVisible = _sourceExpanded && ParseOutcomeLegend.AppliesTo(raw);
+        }
+
         if (marker is not { } mark ||
             mark.Offset < 0 ||
             mark.Length <= 0 ||

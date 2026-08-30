@@ -86,7 +86,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     /// the session that produced it (audit 2, C6). Two seconds is a span a reader can read
     /// honestly and a live capture grows out of within its first breath.
     /// </remarks>
-    private const long MinimumViewportUs = 2_000_000;
+    internal const long MinimumViewportUs = 2_000_000;
 
     /// <remarks>
     /// Only the follow window takes this floor. A reader who deliberately zooms into a
@@ -1790,6 +1790,151 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     }
 
     /// <summary>
+    /// One page of the source lines that did not become entries, formatted for reading.
+    /// </summary>
+    /// <param name="Text">The lines, in the same gutter form the source-context pane uses.</param>
+    /// <param name="Count">How many lines this page holds.</param>
+    /// <param name="NextSequence">Where a following page resumes.</param>
+    /// <param name="Completed">Whether the scan reached the end of the session.</param>
+    public readonly record struct UnparsedLinePage(
+        string Text,
+        int Count,
+        long NextSequence,
+        bool Completed);
+
+    /// <summary>
+    /// Whether this session holds physical lines that never became entries.
+    /// </summary>
+    /// <remarks>
+    /// Continuations are counted as a defect rather than as a line class, so the answer is the
+    /// sum of the three populations that are read from the source stream and not from the
+    /// entry columns: unknown lines, rejected candidates, and the continuation body lines a
+    /// declared grammar attached to a previous entry.
+    /// </remarks>
+    public long UnparsedLineCount =>
+        _snapshot is { } snapshot
+            ? snapshot.Descriptor.Counters.UnknownLines +
+              snapshot.Descriptor.Counters.RejectedCandidates +
+              snapshot.Descriptor.Counters.Continuations
+            : 0;
+
+    /// <summary>
+    /// Records that parsed but carry no usable timestamp.
+    /// </summary>
+    /// <remarks>
+    /// Counted by the filter and by nothing else: a time range cannot contain a record with no
+    /// time, so they are absent from the plot, the minimap, the severity legend and the entries
+    /// list, and 1,200 of them were the unexplained difference between `3,425 match` and
+    /// `2,225 in session` (V2-13). They live in the source stream beside the unparsed lines and
+    /// are read back by the same route.
+    /// </remarks>
+    public long UntimedEntryCount => _snapshot?.Descriptor.Counters.UntimedEntries ?? 0;
+
+    /// <summary>Everything this session holds that no time-based view can show.</summary>
+    public long OffTimelineCount => UnparsedLineCount + UntimedEntryCount;
+
+    /// <summary>
+    /// Reads the next page of source lines that are not parsed entries.
+    /// </summary>
+    /// <remarks>
+    /// ADR 0009 keeps an indented stack frame under ThreadTime as an unknown line, because
+    /// attaching every unmatched line to the entry before it would hide malformed evidence.
+    /// That decision is not changed here and must not be: the bytes are kept, and this is the
+    /// route to them. Before it existed, a 1,800-line crash log reported "600 entries" on every
+    /// surface and its 1,200 stack frames could only be reached by selecting an entry, opening
+    /// Source context, and recognising an undecoded <c>??</c> (V2-14).
+    /// </remarks>
+    public async Task<UnparsedLinePage> LoadUnparsedLinesAsync(
+        long fromSequence = 0,
+        int maximumLines = 500,
+        CancellationToken cancellationToken = default)
+    {
+        using var linked = LinkToLifetime(cancellationToken);
+        if (linked is null)
+        {
+            return new UnparsedLinePage(string.Empty, 0, fromSequence, true);
+        }
+
+        await _loadLock.WaitAsync(linked.Token).ConfigureAwait(false);
+        try
+        {
+            var snapshot = _snapshot;
+            if (snapshot is null)
+            {
+                return new UnparsedLinePage(string.Empty, 0, fromSequence, true);
+            }
+
+            var page = SessionQueryEngine.ScanSourceRecords(
+                snapshot,
+                fromSequence,
+                maximumLines,
+
+                // A million-line session whose unparsed lines are all at the end must not turn
+                // one tap into a full-file walk. The bound is generous enough to cross an
+                // ordinary quiet stretch and small enough to stay interactive.
+                maximumScanned: Math.Max(maximumLines, 200_000),
+                // Untimed entries are here too. They parsed, so they are not "unparsed", but
+                // they are excluded from every time-based view for the same practical reason
+                // and were reachable by exactly the same nothing (V2-13). The gutter code
+                // tells the two apart on every line: `e?` against `??`, `!!` and `..`.
+                static outcome => outcome is not ParseOutcomeKind.ParsedEntry
+                    and not ParseOutcomeKind.IgnoredBlank
+                    and not ParseOutcomeKind.MetaRecord,
+                linked.Token);
+
+            var path = snapshot.RawPath;
+            if (page.Records.Count == 0 || path is null || !File.Exists(path))
+            {
+                return new UnparsedLinePage(string.Empty, 0, page.NextSequence, page.Completed);
+            }
+
+            await using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                64 * 1024,
+                FileOptions.Asynchronous | FileOptions.RandomAccess);
+            var builder = new StringBuilder();
+            var width = SourceLineNumber(page.Records[^1].Sequence)
+                .ToString(System.Globalization.CultureInfo.InvariantCulture).Length;
+            foreach (var record in page.Records)
+            {
+                linked.Token.ThrowIfCancellationRequested();
+                var bytes = new byte[record.Raw.Length];
+                stream.Position = record.Raw.Offset;
+                await stream.ReadExactlyAsync(bytes, linked.Token).ConfigureAwait(false);
+                builder
+                    .Append(SourceLineNumber(record.Sequence)
+                        .ToString(System.Globalization.CultureInfo.InvariantCulture).PadLeft(width))
+                    .Append(' ')
+                    .Append(DescribeOutcome(record.Outcome))
+                    .Append(" │ ")
+                    .Append(Encoding.UTF8.GetString(bytes).TrimEnd('\r', '\n'))
+                    .AppendLine();
+            }
+
+            return new UnparsedLinePage(
+                builder.ToString(),
+                page.Records.Count,
+                page.NextSequence,
+                page.Completed);
+        }
+        catch (EndOfStreamException)
+        {
+            return new UnparsedLinePage(
+                "Raw source changed or is truncated; the indexed entries are still available.",
+                0,
+                fromSequence,
+                true);
+        }
+        finally
+        {
+            _loadLock.Release();
+        }
+    }
+
+    /// <summary>
     /// The physical line number of a source record, as every other tool counts it.
     /// </summary>
     /// <remarks>
@@ -2046,15 +2191,31 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         var health = CaptureHealthWarning is { Length: > 0 } ? " · ⚠ see session details" : string.Empty;
         var pendingLines = Math.Max(0, _captureLines - _captureCommittedLines);
         var pending = pendingLines > 0 ? $" · {pendingLines:N0} pending" : string.Empty;
+        // Two findings pull on this line in opposite directions, and both are right about
+        // something. Finding 27 put the volatile numbers first because the ellipsis takes
+        // whatever is last and the rate is the number a reader watches. V2-11 recorded the
+        // other half: `Capturing · 37 lines received · no source lines for 18s · On-device o…`
+        // dropped the scope clause, which R-02 makes load-bearing, on the one capture where
+        // it is load-bearing — a restricted one, seeing almost nothing.
+        //
+        // The clause that leads is therefore the one that carries a limitation. A full-device
+        // capture is the expected case and its scope can sit last with the numbers in front of
+        // it; a restricted capture says so first, because that is the fact that explains
+        // everything else on the line.
+        var restricted = CaptureScopeSummary is { Length: > 0 };
         if (_captureConnectionSummary is { Length: > 0 } connection)
         {
-            return $"{connection}{health} · {_captureLines:N0} lines received{pending} · Stop remains available · {_captureScope}";
+            return restricted
+                ? $"{connection}{health} · {_captureScope} · {_captureLines:N0} lines received{pending} · Stop remains available"
+                : $"{connection}{health} · {_captureLines:N0} lines received{pending} · Stop remains available · {_captureScope}";
         }
 
         var quiet = TimeSpan.FromMilliseconds(Math.Max(0, Environment.TickCount64 - _captureLastAdvanceMs));
         if (quiet.TotalSeconds < 3)
         {
-            return $"Capturing{health} · {_captureLines:N0} lines received · {_captureRate:N0}/s{pending} · {_captureScope}";
+            return restricted
+                ? $"Capturing{health} · {_captureScope} · {_captureLines:N0} lines received · {_captureRate:N0}/s{pending}"
+                : $"Capturing{health} · {_captureLines:N0} lines received · {_captureRate:N0}/s{pending} · {_captureScope}";
         }
 
         // The scope only becomes worth raising once it is actually costing the reader
@@ -2063,8 +2224,11 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         var hint = quiet.TotalSeconds >= StarvedCaptureSeconds && CaptureScopeSummary is { Length: > 0 } reason
             ? $" · {reason}"
             : string.Empty;
-        return $"Capturing{health} · {_captureLines:N0} lines received{pending} · " +
-               $"no source lines for {FormatQuiet(quiet)}{hint} · {_captureScope}";
+        return restricted
+            ? $"Capturing{health} · {_captureScope} · {_captureLines:N0} lines received{pending} · " +
+              $"no source lines for {FormatQuiet(quiet)}{hint}"
+            : $"Capturing{health} · {_captureLines:N0} lines received{pending} · " +
+              $"no source lines for {FormatQuiet(quiet)}{hint} · {_captureScope}";
     }
 
     private static string FormatQuiet(TimeSpan quiet) =>
@@ -2198,8 +2362,46 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// The reader's own position in this session, as it should be restored.
+    /// </summary>
+    /// <remarks>
+    /// A Follow window is not a chosen viewport. Reopening a finished 4-minute capture
+    /// presented <c>DENSITY · 30 s</c> pinned to the last moment of the recording — an empty
+    /// plot, five zero counters, and a minimap brush parked at the far right — because
+    /// Follow's live-edge window had been written into the stored view and came back with it,
+    /// through a force-stop and a relaunch (V2-10). R-29 already settles the equivalent moment
+    /// on the import path: an untouched viewport follows the session. Reopening from storage
+    /// is the same situation, and R-23 says Follow itself belongs to a running capture.
+    ///
+    /// So while Follow is engaged, nothing about the viewport is persisted: the session opens
+    /// at Fit, exactly as an import does, and the first zoom or pan the reader makes is the
+    /// one that gets remembered.
+    /// </remarks>
+    /// <summary>Captures the stored view under a chosen Follow state, for tests.</summary>
+    /// <remarks>
+    /// V2-10 is about what a running capture writes into its session, and a headless run cannot
+    /// run one. This exercises the one decision the finding is about, on a real tab.
+    /// </remarks>
+    internal static SessionViewState CaptureViewStateForTest(SessionTabViewModel tab, bool following)
+    {
+        ArgumentNullException.ThrowIfNull(tab);
+        var restore = tab.FollowLatest;
+        try
+        {
+            tab.FollowLatest = following;
+            return tab.CaptureViewState("Last view");
+        }
+        finally
+        {
+            tab.FollowLatest = restore;
+        }
+    }
+
     private SessionViewState CaptureViewState(string name) =>
-        new(name, Viewport, Filter, EntryOrder, FollowLatest);
+        FollowLatest
+            ? new SessionViewState(name, null, Filter, EntryOrder, FollowLatest: false)
+            : new SessionViewState(name, Viewport, Filter, EntryOrder, FollowLatest);
 
     private void ApplyViewState(SessionViewState view, TimeRange? sessionRange)
     {

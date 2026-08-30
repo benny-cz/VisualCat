@@ -135,11 +135,141 @@ public sealed class MainActivity : AvaloniaMainActivity
         }
 
         base.OnCreate(savedInstanceState);
+        ConfigureEdgeToEdgeWindow();
+
+        // Registered after Avalonia's own, so this one is asked first: AndroidX offers the
+        // most recently added enabled callback the press before any earlier one. That order is
+        // the whole point — the application's layer stack has to be consulted before the
+        // toolkit decides the press was nobody's, whichever mechanism the platform used to
+        // deliver it (V2-21).
+        OnBackPressedDispatcher.AddCallback(this, new LayerAwareBackCallback(this));
+    }
+
+    /// <summary>
+    /// Draws the app behind the system bars on every API level, not only the ones that enforce it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Android 15 makes edge-to-edge mandatory for a target of API 35 or later. Below that it
+    /// is opt-in, and the opt-in has two halves: the window must stop fitting system windows,
+    /// and the platform's own <em>contrast scrim</em> — a translucent band Android paints
+    /// behind a transparent bar so icons stay legible — has to be turned off, or the app's
+    /// ground never reaches the edge. On a Pixel at API 34 that scrim composited over the
+    /// system's wallpaper-derived surface and produced an off-palette brown-purple band at the
+    /// top 136 px and bottom 66 px of every screen, moving to the navigation edge in landscape
+    /// (V2-22). The content was always safe; the shell simply stopped looking continuous.
+    /// </para>
+    /// <para>
+    /// Avalonia already asks for edge-to-edge through its inset manager and paints the bars
+    /// from the workspace palette (<c>MainView.ApplySystemBarSurface</c>), and MainView
+    /// distributes the safe-area inset itself. This is the platform half of the same request,
+    /// stated where the window is, and it is deliberately unconditional: on API 35 and later
+    /// these calls are no-ops against behaviour the platform already enforces, so one code
+    /// path serves the whole API 31-36 range rather than two that can drift.
+    /// </para>
+    /// </remarks>
+    private void ConfigureEdgeToEdgeWindow()
+    {
+        if (Window is not { } window)
+        {
+            return;
+        }
+
+        try
+        {
+            // Only below API 35, all of it. From 35 the platform enforces edge-to-edge itself
+            // and Avalonia's inset manager is already driving it; asking again is not free —
+            // calling SetDecorFitsSystemWindows on an API-36 device pushed the notice lane 74 px
+            // under the navigation bar, because the second request displaced the inset
+            // dispatch the toolkit had installed. Verified on DUT-1 and reverted there.
+            if (!OperatingSystem.IsAndroidVersionAtLeast(35))
+            {
+                AndroidX.Core.View.WindowCompat.SetDecorFitsSystemWindows(window, false);
+
+                // The two flags that decide whether a bar colour means anything. With
+                // TRANSLUCENT_STATUS or TRANSLUCENT_NAVIGATION set, Android paints its own
+                // scrim behind the bar and ignores statusBarColor/navigationBarColor
+                // entirely — which is what an "off-palette brown-purple band" is (V2-22).
+                // Measured on an API-33 emulator: the band was rgb(133,137,142) over an
+                // app surface of #F4F7FC, i.e. the platform's ~45 % black scrim, while the
+                // colour the app had asked for was #FFFFFF.
+                //
+                // DRAWS_SYSTEM_BAR_BACKGROUNDS is what makes the window responsible for the
+                // bar area instead; clearing the translucent pair is what lets the
+                // transparent colours below actually take effect.
+                window.ClearFlags(
+                    global::Android.Views.WindowManagerFlags.TranslucentStatus |
+                    global::Android.Views.WindowManagerFlags.TranslucentNavigation);
+                window.AddFlags(global::Android.Views.WindowManagerFlags.DrawsSystemBarBackgrounds);
+
+                window.SetStatusBarColor(global::Android.Graphics.Color.Transparent);
+                window.SetNavigationBarColor(global::Android.Graphics.Color.Transparent);
+                window.NavigationBarContrastEnforced = false;
+                window.StatusBarContrastEnforced = false;
+            }
+        }
+        catch (global::Java.Lang.Throwable exception)
+        {
+            // A vendor window implementation that refuses one of these must not cost the
+            // reader the app. The bars stay as the theme left them, which is the state this
+            // improves on rather than depends on.
+            global::Android.Util.Log.Warn(
+                "VisualCat",
+                $"Edge-to-edge window configuration was refused: {exception.GetType().Name}");
+        }
+    }
+
+    /// <summary>
+    /// The activity's own back contract: the application's layer stack first, the platform's
+    /// default second.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A stock gesture-navigation Pixel left VisualCat for the launcher while the
+    /// <em>More actions</em> sheet and the <em>Appearance</em> card were open, although a
+    /// <c>KEYCODE_BACK</c> press closed exactly those layers on the same build (V2-21). The
+    /// app owned no back callback at all: it read the toolkit's routed event and depended on
+    /// the toolkit's callback being the one the platform consulted. Android 15 turns
+    /// predictive back on by default for a target of API 35 or later and stops calling
+    /// <c>Activity.onBackPressed</c> entirely, so "which mechanism fired" is not a thing an
+    /// application can afford to leave implicit across an API 31-36 support range.
+    /// </para>
+    /// <para>
+    /// The fall-through is the AndroidX idiom rather than a <c>Finish</c>: disable this
+    /// callback, hand the press back to the dispatcher, and re-enable. Backgrounding the task
+    /// is the platform's decision and stays the platform's decision.
+    /// </para>
+    /// </remarks>
+    private sealed class LayerAwareBackCallback(MainActivity owner)
+        : AndroidX.Activity.OnBackPressedCallback(enabled: true)
+    {
+        public override void HandleOnBackPressed()
+        {
+            if (PlatformSourceRegistry.TryNavigateBack?.Invoke() == true)
+            {
+                return;
+            }
+
+            Enabled = false;
+            try
+            {
+                owner.OnBackPressedDispatcher.OnBackPressed();
+            }
+            finally
+            {
+                Enabled = true;
+            }
+        }
     }
 
     protected override void OnResume()
     {
         base.OnResume();
+
+        // Restated, because Avalonia configures the window when its view attaches — after
+        // OnCreate — and a translucent-bar flag added there would otherwise stand. Both calls
+        // are idempotent and cost a few flag writes per resume.
+        ConfigureEdgeToEdgeWindow();
         EdgeGestureGuard.Republish();
         PlatformSourceRegistry.PublishAppResumed();
 

@@ -151,9 +151,29 @@ public sealed class TimelineTransform
             overscrollFraction);
     }
 
+    /// <summary>
+    /// How much of the viewport an overscroll margin may occupy at any zoom.
+    /// </summary>
+    /// <remarks>
+    /// The margin used to be a fraction of the <em>session</em> alone, so it was a constant
+    /// amount of time at every zoom: about 3.97 s at both ends of a 75 s session. At Fit that
+    /// is invisible; at a 4.7 s viewport it is <b>78 % of the plot</b> — four-fifths of the
+    /// screen empty, under a time axis printing an interval in which the log did not yet
+    /// exist, which reads as "the data failed to draw" rather than "you are at the start". It
+    /// also collapsed the minimap brush to an 8 px sliver exactly where a reader most needs to
+    /// know where they are (V2-09).
+    ///
+    /// Bounding it by the viewport as well keeps the affordance — the reader can still see
+    /// that they have reached the end — and makes it read as an edge at every zoom: at Fit
+    /// nothing changes, and at the deep zoom the empty band drops from 78 % of the plot to 10 %.
+    /// </remarks>
+    public const double MaximumOverscrollViewportFraction = 0.10;
+
     public static TimeRange Clamp(TimeRange viewport, TimeRange session, double overscrollFraction)
     {
-        var overscroll = (long)Math.Round(session.DurationUs * Math.Clamp(overscrollFraction, 0, 0.5));
+        var overscroll = (long)Math.Round(Math.Min(
+            session.DurationUs * Math.Clamp(overscrollFraction, 0, 0.5),
+            viewport.DurationUs * MaximumOverscrollViewportFraction));
         var minimum = session.StartInclusive.Value - overscroll;
         var maximum = session.EndExclusive.Value + overscroll;
         var start = viewport.StartInclusive.Value;

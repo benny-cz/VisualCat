@@ -701,6 +701,71 @@ public sealed partial class SessionWorkspaceView : UserControl
         Row("Path", snapshot.RootPath);
 
         _sessionInfoText = text.ToString().TrimStart('\n');
+        AnnounceSourceAccountingOnce(counters);
+
+        // The chip's number comes from the descriptor, so this is the first moment it can
+        // be stated — and the last that is guaranteed to run when a session's counters settle.
+        UpdateOffTimelineChip();
+    }
+
+    private bool _sourceAccountingAnnounced;
+
+    /// <summary>
+    /// Says once, when it applies, that part of this file is not on the timeline.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two populations are invisible on every time-based surface and were never mentioned on
+    /// any of them. Indented stack frames are unknown lines under ADR 0009 — correctly — and a
+    /// crash log loses two thirds of itself to that bucket while every counter says
+    /// <c>600 entries</c> (V2-14). Records that parsed but carry no usable timestamp are
+    /// counted by the filter and not by the session, which is how <c>3,425 match</c> came to
+    /// sit beside <c>2,225 in session</c> with nothing explaining the difference (V2-13).
+    /// </para>
+    /// <para>
+    /// Once, on the notice lane, at the moment the session's counters first settle — the same
+    /// place and the same tense the product uses for everything else it has to tell the reader
+    /// about the file they just opened. The threshold is deliberately low for unknown lines:
+    /// one stack trace in a log is exactly the case the reader needs to know is kept.
+    /// </para>
+    /// </remarks>
+    private void AnnounceSourceAccountingOnce(SessionCounters counters)
+    {
+        if (_sourceAccountingAnnounced || counters.SourceLines <= 0)
+        {
+            return;
+        }
+
+        var unparsed = counters.UnknownLines + counters.RejectedCandidates;
+        var untimed = counters.UntimedEntries;
+        if (unparsed == 0 && untimed == 0)
+        {
+            return;
+        }
+
+        _sourceAccountingAnnounced = true;
+        var parts = new List<string>(2);
+        if (unparsed > 0)
+        {
+            // The stack-trace hint is a diagnosis, and a diagnosis of one line is a guess. It
+            // is offered only when the population is large enough for the shape to be the
+            // likely explanation; a handful of odd lines is just reported.
+            var many = unparsed >= 20 || unparsed * 20 >= counters.SourceLines;
+            parts.Add(
+                (many
+                    ? $"{unparsed:N0} of {counters.SourceLines:N0} lines are not logcat records — usually " +
+                      "stack-trace frames. "
+                    : $"{Counted.Lines(unparsed)} could not be read as a logcat record. ") +
+                "They are kept byte for byte; open them from More → Unparsed lines…");
+        }
+
+        if (untimed > 0)
+        {
+            parts.Add(
+                $"{untimed:N0} records carried no usable timestamp, so they are not on the timeline.");
+        }
+
+        Notify(string.Join("  ", parts));
     }
 
     /// <summary>One value in a log row. The foreground takes a brush rather than a color so

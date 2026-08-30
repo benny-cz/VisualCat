@@ -312,12 +312,27 @@ public sealed partial class SessionWorkspaceView : UserControl
 
     private void ApplyMobileModeButtonStyles()
     {
+        // The mode row reports the composition the reader is actually looking at. When Split
+        // cannot seat its four-row floor at this text size the workspace composes Details and
+        // says so on the Split button, rather than leaving Split lit above a plot and two and
+        // a half rows (V2-17).
+        var effective = _splitStarvedByTextScale &&
+                        _mobileWorkspaceState.DisplayMode is MobileWorkspaceDisplayMode.Split
+            ? MobileWorkspaceDisplayMode.Details
+            : _mobileWorkspaceState.DisplayMode;
         foreach (var (mode, button) in _mobileModeButtons)
         {
-            var selected = mode == _mobileWorkspaceState.DisplayMode;
+            var selected = mode == effective;
+            var starved = _splitStarvedByTextScale && mode is MobileWorkspaceDisplayMode.Split;
             ApplyMobileChoiceAppearance(button, selected);
             button.FontWeight = selected ? FontWeight.SemiBold : FontWeight.Normal;
-            AutomationProperties.SetHelpText(button, selected ? "Current workspace mode" : "Switch workspace mode");
+            var help = starved
+                ? "Not enough room at this text size — showing Details"
+                : selected
+                    ? "Current workspace mode"
+                    : "Switch workspace mode";
+            AutomationProperties.SetHelpText(button, help);
+            ToolTip.SetTip(button, starved ? help : null);
         }
     }
 
@@ -402,6 +417,24 @@ public sealed partial class SessionWorkspaceView : UserControl
                                  MobilePaneSplitter.LaneExtent);
 
         var minimapVisible = timelineVisible && hasOverview && layout.MinimapHeight > 0;
+
+        // V2-17's second half. When the band cannot seat four whole rows even with the plot
+        // pushed to the height below which it stops drawing a heat map at all, Split is a
+        // promise the viewport cannot keep: at font_scale 2.0 the reader was shown a 137 dp
+        // plot and two and a half rows of a fifty-thousand-entry log. Details is what the
+        // reader wants at that size, and the mode row says so rather than silently changing
+        // under them.
+        var stacked = timelineVisible && analysisVisible && (!wideComposition || stackedCompact);
+        _splitStarvedByTextScale = stacked &&
+                                   !StackedSplitCanSeatEntryFloor(
+                                       minimapVisible ? layout.MinimapHeight : 0);
+        if (_splitStarvedByTextScale)
+        {
+            timelineVisible = false;
+            minimapVisible = false;
+            stackedCompact = false;
+        }
+
         var composition = filtersOpen
             ? MobilePaneComposition.Filters
             : timelineVisible && !analysisVisible
@@ -519,6 +552,51 @@ public sealed partial class SessionWorkspaceView : UserControl
 
     private const int ManualEntryRowFloor = 1;
     private double _analysisChromeHeight;
+    private double _entryRowDrawnHeight;
+    private bool _splitStarvedByTextScale;
+
+    /// <summary>
+    /// Whether a stacked Split can still give the entries pane its four-row floor.
+    /// </summary>
+    /// <param name="minimapHeight">The overview strip's height, or zero when it is not shown.</param>
+    /// <remarks>
+    /// Answered from three measured quantities and one invariant, none of which depends on
+    /// the composition this decides: the band rows 2-5 have between the command rows and the
+    /// status row, the analysis pane's own arranged chrome, the drawn row height, and
+    /// <see cref="MobilePaneAllocator.TimelineRenderingFloor"/> — the height below which the
+    /// plot stops drawing a heat map at all. Unknown measurements answer <see langword="true"/>,
+    /// so a workspace that has not been arranged yet is never downgraded on a guess.
+    ///
+    /// The restore threshold is one whole row above the downgrade threshold. Without that
+    /// margin the two compositions measure marginally different chrome and the layout can
+    /// alternate between them on consecutive passes.
+    /// </remarks>
+    private bool StackedSplitCanSeatEntryFloor(double minimapHeight)
+    {
+        if (_root.RowDefinitions.Count < 7)
+        {
+            return true;
+        }
+
+        var band = Bounds.Height
+                   - _root.RowDefinitions[0].ActualHeight
+                   - _root.RowDefinitions[1].ActualHeight
+                   - _root.RowDefinitions[6].ActualHeight;
+        var row = AllocatedEntryRowHeight;
+        if (!double.IsFinite(band) || band <= 0 ||
+            !double.IsFinite(row) || row <= 0 ||
+            _analysisChromeHeight <= 0)
+        {
+            return true;
+        }
+
+        var required = _analysisChromeHeight
+                       + (SplitEntryRowFloor * row)
+                       + MobilePaneAllocator.TimelineRenderingFloor
+                       + Math.Max(0, minimapHeight)
+                       + MobilePaneSplitter.LaneExtent;
+        return band >= (_splitStarvedByTextScale ? required + row : required);
+    }
     private MobilePaneAllocation _lastMobilePaneAllocation;
     private (MobileWorkspaceLayout Layout, MobilePaneComposition Composition, double MinimapHeight)?
         _lastMobileComposition;
@@ -544,7 +622,14 @@ public sealed partial class SessionWorkspaceView : UserControl
             return;
         }
 
-        if (UpdateAnalysisChromeMeasurement())
+        // The measurement has to include the row itself, not only the chrome above it. The
+        // pane's floor is stated in rows, and the number it was multiplied by was the design
+        // constant 64 — while the drawn row is content-sized and reaches 96.9 dp at
+        // font_scale 2.0. That is why the ListBox measured exactly 558 px at 1.0, 1.3 and 2.0
+        // alike while the row grew 144 -> 156 -> 218 px underneath it, and the four-row floor
+        // silently became three rows, then two and a half (V2-17).
+        var moved = UpdateEntryRowMeasurement();
+        if (UpdateAnalysisChromeMeasurement() || moved)
         {
             // The resolver consumes the measurement and owns every resulting row write. A
             // tolerance in the measurement and in ApplyMobilePaneAllocation makes this settle
@@ -552,6 +637,129 @@ public sealed partial class SessionWorkspaceView : UserControl
             ApplyMobileLayout(Bounds.Size);
         }
     }
+
+    /// <summary>
+    /// The height a realised entry row actually draws at, in this text scale and this width.
+    /// </summary>
+    /// <remarks>
+    /// Taken from the tallest realised container rather than from the style's
+    /// <c>MinHeight</c>, because the row is content-sized: a two-line message, a wrapped
+    /// metadata line and the reader's own text scale all raise it above the floor, and the
+    /// floor is the only number the allocator used to see. A single realised row is enough —
+    /// they share one template and one width — and the tallest is the honest one, since the
+    /// selected row is the one that expands.
+    /// </remarks>
+    private bool UpdateEntryRowMeasurement()
+    {
+        if (!_entries.IsEffectivelyVisible)
+        {
+            return false;
+        }
+
+        var tallest = 0d;
+        foreach (var item in _entries.GetRealizedContainers())
+        {
+            if (item.Bounds.Height > tallest)
+            {
+                tallest = item.Bounds.Height;
+            }
+        }
+
+        if (tallest <= 0 || Math.Abs(tallest - _entryRowDrawnHeight) < 0.5)
+        {
+            return false;
+        }
+
+        _entryRowDrawnHeight = tallest;
+        return true;
+    }
+
+    /// <summary>What the allocator last resolved, for a test that has to see the budget.</summary>
+    internal MobilePaneAllocation LastMobilePaneAllocation => _lastMobilePaneAllocation;
+
+    private double _noticeReserve;
+
+    /// <summary>
+    /// How much height the shell's notice lane is taking out of this view right now.
+    /// </summary>
+    /// <remarks>
+    /// Pushed by the shell, because the lane is the shell's and its height depends on the
+    /// message. Zero when no notice is showing, which is the ordinary case and the one every
+    /// existing measurement was made in.
+    /// </remarks>
+    internal void SetNoticeReserve(double reserve)
+    {
+        var settled = double.IsFinite(reserve) && reserve > 0 ? reserve : 0;
+        if (Math.Abs(settled - _noticeReserve) < 0.5)
+        {
+            return;
+        }
+
+        // The plot is pinned to the height it was actually drawn at, captured at the moment the
+        // lane arrives — not to the share the allocator would resolve. Those two differ
+        // whenever the analysis pane's four-row minimum is what is binding, which is the
+        // ordinary case, and pinning to the share moved the pane the other way instead.
+        if (settled > 0 && _noticeReserve <= 0 && _mobile && _root.RowDefinitions.Count > 2)
+        {
+            _pinnedTimelineHeight = _root.RowDefinitions[2].ActualHeight;
+        }
+        else if (settled <= 0)
+        {
+            _pinnedTimelineHeight = 0;
+        }
+
+        _noticeReserve = settled;
+        if (_mobile)
+        {
+            RefreshMobilePaneAllocation();
+        }
+    }
+
+    private double _pinnedTimelineHeight;
+
+    /// <summary>
+    /// The plot height to hold while the notice lane is showing, or zero to let it float.
+    /// </summary>
+    /// <remarks>
+    /// Held only while the analysis pane can still seat its manual floor underneath it. A
+    /// notice tall enough to squeeze the pane past that is a notice worth giving plot height
+    /// to, and the ordinary weighted allocation takes over again.
+    /// </remarks>
+    private double ResolvePinnedTimelineHeight(double band, double minimapHeight, double laneHeight)
+    {
+        if (_pinnedTimelineHeight <= 0)
+        {
+            return 0;
+        }
+
+        var remaining = band - _pinnedTimelineHeight - Math.Max(0, minimapHeight) - laneHeight;
+        var floor = _analysisChromeHeight + (ManualEntryRowFloor * AllocatedEntryRowHeight);
+        return remaining >= floor ? _pinnedTimelineHeight : 0;
+    }
+
+    /// <summary>
+    /// The row height the last allocation was actually resolved with, for the same reason.
+    /// </summary>
+    /// <remarks>
+    /// Recorded at the call site rather than read back from the property, because V2-17 is
+    /// exactly the difference between the two: the property could answer correctly while the
+    /// request carried the constant.
+    /// </remarks>
+    internal double BudgetedEntryRowHeight => _budgetedEntryRowHeight;
+
+    private double _budgetedEntryRowHeight;
+
+    /// <summary>Whether Split has been composed as Details because it cannot seat its floor.</summary>
+    internal bool SplitStarvedByTextScale => _splitStarvedByTextScale;
+
+    /// <summary>
+    /// The row height the allocator budgets with: the drawn one when it is known, the design
+    /// floor otherwise.
+    /// </summary>
+    private double AllocatedEntryRowHeight =>
+        double.IsFinite(_entryRowDrawnHeight) && _entryRowDrawnHeight > 0
+            ? Math.Max(_entryRowDrawnHeight, _entryRowMinimumHeight)
+            : _entryRowMinimumHeight;
 
     private bool UpdateAnalysisChromeMeasurement()
     {
@@ -601,18 +809,30 @@ public sealed partial class SessionWorkspaceView : UserControl
         double minimapHeight)
     {
         _lastMobileComposition = (layout, composition, minimapHeight);
+        _budgetedEntryRowHeight = AllocatedEntryRowHeight;
         var band = Bounds.Height - _root.RowDefinitions[0].ActualHeight
                    - _root.RowDefinitions[1].ActualHeight
                    - _root.RowDefinitions[6].ActualHeight;
+
+        // The shell's notice lane is docked below this whole view, so raising one shortens the
+        // band. Both panes are star-sized, so both used to give up their share of it — and the
+        // analysis pane's own top moved with the plot, which is what carried `Copy raw` 140 px
+        // up the screen and turned a repeated tap into Open entry (V2-20).
+        //
+        // The band is therefore resolved as though the lane were not there, and the plot is
+        // then pinned to the height that resolved. Everything above the entries list keeps its
+        // coordinates and the list gives up the rows instead — which is the honest trade, since
+        // a list is the one thing here that is *supposed* to hold as much as it is given.
+        var reserve = Math.Max(0, _noticeReserve);
         var allocation = MobilePaneAllocator.Resolve(new MobilePaneAllocationRequest(
             composition,
-            AvailableBandHeight: Math.Max(0, band),
+            AvailableBandHeight: Math.Max(0, band + reserve),
             TimelineWeight: layout.TimelineWeight,
             AnalysisWeight: layout.AnalysisWeight,
             MinimapHeight: minimapHeight,
             SplitterLaneHeight: MobilePaneSplitter.LaneExtent,
             AnalysisChromeHeight: _analysisChromeHeight,
-            EntryRowHeight: _entryRowMinimumHeight,
+            EntryRowHeight: _budgetedEntryRowHeight,
             PreferredEntryRows: composition == MobilePaneComposition.Details
                 ? DetailsEntryRowFloor
                 : SplitEntryRowFloor,
@@ -620,7 +840,12 @@ public sealed partial class SessionWorkspaceView : UserControl
             TimelineShare: _mobilePaneSplitState.TimelineShare));
 
         _lastMobilePaneAllocation = allocation;
-        ApplyTrack(_root.RowDefinitions[2], allocation.Timeline);
+        var pinned = reserve > 0.5 && composition == MobilePaneComposition.SplitStacked
+            ? ResolvePinnedTimelineHeight(band, minimapHeight, allocation.Splitter.Value)
+            : 0;
+        ApplyTrack(
+            _root.RowDefinitions[2],
+            pinned > 0 ? MobilePaneTrack.Pixels(pinned) : allocation.Timeline);
         ApplyTrack(_root.RowDefinitions[3], allocation.Minimap);
         ApplyTrack(_root.RowDefinitions[4], allocation.Splitter);
         ApplyTrack(_root.RowDefinitions[5], allocation.Analysis);
@@ -1004,6 +1229,10 @@ public sealed partial class SessionWorkspaceView : UserControl
         _loadMoreInHeader = intoHeader;
         if (intoHeader)
         {
+            // The whole band goes, Load all with it. This is the composition that has no room
+            // for a band at all — a 136 dp analysis pane — and a second control there would
+            // be the thing drawn through its own middle.
+            _mobileFooterRow?.Children.Remove(_loadMore);
             footer.Child = null;
             _loadMore.Margin = new Thickness(6, 0, 0, 0);
 
@@ -1020,7 +1249,24 @@ public sealed partial class SessionWorkspaceView : UserControl
             header.ColumnDefinitions = new ColumnDefinitions("Auto,*,*");
             _loadMore.Margin = new Thickness(0);
             _loadMore.HorizontalAlignment = HorizontalAlignment.Stretch;
-            footer.Child = _loadMore;
+            if (_mobileFooterRow is { } row)
+            {
+                Grid.SetColumn(_loadMore, 0);
+
+                // The first call arrives with _loadMoreInHeader still unset, and the control is
+                // already where the footer put it when it was built. Adding it twice is a
+                // second visual parent, which Avalonia refuses outright.
+                if (!row.Children.Contains(_loadMore))
+                {
+                    row.Children.Insert(0, _loadMore);
+                }
+
+                footer.Child = row;
+            }
+            else
+            {
+                footer.Child = _loadMore;
+            }
         }
 
         UpdateEntryLoadControls();

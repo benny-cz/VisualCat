@@ -533,6 +533,96 @@ public static class SessionQueryEngine
         return result;
     }
 
+    /// <summary>
+    /// One page of a forward scan over the session's physical source records.
+    /// </summary>
+    /// <param name="Records">The matching records, in source order.</param>
+    /// <param name="NextSequence">Where a following page should resume.</param>
+    /// <param name="Completed">Whether the scan reached the end of the session.</param>
+    public readonly record struct SourceScanPage(
+        IReadOnlyList<SourceRecord> Records,
+        long NextSequence,
+        bool Completed);
+
+    /// <summary>
+    /// Scans source records forward from <paramref name="fromSequence"/>, keeping the ones
+    /// whose parse outcome <paramref name="include"/> accepts.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The counterpart to <see cref="GetRawContext"/>, which answers "what surrounds this
+    /// entry". This answers "where are the lines that did not become entries" — the population
+    /// <see href="../../../docs/adr/0009-continuations.md">ADR 0009</see> deliberately leaves
+    /// as <see cref="ParseOutcomeKind.UnknownLine"/>, which for a ThreadTime crash log is every
+    /// stack frame in the file. The decision to keep them unknown is right; leaving them
+    /// unreachable is what V2-14 records.
+    /// </para>
+    /// <para>
+    /// Both bounds are hard. <paramref name="maximumRecords"/> caps what a page returns and
+    /// <paramref name="maximumScanned"/> caps how far it will look for them, so a session where
+    /// the matching lines are sparse — or absent — costs a bounded read rather than a walk of
+    /// a hundred million records. A page that stops on the scan bound reports
+    /// <see cref="SourceScanPage.Completed"/> as <see langword="false"/> and a resume point.
+    /// </para>
+    /// </remarks>
+    public static SourceScanPage ScanSourceRecords(
+        SessionSnapshot snapshot,
+        long fromSequence,
+        int maximumRecords,
+        int maximumScanned,
+        Func<ParseOutcomeKind, bool> include,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(include);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumRecords);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumScanned);
+        var first = Math.Max(0, fromSequence);
+        var path = Path.Combine(snapshot.RootPath, "source-order", "records.bin");
+        var kept = new List<SourceRecord>(Math.Min(maximumRecords, 512));
+        if (!File.Exists(path))
+        {
+            return new SourceScanPage(kept, first, true);
+        }
+
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new BinaryReader(stream);
+        if (TryFindRecordOffset(snapshot.RootPath, first, out var startOffset) && startOffset <= stream.Length)
+        {
+            stream.Position = startOffset;
+        }
+
+        var scanned = 0;
+        var next = first;
+        while (stream.Position < stream.Length)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var record = SourceRecordCodec.Read(reader);
+            if (record.Sequence < first)
+            {
+                continue;
+            }
+
+            next = record.Sequence + 1;
+            scanned++;
+            if (include(record.Outcome))
+            {
+                kept.Add(record);
+                if (kept.Count >= maximumRecords)
+                {
+                    return new SourceScanPage(kept, next, false);
+                }
+            }
+
+            if (scanned >= maximumScanned)
+            {
+                return new SourceScanPage(kept, next, false);
+            }
+        }
+
+        return new SourceScanPage(kept, next, true);
+    }
+
     private static bool TryFindRecordOffset(string rootPath, long sequence, out long offset)
     {
         offset = 0;

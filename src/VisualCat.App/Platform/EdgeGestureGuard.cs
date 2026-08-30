@@ -108,7 +108,50 @@ public static class EdgeGestureGuard
         Tracked.Clear();
         _published = [];
         _forcePublish = false;
+        _suspended = false;
+
+        // A recompute is queued at Background priority, so one can still be in flight for a
+        // window that has just gone away. Retiring the generation makes the queued job a
+        // no-op instead of a publication of stale geometry.
+        _generation++;
+        _scheduled = false;
         PlatformSourceRegistry.SetGestureExclusions?.Invoke([]);
+    }
+
+    private static int _generation;
+
+    private static bool _suspended;
+
+    /// <summary>
+    /// Releases every claim while a modal layer is over the workspace, and takes them back
+    /// when it closes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The plot's claim is honest while the plot is the thing under the reader's finger. It is
+    /// not honest while a sheet or a dialog is over it: the surfaces being protected cannot be
+    /// dragged, nothing behind the scrim can be, and the one gesture the reader is most likely
+    /// to want at that moment is the one this suppresses. On a gesture-navigation Pixel that
+    /// combination is half of V2-21 — Back was unavailable across a 205 dp band of the screen,
+    /// decided purely by where on the y-axis the swipe began, at exactly the moments there was
+    /// a layer to peel.
+    /// </para>
+    /// <para>
+    /// Suspension is recomputed rather than toggled, so two stacked sheets closing in any
+    /// order restore the claims exactly once, and the republish is forced because the measured
+    /// geometry has not moved — only the app's willingness to claim it has.
+    /// </para>
+    /// </remarks>
+    public static void Suspend(bool suspended)
+    {
+        if (_suspended == suspended)
+        {
+            return;
+        }
+
+        _suspended = suspended;
+        _forcePublish = true;
+        Schedule();
     }
 
     /// <summary>
@@ -137,9 +180,15 @@ public static class EdgeGestureGuard
         // tracked control, and a mode switch raises several passes; the answer is the same
         // each time and only the last one is worth publishing.
         _scheduled = true;
+        var generation = _generation;
         Dispatcher.UIThread.Post(
-            static () =>
+            () =>
             {
+                if (generation != _generation)
+                {
+                    return;
+                }
+
                 _scheduled = false;
                 Publish();
             },
@@ -150,6 +199,18 @@ public static class EdgeGestureGuard
     {
         if (PlatformSourceRegistry.SetGestureExclusions is not { } apply)
         {
+            return;
+        }
+
+        if (_suspended)
+        {
+            if (_forcePublish || _published.Count > 0)
+            {
+                _forcePublish = false;
+                _published = [];
+                apply([]);
+            }
+
             return;
         }
 

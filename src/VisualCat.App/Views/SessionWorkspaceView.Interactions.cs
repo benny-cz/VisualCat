@@ -792,10 +792,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         _minimap.ViewportChanged += (_, range) => _ = _viewModel.SetViewportAsync(range);
         _entries.SelectionChanged += (_, _) =>
         {
-            if (_copyRaw is { } copyRaw)
-            {
-                copyRaw.IsEnabled = _entries.SelectedItems?.Count > 0 || _entries.SelectedItem is NormalizedEntry;
-            }
+            SyncEntryActionAvailability();
 
             if (_entries.SelectedItem is NormalizedEntry entry)
             {
@@ -986,6 +983,11 @@ public sealed partial class SessionWorkspaceView : UserControl
         _reloadingEntries = false;
         ObserveTimestampPrecision();
         RestoreEntrySelection();
+
+        // The rows the current filter returned are the evidence for whether the open entry is
+        // still in scope, so this is the first moment the question can be answered.
+        UpdateInspectedEntryFilterScope();
+        SyncEntryActionAvailability();
     }
 
     // Both view-model notifications are answered through the dispatcher, so a change raised
@@ -1073,6 +1075,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 case nameof(SessionTabViewModel.Filter):
                     UpdateTimelineLevels();
                     UpdateStatistics();
+                    UpdateInspectedEntryFilterScope();
                     break;
                 case nameof(SessionTabViewModel.MatchesInView):
                     UpdateSelectionHint();
@@ -1295,6 +1298,17 @@ public sealed partial class SessionWorkspaceView : UserControl
         return $"Failed · {WorkspaceViewModel.FriendlyMessage(cause)}";
     }
 
+    /// <summary>
+    /// Above this many outstanding rows, loading them all is a decision rather than a tap.
+    /// </summary>
+    /// <remarks>
+    /// X-13's session had 996,385 rows outstanding. Loading them is supported, it is
+    /// cancellable, and it holds every one of them in memory — which is a thing to be told
+    /// before it starts, not after. Below the threshold the wait is short enough that a
+    /// question would be the more annoying half of the exchange.
+    /// </remarks>
+    internal const long LoadAllConfirmationThreshold = 100_000;
+
     private async Task ToggleLoadAllEntriesAsync()
     {
         if (_loadAllEntriesCancellation is { } active)
@@ -1302,6 +1316,21 @@ public sealed partial class SessionWorkspaceView : UserControl
             active.Cancel();
             UpdateEntryLoadControls();
             return;
+        }
+
+        var outstanding = _viewModel.RemainingEntryCount;
+        if (outstanding >= LoadAllConfirmationThreshold && ConfirmAsync is { } confirm)
+        {
+            var accepted = await confirm(
+                "Load every matching row?",
+                $"{outstanding:N0} rows are not loaded yet. VisualCat will read them in batches and keep " +
+                "all of them in memory, which on a large session takes a while and a lot of it. " +
+                "You can cancel at any point and keep the rows already loaded.",
+                "Load all");
+            if (!accepted)
+            {
+                return;
+            }
         }
 
         var cancellation = new CancellationTokenSource();
@@ -1505,6 +1534,28 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         UpdateEntryActionRows();
+
+        // Load all is a phone control too now. Its label is the state it is in — Load all,
+        // Cancel, Stopping… — and its spoken name carries the exact remainder, because on a
+        // phone the label is three characters wide and the number is the part that matters
+        // (V2-19).
+        _loadAll.Content = stopping
+            ? "Stopping…"
+            : loadingAll
+                ? "Cancel"
+                : _mobile ? "All" : "Load all";
+        _loadAll.IsEnabled = !stopping && (loadingAll || (_viewModel.CanLoadMore && !loading));
+        _loadAll.IsVisible = !_mobile || _viewModel.CanLoadMore || loadingAll || stopping;
+        var loadAllName = stopping
+            ? "Stopping the all-rows load"
+            : loadingAll
+                ? $"Cancel loading all rows; {remaining:N0} remain"
+                : remaining > 0
+                    ? $"Load all {remaining:N0} remaining matching rows in batches"
+                    : "All matching rows are loaded";
+        ToolTip.SetTip(_loadAll, loadAllName);
+        AutomationProperties.SetName(_loadAll, loadAllName);
+
         if (!_mobile)
         {
             _entryLoadStatus.Text = total is { } count
@@ -1519,18 +1570,6 @@ public sealed partial class SessionWorkspaceView : UserControl
                 : $"{loaded:N0} matching rows loaded";
             ToolTip.SetTip(_entryLoadStatus, loadDescription);
             AutomationProperties.SetName(_entryLoadStatus, loadDescription);
-
-            _loadAll.Content = stopping ? "Stopping…" : loadingAll ? "Cancel" : "Load all";
-            _loadAll.IsEnabled = stopping ? false : loadingAll || _viewModel.CanLoadMore && !loading;
-            var loadAllDescription = stopping
-                ? "Stopping the all-rows load"
-                : loadingAll
-                    ? $"Cancel loading all rows; {remaining:N0} remain"
-                    : remaining > 0
-                        ? $"Load all {remaining:N0} remaining matching rows in batches"
-                        : "All matching rows are loaded";
-            ToolTip.SetTip(_loadAll, loadAllDescription);
-            AutomationProperties.SetName(_loadAll, loadAllDescription);
         }
     }
 
@@ -1621,15 +1660,137 @@ public sealed partial class SessionWorkspaceView : UserControl
         SetSelectedEntryOffPage(true);
     }
 
+    /// <summary>
+    /// Both entry actions, from one predicate.
+    /// </summary>
+    /// <remarks>
+    /// <c>Copy raw</c> was driven by the list selection and <c>Entry</c> by the inspected
+    /// entry, so on the cell-selection route the two disagreed about whether the object they
+    /// are both named for still existed: one disabled, one enabled and opening an Error
+    /// record under a Fatal-only filter (V2-06). They act on the same thing now — the entry
+    /// the reader has open — and <c>Copy raw</c> falls back to it when the list has no
+    /// selection of its own, because the entry is right there and copying it is not a lie.
+    /// </remarks>
+    private void SyncEntryActionAvailability()
+    {
+        var hasTarget = _entries.SelectedItems?.Count > 0 ||
+                        _entries.SelectedItem is NormalizedEntry ||
+                        _inspectedEntry is not null;
+        if (_copyRaw is { } copyRaw)
+        {
+            copyRaw.IsEnabled = hasTarget;
+        }
+
+        if (_openInspector is { } inspector)
+        {
+            inspector.IsEnabled = _inspectedEntry is not null;
+        }
+    }
+
+    /// <summary>
+    /// Whether the entry the reader has open is excluded by the filter now in force.
+    /// </summary>
+    /// <remarks>
+    /// Asked of the loaded result rather than re-implementing the engine's predicate: an
+    /// entry that is inspected, is not among the rows the current filter returned, and whose
+    /// filter has changed since it was opened, is out of scope. The <c>CanLoadMore</c> guard
+    /// is what keeps "further down the page" from being mistaken for "excluded".
+    /// </remarks>
+    private void UpdateInspectedEntryFilterScope()
+    {
+        var outside = false;
+        if (_inspectedEntry is { } entry)
+        {
+            // One test that is exact and needs no paging: a severity the filter does not
+            // admit cannot be further down the page. This is the shape V2-06 reproduced —
+            // an Error record left open under a Fatal-only filter — and with 1,209 matching
+            // rows behind a 500-row page the loaded-rows heuristic below never gets to run.
+            var levels = _viewModel.Filter.IncludedLevels;
+            if (levels.Count > 0 && !levels.Contains(entry.Level))
+            {
+                outside = true;
+            }
+            else if (!_viewModel.CanLoadMore &&
+                     _selectionFilterFingerprint is { } fingerprint &&
+                     !string.Equals(fingerprint, _viewModel.Filter.Fingerprint(), StringComparison.Ordinal))
+            {
+                // Everything else the filter can exclude, answered from the rows it returned
+                // rather than by re-implementing the engine's predicate here.
+                outside = true;
+                foreach (var candidate in _viewModel.Entries)
+                {
+                    if (candidate.EntryId == entry.EntryId)
+                    {
+                        outside = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (_inspectedEntryOutsideFilter == outside)
+        {
+            return;
+        }
+
+        _inspectedEntryOutsideFilter = outside;
+        ApplyEntryScopeBanner();
+    }
+
+    /// <summary>Paints the one lane that reports both reasons an open entry is not on screen.</summary>
+    private void ApplyEntryScopeBanner()
+    {
+        var visible = _inspectedEntryOutsideFilter || _selectedEntryOffPage;
+        if (_entryOffPageBanner is { } banner)
+        {
+            banner.IsVisible = visible;
+        }
+
+        if (_entryOffPageShow is { } show)
+        {
+            show.IsVisible = _selectedEntryOffPage && !_inspectedEntryOutsideFilter;
+        }
+
+        if (_entryOutsideFilterClear is { } clear)
+        {
+            clear.IsVisible = _inspectedEntryOutsideFilter;
+        }
+
+        if (!visible || _entryOffPageText is not { } text)
+        {
+            return;
+        }
+
+        text.Text = _inspectedEntryOutsideFilter
+            ? "This entry is not in the current filter. It is still open below."
+            : _viewModel.FollowLatest
+                ? "This entry has scrolled out of the live window. It is still open below."
+                : "This entry is outside the rows on screen. It is still open below.";
+        AutomationProperties.SetName(text, text.Text);
+    }
+
+    private async Task ClearFiltersForInspectedEntryAsync()
+    {
+        _search.Text = string.Empty;
+        _selectedRange = null;
+        _rangeActions.IsVisible = false;
+        await _viewModel.ClearFiltersAsync();
+        UpdateLevelChecks();
+        _selectionFilterFingerprint = _viewModel.Filter.Fingerprint();
+        UpdateInspectedEntryFilterScope();
+    }
+
     /// <summary>Drops the inspected entry, its caret and its actions, together.</summary>
     private void ClearEntrySelection()
     {
         _selectedEntryId = null;
         _selectionFilterFingerprint = null;
         _selectedEntryInstant = null;
+        _inspectedEntryOutsideFilter = false;
         SetSelectedEntryOffPage(false);
         SetInspectedEntry(null);
         _timeline.SetSelectedEntry(null, null);
+        SyncEntryActionAvailability();
     }
 
     /// <summary>
@@ -1640,25 +1801,14 @@ public sealed partial class SessionWorkspaceView : UserControl
     {
         if (_selectedEntryOffPage == offPage && _entryOffPageBanner is not null)
         {
-            if (_entryOffPageBanner.IsVisible == offPage)
+            if (_entryOffPageBanner.IsVisible == (offPage || _inspectedEntryOutsideFilter))
             {
                 return;
             }
         }
 
         _selectedEntryOffPage = offPage;
-        if (_entryOffPageBanner is { } banner)
-        {
-            banner.IsVisible = offPage;
-        }
-
-        if (offPage && _entryOffPageText is { } text)
-        {
-            text.Text = _viewModel.FollowLatest
-                ? "This entry has scrolled out of the live window. It is still open below."
-                : "This entry is outside the rows on screen. It is still open below.";
-            AutomationProperties.SetName(text, text.Text);
-        }
+        ApplyEntryScopeBanner();
     }
 
     /// <summary>
@@ -1733,6 +1883,14 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (selected.Length == 0 && _entries.SelectedItem is NormalizedEntry entry)
         {
             selected = [entry];
+        }
+
+        // The entry the reader has open, when the list has released its own selection — the
+        // filter moved past it, or a live window did. It is on screen, in the pane below, and
+        // its bytes are exactly as copyable as any other entry's (V2-06).
+        if (selected.Length == 0 && _inspectedEntry is { } inspected)
+        {
+            selected = [inspected];
         }
 
         if (selected.Length == 0)

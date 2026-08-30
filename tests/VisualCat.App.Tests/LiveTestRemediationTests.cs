@@ -497,6 +497,11 @@ public sealed partial class LiveTestRemediationTests
         var published = new List<IReadOnlyList<PixelRect>>();
         Platform.PlatformSourceRegistry.SetGestureExclusions = rectangles => published.Add(rectangles);
         SessionWorkspaceView.PhoneCompositionOverride = true;
+
+        // The guard's registry is static and this assembly runs one renderer for every test,
+        // so a workspace an earlier test never closed is still tracked and still spending the
+        // 200 dp budget this one is measuring. Start from nothing; the finally clears it again.
+        EdgeGestureGuard.Reset();
         try
         {
             // A phone-shaped viewport: 393 x 777 dp is the third device's own portrait
@@ -510,10 +515,30 @@ public sealed partial class LiveTestRemediationTests
             fixture.Window.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
 
-            Assert.NotEmpty(published);
-            var claimed = published[^1];
             var timeline = fixture.View.GetLogicalDescendants().OfType<TimelineControl>().Single();
             var minimap = fixture.View.GetLogicalDescendants().OfType<MinimapControl>().Single();
+
+            // The plot claims the edge while a pan can move it, and not at Fit, where the
+            // viewport already spans the session — see TimelineControl.EdgeGestureArea and
+            // V2-21. F-28's contract is about the zoomed state, which is the state a pan
+            // exists in.
+            timeline.ZoomAtCenter(0.25);
+
+            // A zoom is asynchronous — see PixelGestureAndTextScaleTests.PumpUntil — so this
+            // waits for the guard to have recomputed rather than guessing at a pass count.
+            for (var pass = 0; pass < 60; pass++)
+            {
+                fixture.Window.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+                if (((IEdgeGestureSurface)timeline).EdgeGestureArea != default && published.Count > 0 &&
+                    published[^1].Count == 3)
+                {
+                    break;
+                }
+            }
+
+            Assert.NotEmpty(published);
+            var claimed = published[^1];
 
             Assert.True(timeline.IsEffectivelyVisible, timeline.GetType().Name);
             Assert.True(minimap.IsEffectivelyVisible, minimap.GetType().Name);

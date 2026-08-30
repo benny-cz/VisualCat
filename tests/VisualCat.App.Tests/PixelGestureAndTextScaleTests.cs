@@ -95,22 +95,42 @@ public sealed class PixelGestureAndTextScaleTests
         var published = new List<IReadOnlyList<PixelRect>>();
         PlatformSourceRegistry.SetGestureExclusions = rectangles => published.Add(rectangles);
         SessionWorkspaceView.PhoneCompositionOverride = true;
+
+        // The guard's registry is static and this assembly runs one renderer for every test,
+        // so a workspace an earlier test never closed is still tracked and still spending the
+        // 200 dp budget this one is measuring. Start from nothing; the finally clears it again.
+        EdgeGestureGuard.Reset();
         try
         {
             await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(
                 FourEntryLog,
                 width: 393,
                 height: 777);
-            for (var pass = 0; pass < 4; pass++)
-            {
-                fixture.Window.UpdateLayout();
-                Dispatcher.UIThread.RunJobs();
-            }
+            // The guard publishes from a Background-priority job after a layout pass, and the
+            // fixture's own import settles asynchronously, so the first published list is not
+            // necessarily the settled one.
+            PumpUntil(fixture.Window, () => published.Count > 0 && published[^1].Count == 2);
 
             var splitter = fixture.View.GetLogicalDescendants()
                 .OfType<MobilePaneSplitter>()
                 .Single(static control => control.Axis == MobilePaneAxis.Rows);
             Assert.True(splitter.IsEffectivelyVisible);
+
+            // At Fit the plot deliberately claims nothing: the viewport already spans the
+            // session, so a pan cannot move it and the claim would take system Back away for
+            // no gesture in return (V2-21). The two small whole-claim surfaces still hold
+            // theirs, because an edge drag is the whole point of both.
+            var timeline = fixture.View.GetLogicalDescendants().OfType<TimelineControl>().Single();
+            Assert.Equal(default, ((IEdgeGestureSurface)timeline).EdgeGestureArea);
+            Assert.Equal(2, published[^1].Count);
+
+            // Zoomed in, a pan is real and the plot takes its band back.
+            timeline.ZoomAtCenter(0.25);
+            PumpUntil(
+                fixture.Window,
+                () => ((IEdgeGestureSurface)timeline).EdgeGestureArea != default && published[^1].Count == 3);
+
+            Assert.NotEqual(default, ((IEdgeGestureSurface)timeline).EdgeGestureArea);
 
             var scale = fixture.Window.RenderScaling <= 0 ? 1 : fixture.Window.RenderScaling;
             var claim = ((IEdgeGestureSurface)splitter).EdgeGestureArea;
@@ -141,6 +161,40 @@ public sealed class PixelGestureAndTextScaleTests
             SessionWorkspaceView.PhoneCompositionOverride = null;
             EdgeGestureGuard.Reset();
             PlatformSourceRegistry.SetGestureExclusions = null;
+        }
+    }
+
+    /// <summary>
+    /// Pumps the dispatcher and the layout until <paramref name="settled"/> holds.
+    /// </summary>
+    /// <remarks>
+    /// A zoom is asynchronous: SetViewportAsync runs a query off the dispatcher and the result
+    /// arrives as a property change marshalled back to it, which then invalidates layout, which
+    /// is what makes EdgeGestureGuard recompute. A fixed number of passes is a guess about how
+    /// long that takes, and a wrong guess reads the guard's previous answer.
+    /// </remarks>
+    internal static void PumpUntil(Window window, Func<bool> settled, int passes = 60)
+    {
+        var consecutive = 0;
+        for (var pass = 0; pass < passes; pass++)
+        {
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            // RunJobs drains the dispatcher; it does not wait for the thread-pool work the
+            // view model queues. A millisecond of real time is what lets a query finish and
+            // post its result back, and it is what makes this a wait rather than a spin.
+            System.Threading.Thread.Sleep(1);
+            Dispatcher.UIThread.RunJobs();
+
+            // Twice in a row. One satisfied pass can be the middle of a recompute — the guard
+            // publishes from a Background-priority job, so a condition that holds now can be
+            // replaced by the next queued publication before the assertions read it.
+            consecutive = settled() ? consecutive + 1 : 0;
+            if (consecutive >= 2)
+            {
+                return;
+            }
         }
     }
 

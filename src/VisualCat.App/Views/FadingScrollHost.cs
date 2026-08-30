@@ -28,6 +28,7 @@ internal sealed class FadingScrollHost : Grid
 
     private readonly ScrollViewer _scroller;
     private readonly bool _horizontal;
+    private readonly bool _raised;
     private readonly Border _start;
     private readonly Border _end;
 
@@ -37,10 +38,16 @@ internal sealed class FadingScrollHost : Grid
     /// Fade the left and right edges instead of the top and bottom — for the session strip,
     /// which scrolls sideways.
     /// </param>
-    internal FadingScrollHost(ScrollViewer scroller, bool dark, bool horizontal = false)
+    /// <param name="raised">
+    /// Whether the surface behind this scroller is a card rather than the shell's own ground.
+    /// A fade <em>is</em> the surface it fades into, so the empty state — which sits on the
+    /// shell surface — would show a grey smear if it were given a card's.
+    /// </param>
+    internal FadingScrollHost(ScrollViewer scroller, bool dark, bool horizontal = false, bool raised = true)
     {
         _scroller = scroller ?? throw new ArgumentNullException(nameof(scroller));
         _horizontal = horizontal;
+        _raised = raised;
         _start = EdgeBand(horizontal, atStart: true);
         _end = EdgeBand(horizontal, atStart: false);
         Children.Add(_scroller);
@@ -63,7 +70,7 @@ internal sealed class FadingScrollHost : Grid
     /// </remarks>
     internal void ApplyTheme(bool dark)
     {
-        var surface = _horizontal
+        var surface = _horizontal || !_raised
             ? WorkspacePalette.Surface(dark)
             : WorkspacePalette.SurfaceRaised(dark);
         _start.Background = Gradient(surface, _horizontal, atStart: true);

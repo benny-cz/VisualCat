@@ -498,6 +498,9 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// says there is none in view at all. Disabled with a reason when no search is active,
     /// which is what U-10 asks of a control that is sometimes not applicable.
     /// </remarks>
+    /// <summary>Re-resolves the marker cluster, for a test that installs a host mid-flight.</summary>
+    internal void UpdateMarkerNavigationForTest() => UpdateMarkerNavigation();
+
     private void UpdateMarkerNavigation()
     {
         if (_markerNav is not { } nav ||
@@ -519,6 +522,20 @@ public sealed partial class SessionWorkspaceView : UserControl
         _searchStatus.IsVisible = !nav.IsVisible || _viewModel.SearchInProgress;
         previous.IsEnabled = count > 0;
         next.IsEnabled = count > 0;
+        if (_markerFirst is { } first)
+        {
+            first.IsEnabled = count > 0;
+        }
+
+        if (_markerLast is { } last)
+        {
+            last.IsEnabled = count > 0;
+        }
+
+        if (_markerPositionButton is { } positionButton)
+        {
+            positionButton.IsEnabled = count > 0 && AskForNumberAsync is not null;
+        }
         if (count == 0)
         {
             const string reason = "No search is active, so there are no matches to step through.";
@@ -596,8 +613,31 @@ public sealed partial class SessionWorkspaceView : UserControl
         var inView = _viewModel.MatchesInView ?? 0;
         var scoped = _viewModel.DetailRange is not null;
         var scope = scoped ? "in this bar" : "in view";
-        var sessionTotal = _viewModel.Snapshot?.Descriptor.Counters.TimedEntries;
-        var sessionPart = sessionTotal is { } total ? $"{total:N0} in session" : null;
+        var counters = _viewModel.Snapshot?.Descriptor.Counters;
+        var sessionTotal = counters?.TimedEntries;
+
+        // The three counters count three different populations, and with a mixed-format file
+        // the middle one was larger than the last: `2,225 in view · 3,425 match · 2,225 in
+        // session`, because 1,200 Brief records parsed as untimed entries that the filter
+        // accepts and a time range cannot contain (V2-13). Nothing on screen said so. The
+        // qualifier is the fix: "timed in session" is what that number has always meant, and
+        // the untimed population is named beside the number that includes it instead of being
+        // the unexplained difference between two others.
+        var untimed = counters?.UntimedEntries ?? 0;
+        var unknown = counters?.UnknownLines ?? 0;
+        var sessionPart = sessionTotal is { } total
+            ? untimed > 0 || unknown > 0
+                ? $"{total:N0} timed in session"
+                : $"{total:N0} in session"
+            : null;
+        var untimedPart = untimed > 0 ? $"{untimed:N0} untimed" : null;
+
+        // Every Android crash log is a ThreadTime log with indented stack frames, and ADR 0009
+        // classifies those frames as unknown lines — correctly, and invisibly: a 1,800-line
+        // crash corpus reported "600 entries" on every surface while the 1,200 frames a person
+        // actually reads went unmentioned (V2-14). They are kept, byte for byte, and reachable;
+        // this is where the reader is told they exist.
+        var unknownPart = unknown > 0 ? $"{unknown:N0} unparsed lines" : null;
         var full = string.Join(
             "  ·  ",
             new[]
@@ -605,11 +645,13 @@ public sealed partial class SessionWorkspaceView : UserControl
                 $"{inView:N0} {scope}",
                 $"{stats.TotalMatching:N0} match the filter",
                 sessionPart,
+                untimedPart,
+                unknownPart,
                 $"{FormatInstant(stats.FirstInstant)} — {FormatInstant(stats.LastInstant)}",
             }.Where(static part => part is { Length: > 0 }));
         var mobileSummary = string.Join(
             " · ",
-            new[] { $"{inView:N0} {scope}", $"{stats.TotalMatching:N0} match", sessionPart }
+            new[] { $"{inView:N0} {scope}", $"{stats.TotalMatching:N0} match", sessionPart, untimedPart, unknownPart }
                 .Where(static part => part is { Length: > 0 }));
         _summary.Text = _mobile
             ? _summaryInTabStrip

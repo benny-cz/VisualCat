@@ -135,15 +135,25 @@ public sealed partial class MainView
         {
             var whole = chip.Root.Bounds.Width > 0 && ChipIsWhole(chip.Root);
 
-            // The selected chip always keeps its close button, whatever the strip has done
-            // with it. Two reasons. The rule this guards — a close target must not float
-            // unlabelled beside a name that has scrolled away — cannot apply to the selected
-            // session, because the whole workspace under the strip says which one it is. And
-            // holding it changes the chip's width, so the width the scroll is trying to fit
-            // depended on whether it fitted: the strip converged on "close held", which is
-            // how the active session's own close ended up as a 19 dp sliver at the screen
-            // edge on the device (A-05, finding F-26).
-            ControlSlot.Hold(chip.Close, whole || ReferenceEquals(viewModel, selected));
+            // The selected chip is always identified by the workspace under the strip, so its
+            // close never needs revealing. Every other chip's button stays enabled and says
+            // which of the two things it will do, because a full-size control that silently
+            // ignores a tap is worse than either (V2-16).
+            //
+            // Held is now reserved for a chip with no width at all — one that has not been
+            // arranged yet — so the strip can no longer converge on "close held", which is how
+            // the active session's own close ended up as a 19 dp sliver at the screen edge
+            // (A-05, finding F-26).
+            ControlSlot.Hold(chip.Close, chip.Root.Bounds.Width > 0);
+            var reveal = !whole && !ReferenceEquals(viewModel, selected);
+            ToolTip.SetTip(
+                chip.Close,
+                reveal ? $"Show {viewModel.Title} first" : $"Close {viewModel.Title}");
+            AutomationProperties.SetName(
+                chip.Close,
+                reveal
+                    ? $"Show session {viewModel.Title} before closing it"
+                    : $"Close session {viewModel.Title}");
         }
     }
 
@@ -245,7 +255,31 @@ public sealed partial class MainView
         };
         ToolTip.SetTip(close, $"Close {viewModel.Title}");
         AutomationProperties.SetName(close, $"Close session {viewModel.Title}");
-        close.Click += async (_, _) => await _viewModel.CloseAsync(viewModel);
+
+        // A clipped chip reveals itself; a whole chip closes. The button used to be held —
+        // disabled, and invisible in its own slot — whenever its chip was not entirely on
+        // screen, so with four or more sessions the leftmost tab could not be closed at all
+        // and nothing on screen said why: a tap at the centre of its slot did nothing, the
+        // session stayed open, and no notice appeared (V2-16). The guard was right about the
+        // hazard — a destructive control must not float beside a name that has scrolled away —
+        // and wrong about the answer, because "nothing happens" is not a guard a reader can
+        // learn from. One tap brings the name back beside the button; the next one closes it.
+        close.Click += async (_, _) =>
+        {
+            if (!_chips.TryGetValue(viewModel, out var current))
+            {
+                return;
+            }
+
+            if (!ChipIsWhole(current.Root))
+            {
+                ScrollChipIntoView(current.Root);
+                UpdateChipEdges();
+                return;
+            }
+
+            await _viewModel.CloseAsync(viewModel);
+        };
 
         var body = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         body.Children.Add(select);

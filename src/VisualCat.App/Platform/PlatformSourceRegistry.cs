@@ -271,6 +271,27 @@ public static class PlatformSourceRegistry
     /// </remarks>
     public static Action<IReadOnlyList<Avalonia.PixelRect>>? SetGestureExclusions { get; set; }
 
+    /// <summary>
+    /// Peels the topmost layer the reader has open, and says whether there was one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The application's answer to a platform Back, installed by the shell and called by the
+    /// host's own back contract. A stock gesture-navigation Pixel left the app for the
+    /// launcher while the <em>More actions</em> sheet and the <em>Appearance</em> card were
+    /// open, although the same layers closed correctly for a <c>KEYCODE_BACK</c> press
+    /// (V2-21): the app owned no back callback of its own and depended entirely on the
+    /// toolkit's, so which mechanism the platform chose decided whether the layer stack was
+    /// consulted at all.
+    /// </para>
+    /// <para>
+    /// This is that decision, made once, in the order the layers are stacked in: dialog,
+    /// sheet, drawer, then the platform's own default. <see langword="false"/> means the app
+    /// has nothing open and the host should do what it does everywhere else.
+    /// </para>
+    /// </remarks>
+    public static Func<bool>? TryNavigateBack { get; set; }
+
     /// <summary>Where this installation came from, or null on a platform with no such notion.</summary>
     /// <remarks>
     /// Its presence is also what decides whether the Check for updates command is offered at

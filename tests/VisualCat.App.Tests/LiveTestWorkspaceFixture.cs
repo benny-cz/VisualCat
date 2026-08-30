@@ -66,6 +66,11 @@ internal sealed class LiveTestWorkspaceFixture : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Window.Close();
+
+        // A phone workspace tracks its plot, minimap and divider with the edge guard, whose
+        // registry and last-published geometry are static. Its own comment says a rectangle
+        // from a closed window must not outlive it; every fixture closes a window.
+        Platform.EdgeGestureGuard.Reset();
         await _workspace.CloseAsync(Tab);
         await _workspace.DisposeAsync();
         WorkspaceViewModel.ConfigureTemporarySessionRoot(null);

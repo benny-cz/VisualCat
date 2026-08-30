@@ -58,6 +58,9 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// </remarks>
     private Panel? _markerNav;
     private TextBlock? _markerPosition;
+    private Button? _markerPositionButton;
+    private Button? _markerFirst;
+    private Button? _markerLast;
     private Button? _markerPrevious;
     private Button? _markerNext;
     private readonly TextBox _search = new() { PlaceholderText = "Search message text or regex…" };
@@ -135,6 +138,9 @@ public sealed partial class SessionWorkspaceView : UserControl
     private bool _selectedEntryOffPage;
     private Border? _entryOffPageBanner;
     private TextBlock? _entryOffPageText;
+    private Button? _entryOffPageShow;
+    private Button? _entryOutsideFilterClear;
+    private bool _inspectedEntryOutsideFilter;
     private bool _reloadingEntries;
     private bool _pressedSelectedEntry;
     private string _presentedRawText = string.Empty;
@@ -151,6 +157,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Button? _copyMessage;
     private Button? _openInspector;
     private TextBlock? _sourceStatus;
+    private TextBlock? _rawOutcomeLegend;
     private Control? _rawSourceTools;
     private Border? _rawContentBorder;
     private TextBlock? _rawPlaceholder;
@@ -185,7 +192,15 @@ public sealed partial class SessionWorkspaceView : UserControl
     private NormalizedEntry? _rawLoadEntry;
     private long? _rawLoadTimelineCount;
     private bool _rawLoadInterrupted;
-    private static readonly FontFamily MonoFont =
+    /// <summary>
+    /// The face every surface that shows the file's own bytes draws in.
+    /// </summary>
+    /// <remarks>
+    /// Shared with <see cref="UnparsedLinesDialog"/>, which shows the same source stream in the
+    /// same gutter form: one declaration is what keeps the two panes reading as the same view
+    /// of the same file.
+    /// </remarks>
+    internal static readonly FontFamily MonoFont =
         new("Cascadia Mono,Consolas,Menlo,DejaVu Sans Mono,Roboto Mono,monospace");
     private static readonly IBrush IncludeActive = new SolidColorBrush(Color.Parse("#1E6FA8"));
     private static readonly IBrush ExcludeActive = new SolidColorBrush(Color.Parse("#8A3B4A"));
@@ -257,6 +272,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private TextBlock? _severityLegend;
     private TextBlock? _chipEmptyLabel;
     private Button? _clearFilters;
+    private Button? _offTimelineChip;
     private Control? _mobileQuerySection;
     private Grid? _mobileQueryRow;
 
@@ -685,9 +701,23 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// </summary>
     internal event Action<string>? PartialRecoveryRaised;
 
+    /// <summary>Asks the host to show the records no time-based view can show.</summary>
+    internal event Action? OffTimelineRequested;
+
     /// <summary>Reports the result of an action whose only other evidence is off screen.</summary>
     private void Notify(string message, bool failure = false) =>
         NoticeRaised?.Invoke(message, failure);
+
+    /// <summary>
+    /// Asks the shell to put a yes/no question in front of the reader.
+    /// </summary>
+    /// <remarks>
+    /// The workspace has no dialog host of its own — presentation is the shell's, the same way
+    /// export pickers and partial-recovery dispositions are. Installed by
+    /// <c>MainView.CreateWorkspaceView</c>; where it is not installed the answer is "yes", so a
+    /// desktop or a test that never wired it is not blocked by a question nobody can see.
+    /// </remarks>
+    internal Func<string, string, string, Task<bool>>? ConfirmAsync { get; set; }
 
     /// <summary>The phone workspace mode, in the form settings.json stores.</summary>
     internal string DisplayMode => _mobileWorkspaceState.Persisted;
@@ -870,6 +900,94 @@ public sealed partial class SessionWorkspaceView : UserControl
             new TimeRange(new InstantUs(start), new InstantUs(start + span))).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Centres the viewport on the first or the last match in the session.
+    /// </summary>
+    /// <remarks>
+    /// The only navigation was one match at a time. With <c>Rendering surface</c> the counter
+    /// opened at <b>3,579 / 7,181</b> — the caret's position, not the first match — so reaching
+    /// match 1 took 3,578 taps and match 7,181 another 3,602. Finding the <em>first</em>
+    /// occurrence of something is the most common reason anyone searches a log, and it could
+    /// not be done; the plan's own "navigation wraps at both ends" assertion could not be
+    /// tested through the UI either (V2-07).
+    /// </remarks>
+    /// <summary>
+    /// Asks which match to go to, and goes there.
+    /// </summary>
+    /// <remarks>
+    /// The host owns presentation, so the question is asked through the same seam the
+    /// all-rows warning uses. Where no host is installed — a desktop build, a test — the
+    /// counter simply does nothing rather than blocking on a dialog nobody can see.
+    /// </remarks>
+    private async Task AskForMatchIndexAsync()
+    {
+        if (_viewModel.SearchResult?.Markers is not { Count: > 0 } markers ||
+            AskForNumberAsync is not { } ask)
+        {
+            return;
+        }
+
+        var chosen = await ask(
+            "Go to match",
+            $"Which of the {markers.Count:N0} matches?",
+            MarkerIndexInView(markers) is { } current ? current + 1 : 1,
+            markers.Count);
+        if (chosen is not { } index)
+        {
+            return;
+        }
+
+        await CentreOnMarkerAsync(markers[(int)Math.Clamp(index - 1, 0, markers.Count - 1)]);
+    }
+
+    /// <summary>Asks the host for a number in a range, or null when the reader declines.</summary>
+    internal Func<string, string, long, long, Task<long?>>? AskForNumberAsync { get; set; }
+
+    internal Task NavigateToSearchEdgeAsync(bool last) =>
+        _viewModel.SearchResult?.Markers is { Count: > 0 } markers
+            ? CentreOnMarkerAsync(last ? markers[^1] : markers[0])
+            : Task.CompletedTask;
+
+    /// <summary>
+    /// The window a jump-to-edge opens when the whole session is already on screen.
+    /// </summary>
+    /// <remarks>
+    /// A twentieth of the session, which on the 75 s corpus the report used is about 3.8 s —
+    /// wide enough to read, narrow enough that arriving somewhere is visible. Without it the
+    /// jump is a no-op at Fit: the viewport already spans every match, so centring on one
+    /// clamps straight back to where it was and the counter goes on reporting whichever match
+    /// happens to be nearest the middle of the session.
+    /// </remarks>
+    private const int SearchEdgeSessionDivisor = 20;
+
+    private async Task CentreOnMarkerAsync(InstantUs marker)
+    {
+        if (_viewModel.Viewport is not { } viewport ||
+            _viewModel.Snapshot?.TimedRange is not { } session)
+        {
+            return;
+        }
+
+        var span = Math.Min(viewport.DurationUs, session.DurationUs);
+
+        // Going to the first match has to arrive somewhere. At Fit every match is already in
+        // view, so a centred window of the same span clamps back to the session bounds and
+        // nothing moves — which is what the reader would experience as the button doing
+        // nothing (V2-07). A narrower window is what "go there" means from a fitted plot; a
+        // reader who has already chosen a zoom keeps it.
+        if (span >= session.DurationUs)
+        {
+            span = Math.Max(
+                SessionTabViewModel.MinimumViewportUs,
+                session.DurationUs / SearchEdgeSessionDivisor);
+        }
+
+        var maximumStart = session.EndExclusive.Value - span;
+        var start = Math.Clamp(marker.Value - span / 2, session.StartInclusive.Value, maximumStart);
+        await _viewModel.SetViewportAsync(
+            new TimeRange(new InstantUs(start), new InstantUs(start + span))).ConfigureAwait(false);
+    }
+
     internal async Task NavigateSearchMatchAsync(int direction)
     {
         if (_viewModel.SearchResult?.Markers is not { Count: > 0 } markers ||
@@ -990,8 +1108,30 @@ public sealed partial class SessionWorkspaceView : UserControl
             return button;
         }
 
+        Button Edge(string glyph, string name, bool last)
+        {
+            var button = new Button
+            {
+                Content = glyph,
+                MinHeight = TouchTarget.For(_mobile),
+                MinWidth = TouchTarget.For(_mobile, 26),
+                Padding = new Thickness(_mobile ? 6 : 8, 0),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                IsEnabled = false,
+            };
+            AutomationProperties.SetName(button, name);
+            ToolTip.SetTip(button, name);
+            button.Click += async (_, _) => await RunUiActionAsync(() => NavigateToSearchEdgeAsync(last));
+            return button;
+        }
+
         _markerPrevious = Step("◀", "Previous search match", -1);
         _markerNext = Step("▶", "Next search match", 1);
+        _markerFirst = Edge("⏮", "First search match", last: false);
+        _markerLast = Edge("⏭", "Last search match", last: true);
         _markerPosition = new TextBlock
         {
             FontSize = TextScale.Of(11),
@@ -999,12 +1139,28 @@ public sealed partial class SessionWorkspaceView : UserControl
             Margin = new Thickness(2, 0),
         };
 
+        // The counter is the third route V2-07 asks for, and the only one that reaches a match
+        // by number. `3,579 / 7,181` was a label: it told the reader exactly where they were
+        // among 7,181 matches and gave them no way to go anywhere else by that number.
+        var position = _markerPositionButton = new Button
+        {
+            Content = _markerPosition,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(_mobile ? 4 : 6, 0),
+            MinHeight = TouchTarget.For(_mobile),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            IsEnabled = false,
+        };
+        position.Click += async (_, _) => await RunUiActionAsync(AskForMatchIndexAsync);
+
         var nav = _markerNav = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
             IsVisible = false,
-            Children = { _markerPrevious, _markerPosition, _markerNext },
+            Children = { _markerFirst, _markerPrevious, position, _markerNext, _markerLast },
         };
         AutomationProperties.SetName(nav, "Search match navigation");
         return nav;
@@ -1036,13 +1192,32 @@ public sealed partial class SessionWorkspaceView : UserControl
         };
         AutomationProperties.SetName(show, "Move the plot back to the entry being read");
         show.Click += async (_, _) => await RunUiActionAsync(ShowInspectedEntryAgainAsync);
+        _entryOffPageShow = show;
+
+        // The same lane says the other thing that can be true of an open entry: that the
+        // filter no longer admits it. Two controls named for one object were reporting
+        // different answers about whether that object existed — Copy raw disabled, Entry
+        // enabled, and the Entry pane happily showing an Error record under a Fatal-only
+        // filter with nothing saying so (V2-06). The entry is kept, because persisting what
+        // the reader was studying across a filter change is kind; what was missing is the
+        // sentence admitting it.
+        var clear = _entryOutsideFilterClear = new Button
+        {
+            Content = "Clear filters",
+            MinHeight = TouchTarget.For(_mobile),
+            Margin = new Thickness(8, 0, 0, 0),
+            IsVisible = false,
+        };
+        AutomationProperties.SetName(clear, "Clear the filters so this entry is in scope again");
+        clear.Click += async (_, _) => await RunUiActionAsync(ClearFiltersForInspectedEntryAsync);
 
         var row = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-            Children = { text, show },
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+            Children = { text, show, clear },
         };
         Grid.SetColumn(show, 1);
+        Grid.SetColumn(clear, 2);
 
         var banner = _entryOffPageBanner = new Border
         {
@@ -1721,12 +1896,16 @@ public sealed partial class SessionWorkspaceView : UserControl
         var chipBar = _chipBar;
         chipBar.Margin = new Thickness(10, 0, 10, 5);
         chipBar.LastChildFill = true;
-        chipBar.MinHeight = _mobile ? 40 : 0;
+        // 40 was a chip-bar-local literal that predated TouchTarget, and it is what the device
+        // measured: Clear all was 40.0 dp tall, 17 % short of the floor every control around
+        // it clears — and it is the recovery action from the mis-taps the 16 dp chip × caused
+        // (V2-05). The bar takes the same floor so the row does not shrink under it.
+        chipBar.MinHeight = TouchTarget.For(_mobile);
         var clear = _clearFilters = new Button
         {
             Content = "Clear all",
             Margin = new Thickness(6, 0, 0, 0),
-            MinHeight = _mobile ? 40 : 0,
+            MinHeight = TouchTarget.SelfSized(_mobile),
             IsVisible = false,
         };
         clear.Click += async (_, _) =>
@@ -1749,6 +1928,29 @@ public sealed partial class SessionWorkspaceView : UserControl
         };
         DockPanel.SetDock(chipEmptyLabel, Dock.Left);
         chipBar.Children.Add(chipEmptyLabel);
+
+        // The home V2-13 asks for. Untimed records and unparsed lines are counted by the
+        // filter and shown by nothing: no plot bar, no minimap mark, no severity row, no entry
+        // row — so "1,200 untimed" was the unexplained difference between two numbers on the
+        // count line and could only be reached by not knowing it existed.
+        //
+        // Docked beside the empty label rather than added to _chips, because it is not a
+        // filter: putting it there would make the strip claim a filter is active, hide "No
+        // filters · showing everything in view" and offer Clear all for something it cannot
+        // clear.
+        var offTimeline = _offTimelineChip = new Button
+        {
+            Margin = new Thickness(6, 0, 0, 0),
+            Padding = new Thickness(7, 2),
+            CornerRadius = new CornerRadius(3),
+            BorderThickness = new Thickness(1),
+            MinHeight = TouchTarget.SelfSized(_mobile),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            IsVisible = false,
+        };
+        offTimeline.Click += (_, _) => OffTimelineRequested?.Invoke();
+        DockPanel.SetDock(offTimeline, Dock.Left);
+        chipBar.Children.Add(offTimeline);
         _rangeActions.Children.Add(_rangeText);
         var zoomRange = new Button { Content = "Zoom range" };
         zoomRange.Click += (_, _) =>
@@ -2196,18 +2398,39 @@ public sealed partial class SessionWorkspaceView : UserControl
         _loadMore.HorizontalAlignment = HorizontalAlignment.Stretch;
         _loadMore.HorizontalContentAlignment = HorizontalAlignment.Center;
         _loadMore.Margin = new Thickness(0);
-        _loadMore.MinHeight = 48;
+        _loadMore.MinHeight = TouchTarget.SelfSized(_mobile, 48);
+
+        // The phone had Load 500 more and nothing else, so a 999,885-entry session needed
+        // 1,999 taps to traverse and X-13 could neither complete nor be told why not: the
+        // implementation only ever wrote _loadAll inside `if (!_mobile)` (V2-19). It is a
+        // second control in the same band rather than a wider one, because the primary action
+        // — one more page — must keep the full-width target it earned.
+        _loadAll.Margin = new Thickness(6, 0, 0, 0);
+        _loadAll.MinHeight = TouchTarget.SelfSized(_mobile, 48);
+
+        // A three-character label sizes itself to about 34 dp, which is what the device
+        // measured. Height alone is not the floor: both edges are.
+        _loadAll.MinWidth = TouchTarget.SelfSized(_mobile);
+        _loadAll.Click += async (_, _) => await ToggleLoadAllEntriesAsync();
+        var row = _mobileFooterRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        row.Children.Add(_loadMore);
+        Grid.SetColumn(_loadAll, 1);
+        row.Children.Add(_loadAll);
+
         var footer = _entryFooter = new Border
         {
             BorderThickness = new Thickness(0, 1, 0, 0),
             Padding = new Thickness(0, 6, 0, 0),
             Margin = new Thickness(0, 2, 0, 0),
-            Child = _loadMore,
+            Child = row,
             IsVisible = false,
         };
         AutomationProperties.SetName(footer, "End of the loaded rows");
         return footer;
     }
+
+    /// <summary>The phone footer's two controls, so one of them can move without the other.</summary>
+    private Grid? _mobileFooterRow;
 
     private void ToggleInsights()
     {

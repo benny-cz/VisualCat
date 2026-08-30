@@ -13,6 +13,42 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Added
+- **Unparsed lines…** in the More menu opens the lines a logcat parse could not
+  read as records — in practice every frame of every crash log's stack traces.
+  They were always kept, byte for byte, and the only way to see one was to select
+  a neighbouring entry, open its source context, and recognise an undecoded `??`.
+  A 1,800-line crash log reported "600 entries" on every surface and said nothing
+  about the other 1,200. The count line names them now, an import says so once,
+  and the card lists them.
+- The two-letter codes in a source gutter have a legend on screen — `en entry ·
+  mt marker · .. continuation · e? untimed · ?? unknown · !! rejected` — shown
+  when a code other than `en` is actually visible. The explanation had only ever
+  existed as a tooltip, which a touch device cannot open, so a screen reader could
+  hear it and a sighted phone user could not.
+- **Load all** on the phone. A 999,885-entry session offered `Load 500 more` and
+  nothing else, so reaching the end took 1,999 taps. Above 100,000 outstanding
+  rows it asks first, naming the count and that every row is held in memory, and
+  it can be cancelled at any point.
+- **⏮ / ⏭** beside the search stepper. Reaching the first of 7,181 matches used
+  to take 3,578 taps, and the first occurrence of something is the most common
+  reason anyone searches a log.
+- *Export CSV…* offers the scopes that differ, with their row counts, including
+  **everything in this session ignoring the filter** — which the product could
+  not previously produce at all. The menu promised a choice and skipped straight
+  to the save dialog whenever the plot happened to be fitted.
+- `vcat generate-test-log --format` is accepted, and `--format long` now actually
+  produces long format instead of silently falling back to threadtime.
+- Tapping the search counter — `3,579 / 7,181` — asks which match to go to and
+  goes there. It was a label, so the only way to reach a particular match was to
+  step to it.
+- A chip beside the count row names the records no time-based view can show
+  (`1,199 untimed`, `6 unparsed`, or the sum of both) and opens the card that
+  lists them. They were counted by the filter and drawn by nothing, so the only
+  way to reach them was to already know they existed. The card covers untimed
+  records as well as unparsed lines now, and tells them apart by their gutter
+  code.
+
 ### Fixed
 - Dragging the phone Split divider near either edge of the screen no longer
   leaves the app. On a phone using gesture navigation the system's own Back
@@ -45,6 +81,72 @@ screenshot says which build it came from.
   reserve that a severity chip was given in 2.0.8 is now a named rule the whole
   family shares, rather than a number written at the one control that had been
   measured.
+
+- **Choose what Live captures** puts its two options above the disclosure that
+  supports them. At Android's larger text sizes the 90-word paragraph pushed both
+  radio buttons off a card that gave no sign it scrolled: at 180 % the
+  VisualCat-only option left the accessibility tree entirely, and at 200 % neither
+  option was painted, leaving cancel or a Wireless-debugging pairing flow as the
+  only discoverable actions. The disclosure is one labelled control away and the
+  sentence that answers "is this safe" stays on the card.
+- One Back press takes down one layer. On a phone, Back both closed the Live
+  scope card and left the app, because the card's Cancel answered the key event
+  and the platform's own callback then found nothing left to close. A stock
+  edge-Back gesture did the same to the More sheet for a different reason: the
+  gesture begins as an ordinary touch, so the scrim dismissed the sheet on
+  touch-down and the same gesture arrived as Back a moment later.
+- The heat map releases its claim on the platform's edge gesture while a sheet or
+  a dialog is over it, and while the session is fitted — a viewport that already
+  spans the session cannot be panned, so the claim took system Back away and gave
+  nothing back.
+- Removing a filter is a 48 dp target. The chip's `×` measured 15.6 × 16.4 dp,
+  the label beside it did nothing at all, and **Clear all** — the recovery from
+  missing that target — was 40 dp tall. The whole chip is now the control.
+- The entries list keeps its four-row floor as text grows. The pane budgeted four
+  *design* rows at every text size while the drawn row grew by half, so at 200 %
+  a fifty-thousand-entry log showed two and a half rows; where four whole rows
+  genuinely cannot fit beside a readable plot, the workspace composes Details and
+  the mode row says why.
+- The count line no longer contradicts itself. `3,425 match` beside `2,225 in
+  session` was true — the middle number counts records a time range cannot hold —
+  and now says which population each number counts.
+- `Copy raw` and **Entry** agree about whether the entry they are both named for
+  is still in scope, and an entry kept across a filter change says so and offers
+  the way back. One was disabled while the other opened an Error record under a
+  Fatal-only filter with nothing on screen admitting it.
+- A confirmation no longer moves the control that raised it. Copying an entry
+  raised a notice that took 140 px out of the workspace, so a second tap at the
+  same place opened the entry instead of copying again.
+- The welcome screen centres its hero instead of ending 45 % down the display
+  with the rest left blank, and **Recent captures** with nothing stored says so
+  and offers to start a capture, rather than explaining a three-way status
+  taxonomy for items you do not have beside a disabled *Open*.
+- Reopening a finished capture shows the whole capture. It came back on Follow's
+  30-second live-edge window — an empty plot and six zero counters, which reads
+  as "this recorded nothing" — because that window had been written into the
+  stored view.
+- An empty file says it is empty, once, instead of reporting the same
+  "no supported logcat format" sentence in three places at the same time.
+- The clipped leftmost session tab can be closed. Its close button was disabled
+  and silently ignored taps; one tap now brings the tab into view and the next
+  closes it.
+- Panning to either end of a zoomed plot no longer shows four seconds of time the
+  session does not contain — at a close zoom that was four-fifths of the screen,
+  under an axis for an interval in which the log did not yet exist.
+- The live capture's status line leads with its scope when the scope is
+  restricted, so the clause that explains why almost nothing is arriving is not
+  the one the ellipsis takes; the notice's remedy is a button rather than the tail
+  of a paragraph, and it changes tense when the capture stops.
+- The notice lane costs the workspace two lines instead of four and offers
+  **More** when there is more, rather than being a scroll container tall enough
+  to take 122 dp of the screen and still cut its last line in half. Expanding it
+  sizes to the message.
+- On Android 14 and earlier the status and navigation bars carry the app's own
+  ground instead of a grey platform scrim. The window was asking for transparent
+  bars while two window flags told Android to paint its own backing and ignore
+  the request, so a light-themed app showed a band measuring rgb(133,137,142)
+  where it had asked for #F4F7FC. Android 15 and later enforce this themselves
+  and were never affected.
 
 ## [2.0.10] - 2026-08-28
 

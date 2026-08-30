@@ -50,8 +50,7 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
 
     private const string DeclinedRemedy =
         "Android did not allow this direct READ_LOGS capture to read the whole device log, so " +
-        "the capture can only see VisualCat's own log lines. Tap Live again and use the " +
-        "recommended Wireless debugging full-device path.";
+        "the capture can only see VisualCat's own log lines.";
 
 #if VISUALCAT_READ_LOGS
     private const string NotGrantedRemedy =
@@ -62,11 +61,16 @@ public sealed class OnDeviceLogSource : ILogSource, ISourceScopeReporter
         "READ_LOGS can still be granted from a computer with adb; repeat that after reinstall:\n" +
         "adb shell pm grant com.barebit.visualcat android.permission.READ_LOGS";
 #else
+    /// <remarks>
+    /// The instruction that used to end this paragraph — "Stop this capture, tap Live again,
+    /// and choose full-device access" — was the part that fell below the fold of a four-line
+    /// notice lane, which is to say the one sentence the notice existed to deliver was the one
+    /// nobody could read (V2-11). It is a button now. The paragraph says what is true; the
+    /// control does the thing.
+    /// </remarks>
     private const string NotGrantedRemedy =
-        "This capture can only see this app's own log lines, so an idle app produces " +
-        "almost nothing. This Release build intentionally does not declare Android's privileged " +
-        "READ_LOGS permission. Stop this capture, tap Live again, and choose full-device access " +
-        "to use the recommended Wireless debugging path.";
+        "An idle app produces almost nothing. This build does not declare Android's " +
+        "privileged READ_LOGS permission.";
 #endif
 
     private readonly CancellationTokenSource _stop = new();
