@@ -220,6 +220,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private string? _refreshFailure;
     private string? _captureConnectionSummary;
     private string? _captureConnectionDetail;
+    private bool _captureStreamEstablished;
+    private string _captureNoRecordsSummary = "waiting for the source to log something";
     private int _liveSegmentCount;
 
     // A stop is not an instant: the pipeline still has to drain what it has read, compact
@@ -842,10 +844,13 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     }
                     else if (IsLiveCaptureActive)
                     {
+                        // A published snapshot is a storage refresh, not a second status
+                        // population. Replacing the source-line status with parsed entries
+                        // made the live line alternate between incomparable counts on every
+                        // refresh (Windows live finding F-10).
                         ReportActivity(
                             SessionActivity.Capturing,
-                            $"Capturing · {Counted.Entries(replacement.Descriptor.Counters.TimedEntries)} · " +
-                            replacement.Descriptor.SourceDescription);
+                            DescribeCapture());
                     }
                     else
                     {
@@ -2154,6 +2159,26 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         }
     }
 
+    /// <summary>
+    /// Says that the source transport is running even when it has not emitted a record.
+    /// </summary>
+    public void ReportCaptureStreamEstablished(string scope, string noRecordsSummary)
+    {
+        _captureStreamEstablished = true;
+        _captureNoRecordsSummary = string.IsNullOrWhiteSpace(noRecordsSummary)
+            ? "waiting for the source to log something"
+            : noRecordsSummary;
+        _captureConnectionSummary = null;
+        _captureConnectionDetail = null;
+        UpdateCaptureHealth(null, keepCaptureWarning: true);
+        if (IsLiveCaptureActive && !_stopping)
+        {
+            ReportActivity(
+                SessionActivity.Capturing,
+                DescribeCaptureSourceProgress(scope, _captureLines));
+        }
+    }
+
     private void UpdateCaptureHealth(string? captureWarning, bool keepCaptureWarning = false)
     {
         if (!keepCaptureWarning)
@@ -2208,6 +2233,17 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             return restricted
                 ? $"{connection}{health} · {_captureScope} · {_captureLines:N0} lines received{pending} · Stop remains available"
                 : $"{connection}{health} · {_captureLines:N0} lines received{pending} · Stop remains available · {_captureScope}";
+        }
+
+        if (_captureStreamEstablished && _captureLines == 0)
+        {
+            var silentFor = TimeSpan.FromMilliseconds(Math.Max(0, Environment.TickCount64 - _captureLastAdvanceMs));
+            var silence = silentFor.TotalSeconds < 3
+                ? "no records yet"
+                : $"no records for {FormatQuiet(silentFor)}";
+            return restricted
+                ? $"Connected{health} · {_captureScope} · {silence} · {_captureNoRecordsSummary} · 0/s"
+                : $"Connected{health} · {silence} · {_captureNoRecordsSummary} · 0/s · {_captureScope}";
         }
 
         var quiet = TimeSpan.FromMilliseconds(Math.Max(0, Environment.TickCount64 - _captureLastAdvanceMs));

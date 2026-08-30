@@ -170,7 +170,13 @@ public sealed record DefectCounters(
     long ReconnectGaps = 0,
     long ReconnectDuplicates = 0,
     long SourceChanges = 0,
-    long RetentionDeleted = 0);
+    long RetentionDeleted = 0,
+
+    // How much wall-clock time the gaps above actually cost. A count of one, with no
+    // duration beside it, told a reader that something was missing and nothing about how
+    // much: a reboot mid-capture and a half-second cable jolt both read as
+    // "reconnectGaps: 1" (finding F-12).
+    long ReconnectGapMilliseconds = 0);
 
 /// <summary>Associates a PID with a resolved process name over a time interval.</summary>
 public sealed record ProcessNameRange(
@@ -193,6 +199,44 @@ public sealed record SessionCounters(
     long IgnoredBlanks = 0,
     long Templates = 0);
 
+/// <summary>
+/// What a live capture was asked to do, recorded so a finished session can answer for
+/// itself.
+/// </summary>
+/// <remarks>
+/// A session used to record only what arrived. <c>buffers</c> in the manifest is the
+/// per-record attribution dictionary — the buffers that actually produced a record — so a
+/// capture that selected <c>crash</c> and saw nothing from it was indistinguishable from
+/// one that never asked for it (finding F-02). The same silence hid a timestamp policy
+/// built from the wrong zone (F-11) and left a capture stopped by its own byte cap with no
+/// vocabulary to name the limit that fired (F-07). Every field here is known before the
+/// first byte is read, and none is more sensitive than the device serial already stored.
+///
+/// Entirely optional: a session written before this existed, and every source that is not
+/// a device capture, carries a null and reads back as one.
+/// </remarks>
+/// <param name="RequestedBuffers">The buffers the capture asked for, in the order asked.</param>
+/// <param name="PreRollSeconds">How much history before the start instant was requested.</param>
+/// <param name="IncludesBufferHistory">Whether the capture deliberately took the whole ring buffer.</param>
+/// <param name="DurationLimitSeconds">The stop-after-time the caller enforced, if any.</param>
+/// <param name="ByteLimit">The stop-after-size the source enforced, if any.</param>
+/// <param name="NegotiatedFormat">The rung of the logcat format ladder the device agreed to.</param>
+/// <param name="LogTimeZoneId">The zone that format writes timestamps in.</param>
+/// <param name="AdbVersion">The ADB build that ran the capture.</param>
+/// <param name="DeviceModel">The device model as the transport reported it.</param>
+/// <param name="DeviceFingerprint">The device build fingerprint, when the device answered for it.</param>
+public sealed record CaptureSettings(
+    IReadOnlyList<string>? RequestedBuffers = null,
+    double? PreRollSeconds = null,
+    bool IncludesBufferHistory = false,
+    double? DurationLimitSeconds = null,
+    long? ByteLimit = null,
+    string? NegotiatedFormat = null,
+    string? LogTimeZoneId = null,
+    string? AdbVersion = null,
+    string? DeviceModel = null,
+    string? DeviceFingerprint = null);
+
 /// <summary>Describes immutable session identity, policy, state, counts, and time bounds.</summary>
 public sealed record SessionDescriptor(
     Guid SessionId,
@@ -212,7 +256,12 @@ public sealed record SessionDescriptor(
     InstantUs? LastInstant,
     bool Finalized,
     bool Degraded,
-    string StoreVersion = "2.0");
+    string StoreVersion = "2.0",
+
+    // What the capture was asked for, as opposed to what it received. Null for every
+    // source that is not a live device capture, and for sessions written before the
+    // block existed (finding F-02).
+    CaptureSettings? CaptureSettings = null);
 
 /// <summary>Captures one monotonic progress observation from the ingest coordinator.</summary>
 public sealed record ProgressSnapshot(

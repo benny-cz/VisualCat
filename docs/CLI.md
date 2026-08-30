@@ -128,7 +128,9 @@ vcat query <session.vcat> [--from <ISO|us>] [--to <ISO|us>]
 Prints one `NormalizedEntry` JSON object per line (NDJSON), suitable for
 streaming into tools such as `jq`. Each entry contains source identity and raw
 span, normalized timestamp and provenance, PID/TID, severity, tag, buffer,
-message, format, template ID, and flags. `--limit` defaults to `100`.
+message, format, template ID, and flags. `--limit` defaults to `100` and is capped
+at `10,000` per invocation. To stream a larger session, page with successive
+half-open `--from` / `--to` ranges rather than requesting one unbounded result.
 
 ```shell
 vcat query crash.vcat --levels E,F --limit 50 > errors.ndjson
@@ -247,20 +249,31 @@ vcat adb-devices
 ```text
 vcat capture-adb --serial <serial> [--output <session.vcat>]
                  [--duration-seconds <seconds>] [--max-bytes <bytes>]
-                 [--buffers <list>] [--adb <path>] [index options]
+                 [--buffers <list>] [--pre-roll-seconds <seconds>]
+                 [--include-buffer-history] [--adb <path>] [index options]
 ```
 
 Captures `threadtime` output from the selected device into a portable session.
 The default buffers are `main,system,crash`. Without a duration or byte limit,
-capture continues until interrupted. The absolute session path is printed.
+capture continues until interrupted. `--pre-roll-seconds 0` starts at the capture
+instant; positive values include that much recent history. The complete existing
+ring buffer is deliberately separate: `--include-buffer-history` may add hundreds
+of thousands of older records on a busy device. The absolute session path is
+printed to standard output; the reason an automatic limit ended the capture is
+printed to standard error.
 
 ```shell
 vcat capture-adb --serial emulator-5554 --duration-seconds 60 --output minute.vcat
 ```
 
-`--format` is fixed to `threadtime` for live ADB capture. The remaining index
-options (`--year`, `--timezone`, `--no-templates`, `--segment-entries`, and
-`--workers`) still apply.
+`--format` is fixed to `threadtime` for live ADB capture. VisualCat negotiates the
+richest logcat timestamp modifiers the device accepts and parses in the zone that
+format actually emits. An explicit `--timezone` still overrides the negotiated
+zone. The remaining index options (`--year`, `--no-templates`,
+`--segment-entries`, and `--workers`) still apply. The session manifest records
+the requested buffers, history/pre-roll, limits, negotiated format and zone, ADB
+version, and device model/fingerprint; `vcat info <session.vcat>` prints that
+`captureSettings` block.
 
 ## Automation notes
 
@@ -271,3 +284,7 @@ options (`--year`, `--timezone`, `--no-templates`, `--segment-entries`, and
   redirected structured output remains clean.
 - Send Ctrl+C to request cancellation; completed session generations remain
   recoverable when an import or capture is interrupted.
+- Treat every `.vcat` directory as sensitive: a live or portable session retains
+  the device's byte-faithful `raw.log`, which can contain network names, account or
+  device identifiers, notification text, tokens, paths, and proprietary data.
+  Review sessions and exports before copying or sharing them.

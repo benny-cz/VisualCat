@@ -336,22 +336,83 @@ internal static class VisualCatCli
         var adb = AdbLocator.Find(options.Get("--adb")) ?? throw new CommandException("ADB was not found. Set --adb, ANDROID_SDK_ROOT, or PATH.");
         var buffers = (options.Get("--buffers") ?? "main,system,crash").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var maximumBytes = options.GetLong("--max-bytes", 0);
+        var seconds = options.GetInt("--duration-seconds", 0);
+        var preRollSeconds = options.GetInt("--pre-roll-seconds", 0);
+        var includeBufferHistory = options.Has("--include-buffer-history");
+        var requestedFormat = options.Get("--format");
+        if (buffers.Length == 0)
+        {
+            throw new CommandException("capture-adb requires at least one buffer in --buffers.");
+        }
+        if (maximumBytes < 0)
+        {
+            throw new CommandException("--max-bytes must be zero (unlimited) or a positive byte count.");
+        }
+        if (seconds < 0)
+        {
+            throw new CommandException("--duration-seconds must be zero (unlimited) or a positive duration.");
+        }
+        if (preRollSeconds is < 0 or > 3600)
+        {
+            throw new CommandException("--pre-roll-seconds must be between 0 and 3600.");
+        }
+        if (includeBufferHistory && preRollSeconds > 0)
+        {
+            throw new CommandException(
+                "--include-buffer-history cannot be combined with a positive --pre-roll-seconds value.");
+        }
+        if (requestedFormat is not null &&
+            !requestedFormat.Equals("threadtime", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new CommandException(
+                "Live ADB capture uses threadtime format; omit --format or set it to threadtime.");
+        }
+
+        var duration = seconds > 0 ? TimeSpan.FromSeconds(seconds) : (TimeSpan?)null;
         await using var source = new AdbLogSource(
             new ProcessAdbClient(adb),
             serial,
             buffers,
-            maximumBytes > 0 ? maximumBytes : null);
-        var settings = Settings(options, DateTimeOffset.UtcNow) with { FormatOverride = LogcatFormat.ThreadTime, PortableRaw = true };
-        using var duration = options.GetInt("--duration-seconds", 0) is var seconds and > 0
-            ? new CancellationTokenSource(TimeSpan.FromSeconds(seconds))
+            maximumBytes > 0 ? maximumBytes : null,
+            TimeSpan.FromSeconds(preRollSeconds),
+            includeBufferHistory,
+            duration);
+
+        // Settling the format first is what lets the policy below follow the zone the device
+        // actually agreed to write in. Without it the CLI built its policy from the host,
+        // so a capture from a phone whose logcat cannot emit the UTC modifier had every
+        // instant moved by the host-to-device offset — silently, with isValid: true and no
+        // defect counter raised (finding F-11). The desktop has always asked; this is the
+        // same question, asked from the other surface.
+        await source.PrepareAsync(cancellationToken).ConfigureAwait(false);
+        var settings = Settings(options, DateTimeOffset.UtcNow, source.Metadata.ResolveLogTimeZoneId()) with
+        {
+            FormatOverride = LogcatFormat.ThreadTime,
+            PortableRaw = true,
+        };
+        using var stop = duration is { } limit
+            ? new CancellationTokenSource(limit)
             : new CancellationTokenSource();
         var result = await SessionCoordinator.ImportAsync(
             source,
             output,
             settings,
-            gracefulStopToken: duration.Token,
+            gracefulStopToken: stop.Token,
             cancellationToken: cancellationToken).ConfigureAwait(false);
         result.Snapshot.Dispose();
+
+        // stdout stays the session path, which is what a script reads. Why the capture ended
+        // goes beside it, because "the log source ended it" sent readers to check a cable
+        // when their own byte cap had fired (finding F-07).
+        if (source.Completion is { } completion)
+        {
+            Console.Error.WriteLine($"capture ended: {completion.Summary}");
+        }
+        else if (stop.IsCancellationRequested)
+        {
+            Console.Error.WriteLine($"capture ended: it ran its full {seconds}s duration");
+        }
+
         Console.WriteLine(Path.GetFullPath(output));
         return 0;
     }
@@ -359,20 +420,23 @@ internal static class VisualCatCli
     private static async Task<SessionSnapshot> OpenRequiredAsync(Arguments options, CancellationToken cancellationToken) =>
         await SessionStore.OpenAsync(options.RequiredPosition(0, "A .vcat session path is required."), cancellationToken).ConfigureAwait(false);
 
-    private static IngestSettings Settings(Arguments options, DateTimeOffset reference) =>
+    private static IngestSettings Settings(Arguments options, DateTimeOffset reference, string? sourceZoneId = null) =>
         new(
             ParseFormat(options.Get("--format")),
             "utf-8",
-            Policy(options, reference),
+            Policy(options, reference, sourceZoneId),
             new TemplateSettings(!options.Has("--no-templates")),
             SegmentEntries: options.GetInt("--segment-entries", 100_000),
             ParseWorkers: options.GetInt("--workers", 0),
             PortableRaw: options.Has("--portable"));
 
-    private static TimestampPolicy Policy(Arguments options, DateTimeOffset reference) =>
+    // sourceZoneId is the zone the source says its own timestamps are written in, when it
+    // knows. A device capture negotiates it; a file on disk does not, and is read in the
+    // local zone as it always was. An explicit --timezone still wins over both.
+    private static TimestampPolicy Policy(Arguments options, DateTimeOffset reference, string? sourceZoneId = null) =>
         new(
             options.GetNullableInt("--year"),
-            options.Get("--timezone") ?? TimeZoneInfo.Local.Id,
+            options.Get("--timezone") ?? sourceZoneId ?? TimeZoneInfo.Local.Id,
             reference);
 
     private static FilterSpec Filter(Arguments options)
@@ -451,64 +515,120 @@ internal static class VisualCatCli
     private static string Sanitize(string value) =>
         string.Concat(value.Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
 
-    /// <summary>Every option one command accepts, for both usage and unknown-option checks.</summary>
+    /// <summary>The filter options every query-shaped command shares.</summary>
+    private const string FilterUsage =
+        "[--levels W,E,F] [--tags TAG,...] [--exclude-tags TAG,...] [--pids 1,2] " +
+        "[--processes NAME,...] [--exclude-processes NAME,...] [--tids 1,2] [--buffers main,system]";
+
+    /// <summary>The ingest options `index` and `capture-adb` both take.</summary>
+    private const string IngestUsage =
+        "[--format threadtime|time|brief|long|epoch] [--year 2026] [--timezone UTC] " +
+        "[--no-templates] [--segment-entries 100000] [--workers 0]";
+
+    /// <summary>Ingest policy accepted by live ADB, whose wire format is always threadtime.</summary>
+    private const string CaptureIngestUsage =
+        "[--format threadtime] [--year 2026] [--timezone UTC] " +
+        "[--no-templates] [--segment-entries 100000] [--workers 0]";
+
+    /// <summary>
+    /// Every command, with the usage text that is also its option list.
+    /// </summary>
     /// <remarks>
-    /// One table, used by two things that must not disagree: what the usage line prints and
-    /// what the parser will accept. A command missing from it accepts anything, which is the
-    /// safe direction — it can only fail to reject, never wrongly reject.
+    /// The options a command accepted and the usage line it printed used to be two lists
+    /// kept by hand, and they had drifted in both directions: `vcat index --timezone UTC` —
+    /// an option `CLI.md` documents and <see cref="Settings"/> reads — was refused as
+    /// unknown, `vcat verify --skip-raw` was refused although `VerifyAsync` reads it, and
+    /// `vcat search --limit 5` was accepted and silently ignored (report §4.3). There is one
+    /// list now and the accepted set is read out of the printed text, so a command cannot
+    /// accept an option it does not print, or print one it will not accept.
     /// </remarks>
-    private static HashSet<string>? KnownOptions(string command) => command switch
+    private static readonly Dictionary<string, CommandHelp> Commands = new(StringComparer.Ordinal)
     {
-        "index" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "--output", "--portable", "--format", "--workers", "--year", "--zone" },
-        "info" => new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "--format" },
-        "stats" => new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "--levels", "--top" },
-        "query" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "--from", "--to", "--limit", "--levels", "--tags", "--processes", "--pids", "--order" },
-        "search" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "--regex", "--case-sensitive", "--limit" },
-        "templates" => new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "--top" },
-        "export" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "--type", "--from", "--to", "--levels", "--order" },
-        "verify" => new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+        ["index"] = new(
+            $"vcat index <log.txt> [--output session.vcat] [--force] [--portable] {IngestUsage}",
+            "--force replaces an existing .vcat directory; it refuses filesystem roots and trees containing links."),
+        ["info"] = new("vcat info <log.txt|session.vcat> [--format threadtime] [--year 2026] [--timezone UTC]"),
+        ["stats"] = new($"vcat stats <session.vcat> [--top 20] {FilterUsage}"),
+        ["query"] = new(
+            $"vcat query <session.vcat> [--from ISO|us] [--to ISO|us] [--limit 100] " +
+            $"[--order chronological|source] {FilterUsage}",
+            "--limit is capped at 10,000; read a whole session by paging with --from and --to."),
+        ["search"] = new(
+            $"vcat search <session.vcat> <text> [--regex] [--case-sensitive] [--timeout-ms 250] {FilterUsage}"),
+        ["templates"] = new(
+            $"vcat templates <session.vcat> [--top 50] [--from ISO|us] [--to ISO|us] {FilterUsage}"),
+        ["export"] = new(
+            "vcat export <session.vcat> <output> " +
+            "[--type raw|csv|templates-md|templates-csv|stats-md|stats-csv|portable|portable-zip] " +
+            $"[--from ISO|us] [--to ISO|us] [--order chronological|source] {FilterUsage}"),
+        ["verify"] = new("vcat verify <session.vcat> [--skip-raw]"),
         // --format was parsed by GenerateAsync and rejected here, so the one option the live
         // test plan's §3.2 asks for by name could not be passed at all: `vcat
         // generate-test-log --format brief` failed as an unknown option while the code behind
         // it worked. A plan must not command a CLI option the shipped CLI rejects (PLAN-01).
-        "generate-test-log" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "--output", "--lines", "--seed", "--format" },
-        "adb-devices" => new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "--adb" },
-        "capture-adb" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "--serial", "--output", "--duration-seconds", "--max-bytes", "--adb", "--buffers", "--format" },
-        _ => null,
+        ["generate-test-log"] = new(
+            "vcat generate-test-log [--output log.txt] [--lines 1000000] [--seed 42] " +
+            "[--format threadtime|time|brief|long|epoch]"),
+        ["adb-devices"] = new("vcat adb-devices [--adb path]"),
+        ["capture-adb"] = new(
+            "vcat capture-adb --serial SERIAL [--output session.vcat] [--duration-seconds N] " +
+            "[--max-bytes N] [--buffers main,system,crash] [--pre-roll-seconds 0] " +
+            $"[--include-buffer-history] [--adb path] {CaptureIngestUsage}",
+            "--pre-roll-seconds 0 starts from now; --include-buffer-history takes everything the " +
+            "ring buffer already holds, which on a busy device is hundreds of thousands of records."),
     };
 
-    /// <summary>The usage line for one command, or the whole map when the command is unknown.</summary>
+    /// <summary>One command's complete usage text, and anything a reader needs beside it.</summary>
+    private sealed record CommandHelp(string Usage, string? Note = null);
+
+    private static HashSet<string>? KnownOptions(string command) =>
+        Commands.TryGetValue(command, out var help) ? OptionsIn($"{help.Usage} {help.Note}") : null;
+
+    /// <summary>Every <c>--option</c> token in a usage text, which is what the command accepts.</summary>
+    private static HashSet<string> OptionsIn(string usage)
+    {
+        var options = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var searchFrom = 0;
+        while (searchFrom < usage.Length)
+        {
+            var index = usage.IndexOf("--", searchFrom, StringComparison.Ordinal);
+            if (index < 0)
+            {
+                break;
+            }
+
+            var end = index + 2;
+            while (end < usage.Length && (char.IsAsciiLetterOrDigit(usage[end]) || usage[end] == '-'))
+            {
+                end++;
+            }
+
+            if (end > index + 2)
+            {
+                options.Add(usage[index..end]);
+            }
+
+            searchFrom = end;
+        }
+
+        return options;
+    }
+
+    /// <summary>The usage text for one command, or the whole map when the command is unknown.</summary>
     private static void PrintCommandHelp(string command)
     {
-        var usage = command switch
-        {
-            "index" => "vcat index <log.txt> [--output session.vcat] [--portable] [--format threadtime]",
-            "info" => "vcat info <log.txt|session.vcat>",
-            "stats" => "vcat stats <session.vcat> [--levels W,E,F] [--top 20]",
-            "query" => "vcat query <session.vcat> [--from ISO|us] [--to ISO|us] [--limit 100] [--processes NAME]",
-            "search" => "vcat search <session.vcat> <text> [--regex] [--case-sensitive]",
-            "templates" => "vcat templates <session.vcat> [--top 50]",
-            "export" => "vcat export <session.vcat> <output> [--type raw|csv|templates-md|templates-csv|stats-md|stats-csv|portable|portable-zip]",
-            "verify" => "vcat verify <session.vcat>",
-            "generate-test-log" => "vcat generate-test-log [--output log.txt] [--lines 1000000] [--seed 42] [--format threadtime|time|brief|long|epoch]",
-            "adb-devices" => "vcat adb-devices [--adb path]",
-            "capture-adb" => "vcat capture-adb --serial SERIAL [--output session.vcat] [--duration-seconds N] [--max-bytes N]",
-            _ => null,
-        };
-
-        if (usage is null)
+        if (!Commands.TryGetValue(command, out var help))
         {
             PrintHelp();
             return;
         }
 
-        Console.WriteLine(usage);
+        Console.WriteLine(help.Usage);
+        if (help.Note is { Length: > 0 } note)
+        {
+            Console.WriteLine();
+            Console.WriteLine(note);
+        }
     }
 
     private static void PrintHelp() => Console.WriteLine(
@@ -527,6 +647,8 @@ internal static class VisualCatCli
           vcat generate-test-log [--output log.txt] [--lines 1000000] [--seed 42] [--format threadtime|time|brief|long|epoch]
           vcat adb-devices [--adb path]
           vcat capture-adb --serial SERIAL [--output session.vcat] [--duration-seconds N] [--max-bytes N]
+
+        Run 'vcat <command> --help' for one command's complete option list.
         """);
 }
 

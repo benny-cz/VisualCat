@@ -13,7 +13,12 @@ public sealed record SourceMetadata(
     bool IsFinite,
     bool IsReplayable,
     string? DeviceSerial = null,
-    IReadOnlyDictionary<string, string>? Properties = null)
+    IReadOnlyDictionary<string, string>? Properties = null,
+
+    // What a live capture was asked to do, for the sources that were asked something.
+    // Reaches the session manifest unchanged, so a finished capture can state its own
+    // configuration rather than leaving it to be inferred from what arrived (F-02).
+    CaptureSettings? Capture = null)
 {
     /// <summary>
     /// <see cref="Properties"/> key naming the time zone the source's own timestamps are
@@ -138,6 +143,48 @@ public interface ISourceConnectionStatusReporter
     /// clears it as soon as the transport is healthy again.
     /// </summary>
     event Action<SourceConnectionStatus?>? ConnectionStatusChanged;
+}
+
+/// <summary>
+/// A live source that can say when its transport is established, before — and whether or
+/// not — a single record arrives.
+/// </summary>
+/// <remarks>
+/// Capture status used to be inferred from record arrival, which is not the same question.
+/// A capture of a buffer that happens to be empty is a perfectly healthy stream that will
+/// never produce a line, and the workspace sat on "Connecting to the device… Checking the
+/// device and logcat format." for as long as it ran — long after both of those had finished
+/// (finding F-12a). A source that knows its stream is running says so, and the workspace
+/// can then distinguish "still connecting" from "connected, and nothing is being logged".
+/// </remarks>
+public interface ISourceStreamStartReporter
+{
+    /// <summary>
+    /// Raised from any thread when the source's stream is running: the first time, and
+    /// again after every repair. Idempotent for the reader — it says "the transport is up",
+    /// not "something new happened".
+    /// </summary>
+    event Action? StreamEstablished;
+}
+
+/// <summary>Why a source ended its own stream, when the log itself did not end.</summary>
+/// <param name="Summary">The status-line clause, such as "this capture reached its 1 MiB limit".</param>
+/// <param name="Detail">The whole sentence for the notice lane, including what to do next.</param>
+public sealed record SourceCompletionReason(string Summary, string Detail);
+
+/// <summary>
+/// A source that can end a capture on its own terms and name the reason.
+/// </summary>
+/// <remarks>
+/// A capture stopped by its own byte cap was reported as "the log source ended this
+/// capture", which points the reader at the phone: they check the cable, the device and USB
+/// debugging, all healthy, and the offered remedy — start Live again — walks straight back
+/// into the same cap (finding F-07).
+/// </remarks>
+public interface ISourceCompletionReporter
+{
+    /// <summary>Why the stream ended, or null when the source did not deliberately end it.</summary>
+    SourceCompletionReason? Completion { get; }
 }
 
 public interface IProcessNameSource

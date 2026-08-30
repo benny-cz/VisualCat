@@ -553,6 +553,12 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         Width = 180,
     };
     private readonly TextBox _adbPath = new() { PlaceholderText = "Auto-detect when empty" };
+    private readonly TextBlock _adbPathWarning = new()
+    {
+        TextWrapping = TextWrapping.Wrap,
+        FontWeight = FontWeight.SemiBold,
+        IsVisible = false,
+    };
     private readonly TextBox _sessionDirectory = new() { PlaceholderText = "Platform-local default when empty" };
     private readonly TextBox _captureBuffers = new() { PlaceholderText = "main,system,crash" };
     private readonly NumericUpDown _preRollSeconds = new() { Minimum = 0, Maximum = 3600, Increment = 5, Width = 180 };
@@ -609,6 +615,11 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         _exportEncoding.SelectedItem = SettingChoice.Resolve(ExportEncodingChoices, settings.ExportEncoding);
         _pixelSnap.IsChecked = settings.TimelinePixelSnap;
         _diagnostics.IsChecked = settings.DiagnosticsEnabled;
+        AutomationProperties.SetName(_adbPath, "ADB executable");
+        AutomationProperties.SetName(_adbPathWarning, "ADB executable validation");
+        AutomationProperties.SetLiveSetting(_adbPathWarning, AutomationLiveSetting.Polite);
+        _adbPath.TextChanged += (_, _) => UpdateAdbPathWarning();
+        UpdateAdbPathWarning();
 
         var form = new StackPanel { Spacing = 8 };
         form.Children.Add(new TextBlock { Text = "Theme" });
@@ -633,6 +644,7 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         {
             form.Children.Add(new TextBlock { Text = "ADB executable" });
             form.Children.Add(_adbPath);
+            form.Children.Add(_adbPathWarning);
             form.Children.Add(new TextBlock { Text = "Default capture buffers (comma separated)" });
             form.Children.Add(_captureBuffers);
             form.Children.Add(new TextBlock { Text = "Default ADB pre-roll (seconds)" });
@@ -763,6 +775,21 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         // The form scrolls; the decision does not. Apply and Cancel used to scroll away with
         // the twenty controls above them (finding 16 / 21.4).
         Content = SheetForm.Build(form, buttons, new Thickness(16));
+    }
+
+    private void UpdateAdbPathWarning()
+    {
+        var path = NullIfWhiteSpace(_adbPath.Text);
+        var missing = path is not null && !File.Exists(path);
+        _adbPathWarning.IsVisible = missing;
+        _adbPathWarning.Text = missing
+            ? "⚠ ADB was not found at this path. Live ADB will use auto-detection until the path is corrected."
+            : string.Empty;
+        AutomationProperties.SetHelpText(
+            _adbPath,
+            missing
+                ? "ADB was not found at the configured path. Correct the path, or clear it to use auto-detection."
+                : "Leave empty to find ADB from the Android SDK settings or PATH.");
     }
 
     /// <summary>

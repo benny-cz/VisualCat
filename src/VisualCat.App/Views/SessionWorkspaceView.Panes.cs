@@ -610,6 +610,15 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         static string N(long value) => value.ToString("N0", DisplayCulture.Current);
 
+        static string Duration(double seconds) => seconds switch
+        {
+            < 60 => $"{seconds:N0} s",
+            < 3600 when seconds % 60 == 0 => $"{seconds / 60:N0} min",
+            < 3600 => $"{(int)(seconds / 60)} min {seconds % 60:N0} s",
+            _ when seconds % 3600 == 0 => $"{seconds / 3600:N0} h",
+            _ => TimeSpan.FromSeconds(seconds).ToString("g", DisplayCulture.Current),
+        };
+
         Section("Session");
 
         // First row in the pane when it applies, because the status bar's marker sends
@@ -651,6 +660,47 @@ public sealed partial class SessionWorkspaceView : UserControl
             descriptor.Degraded || completion == SessionCompletion.RecoverablePartial);
         IdentifierRow("Session id", descriptor.SessionId.ToString());
 
+        // This is the request, not an inference from what happened to arrive. In
+        // particular an empty `crash` buffer remains visible here as selected, which is the
+        // question a reader reopening a capture is trying to answer (Windows F-02).
+        if (descriptor.CaptureSettings is { } capture)
+        {
+            Section("Capture request");
+            Row(
+                "Requested buffers",
+                capture.RequestedBuffers is { Count: > 0 } requested
+                    ? string.Join(", ", requested)
+                    : "not recorded");
+            Row(
+                "History",
+                capture.IncludesBufferHistory
+                    ? "Everything already in the selected buffers"
+                    : capture.PreRollSeconds is { } preRoll
+                        ? preRoll == 0
+                            ? "From capture start (no earlier records)"
+                            : $"{Duration(preRoll)} before capture start"
+                        : "not recorded");
+
+            var stopLimits = new List<string>(2);
+            if (capture.DurationLimitSeconds is { } durationLimit)
+            {
+                stopLimits.Add(Duration(durationLimit));
+            }
+            if (capture.ByteLimit is { } byteLimit)
+            {
+                stopLimits.Add(RecentSessionsDialog.FormatBytes(byteLimit));
+            }
+            Row("Stop limits", stopLimits.Count == 0 ? "Until stopped" : string.Join(" or ", stopLimits));
+            Row("Logcat format", capture.NegotiatedFormat ?? "not reported");
+            Row("Log timestamp zone", capture.LogTimeZoneId ?? "not reported");
+            Row("Device model", capture.DeviceModel ?? "not reported");
+            Row("ADB version", capture.AdbVersion ?? "not reported");
+            if (capture.DeviceFingerprint is { Length: > 0 } fingerprint)
+            {
+                IdentifierRow("Device fingerprint", fingerprint);
+            }
+        }
+
         Section("Entries");
         Row("Timed", N(counters.TimedEntries));
         // Untimed lines (buffer markers and the like) and inferred/continued timestamps are
@@ -673,6 +723,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         Section("Live loss evidence");
         Row("Chatty drops", N(defects.ChattyDeclaredDrops), defects.ChattyDeclaredDrops > 0);
         Row("Reconnect gaps", N(defects.ReconnectGaps), defects.ReconnectGaps > 0);
+        Row(
+            "Time missing across gaps",
+            defects.ReconnectGapMilliseconds < 1000
+                ? $"{N(defects.ReconnectGapMilliseconds)} ms"
+                : Duration(defects.ReconnectGapMilliseconds / 1000d),
+            defects.ReconnectGapMilliseconds > 0);
         Row("Duplicates", N(defects.ReconnectDuplicates), defects.ReconnectDuplicates > 0);
 
         Section("Safety");

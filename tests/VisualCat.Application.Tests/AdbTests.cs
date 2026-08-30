@@ -35,9 +35,12 @@ public sealed class AdbTests
     [Fact]
     public async Task AdbSourceNegotiatesBestFormatAndHonorsByteCap()
     {
-        var process = new FakeProcess("abcdefghij");
+        // The cap stops at the last complete record at or below it: a byte-exact cut left
+        // raw.log ending mid-line, which no parser can read back and which the manifest
+        // then booked as a rejected candidate (finding F-08).
+        var process = new FakeProcess("aaaa\nbbbb\ncccc\n");
         var client = new FakeClient(process);
-        await using var source = new AdbLogSource(client, "ABC", ["main", "crash"], maximumCaptureBytes: 5);
+        await using var source = new AdbLogSource(client, "ABC", ["main", "crash"], maximumCaptureBytes: 6);
         var chunks = new List<SourceChunk>();
 
         await foreach (var chunk in source.ReadAsync(
@@ -49,11 +52,11 @@ public sealed class AdbTests
 
         var resultChunk = Assert.Single(chunks);
         Assert.Equal(0, resultChunk.RawOffset);
-        Assert.Equal("abcde", Encoding.UTF8.GetString(resultChunk.Bytes.Span));
+        Assert.Equal("aaaa\n", Encoding.UTF8.GetString(resultChunk.Bytes.Span));
         Assert.True(process.Stopped);
         Assert.Contains("threadtime,year,UTC,usec", client.StartArguments);
         Assert.Contains("main,crash", client.StartArguments);
-        Assert.Equal("5", source.Metadata.Properties!["maximumCaptureBytes"]);
+        Assert.Equal("6", source.Metadata.Properties!["maximumCaptureBytes"]);
 
         // The richest candidate succeeded, so no degradation was attempted.
         Assert.Equal(["threadtime,year,UTC,usec"], client.ProbedFormats);

@@ -37,6 +37,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private readonly string[] _startupPaths;
     private readonly SettingsStore _settingsStore;
     private ApplicationSettings _settings = new();
+    private string? _reportedInvalidAdbPath;
     private RollingDiagnosticLogger? _diagnostics;
     private bool _startupOpened;
     private bool _settingsLoaded;
@@ -106,6 +107,12 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private TextBlock? _recentHeading;
     private Control? _recentSection;
     private Button? _recentShowAll;
+    private readonly object _recentRefreshGate = new();
+    private readonly CancellationTokenSource _recentRefreshLifetime = new();
+    private Task _recentRefreshTask = Task.CompletedTask;
+    private bool _recentRefreshRunning;
+    private bool _recentRefreshRequested;
+    private int _recentRefreshDisposed;
 
     private static string DiagnosticsDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -992,7 +999,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             IsVisible = false,
             Children = { heading, list, showAll },
         };
-        _ = RefreshRecentSessionsAsync();
+        RequestRecentSessionsRefresh();
         return section;
     }
 
@@ -1001,7 +1008,94 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// a screen whose other routes all still work, and a cache that cannot be scanned is not
     /// worth an error banner on the first screen of the app.
     /// </summary>
-    private async Task RefreshRecentSessionsAsync()
+    private void RequestRecentSessionsRefresh()
+    {
+        lock (_recentRefreshGate)
+        {
+            if (_recentRefreshLifetime.IsCancellationRequested)
+            {
+                return;
+            }
+
+            // A close burst used to start one complete cache walk per tab. Fifty short
+            // captures could therefore leave fifty growing directory scans, UI rebuilds and
+            // continuations in flight at once. One running scan now absorbs every request
+            // into at most one follow-up pass, so the latest state wins without creating an
+            // unbounded background queue (Windows live-test finding F-13 / X-21).
+            _recentRefreshRequested = true;
+            if (_recentRefreshRunning)
+            {
+                return;
+            }
+
+            _recentRefreshRunning = true;
+            _recentRefreshTask = DrainRecentSessionRefreshesAsync(_recentRefreshLifetime.Token);
+        }
+    }
+
+    private async Task DrainRecentSessionRefreshesAsync(CancellationToken cancellationToken)
+    {
+        // Do not run the first gate-taking part inline while RequestRecentSessionsRefresh
+        // still owns the gate. Keeping the captured UI context also ensures that the control
+        // tree is only rebuilt on the dispatcher thread.
+        await Task.Yield();
+
+        try
+        {
+            while (true)
+            {
+                lock (_recentRefreshGate)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _recentRefreshRequested = false;
+                }
+
+                await RefreshRecentSessionsCoreAsync(cancellationToken);
+
+                lock (_recentRefreshGate)
+                {
+                    if (!_recentRefreshRequested)
+                    {
+                        _recentRefreshRunning = false;
+                        return;
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            lock (_recentRefreshGate)
+            {
+                _recentRefreshRunning = false;
+                _recentRefreshRequested = false;
+            }
+        }
+    }
+
+    /// <summary>Waits until every recent-session refresh requested so far has settled.</summary>
+    internal async Task WaitForRecentSessionsRefreshAsync()
+    {
+        while (true)
+        {
+            Task pending;
+            lock (_recentRefreshGate)
+            {
+                pending = _recentRefreshTask;
+            }
+
+            await pending;
+
+            lock (_recentRefreshGate)
+            {
+                if (!_recentRefreshRunning && ReferenceEquals(pending, _recentRefreshTask))
+                {
+                    return;
+                }
+            }
+        }
+    }
+
+    private async Task RefreshRecentSessionsCoreAsync(CancellationToken cancellationToken)
     {
         if (_recentList is not { } list || _recentSection is not { } section)
         {
@@ -1011,7 +1105,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         IReadOnlyList<TemporarySessionInfo> sessions;
         try
         {
-            sessions = await TemporarySessionRetentionService.ScanAsync(WorkspaceViewModel.TemporarySessionRoot);
+            sessions = await TemporarySessionRetentionService.ScanAsync(
+                WorkspaceViewModel.TemporarySessionRoot,
+                cancellationToken);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -2527,7 +2623,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         if (_emptyState.IsVisible)
         {
             // The session just closed is the most likely one to be wanted back.
-            _ = RefreshRecentSessionsAsync();
+            RequestRecentSessionsRefresh();
         }
 
         UpdateSessionActionAvailability();
@@ -2563,11 +2659,33 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
     private async Task StartAdbAsync()
     {
+        var configuredPath = string.IsNullOrWhiteSpace(_settings.AdbPath) ? null : _settings.AdbPath.Trim();
         var executable = AdbLocator.Find(_settings.AdbPath);
         if (executable is null)
         {
-            ShowNotice("ADB was not found. Install Android platform-tools or set ANDROID_SDK_ROOT.", NoticeKind.Failure);
+            ShowNotice(
+                configuredPath is not null && !File.Exists(configuredPath)
+                    ? $"The configured ADB path '{configuredPath}' was not found, and no other ADB installation was detected. " +
+                      "Correct it in Appearance & timeline, install Android platform-tools, or set ANDROID_SDK_ROOT."
+                    : "ADB was not found. Install Android platform-tools or set ANDROID_SDK_ROOT.",
+                NoticeKind.Failure);
             return;
+        }
+
+        if (configuredPath is not null && !File.Exists(configuredPath))
+        {
+            if (!string.Equals(_reportedInvalidAdbPath, configuredPath, StringComparison.OrdinalIgnoreCase))
+            {
+                _reportedInvalidAdbPath = configuredPath;
+                ShowNotice(
+                    $"The configured ADB path '{configuredPath}' was not found; using '{executable}' from auto-detection. " +
+                    "Correct or clear the path in Appearance & timeline.",
+                    NoticeKind.Information);
+            }
+        }
+        else
+        {
+            _reportedInvalidAdbPath = null;
         }
 
         if (TopLevel.GetTopLevel(this) is not Window owner)
@@ -2575,7 +2693,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        var dialog = new AdbCaptureDialog(
+        using var dialog = new AdbCaptureDialog(
             new ProcessAdbClient(executable),
             _settings.DefaultCaptureBuffers,
             _settings.DefaultCapturePreRollSeconds);
@@ -3136,6 +3254,16 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         StopNoticeTimer();
         StopObservingSafeArea();
 
+        // A cache walk must not keep this view (and its complete visual tree) alive after the
+        // host closes it. ScanAsync observes this token between every session it inspects.
+        var disposeRecentRefresh = Interlocked.Exchange(ref _recentRefreshDisposed, 1) == 0;
+        if (disposeRecentRefresh)
+        {
+            _recentRefreshLifetime.Cancel();
+        }
+
+        await WaitForRecentSessionsRefreshAsync();
+
         // No settings writer may still be waiting on the semaphore when it is disposed. The
         // newest workspace task subsumes every older queued workspace snapshot; direct settings
         // writes are awaited at their call sites.
@@ -3168,5 +3296,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         _settingsSaveGate.Dispose();
+        if (disposeRecentRefresh)
+        {
+            _recentRefreshLifetime.Dispose();
+        }
     }
 }

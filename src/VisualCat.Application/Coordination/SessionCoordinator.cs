@@ -661,7 +661,8 @@ public sealed class SessionCoordinator
                 first,
                 last,
                 finalized,
-                false);
+                false,
+                CaptureSettings: source.Metadata.Capture);
         }
 
         void PublishProgress(
@@ -1090,7 +1091,8 @@ internal sealed class MutableCounters
             local.ReconnectGaps + sourceDefects.ReconnectGaps,
             local.ReconnectDuplicates + sourceDefects.ReconnectDuplicates,
             local.SourceChanges + sourceDefects.SourceChanges,
-            local.RetentionDeleted + sourceDefects.RetentionDeleted);
+            local.RetentionDeleted + sourceDefects.RetentionDeleted,
+            local.ReconnectGapMilliseconds + sourceDefects.ReconnectGapMilliseconds);
     }
 }
 

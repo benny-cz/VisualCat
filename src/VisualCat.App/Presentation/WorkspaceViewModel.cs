@@ -421,6 +421,19 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             Dispatcher.UIThread.Post(() =>
                 tab.ReportCaptureConnectionStatus(status?.Summary, status?.Detail));
 
+        void OnStreamEstablished()
+        {
+            var requested = source.Metadata.Capture?.RequestedBuffers;
+            var quietReason = requested switch
+            {
+                [var only] => $"the {only} buffer is empty",
+                { Count: > 1 } => $"waiting for records from {string.Join(", ", requested)}",
+                _ => "waiting for the source to log something",
+            };
+            Dispatcher.UIThread.Post(() =>
+                tab.ReportCaptureStreamEstablished(scope.Value, quietReason));
+        }
+
         // A source that only learns its own reach by exercising it says so when it knows.
         // Until then the status line carries the neutral name the source chose, rather than
         // promising a device-wide capture that may already have been declined.
@@ -432,6 +445,11 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         if (source is ISourceConnectionStatusReporter connectionReporter)
         {
             connectionReporter.ConnectionStatusChanged += OnConnectionStatusChanged;
+        }
+
+        if (source is ISourceStreamStartReporter streamStartReporter)
+        {
+            streamStartReporter.StreamEstablished += OnStreamEstablished;
         }
 
 
@@ -555,13 +573,8 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             var readerStopped = operation.GracefulStop.IsCancellationRequested;
             var durationElapsed = timed.IsCancellationRequested;
             var platformStopped = Volatile.Read(ref platformStopReason);
-            if (capturedEntries == 0)
-            {
-                tab.ReportActivity(
-                    SessionActivity.Stopped,
-                    "Stopped · no log entries were received; retry Live and generate app activity");
-            }
-            else if (platformStopped == (int)PlatformLiveCaptureStopReason.SystemTimeLimit)
+            var sourceCompletion = (source as ISourceCompletionReporter)?.Completion;
+            if (platformStopped == (int)PlatformLiveCaptureStopReason.SystemTimeLimit)
             {
                 tab.ReportActivity(
                     SessionActivity.Stopped,
@@ -579,6 +592,18 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
                     SessionActivity.Stopped,
                     $"Stopped · this capture ran its full duration · {Counted.Entries(capturedEntries)} kept");
             }
+            else if (sourceCompletion is not null)
+            {
+                tab.ReportActivity(
+                    SessionActivity.Stopped,
+                    $"Stopped · {sourceCompletion.Summary} · {Counted.Entries(capturedEntries)} kept");
+            }
+            else if (capturedEntries == 0)
+            {
+                tab.ReportActivity(
+                    SessionActivity.Stopped,
+                    "Stopped · no log entries were received; retry Live and generate app activity");
+            }
             else
             {
                 tab.ReportActivity(
@@ -590,7 +615,10 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             {
                 CaptureEndedUnprompted?.Invoke(
                     tab,
-                    capturedEntries == 0
+                    sourceCompletion is not null
+                        ? $"{sourceCompletion.Detail} {Counted.Entries(capturedEntries)} " +
+                          $"{(capturedEntries == 1 ? "was" : "were")} kept."
+                        : capturedEntries == 0
                         ? "The live capture stopped on its own before any log line arrived. Nothing was recorded."
                         : $"The live capture stopped on its own — the log source ended it. " +
                           $"{Counted.Entries(capturedEntries)} {(capturedEntries == 1 ? "was" : "were")} kept; start Live again to carry on.");
@@ -619,6 +647,10 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             if (source is ISourceConnectionStatusReporter finishedConnectionReporter)
             {
                 finishedConnectionReporter.ConnectionStatusChanged -= OnConnectionStatusChanged;
+            }
+            if (source is ISourceStreamStartReporter finishedStreamStartReporter)
+            {
+                finishedStreamStartReporter.StreamEstablished -= OnStreamEstablished;
             }
 
             // Release after the source and pipeline are no longer live, but before the
