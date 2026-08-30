@@ -530,9 +530,9 @@ the absolute gate still passes.
 | On-device import throughput | ≥ 30 000 lines/s sustained | Status line rate, cross-checked with wall clock |
 | First heat map visible after import starts | ≤ 3 s | screenrecord |
 | Search over 1 M entries, first results | ≤ 1.5 s | Stopwatch from Apply |
-| Timeline pan/zoom during ingest | No visible freeze > 1 s; ≤ 15% janky frames; p95 no worse than 20% over baseline | `dumpsys gfxinfo <PKG> framestats`, interpreted against the device refresh period |
+| Timeline pan/zoom during ingest | No visible freeze > 1 s; ≤ 15% janky frames; p95 no worse than 20% over baseline | **Perfetto FrameTimeline** — see §4.3.1. `dumpsys gfxinfo` does not see this renderer and reports zero frames for it |
 | Entry paging (`+500`) | ≤ 400 ms | screenrecord |
-| Live capture UI refresh | Bounded by the *Live UI refresh limit (Hz)* setting; no busy-loop | gfxinfo + `top` |
+| Live capture UI refresh | Bounded by the *Live UI refresh limit (Hz)* setting; no busy-loop | Perfetto FrameTimeline (§4.3.1) + `top` |
 | Stop capture → button answers | ≤ 250 ms to acknowledgement, and the acknowledgement is sticky | screenrecord |
 | Stop → "capture saved" | No absolute gate; the elapsed clock must advance visibly throughout and the stage must be named | Record total elapsed against entry count for each capture size; compare like with like across builds |
 | Live capture ingest rate, full-device | No absolute gate; flag a >20% drop against the recorded baseline for the same device and the same traffic | Status-line rate, cross-checked against the marker-bounded interval |
@@ -569,7 +569,72 @@ threads/handles/files, worsening latency, or resource exhaustion risk.
 Reset `gfxinfo` immediately before the interaction being measured; otherwise the
 numbers include start-up frames and mean nothing. `gfxinfo` counts only frames
 the process rendered; pair it with the recording and process-state evidence so a
-dead or frozen renderer does not look artificially smooth. Directory listings
+dead or frozen renderer does not look artificially smooth.
+
+> **`gfxinfo` is not a jank oracle for this renderer.** VisualCat draws its
+> workspace through Avalonia onto a `SurfaceView`-backed swapchain, which does not
+> go through the `HardwareRenderer` pipeline `dumpsys gfxinfo` reports on. On a
+> Samsung SM-G990B at API 36 a full pan/zoom burst over a one-million-line session
+> produced `Total frames rendered: 0` — not a smooth result, an empty one — and
+> `dumpsys SurfaceFlinger --latency` returned no frame rows for the app's layer
+> either. A percentage computed from zero frames is not a pass; it is the absence
+> of a measurement. Recorded as the frame-instrumentation amendment in
+> `ANDROID-LIVE-TEST-REPORT-V2.md` §11.
+
+### 4.3.1 Frame pacing — the procedure that measures the right pipeline
+
+Use Android's **FrameTimeline**, which is populated by SurfaceFlinger for every
+layer regardless of which renderer produced it, captured through Perfetto. This
+is the only ADB-reachable source that sees a `SurfaceView` swapchain, and it is
+what any frame-pacing release gate has to be computed from.
+
+```shell
+# 1. Record. `--time 20s` bounds the trace; the atrace categories are what carry
+#    the frame timeline and the app's own slices.
+<ADB> shell perfetto -o /data/misc/perfetto-traces/vc-frames.pftrace \
+  --time 20s --buffer 32mb \
+  gfx view sched freq idle am wm binder_driver hal
+
+# 2. Drive the interaction being measured while it records.
+
+# 3. Retrieve.
+<ADB> pull /data/misc/perfetto-traces/vc-frames.pftrace <EVIDENCE>/
+<ADB> shell rm /data/misc/perfetto-traces/vc-frames.pftrace
+```
+
+Read the trace with `trace_processor`, not by eye. The two tables that matter are
+`actual_frame_timeline_slice` and `expected_frame_timeline_slice`; a frame is
+janky when its actual duration exceeds the expected one, and `jank_type` names
+why:
+
+```sql
+-- Janky frames for one package, as a percentage, over the recorded window.
+select
+  count(*) filter (where jank_type not in ('None', 'Buffer Stuffing')) * 100.0
+    / count(*) as janky_percent,
+  count(*) as frames
+from actual_frame_timeline_slice
+where upid = (select upid from process where name = '<PKG>');
+```
+
+Three rules keep this honest, and each of them is why `gfxinfo` was believed for
+as long as it was:
+
+1. **A frame count of zero is Blocked, never Pass.** Assert `frames > 0` before
+   reading any percentage, and record the count beside it.
+2. **Name the refresh period.** The device's active mode decides the budget —
+   8.3 ms at 120 Hz, 16.7 ms at 60 Hz — so record
+   `dumpsys display | grep -i renderFrameRate` in the same evidence set. A
+   percentage without the period it was measured against is not comparable
+   between devices.
+3. **Keep the external fallback.** Where Perfetto is unavailable or the OEM build
+   refuses the categories, a high-frame-rate camera recording of the physical
+   screen measures the same signal and is the documented substitute. A screen
+   recording made by the device is not: `screenrecord` caps its own frame rate and
+   cannot resolve sub-frame latency.
+
+Until a run records `frames > 0` from this procedure, every frame-pacing row in
+§4.2 stays **Blocked**. Directory listings
 under `/data/anr` and `/data/tombstones` are optional diagnostics on a rooted or
 debuggable environment, never the sole release gate on a consumer device.
 Probe OEM-dependent command options before the measured interval. If an option is

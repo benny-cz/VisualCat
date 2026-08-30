@@ -471,8 +471,12 @@ internal static class VisualCatCli
         "export" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "--type", "--from", "--to", "--levels", "--order" },
         "verify" => new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+        // --format was parsed by GenerateAsync and rejected here, so the one option the live
+        // test plan's §3.2 asks for by name could not be passed at all: `vcat
+        // generate-test-log --format brief` failed as an unknown option while the code behind
+        // it worked. A plan must not command a CLI option the shipped CLI rejects (PLAN-01).
         "generate-test-log" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "--output", "--lines", "--seed" },
+            { "--output", "--lines", "--seed", "--format" },
         "adb-devices" => new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "--adb" },
         "capture-adb" => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "--serial", "--output", "--duration-seconds", "--max-bytes", "--adb", "--buffers", "--format" },
@@ -492,7 +496,7 @@ internal static class VisualCatCli
             "templates" => "vcat templates <session.vcat> [--top 50]",
             "export" => "vcat export <session.vcat> <output> [--type raw|csv|templates-md|templates-csv|stats-md|stats-csv|portable|portable-zip]",
             "verify" => "vcat verify <session.vcat>",
-            "generate-test-log" => "vcat generate-test-log [--output log.txt] [--lines 1000000] [--seed 42]",
+            "generate-test-log" => "vcat generate-test-log [--output log.txt] [--lines 1000000] [--seed 42] [--format threadtime|time|brief|long|epoch]",
             "adb-devices" => "vcat adb-devices [--adb path]",
             "capture-adb" => "vcat capture-adb --serial SERIAL [--output session.vcat] [--duration-seconds N] [--max-bytes N]",
             _ => null,
@@ -520,7 +524,7 @@ internal static class VisualCatCli
           vcat templates <session.vcat> [--top 50]
           vcat export <session.vcat> <output> [--type raw|csv|templates-md|templates-csv|stats-md|stats-csv|portable|portable-zip]
           vcat verify <session.vcat>
-          vcat generate-test-log [--output log.txt] [--lines 1000000] [--seed 42]
+          vcat generate-test-log [--output log.txt] [--lines 1000000] [--seed 42] [--format threadtime|time|brief|long|epoch]
           vcat adb-devices [--adb path]
           vcat capture-adb --serial SERIAL [--output session.vcat] [--duration-seconds N] [--max-bytes N]
         """);

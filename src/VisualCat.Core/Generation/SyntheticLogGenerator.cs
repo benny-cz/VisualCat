@@ -91,6 +91,15 @@ public static class SyntheticLogGenerator
                 $"{InstantUs.FromDateTimeOffset(instant).Value / 1_000_000m:F6} {pid,5} {tid,5} {level.ToLetter()} {tag}: {message}"),
             LogcatFormat.Time => $"{instant:MM-dd HH:mm:ss.fff} {level.ToLetter()}/{tag}({pid,5}): {message}",
             LogcatFormat.Brief => $"{level.ToLetter()}/{tag}({pid,5}): {message}",
+
+            // Long format is two lines and a blank one: a bracketed header, the message on its
+            // own, then a separator. It used to fall through to the ThreadTime arm, so
+            // `--format long` produced ThreadTime and the detector duly reported ThreadTime —
+            // the option was accepted and silently ignored, which is a worse failure than
+            // rejecting it (PLAN-01). The header shape is exactly what LogcatParser.TryLong
+            // reads back: "[ MM-dd HH:mm:ss.fff  pid: tid L/Tag ]".
+            LogcatFormat.LongFormat =>
+                $"[ {instant:MM-dd HH:mm:ss.fff} {pid,5}:{tid,5} {level.ToLetter()}/{tag} ]\n{message}\n",
             _ => $"{instant:MM-dd HH:mm:ss.ffffff} {pid,5} {tid,5} {level.ToLetter()} {tag,-16}: {message}",
         };
 }

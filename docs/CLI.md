@@ -219,8 +219,13 @@ Generates deterministic synthetic logcat data. Defaults are
 settings produce byte-identical content across supported platforms. The
 absolute output path is printed.
 
+`--format` accepts `threadtime`, `time`, `brief`, `long`, or `epoch`, and is what
+produces the format-detection corpora the Android live-test plan's §3.2 asks for
+without hand-editing a generated file.
+
 ```shell
 vcat generate-test-log --output large.txt --lines 1000000 --seed 42
+vcat generate-test-log --output fmt-brief.txt --lines 5000 --seed 42 --format brief
 ```
 
 ## `adb-devices`
