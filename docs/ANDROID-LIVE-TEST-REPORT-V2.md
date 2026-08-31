@@ -3690,4 +3690,3 @@ the two that are closed for a different reason: V2-01 is a misattribution
 (§20.7.2) and V2-25 was a harness artefact of this run (§21.1). What remains open
 is §21.4's list minus V2-22 — that is, the plan's own §12 coverage gaps, the v1
 report's dangling links, and the release-script stages that were not run here.
-

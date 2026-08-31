@@ -48,7 +48,7 @@
 
         major * 1000000 + minor * 10000 + patch * 100 + build
 
-    so 2.0.10 -> 2001000 and 2.1.0 built with -VisualCatBuildNumber 3 -> 2010003.
+    so 2.0.11 -> 2001100 and 2.1.0 built with -VisualCatBuildNumber 3 -> 2010003.
     Play refuses a code it has already seen on any track, so a second build of the
     same version needs the build counter bumped rather than this parameter set;
     overriding here is for re-uploading an unchanged version.

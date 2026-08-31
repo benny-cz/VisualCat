@@ -77,7 +77,7 @@ and an explicit build counter:
 versionCode = major * 1000000 + minor * 10000 + patch * 100 + VisualCatBuildNumber
 ```
 
-so 2.0.10 is `2001000`, and `-VisualCatBuildNumber 3` on 2.1.0 gives `2010003`.
+so 2.0.11 is `2001100`, and `-VisualCatBuildNumber 3` on 2.1.0 gives `2010003`.
 Each field owns two digits and the build fails rather than wrap. The prerelease
 suffix is **not** an input, so two builds of the same version — `v2.1.0-beta.1`
 and `v2.1.0-beta.2` — need the counter bumped or Play rejects the second.

@@ -248,7 +248,7 @@ do not add it to the current API-36 build pre-emptively.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version and an explicit build counter: `major*1000000 + minor*10000 + patch*100 + build`, so `2.0.10` → `2001000` and `2.1.0` with `-VisualCatBuildNumber 3` → `2010003`. See `docs/RELEASE-CHECKLIST.md`. |
+| versionCode | Derived from the release version and an explicit build counter: `major*1000000 + minor*10000 + patch*100 + build`, so `2.0.11` → `2001100` and `2.1.0` with `-VisualCatBuildNumber 3` → `2010003`. See `docs/RELEASE-CHECKLIST.md`. |
 | inAppUpdatePriority | Set per release through the Play Developer API before rollout; it cannot be changed afterwards. See `docs/RELEASE-CHECKLIST.md`. |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
@@ -265,6 +265,12 @@ explore it as a zoomable severity-by-time heat map with filters, ranked message
 templates and byte-faithful source context. Full-device Live capture can pair
 with Android Wireless debugging; VisualCat-only capture works without setup.
 Everything is processed on the device.
+```
+
+Release notes for `2.0.11` (479/500 characters):
+
+```text
+Logs are easier to inspect end to end: Unparsed lines exposes stack traces and rejected records, count rows identify untimed or hidden data, search can jump to the first, last, or a chosen match, and sessions can Load all. CSV export now offers clear scopes. Live ADB capture records its settings and handles silent or disconnected devices and byte limits honestly, while phone layouts, Back gestures, touch targets, text scaling, and older Android system bars are more reliable.
 ```
 
 Release notes for `2.0.10` (467/500 characters):

@@ -12,3 +12,5 @@ VisualCat v2 command line (<version>)
   vcat generate-test-log [--output log.txt] [--lines 1000000] [--seed 42] [--format threadtime|time|brief|long|epoch]
   vcat adb-devices [--adb path]
   vcat capture-adb --serial SERIAL [--output session.vcat] [--duration-seconds N] [--max-bytes N]
+
+Run 'vcat <command> --help' for one command's complete option list.

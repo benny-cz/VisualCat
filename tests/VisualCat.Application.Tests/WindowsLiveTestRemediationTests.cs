@@ -48,7 +48,8 @@ public sealed class WindowsLiveTestRemediationTests
             ["main", "system", "crash"],
             maximumCaptureBytes: 1024,
             preRoll: TimeSpan.FromSeconds(30),
-            durationLimit: TimeSpan.FromMinutes(5)) { Timing = FastTiming };
+            durationLimit: TimeSpan.FromMinutes(5))
+        { Timing = FastTiming };
 
         await source.PrepareAsync(TestContext.Current.CancellationToken);
 
@@ -81,7 +82,8 @@ public sealed class WindowsLiveTestRemediationTests
             "ABC",
             ["main", "crash"],
             preRoll: TimeSpan.FromSeconds(30),
-            durationLimit: TimeSpan.FromMinutes(5)) { Timing = FastTiming };
+            durationLimit: TimeSpan.FromMinutes(5))
+        { Timing = FastTiming };
         try
         {
             await source.PrepareAsync(TestContext.Current.CancellationToken);

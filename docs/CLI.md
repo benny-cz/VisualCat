@@ -7,12 +7,12 @@ finds corruption, `130` when cancelled, and `1` for other failures. Diagnostics
 go to standard error; structured results go to standard output.
 
 NuGet.org publication is not currently configured. Download
-`VisualCat.Cli.2.0.10.nupkg` from the
+`VisualCat.Cli.2.0.11.nupkg` from the
 [latest GitHub release](https://github.com/benny-cz/VisualCat/releases/latest)
 into `./packages`, then install that exact package from the local feed:
 
 ```shell
-dotnet tool install --global VisualCat.Cli --version 2.0.10 --add-source ./packages
+dotnet tool install --global VisualCat.Cli --version 2.0.11 --add-source ./packages
 vcat --version
 ```
 
@@ -21,6 +21,8 @@ From a source checkout, replace `vcat` in every example with:
 ```shell
 dotnet run --project src/VisualCat.Cli --
 ```
+
+Run `vcat <command> --help` for that command's complete accepted option list.
 
 ## Common option conventions
 
