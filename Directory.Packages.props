@@ -12,7 +12,7 @@
     <PackageVersion Include="Avalonia.Skia" Version="12.1.0" />
     <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.0" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
-    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.301" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.400" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <PackageVersion Include="Xamarin.AndroidX.Annotation" Version="$(XamarinAndroidXAnnotationVersion)" />
     <PackageVersion Include="Xamarin.AndroidX.Core" Version="1.17.0.2" />
