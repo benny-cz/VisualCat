@@ -1004,18 +1004,20 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     internal static string? ImportRemedy(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        if (Unwrap(exception) is not InvalidDataException)
+        if (Unwrap(exception) is not ImportSourceException failure)
         {
             return null;
         }
 
-        // An empty file is not a file in the wrong format, and advising the reader to check
-        // that it is a logcat capture rather than a bug report is advice about a file that has
-        // no contents to be either (V2-12).
-        if (Unwrap(exception).Message.StartsWith("This file is empty", StringComparison.Ordinal))
+        if (failure.Reason == ImportFailureReason.EmptySource)
         {
             return "Nothing was written to it. Check the capture that produced it, or pick a " +
                    "different file.";
+        }
+
+        if (failure.Reason == ImportFailureReason.UnsupportedEncoding)
+        {
+            return "Convert or save the log as UTF-8, then open that UTF-8 copy.";
         }
 
         // No Markdown: this is read by a plain TextBlock, so backticks around logcat and .vcat

@@ -62,6 +62,10 @@ public sealed record SourceMetadata(
             : TimeZoneInfo.Local.Id;
 }
 
+/// <summary>
+/// A source byte window. Its memory remains valid until the source iterator is advanced;
+/// consumers that retain it longer must copy it.
+/// </summary>
 public sealed record SourceChunk(long RawOffset, ReadOnlyMemory<byte> Bytes);
 
 public sealed record SourceReadContext(Guid SessionId, long CoordinatorGeneration, string SessionDirectory);

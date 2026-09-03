@@ -1002,7 +1002,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     token);
                 return (heat, overview, stats, details);
             }, token).ConfigureAwait(false);
-            var searchTask = RunSearchAsync();
+            var searchTask = Task.Run(RunSearchAsync, token);
             var results = await queryTask;
             var searchResult = await searchTask.ConfigureAwait(false);
             if (generation != Volatile.Read(ref _queryGeneration) ||

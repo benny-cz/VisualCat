@@ -7,12 +7,20 @@ namespace VisualCat.Core.Store;
 public sealed class SessionSnapshot : IDisposable
 {
     private bool _disposed;
+    private readonly Lazy<IReadOnlyList<TemplateDefinition>> _templates;
 
-    internal SessionSnapshot(string rootPath, SessionManifest manifest, IReadOnlyList<SegmentSnapshot> segments)
+    internal SessionSnapshot(
+        string rootPath,
+        SessionManifest manifest,
+        IReadOnlyList<SegmentSnapshot> segments,
+        Func<IReadOnlyList<TemplateDefinition>> templateLoader)
     {
         RootPath = rootPath;
         Manifest = manifest;
         Segments = segments;
+        _templates = new Lazy<IReadOnlyList<TemplateDefinition>>(
+            templateLoader,
+            LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     public string RootPath { get; }
@@ -30,7 +38,8 @@ public sealed class SessionSnapshot : IDisposable
     public int MappedColumnCount => Segments.Sum(static segment => segment.MappedColumnCount);
     public IReadOnlyList<string> Tags => Manifest.Tags;
     public IReadOnlyList<string> Buffers => Manifest.Buffers;
-    public IReadOnlyList<TemplateDefinition> Templates => Manifest.Templates;
+    /// <summary>Loads template descriptions only when an insight or report asks for them.</summary>
+    public IReadOnlyList<TemplateDefinition> Templates => _templates.Value;
     public IReadOnlyList<ProcessNameRange> ProcessNames => Manifest.ProcessNames ?? [];
     public string? RawPath => Manifest.Source.Embedded
         ? Path.Combine(RootPath, "raw.log")

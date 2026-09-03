@@ -61,7 +61,7 @@ public sealed class DrainTemplateMiner
     /// only in <c>TemplateId</c>, once per line in the session (§19.3).
     /// </summary>
     public uint AssignId(string tag, string message, InstantUs? timestamp, long entryId) =>
-        _settings.Enabled ? Match(tag, message, timestamp, entryId, null).Id : 0u;
+        _settings.Enabled ? Match(tag, message, timestamp, entryId, null)?.Id ?? 0u : 0u;
 
     /// <summary>
     /// Clusters one entry and returns the cluster itself rather than an identity. Used by
@@ -71,6 +71,12 @@ public sealed class DrainTemplateMiner
     /// </summary>
     internal Cluster? MatchCluster(string tag, string message, InstantUs? timestamp, long entryId) =>
         _settings.Enabled ? Match(tag, message, timestamp, entryId, null) : null;
+
+    /// <summary>
+    /// Stops this shard from minting clusters after its owner spends the session-wide
+    /// budget. Existing clusters continue matching and accumulating evidence.
+    /// </summary>
+    internal bool PreventNewClusters { get; set; }
 
     /// <summary>Clusters this miner created, in creation order.</summary>
     internal IReadOnlyList<Cluster> CreatedClusters => _created;
@@ -85,6 +91,11 @@ public sealed class DrainTemplateMiner
 
         var parameters = new List<string>();
         var cluster = Match(entry.Tag, entry.Message, entry.Timestamp, entry.EntryId, parameters);
+        if (cluster is null)
+        {
+            return new TemplateAssignment(0, string.Empty, []);
+        }
+
         return new TemplateAssignment(cluster.Id, string.Join(' ', cluster.Tokens), parameters);
     }
 
@@ -93,7 +104,7 @@ public sealed class DrainTemplateMiner
     /// similar cluster at the leaf (§9.3). State is keyed by tag — never by shard — so
     /// clustering cannot depend on worker configuration (§9.4).
     /// </summary>
-    private Cluster Match(string tag, string message, InstantUs? entryTimestamp, long entryId, List<string>? parameters)
+    private Cluster? Match(string tag, string message, InstantUs? entryTimestamp, long entryId, List<string>? parameters)
     {
         var masked = ApplyMasks(message);
         var tokens = _tokenRanges;
@@ -114,7 +125,15 @@ public sealed class DrainTemplateMiner
 
         var leaf = Descend(root, masked, tokens);
         var best = SelectCluster(leaf, tagState, masked, tokens);
-        Generalize(best, masked, tokens, parameters);
+        if (best is null)
+        {
+            return null;
+        }
+
+        if (Generalize(best, masked, tokens, parameters))
+        {
+            best.ShapeRevision++;
+        }
 
         best.Count++;
         if (entryTimestamp is { } timestamp)
@@ -127,6 +146,8 @@ public sealed class DrainTemplateMiner
         {
             best.Examples.Add(entryId);
         }
+
+        best.Revision++;
 
         return best;
     }
@@ -183,7 +204,7 @@ public sealed class DrainTemplateMiner
         return node;
     }
 
-    private Cluster SelectCluster(Node leaf, TagState tagState, string masked, List<Range> tokens)
+    private Cluster? SelectCluster(Node leaf, TagState tagState, string masked, List<Range> tokens)
     {
         Cluster? best = null;
         var bestSimilarity = -1d;
@@ -201,6 +222,11 @@ public sealed class DrainTemplateMiner
         }
 
         if (best is not null && bestSimilarity >= _settings.SimilarityThreshold)
+        {
+            return best;
+        }
+
+        if (PreventNewClusters)
         {
             return best;
         }
@@ -232,8 +258,9 @@ public sealed class DrainTemplateMiner
         return created;
     }
 
-    private static void Generalize(Cluster cluster, string masked, List<Range> tokens, List<string>? parameters)
+    private static bool Generalize(Cluster cluster, string masked, List<Range> tokens, List<string>? parameters)
     {
+        var changed = false;
         // A forced absorption can land on a cluster of a different length; only the
         // positions the two share can generalize.
         var shared = Math.Min(cluster.Tokens.Length, tokens.Count);
@@ -242,6 +269,7 @@ public sealed class DrainTemplateMiner
             var token = masked.AsSpan(tokens[index]);
             if (!token.Equals(cluster.Tokens[index], StringComparison.Ordinal))
             {
+                changed |= cluster.Tokens[index] != Wildcard;
                 cluster.Tokens[index] = Wildcard;
                 parameters?.Add(token.ToString());
             }
@@ -250,6 +278,8 @@ public sealed class DrainTemplateMiner
                 parameters?.Add(token.ToString());
             }
         }
+
+        return changed;
     }
 
     private static double Similarity(string[] template, string masked, List<Range> tokens)
@@ -321,8 +351,16 @@ public sealed class DrainTemplateMiner
 
     internal static TemplateDefinition Describe(Cluster cluster, string algorithmVersion, uint id)
     {
+        if (cluster.CachedDefinition is { } cached &&
+            cluster.CachedRevision == cluster.Revision &&
+            cluster.CachedId == id &&
+            string.Equals(cluster.CachedAlgorithmVersion, algorithmVersion, StringComparison.Ordinal))
+        {
+            return cached;
+        }
+
         var canonical = string.Join(' ', cluster.Tokens);
-        return new TemplateDefinition(
+        var definition = new TemplateDefinition(
             id,
             canonical,
             "drain",
@@ -333,6 +371,11 @@ public sealed class DrainTemplateMiner
             cluster.Count,
             cluster.Examples.ToArray(),
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))));
+        cluster.CachedRevision = cluster.Revision;
+        cluster.CachedId = id;
+        cluster.CachedAlgorithmVersion = algorithmVersion;
+        cluster.CachedDefinition = definition;
+        return definition;
     }
 
     [Flags]
@@ -519,5 +562,17 @@ public sealed class DrainTemplateMiner
         public InstantUs? First { get; set; }
         public InstantUs? Last { get; set; }
         public List<long> Examples { get; } = [];
+        public long Revision { get; set; }
+        /// <summary>
+        /// Changes only when the persisted canonical shape changes. Counts, time bounds,
+        /// and examples receive one authoritative revision at finalization instead of
+        /// making every live publication rewrite every hot template.
+        /// </summary>
+        public long ShapeRevision { get; set; } = 1;
+        public long PublishedShapeRevision { get; set; }
+        public long CachedRevision { get; set; } = -1;
+        public uint CachedId { get; set; }
+        public string? CachedAlgorithmVersion { get; set; }
+        public TemplateDefinition? CachedDefinition { get; set; }
     }
 }

@@ -22,6 +22,7 @@ public sealed class LogcatParser
 
     public static int Probe(ReadOnlySpan<byte> bytes, LogcatFormat format)
     {
+        bytes = TrimUtf8Bom(bytes);
         var line = Decode(bytes, out _);
         return TryParse(line.AsSpan(), format, null, out var fields, out _) && fields is not null ? Score(fields) : 0;
     }
@@ -59,7 +60,7 @@ public sealed class LogcatParser
 
     public static ParseOutcome Parse(SourceLine source, LogcatFormat primaryFormat, string? activeBuffer = null)
     {
-        var bytes = TrimLine(source.Bytes.Span);
+        var bytes = TrimUtf8Bom(TrimLine(source.Bytes.Span));
         if (bytes.IsEmpty)
         {
             return ParseOutcome.Blank(source);
@@ -134,6 +135,9 @@ public sealed class LogcatParser
             _ => false,
         };
     }
+
+    private static ReadOnlySpan<byte> TrimUtf8Bom(ReadOnlySpan<byte> bytes) =>
+        bytes.StartsWith("\uFEFF"u8) ? bytes[3..] : bytes;
 
     private static bool TryThreadTime(
         ReadOnlySpan<char> line,

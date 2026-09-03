@@ -326,6 +326,37 @@ public sealed class PipelineIntegrationTests
     }
 
     [Fact]
+    public async Task ChronologicalPagingDoesNotReapplyTheSourceSequenceCursor()
+    {
+        // Source order in the fixture is alpha (37.496), beta (37.498), gamma
+        // (37.497). Chronological paging therefore crosses from gamma's higher source
+        // sequence back to beta's lower one. The timestamp cursor, not the standalone
+        // sequence, must decide whether beta belongs to the next page.
+        await using var imported = await ImportAsync([9], workers: 2);
+        var range = imported.Snapshot.TimedRange!.Value;
+        EntryCursor? cursor = null;
+        var messages = new List<string>();
+        long generation = 1;
+
+        do
+        {
+            var page = SessionQueryEngine.GetEntries(
+                imported.Snapshot,
+                range,
+                FilterSpec.All,
+                EntryOrder.Chronological,
+                cursor,
+                1,
+                generation++);
+            messages.AddRange(page.Entries.Select(static entry => entry.Message));
+            cursor = page.NextCursor;
+        }
+        while (cursor is not null);
+
+        Assert.Equal(["alpha 1000", "gamma 3000", "beta 2000"], messages);
+    }
+
+    [Fact]
     public async Task FacetsOmitTheirOwnSelectedDimension()
     {
         await using var imported = await ImportAsync([17], workers: 2);
@@ -1001,7 +1032,7 @@ public sealed class PipelineIntegrationTests
     }
 
     [Fact]
-    public async Task UntimedEntriesAreStreamedToACompleteReopenableSidecar()
+    public async Task UntimedEntriesRemainRecoverableWithoutARedundantJsonSidecar()
     {
         var root = Path.Combine(Path.GetTempPath(), $"visualcat-untimed-{Guid.NewGuid():N}.vcat");
         var text = string.Concat(Enumerable.Range(0, 5_000).Select(index => $"I/Brief( 42): message {index}\n"));
@@ -1016,13 +1047,15 @@ public sealed class PipelineIntegrationTests
 
         Assert.Equal(5_000, imported.Snapshot.Descriptor.Counters.UntimedEntries);
         var path = Path.Combine(root, "source-order", "untimed.json");
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var entries = await JsonSerializer.DeserializeAsync<NormalizedEntry[]>(
-            stream,
-            WebJson);
-        Assert.NotNull(entries);
-        Assert.Equal(5_000, entries.Length);
-        Assert.All(entries, static entry => Assert.Null(entry.Timestamp));
+        Assert.False(File.Exists(path));
+        var records = SessionQueryEngine.ScanSourceRecords(
+            imported.Snapshot,
+            0,
+            6_000,
+            6_000,
+            static outcome => outcome == ParseOutcomeKind.UntimedEntry);
+        Assert.True(records.Completed);
+        Assert.Equal(5_000, records.Records.Count);
     }
 
     [Fact]
@@ -1041,6 +1074,72 @@ public sealed class PipelineIntegrationTests
         {
             File.Delete(path);
         }
+    }
+
+    [Fact]
+    public async Task Utf16InputFailsWithAnEncodingSpecificReason()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-utf16-{Guid.NewGuid():N}.vcat");
+        var content = Encoding.Unicode.GetPreamble()
+            .Concat(Encoding.Unicode.GetBytes("05-15 14:13:37.496  1  2 I Tag: message\n"))
+            .ToArray();
+        await using var source = new MemoryLogSource(content, [content.Length]);
+
+        var failure = await Assert.ThrowsAsync<ImportSourceException>(() =>
+            SessionCoordinator.ImportAsync(source, root, Settings(1)));
+        Assert.Equal(ImportFailureReason.UnsupportedEncoding, failure.Reason);
+        Assert.Contains("UTF-16", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HighCardinalityTemplatesKeepManifestAndSidecarGrowthLinear()
+    {
+        const int templateCount = 5_000;
+        const int repetitions = 3;
+        var text = new StringBuilder(templateCount * repetitions * 64);
+        for (var repetition = 0; repetition < repetitions; repetition++)
+        {
+            for (var index = 0; index < templateCount; index++)
+            {
+                text.Append("05-15 14:13:37.496  1  2 I Svc")
+                    .Append(index.ToString("D5", System.Globalization.CultureInfo.InvariantCulture))
+                    .Append(": stable message\n");
+            }
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-templates-{Guid.NewGuid():N}.vcat");
+        await using var source = new MemoryLogSource(Encoding.UTF8.GetBytes(text.ToString()), [4096]);
+        var result = await SessionCoordinator.ImportAsync(
+            source,
+            root,
+            Settings(4) with { SegmentEntries = 250 });
+        await using var imported = new ImportedSession(root, result.Snapshot);
+
+        var manifestPath = Path.Combine(root, "manifest.json");
+        var manifest = JsonNode.Parse(await File.ReadAllTextAsync(manifestPath))!.AsObject();
+        Assert.Empty(manifest["templates"]!.AsArray());
+        Assert.Equal(templateCount, imported.Snapshot.Descriptor.Counters.Templates);
+        Assert.Equal(templateCount, imported.Snapshot.Templates.Count);
+        Assert.True(new FileInfo(manifestPath).Length < 256 * 1024);
+
+        // A live capture appends a record every time a template's shape changes, so the
+        // file it grows carries revisions that a reader folds by id and throws away.
+        // Finalization writes each template exactly once into a file of its own and names
+        // that instead, so a finished session neither stores nor parses a superseded one.
+        var sidecarName = manifest["templateSidecarName"]!.GetValue<string>();
+        Assert.Equal("templates-final.jsonl", sidecarName);
+        var sidecarPath = Path.Combine(root, sidecarName);
+        Assert.False(File.Exists(Path.Combine(root, "templates.jsonl")));
+        Assert.Equal(templateCount, File.ReadLines(sidecarPath).LongCount());
+        Assert.Equal(new FileInfo(sidecarPath).Length, manifest["templateSidecarLength"]!.GetValue<long>());
+        Assert.True(new FileInfo(sidecarPath).Length > new FileInfo(manifestPath).Length);
+
+        // Ids are contiguous from one, which is what lets the reader validate the file
+        // against the count the manifest declares.
+        var ids = File.ReadLines(sidecarPath)
+            .Select(static line => JsonNode.Parse(line)!["templateId"]!.GetValue<long>())
+            .ToArray();
+        Assert.Equal(Enumerable.Range(1, templateCount).Select(static value => (long)value), ids);
     }
 
     /// <summary>

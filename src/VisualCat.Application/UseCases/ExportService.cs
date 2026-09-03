@@ -22,6 +22,7 @@ public static class ExportService
         var rawPath = RequireRaw(snapshot);
         await using var source = new FileStream(rawPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, true);
         await using var output = new AtomicDestination(destination);
+        var buffer = new byte[1024 * 1024];
         var cursor = (EntryCursor?)null;
         long generation = 1;
         do
@@ -29,7 +30,7 @@ public static class ExportService
             var page = SessionQueryEngine.GetEntries(snapshot, range, filter, order, cursor, 4096, generation++, cancellationToken);
             foreach (var entry in page.Entries)
             {
-                await CopySpanAsync(source, output.Stream, entry.Raw.Offset, entry.Raw.Length, cancellationToken).ConfigureAwait(false);
+                await CopySpanAsync(source, output.Stream, entry.Raw.Offset, entry.Raw.Length, buffer, cancellationToken).ConfigureAwait(false);
             }
 
             cursor = page.NextCursor;
@@ -51,9 +52,10 @@ public static class ExportService
         var records = SessionQueryEngine.GetRawContext(snapshot, sourceSequence, before, after);
         await using var source = new FileStream(rawPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, true);
         await using var output = new AtomicDestination(destination);
+        var buffer = new byte[1024 * 1024];
         foreach (var record in records)
         {
-            await CopySpanAsync(source, output.Stream, record.Raw.Offset, record.Raw.Length, cancellationToken).ConfigureAwait(false);
+            await CopySpanAsync(source, output.Stream, record.Raw.Offset, record.Raw.Length, buffer, cancellationToken).ConfigureAwait(false);
         }
 
         await output.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -98,6 +100,7 @@ public static class ExportService
         await using (var writer = new StreamWriter(output.Stream, new UTF8Encoding(includeUtf8Bom), 1024 * 1024, leaveOpen: true))
         {
             await writer.WriteLineAsync("timestamp_utc,level,pid,tid,buffer,tag,template_id,message").ConfigureAwait(false);
+            var row = new StringBuilder(512);
             EntryCursor? cursor = null;
             long generation = 1;
             do
@@ -107,18 +110,20 @@ public static class ExportService
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     written++;
-                    var values = new[]
-                    {
-                        entry.Timestamp?.ToString() ?? string.Empty,
-                        entry.Level.ToString(),
-                        entry.Pid.ToString(CultureInfo.InvariantCulture),
-                        entry.Tid.ToString(CultureInfo.InvariantCulture),
-                        entry.Buffer,
-                        entry.Tag,
-                        entry.TemplateId.ToString(CultureInfo.InvariantCulture),
-                        entry.Message,
-                    };
-                    await writer.WriteLineAsync(string.Join(',', values.Select(EscapeCsv))).ConfigureAwait(false);
+                    row.Clear();
+                    AppendCsv(row, entry.Timestamp?.ToString() ?? string.Empty);
+                    row.Append(',');
+                    AppendCsv(row, entry.Level.ToString());
+                    row.Append(',').Append(entry.Pid.ToString(CultureInfo.InvariantCulture));
+                    row.Append(',').Append(entry.Tid.ToString(CultureInfo.InvariantCulture));
+                    row.Append(',');
+                    AppendCsv(row, entry.Buffer);
+                    row.Append(',');
+                    AppendCsv(row, entry.Tag);
+                    row.Append(',').Append(entry.TemplateId.ToString(CultureInfo.InvariantCulture));
+                    row.Append(',');
+                    AppendCsv(row, entry.Message);
+                    await writer.WriteLineAsync(row.ToString()).ConfigureAwait(false);
                 }
 
                 cursor = page.NextCursor;
@@ -240,11 +245,15 @@ public static class ExportService
         Stream destination,
         long offset,
         int length,
+        byte[] buffer,
         CancellationToken cancellationToken)
     {
-        source.Position = offset;
+        if (source.Position != offset)
+        {
+            source.Position = offset;
+        }
+
         var remaining = length;
-        var buffer = new byte[Math.Min(1024 * 1024, Math.Max(1, length))];
         while (remaining > 0)
         {
             var read = await source.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), cancellationToken).ConfigureAwait(false);
@@ -262,6 +271,27 @@ public static class ExportService
         value.IndexOfAny([',', '"', '\r', '\n']) < 0
             ? value
             : $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+
+    private static void AppendCsv(StringBuilder builder, string value)
+    {
+        if (value.IndexOfAny([',', '"', '\r', '\n']) < 0)
+        {
+            builder.Append(value);
+            return;
+        }
+
+        builder.Append('"');
+        foreach (var character in value)
+        {
+            builder.Append(character);
+            if (character == '"')
+            {
+                builder.Append('"');
+            }
+        }
+
+        builder.Append('"');
+    }
 
     private sealed class AtomicDestination : IAsyncDisposable
     {

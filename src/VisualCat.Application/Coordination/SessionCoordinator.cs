@@ -46,6 +46,8 @@ public sealed class SessionCoordinator
         var stopwatch = Stopwatch.StartNew();
 
         var samples = await source.ProbeAsync(200, cancellationToken).ConfigureAwait(false);
+        ImportSourceException.ThrowIfUnsupportedEncoding(samples);
+
         var detection = settings.FormatOverride is { } format
             ? new FormatDetectionResult(format, [], 1, [new FormatCandidate(format, samples.Count, samples.Count * 6, 1)], samples.Count)
             : FormatDetector.Detect(samples);
@@ -59,14 +61,17 @@ public sealed class SessionCoordinator
             // cases say different, true things.
             if (samples.Count == 0)
             {
-                throw new InvalidDataException("This file is empty — there is nothing to import.");
+                throw new ImportSourceException(
+                    ImportFailureReason.EmptySource,
+                    "This file is empty — there is nothing to import.");
             }
 
             // States the fact only. What to do about it differs by platform — the desktop
             // import preview offers a format override and the Android companion has no such
             // control — so the remedy is added by whoever is talking to the user rather than
             // baked into a message that was advising phone users to use a desktop dialog.
-            throw new InvalidDataException(
+            throw new ImportSourceException(
+                ImportFailureReason.UndetectableFormat,
                 "No supported logcat format could be detected in this file.");
         }
 
@@ -271,9 +276,13 @@ public sealed class SessionCoordinator
             var descriptor = CreateDescriptor(SessionState.Ready, true);
             await store.FinalizeAsync(
                 descriptor,
+                // Finalization writes authoritative counts, time bounds, and examples.
+                // Progressive snapshots publish only new or generalized shapes so the
+                // sidecar remains linear even when every hot template matches forever.
                 miner.GetDefinitions(),
                 processNames.Snapshot(),
                 cancellationToken).ConfigureAwait(false);
+            miner.MarkDefinitionsPublished();
             if (state.State == SessionState.Streaming)
             {
                 state.TransitionTo(SessionState.Stopping);
@@ -588,9 +597,10 @@ public sealed class SessionCoordinator
             {
                 await store.PublishSnapshotAsync(
                     partial,
-                    miner.GetDefinitions(),
+                    miner.GetChangedDefinitions(),
                     processNames.Snapshot(),
                     cancellationToken).ConfigureAwait(false);
+                miner.MarkDefinitionsPublished();
                 publishFailure = null;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -657,7 +667,7 @@ public sealed class SessionCoordinator
                 settings.TimestampPolicy,
                 settings.TemplateSettings,
                 counters.ToCounters(observedBytes, observedLines, miner.TemplateCount),
-                counters.ToDefects((source as ISourceDefectSource)?.GetDefects()),
+                counters.ToDefects((source as ISourceDefectSource)?.GetDefects(), miner.OverflowAssignments),
                 first,
                 last,
                 finalized,
@@ -744,9 +754,10 @@ public sealed class SessionCoordinator
                 store.FlushSegment();
                 await store.PublishSnapshotAsync(
                     CreateDescriptor(sessionState, false),
-                    miner.GetDefinitions(),
+                    miner.GetChangedDefinitions(),
                     processNames.Snapshot(),
                     CancellationToken.None).ConfigureAwait(false);
+                miner.MarkDefinitionsPublished();
             }
             catch
             {
@@ -802,6 +813,11 @@ public sealed class SessionCoordinator
 
     private static void ValidateSettings(IngestSettings settings)
     {
+        if (!string.Equals(settings.EncodingName, "utf-8", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("VisualCat currently accepts UTF-8 log input only.", nameof(settings));
+        }
+
         if (settings.BatchBytes is < 1 or > 256 * 1024 * 1024)
         {
             throw new ArgumentOutOfRangeException(nameof(settings), "Batch size must be between 1 byte and 256 MiB.");
@@ -820,6 +836,13 @@ public sealed class SessionCoordinator
         if (settings.ParseWorkers is < 0 or > 256)
         {
             throw new ArgumentOutOfRangeException(nameof(settings), "Parse worker count must be automatic or between 1 and 256.");
+        }
+
+        if (settings.TemplateSettings.MaximumClusters is < 1 or > TemplateSettings.AbsoluteMaximumClusters)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(settings),
+                $"The session-wide template cluster limit must be between 1 and {TemplateSettings.AbsoluteMaximumClusters:N0}.");
         }
 
         if (settings.SegmentEntries is < 1 or > 5_000_000)
@@ -1057,7 +1080,7 @@ internal sealed class MutableCounters
     public SessionCounters ToCounters(long bytes, long lines, long templates) =>
         new(bytes, lines, ParsedEntries, TimedEntries, Meta, Unknown, Rejected, Continuations, Untimed, Blanks, templates);
 
-    public DefectCounters ToDefects(DefectCounters? sourceDefects = null)
+    public DefectCounters ToDefects(DefectCounters? sourceDefects = null, long templateOverflowEntries = 0)
     {
         var local = new DefectCounters(
             Unknown,
@@ -1070,7 +1093,8 @@ internal sealed class MutableCounters
             0,
             EncodingFallbacks,
             LongLines,
-            ChattyDrops);
+            ChattyDrops,
+            TemplateOverflowEntries: templateOverflowEntries);
         if (sourceDefects is null)
         {
             return local;
@@ -1092,7 +1116,8 @@ internal sealed class MutableCounters
             local.ReconnectDuplicates + sourceDefects.ReconnectDuplicates,
             local.SourceChanges + sourceDefects.SourceChanges,
             local.RetentionDeleted + sourceDefects.RetentionDeleted,
-            local.ReconnectGapMilliseconds + sourceDefects.ReconnectGapMilliseconds);
+            local.ReconnectGapMilliseconds + sourceDefects.ReconnectGapMilliseconds,
+            local.TemplateOverflowEntries + sourceDefects.TemplateOverflowEntries);
     }
 }
 

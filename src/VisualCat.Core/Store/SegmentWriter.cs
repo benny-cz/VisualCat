@@ -146,6 +146,14 @@ internal static class SegmentWriter
             // live capture.
             SegmentChecksums.Write(directory, checksums);
 
+            // DirectoryInfo hands back FileInfo objects already populated from the
+            // directory enumeration. Enumerating names and then constructing a FileInfo
+            // per name stats all twenty-seven files a second time, which measured eight
+            // times slower for the same answer, on the commit thread, once per segment.
+            var sizeBytes = new DirectoryInfo(directory)
+                .EnumerateFiles("*", SearchOption.AllDirectories)
+                .Sum(static file => file.Length);
+
             return new SegmentManifest(
                 id,
                 relative.Replace('\\', '/'),
@@ -153,7 +161,8 @@ internal static class SegmentWriter
                 entries[0].Timestamp!.Value.Value,
                 entries[^1].Timestamp!.Value.Value,
                 minimumSequence,
-                maximumSequence);
+                maximumSequence,
+                SizeBytes: sizeBytes);
         }
         finally
         {

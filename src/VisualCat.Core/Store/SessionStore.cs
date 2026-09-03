@@ -59,7 +59,7 @@ public static class SessionStore
                     segments.Add(Acquire(root, segment, reusable));
                 }
 
-                return new SessionSnapshot(root, manifest, segments);
+                return new SessionSnapshot(root, manifest, segments, CreateTemplateLoader(root, manifest));
             }
             catch (Exception exception) when (
                 !manifest.Finalized &&
@@ -183,7 +183,7 @@ public static class SessionStore
             manifest.Segments is null ||
             manifest.Tags is null ||
             manifest.Buffers is null ||
-            manifest.Templates is null)
+            manifest.Templates is null && manifest.TemplateSidecarLength is null)
         {
             throw new InvalidDataException("Session manifest is missing required fields.");
         }
@@ -194,6 +194,12 @@ public static class SessionStore
             manifest.Descriptor.TemplateSettings is null)
         {
             throw new InvalidDataException("Session descriptor is missing required fields.");
+        }
+
+        if (manifest.TemplateSidecarLength is null &&
+            (manifest.Templates?.Count ?? 0) != manifest.Descriptor.Counters.Templates)
+        {
+            throw new InvalidDataException("Session manifest template count does not match its embedded table.");
         }
 
         // Named separately from the other dimension checks: this is the one a real
@@ -208,7 +214,7 @@ public static class SessionStore
 
         if (manifest.Tags.Count > 10_000_000 ||
             manifest.Buffers.Count > 1_000_000 ||
-            manifest.Templates.Count > 10_000_000 ||
+            manifest.Templates is { Count: > 10_000_000 } ||
             manifest.ProcessNames is { Count: > 10_000_000 })
         {
             throw new InvalidDataException("Session manifest declares unreasonable collection dimensions.");
@@ -216,7 +222,10 @@ public static class SessionStore
 
         if (manifest.Source.Length < 0 ||
             manifest.SnapshotGeneration < 0 ||
-            manifest.Descriptor.Counters.TimedEntries < 0)
+            manifest.Descriptor.Counters.TimedEntries < 0 ||
+            manifest.Descriptor.Counters.Templates is < 0 or > TemplateSettings.AbsoluteMaximumClusters ||
+            manifest.TemplateSidecarLength is < 0 ||
+            manifest.SessionSizeBytes is < 0)
         {
             throw new InvalidDataException("Session manifest contains negative dimensions.");
         }
@@ -230,6 +239,7 @@ public static class SessionStore
                 !ids.Add(segment.Id) ||
                 segment.EntryCount <= 0 ||
                 segment.EntryCount > 50_000_000 ||
+                segment.SizeBytes is < 0 ||
                 string.IsNullOrWhiteSpace(segment.RelativePath) ||
                 segment.MaximumTimestampUs < segment.MinimumTimestampUs ||
                 segment.MaximumSequence < segment.MinimumSequence)
@@ -246,7 +256,7 @@ public static class SessionStore
 
         if (manifest.Tags.Any(static value => value is null) ||
             manifest.Buffers.Any(static value => value is null) ||
-            manifest.Templates.Any(static value => value is null) ||
+            manifest.Templates?.Any(static value => value is null) == true ||
             manifest.ProcessNames?.Any(static value =>
                 value is null ||
                 value.Pid < 0 ||
@@ -271,5 +281,24 @@ public static class SessionStore
                 previous = range;
             }
         }
+    }
+
+    private static Func<IReadOnlyList<VisualCat.Domain.Templates.TemplateDefinition>> CreateTemplateLoader(
+        string root,
+        SessionManifest manifest)
+    {
+        // Embedded definitions win for format-2 sessions written by older releases.
+        // An old session with no templates has neither a sidecar boundary nor anything
+        // to load.
+        if (manifest.Templates is { Count: > 0 } embedded || manifest.TemplateSidecarLength is null)
+        {
+            var value = (IReadOnlyList<VisualCat.Domain.Templates.TemplateDefinition>)(manifest.Templates ?? []);
+            return () => value;
+        }
+
+        var committedLength = manifest.TemplateSidecarLength.Value;
+        var fileName = manifest.TemplateSidecarName ?? TemplateTable.FileName;
+        var expectedCount = manifest.Descriptor.Counters.Templates;
+        return () => TemplateTable.Load(root, fileName, committedLength, expectedCount);
     }
 }

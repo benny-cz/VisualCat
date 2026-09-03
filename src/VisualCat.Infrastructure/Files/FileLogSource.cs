@@ -106,22 +106,19 @@ public sealed class FileLogSource : ILogSource, ISourceDefectSource
         _ = context;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
         await using var stream = Open();
+        // The chunk is consumed before the iterator is advanced, so one read buffer can
+        // serve the whole finite import. Line batching copies the bytes it retains.
+        var buffer = GC.AllocateUninitializedArray<byte>(_chunkBytes);
         long offset = 0;
         while (true)
         {
-            var buffer = new byte[_chunkBytes];
             var read = await stream.ReadAsync(buffer, linked.Token).ConfigureAwait(false);
             if (read == 0)
             {
                 break;
             }
 
-            if (read != buffer.Length)
-            {
-                Array.Resize(ref buffer, read);
-            }
-
-            yield return new SourceChunk(offset, buffer);
+            yield return new SourceChunk(offset, buffer.AsMemory(0, read));
             offset += read;
         }
 

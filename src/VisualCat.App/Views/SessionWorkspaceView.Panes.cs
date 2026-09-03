@@ -734,6 +734,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         Section("Safety");
         Row("Encoding fallback", N(defects.EncodingFallbacks), defects.EncodingFallbacks > 0);
         Row("Long-line overflow", N(defects.LongLineOverflows), defects.LongLineOverflows > 0);
+        Row("Template limit", N(defects.TemplateOverflowEntries), defects.TemplateOverflowEntries > 0);
         Row("Retention deleted", N(defects.RetentionDeleted), defects.RetentionDeleted > 0);
 
         // Segment count is the one number that used to grow with how long a capture ran

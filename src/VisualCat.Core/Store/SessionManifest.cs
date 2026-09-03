@@ -23,7 +23,8 @@ public sealed record SegmentManifest(
     // Digests of the segment's files, populated only in sessions written before they
     // moved to a per-segment sidecar. Read through SegmentChecksums.Load, which prefers
     // this when present and falls back to the sidecar otherwise.
-    IReadOnlyDictionary<string, string>? Checksums = null);
+    IReadOnlyDictionary<string, string>? Checksums = null,
+    long? SizeBytes = null);
 
 public sealed record SessionManifest(
     string FormatVersion,
@@ -36,10 +37,20 @@ public sealed record SessionManifest(
     IReadOnlyList<SegmentManifest> Segments,
     IReadOnlyList<string> Tags,
     IReadOnlyList<string> Buffers,
-    IReadOnlyList<TemplateDefinition> Templates,
+    // Older sessions carry the complete table here. New writers leave it empty and
+    // commit a prefix of the append-only template sidecar instead.
+    IReadOnlyList<TemplateDefinition>? Templates,
     bool Finalized,
     DateTimeOffset UpdatedUtc,
-    IReadOnlyList<ProcessNameRange>? ProcessNames = null);
+    IReadOnlyList<ProcessNameRange>? ProcessNames = null,
+    long? TemplateSidecarLength = null,
+    long? SessionSizeBytes = null,
+
+    // Names the committed template file. A live capture appends revisions to the default
+    // one and a reader folds them by id; finalization writes a compacted file holding one
+    // record per template and names that instead, so a finished session neither stores
+    // nor parses a superseded revision.
+    string? TemplateSidecarName = null);
 
 public sealed record VerificationIssue(string Code, string Message, bool IsError);
 

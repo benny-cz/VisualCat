@@ -124,6 +124,22 @@ public sealed class ParserTests
     }
 
     [Fact]
+    public void Utf8BomDoesNotConsumeTheFirstLogRecord()
+    {
+        const string line = "05-15 14:13:37.496  1  2 I Tag: first\n";
+        var bytes = "\uFEFF"u8.ToArray().Concat(Encoding.UTF8.GetBytes(line)).ToArray();
+        var detection = FormatDetector.Detect([bytes]);
+        Assert.Equal(LogcatFormat.ThreadTime, detection.PrimaryFormat);
+
+        var outcome = LogcatParser.Parse(
+            new SourceLine(Guid.NewGuid(), 0, new RawSpan(0, bytes.Length), bytes),
+            LogcatFormat.ThreadTime);
+        Assert.Equal(ParseOutcomeKind.ParsedEntry, outcome.Kind);
+        Assert.Equal("first", outcome.Fields?.Message);
+        Assert.Equal(bytes.Length, outcome.Source.Raw.Length);
+    }
+
+    [Fact]
     public void TimestampResolverInfersRolloverAndPreservesOutOfOrder()
     {
         var policy = new TimestampPolicy(null, "UTC", new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero));

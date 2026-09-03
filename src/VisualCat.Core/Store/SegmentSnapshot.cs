@@ -48,6 +48,7 @@ public sealed class SegmentSnapshot : IDisposable
     private readonly LinkedList<string> _aggregateLru = [];
     private readonly Lock _aggregateLock = new();
     private Dictionary<LogLevel, RankBitmap>? _severity;
+    private int[]? _sourceOrderIndices;
     private int _references = 1;
     private bool _disposed;
 
@@ -173,6 +174,76 @@ public sealed class SegmentSnapshot : IDisposable
         {
             var middle = low + ((high - low) >> 1);
             if (timestamps.ReadInt64(middle) < timestampUs)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        return low;
+    }
+
+    /// <summary>First entry whose stable chronological key is greater than the cursor.</summary>
+    public int UpperBound(long timestampUs, long sequence, int start, int end)
+    {
+        var low = Math.Clamp(start, 0, Count);
+        var high = Math.Clamp(end, low, Count);
+        while (low < high)
+        {
+            var middle = low + ((high - low) >> 1);
+            var timestamp = TimestampAt(middle);
+            if (timestamp < timestampUs || timestamp == timestampUs && SequenceAt(middle) <= sequence)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        return low;
+    }
+
+    /// <summary>
+    /// Indices sorted by source sequence, built only for source-order paging and retained
+    /// with this immutable segment so later pages seek instead of sorting or rescanning.
+    /// </summary>
+    public IReadOnlyList<int> SourceOrderIndices
+    {
+        get
+        {
+            var existing = Volatile.Read(ref _sourceOrderIndices);
+            if (existing is not null)
+            {
+                return existing;
+            }
+
+            var sequences = new long[Count];
+            var created = new int[Count];
+            for (var index = 0; index < Count; index++)
+            {
+                sequences[index] = SequenceAt(index);
+                created[index] = index;
+            }
+
+            Array.Sort(sequences, created);
+            return Interlocked.CompareExchange(ref _sourceOrderIndices, created, null) ?? created;
+        }
+    }
+
+    public int SourceOrderUpperBound(long sequence)
+    {
+        var indices = SourceOrderIndices;
+        var low = 0;
+        var high = indices.Count;
+        while (low < high)
+        {
+            var middle = low + ((high - low) >> 1);
+            if (SequenceAt(indices[middle]) <= sequence)
             {
                 low = middle + 1;
             }
@@ -439,6 +510,7 @@ public sealed class SegmentSnapshot : IDisposable
             }
 
             _severity = null;
+            _sourceOrderIndices = null;
         }
 
         lock (_filterLock)

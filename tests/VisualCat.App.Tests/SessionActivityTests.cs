@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using Avalonia.Headless.XUnit;
 using VisualCat.App.Presentation;
+using VisualCat.Application.Coordination;
 using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
 using VisualCat.Infrastructure.Testing;
@@ -309,7 +310,10 @@ public sealed class SessionActivityTests
     [Fact]
     public void OnlyAnUndetectableFormatGetsAnImportRemedy()
     {
-        Assert.NotNull(WorkspaceViewModel.ImportRemedy(new InvalidDataException("undetectable")));
+        Assert.NotNull(WorkspaceViewModel.ImportRemedy(new ImportSourceException(
+            ImportFailureReason.UndetectableFormat,
+            "undetectable")));
+        Assert.Null(WorkspaceViewModel.ImportRemedy(new InvalidDataException("damaged session")));
         Assert.Null(WorkspaceViewModel.ImportRemedy(new IOException("disk")));
     }
 

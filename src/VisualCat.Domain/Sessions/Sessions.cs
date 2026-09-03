@@ -133,7 +133,16 @@ public sealed record TemplateSettings(
     int MaximumChildren = 100,
     int MaximumClustersPerTag = 10_000,
     int RepresentativeExamples = 3,
-    string AlgorithmVersion = "drain-v2");
+    string AlgorithmVersion = "drain-v2",
+    int MaximumClusters = 200_000)
+{
+    /// <summary>
+    /// Cross-layer ceiling for persisted template identities. Readers enforce the same
+    /// bound as writers so an untrusted session cannot turn a configurable mining limit
+    /// into an unbounded template-table allocation.
+    /// </summary>
+    public const int AbsoluteMaximumClusters = 200_000;
+}
 
 /// <summary>Configures bounded parsing, ordering, segmentation, and raw-data retention.</summary>
 public sealed record IngestSettings(
@@ -176,7 +185,12 @@ public sealed record DefectCounters(
     // duration beside it, told a reader that something was missing and nothing about how
     // much: a reboot mid-capture and a half-second cable jolt both read as
     // "reconnectGaps: 1" (finding F-12).
-    long ReconnectGapMilliseconds = 0);
+    long ReconnectGapMilliseconds = 0,
+
+    // Entries whose message could not receive a newly minted template because the
+    // session-wide cluster budget had been reached. Their template id remains zero;
+    // parsing and storage continue normally.
+    long TemplateOverflowEntries = 0);
 
 /// <summary>Associates a PID with a resolved process name over a time interval.</summary>
 public sealed record ProcessNameRange(

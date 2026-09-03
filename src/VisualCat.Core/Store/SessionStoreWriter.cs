@@ -66,6 +66,8 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         WriteIndented = false,
     };
 
+    private static readonly byte[] Newline = [(byte)'\n'];
+
     private readonly string _root;
 
     /// <summary>Serializes manifest rewrites; a progressive publish and the finalize can
@@ -98,8 +100,8 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     private readonly BinaryWriter _sourceRecords;
     private readonly FileStream _sourceIndexStream;
     private readonly BinaryWriter _sourceIndex;
-    private readonly FileStream _untimedStream;
-    private readonly Utf8JsonWriter _untimedWriter;
+    private readonly FileStream _templateStream;
+    private readonly Dictionary<uint, TemplateDefinition> _writtenTemplateDefinitions = [];
     private int _nextSegmentId = 1;
     private long _generation;
     private bool _finalized;
@@ -154,20 +156,16 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             FileOptions.SequentialScan);
         _sourceIndex = new BinaryWriter(_sourceIndexStream);
 
-        // Brief/untimed captures can contain tens of millions of entries. Stream the
-        // JSON array as entries arrive instead of retaining every normalized record in
-        // a List until finalization. A partial session may end with an incomplete array,
-        // but its byte-faithful source records remain recoverable and the manifest
-        // already marks that session as partial.
-        _untimedStream = new FileStream(
-            Path.Combine(_root, "source-order", "untimed.json"),
+        // Definitions are mutable while their cluster keeps matching, so the sidecar is
+        // a revision log rather than a one-record-per-id table. A manifest commits a byte
+        // prefix; readers fold that prefix by id and ignore later live revisions.
+        _templateStream = new FileStream(
+            Path.Combine(_root, TemplateTable.FileName),
             FileMode.Create,
             FileAccess.Write,
             FileShare.Read,
             256 * 1024,
             FileOptions.SequentialScan);
-        _untimedWriter = new Utf8JsonWriter(_untimedStream);
-        _untimedWriter.WriteStartArray();
         InternTag(string.Empty);
         InternBuffer(string.Empty);
     }
@@ -202,7 +200,6 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(entry);
         if (entry.Timestamp is null)
         {
-            JsonSerializer.Serialize(_untimedWriter, entry, IndentedJsonOptions);
             return null;
         }
 
@@ -366,8 +363,6 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         await _sourceRecordsStream.FlushAsync(cancellationToken).ConfigureAwait(false);
         _sourceIndex.Flush();
         await _sourceIndexStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        await _untimedWriter.FlushAsync(cancellationToken).ConfigureAwait(false);
-        await _untimedStream.FlushAsync(cancellationToken).ConfigureAwait(false);
 
         var manifest = new SessionManifest(
             "2.0",
@@ -380,13 +375,13 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             Segments,
             _tags.ToArray(),
             _buffers.ToArray(),
-            templates,
+            [],
             false,
             DateTimeOffset.UtcNow,
             processNames);
-        await AtomicJsonWriteAsync(
-            Path.Combine(_root, "manifest.json"),
+        manifest = await WritePublicationAsync(
             manifest,
+            templates,
             durable: false,
             indented: false,
             cancellationToken).ConfigureAwait(false);
@@ -410,11 +405,6 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         await _sourceIndexStream.FlushAsync(cancellationToken).ConfigureAwait(false);
         _sourceIndex.Dispose();
         _sourceIndexStream.Dispose();
-        _untimedWriter.WriteEndArray();
-        await _untimedWriter.FlushAsync(cancellationToken).ConfigureAwait(false);
-        await _untimedWriter.DisposeAsync().ConfigureAwait(false);
-        await _untimedStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        await _untimedStream.DisposeAsync().ConfigureAwait(false);
         var obsoleteSegmentContainers = CompactSegments(cancellationToken);
 
         var manifest = new SessionManifest(
@@ -428,16 +418,11 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             Segments,
             _tags.ToArray(),
             _buffers.ToArray(),
-            templates,
+            [],
             true,
             DateTimeOffset.UtcNow,
             processNames);
-        await AtomicJsonWriteAsync(
-            Path.Combine(_root, "manifest.json"),
-            manifest,
-            durable: true,
-            indented: true,
-            cancellationToken).ConfigureAwait(false);
+        manifest = await WriteFinalPublicationAsync(manifest, templates, cancellationToken).ConfigureAwait(false);
         _finalized = true;
         foreach (var obsolete in obsoleteSegmentContainers)
         {
@@ -461,8 +446,7 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             await _sourceRecordsStream.DisposeAsync().ConfigureAwait(false);
             _sourceIndex.Dispose();
             await _sourceIndexStream.DisposeAsync().ConfigureAwait(false);
-            await _untimedWriter.DisposeAsync().ConfigureAwait(false);
-            await _untimedStream.DisposeAsync().ConfigureAwait(false);
+            await _templateStream.DisposeAsync().ConfigureAwait(false);
         }
 
         _manifestWriteLock.Dispose();
@@ -826,9 +810,9 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         return true;
     }
 
-    /// <summary>Serializes JSON to a temporary file and atomically publishes it.</summary>
-    /// <param name="path">The final manifest path.</param>
-    /// <param name="value">The value to serialize.</param>
+    /// <summary>Appends template revisions and atomically commits their boundary in a manifest.</summary>
+    /// <param name="manifest">The manifest to publish.</param>
+    /// <param name="definitions">Template revisions since the previous successful publication.</param>
     /// <param name="durable">
     /// Whether to bypass the OS write cache. Only the finalized manifest needs that
     /// guarantee. A progressive manifest is explicitly marked unfinalized and is
@@ -839,21 +823,203 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     /// </param>
     /// <param name="indented">Whether to write human-readable JSON.</param>
     /// <param name="cancellationToken">Cancels serialization and publication.</param>
-    private async Task AtomicJsonWriteAsync<T>(
+    private async Task<SessionManifest> WritePublicationAsync(
+        SessionManifest manifest,
+        IReadOnlyList<TemplateDefinition> definitions,
+        bool durable,
+        bool indented,
+        CancellationToken cancellationToken)
+    {
+        // The lock covers the sidecar append and the manifest replacement as one
+        // publication operation. A finalization racing a progressive publish must not
+        // commit the other operation's template boundary.
+        await _manifestWriteLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var appendStart = _templateStream.Position;
+            var appended = new List<TemplateDefinition>();
+            try
+            {
+                foreach (var definition in definitions.OrderBy(static value => value.TemplateId))
+                {
+                    if (_writtenTemplateDefinitions.TryGetValue(definition.TemplateId, out var previous) &&
+                        ReferenceEquals(previous, definition))
+                    {
+                        continue;
+                    }
+
+                    var bytes = JsonSerializer.SerializeToUtf8Bytes(definition, CompactJsonOptions);
+                    await _templateStream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+                    await _templateStream.WriteAsync(Newline, cancellationToken).ConfigureAwait(false);
+                    appended.Add(definition);
+                }
+
+                await _templateStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                if (durable)
+                {
+                    _templateStream.Flush(flushToDisk: true);
+                }
+            }
+            catch
+            {
+                _templateStream.SetLength(appendStart);
+                _templateStream.Position = appendStart;
+                throw;
+            }
+
+            foreach (var definition in appended)
+            {
+                _writtenTemplateDefinitions[definition.TemplateId] = definition;
+            }
+
+            var templateCount = _writtenTemplateDefinitions.Count;
+            if (templateCount > 0 &&
+                (_writtenTemplateDefinitions.Keys.Min() != 1 ||
+                 _writtenTemplateDefinitions.Keys.Max() != templateCount))
+            {
+                throw new InvalidDataException("Template definitions must use contiguous ids beginning at one.");
+            }
+
+            manifest = manifest with
+            {
+                Descriptor = manifest.Descriptor with
+                {
+                    Counters = manifest.Descriptor.Counters with { Templates = templateCount },
+                },
+                TemplateSidecarLength = _templateStream.Position,
+                SessionSizeBytes = EstimateSessionSize(_templateStream.Position),
+            };
+            await AtomicJsonWriteCoreAsync(
+                Path.Combine(_root, "manifest.json"),
+                manifest,
+                durable,
+                indented,
+                cancellationToken).ConfigureAwait(false);
+            return manifest;
+        }
+        finally
+        {
+            _manifestWriteLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Publishes the finalized manifest against a compacted template file.
+    /// </summary>
+    /// <remarks>
+    /// A live capture appends a record whenever a template's shape changes, so the file
+    /// it grows holds superseded revisions that a reader folds by id and discards. On a
+    /// real device capture that was 18,984 records for 13,057 templates. Finalization
+    /// writes each template once into a file of its own and names that in the manifest,
+    /// which costs a finished session neither the bytes nor the parse. The live file is
+    /// removed only after the finalized manifest is durably in place, so a crash between
+    /// the two leaves the previous manifest pointing at a file that is still intact.
+    /// </remarks>
+    private async Task<SessionManifest> WriteFinalPublicationAsync(
+        SessionManifest manifest,
+        IReadOnlyList<TemplateDefinition> definitions,
+        CancellationToken cancellationToken)
+    {
+        await _manifestWriteLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var ordered = definitions.OrderBy(static value => value.TemplateId).ToArray();
+            for (var index = 0; index < ordered.Length; index++)
+            {
+                if (ordered[index].TemplateId != (uint)index + 1)
+                {
+                    throw new InvalidDataException("Template definitions must use contiguous ids beginning at one.");
+                }
+            }
+
+            // Mining can be off, and then there is nothing to compact and no reason to
+            // leave an empty file named by the manifest.
+            long compactLength = 0;
+            string? compactName = null;
+            if (ordered.Length > 0)
+            {
+                compactName = TemplateTable.FinalFileName;
+                await using var compact = new FileStream(
+                    Path.Combine(_root, compactName),
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.Read,
+                    256 * 1024,
+                    FileOptions.SequentialScan);
+                foreach (var definition in ordered)
+                {
+                    var bytes = JsonSerializer.SerializeToUtf8Bytes(definition, CompactJsonOptions);
+                    await compact.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+                    await compact.WriteAsync(Newline, cancellationToken).ConfigureAwait(false);
+                }
+
+                await compact.FlushAsync(cancellationToken).ConfigureAwait(false);
+                compact.Flush(flushToDisk: true);
+                compactLength = compact.Position;
+            }
+
+            await _templateStream.DisposeAsync().ConfigureAwait(false);
+            manifest = manifest with
+            {
+                Descriptor = manifest.Descriptor with
+                {
+                    Counters = manifest.Descriptor.Counters with { Templates = ordered.Length },
+                },
+                TemplateSidecarLength = compactLength,
+                TemplateSidecarName = compactName,
+                SessionSizeBytes = EstimateSessionSize(compactLength),
+            };
+            await AtomicJsonWriteCoreAsync(
+                Path.Combine(_root, "manifest.json"),
+                manifest,
+                durable: true,
+                indented: true,
+                cancellationToken).ConfigureAwait(false);
+            TryDeleteFile(Path.Combine(_root, TemplateTable.FileName));
+            return manifest;
+        }
+        finally
+        {
+            _manifestWriteLock.Release();
+        }
+    }
+
+    private long EstimateSessionSize(long templateBytes)
+    {
+        long size = _segments.Sum(static segment => segment.Manifest.SizeBytes ?? 0);
+        foreach (var relative in new[]
+                 {
+                     Path.Combine("source-order", "records.bin"),
+                     Path.Combine("source-order", "index.bin"),
+                 })
+        {
+            var info = new FileInfo(Path.Combine(_root, relative));
+            if (info.Exists)
+            {
+                size = checked(size + info.Length);
+            }
+        }
+
+        size = checked(size + templateBytes);
+        if (_source.Embedded)
+        {
+            var raw = new FileInfo(Path.Combine(_root, "raw.log"));
+            if (raw.Exists)
+            {
+                size = checked(size + raw.Length);
+            }
+        }
+
+        return size;
+    }
+
+    private static async Task AtomicJsonWriteCoreAsync<T>(
         string path,
         T value,
         bool durable,
         bool indented,
         CancellationToken cancellationToken)
     {
-        // Publishing a progressive snapshot and finalizing the session both rewrite the
-        // manifest, and nothing sequenced them. They shared one fixed temporary path, so
-        // two writes in flight together opened the same file with FileShare.None and the
-        // second failed the whole ingest with UnauthorizedAccessException — reliably on a
-        // capture short enough for a publish and the finalize to overlap. The write is
-        // serialized, and each attempt gets a temporary of its own so a stale or
-        // externally held one cannot block the next.
-        await _manifestWriteLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         var temporary = $"{path}.{Guid.NewGuid():N}.tmp";
         try
         {
@@ -882,10 +1048,6 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             // session directory, one per failed publication.
             TryDeleteFile(temporary);
             throw;
-        }
-        finally
-        {
-            _manifestWriteLock.Release();
         }
     }
 

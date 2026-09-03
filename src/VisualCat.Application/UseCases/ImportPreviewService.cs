@@ -1,3 +1,4 @@
+using VisualCat.Application.Coordination;
 using VisualCat.Application.Ports;
 using VisualCat.Core.Parsing;
 using VisualCat.Domain.Entries;
@@ -24,6 +25,7 @@ public static class ImportPreviewService
     {
         ArgumentNullException.ThrowIfNull(source);
         var samples = await source.ProbeAsync(200, cancellationToken).ConfigureAwait(false);
+        ImportSourceException.ThrowIfUnsupportedEncoding(samples);
         var detection = formatOverride is { } selected
             ? new FormatDetectionResult(selected, [], 1, [new FormatCandidate(selected, samples.Count, samples.Count * 6, 1)], samples.Count)
             : FormatDetector.Detect(samples);

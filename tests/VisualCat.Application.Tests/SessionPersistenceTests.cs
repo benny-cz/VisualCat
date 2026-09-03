@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using VisualCat.Application.Coordination;
 using VisualCat.Application.Ports;
 using VisualCat.Application.UseCases;
@@ -407,6 +408,82 @@ public sealed class SessionPersistenceTests
             {
                 Directory.Delete(root, true);
             }
+        }
+    }
+
+    [Fact]
+    public async Task MeasuredSessionSizesArePersistedBesideTheSessionsAndReusedByALaterProcess()
+    {
+        // A session written before sessionSizeBytes existed has to be measured, and a
+        // finalized one is never rewritten, so without a persisted index the cold-start
+        // screen re-walks the whole cache on every launch.
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-sizeindex-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var now = new DateTimeOffset(2026, 7, 19, 12, 0, 0, TimeSpan.Zero);
+        var index = Path.Combine(root, ".session-sizes.json");
+        try
+        {
+            var legacy = CreateFakeSession(root, "legacy.vcat", now.AddHours(-1), 128);
+            var declared = Path.Combine(root, "declared.vcat");
+            Directory.CreateDirectory(declared);
+            File.WriteAllBytes(Path.Combine(declared, "payload.bin"), new byte[64]);
+            File.WriteAllText(
+                Path.Combine(declared, "manifest.json"),
+                $$"""{"updatedUtc":"{{now:O}}","finalized":true,"sessionSizeBytes":4242}""");
+
+            var scanned = await TemporarySessionRetentionService.ScanAsync(root);
+            Assert.Equal(2, scanned.Count);
+            var legacySize = Assert.Single(
+                scanned,
+                session => string.Equals(session.Path, legacy, StringComparison.OrdinalIgnoreCase)).SizeBytes;
+            Assert.True(legacySize >= 128);
+            Assert.Equal(
+                4242,
+                Assert.Single(
+                    scanned,
+                    session => string.Equals(session.Path, declared, StringComparison.OrdinalIgnoreCase)).SizeBytes);
+
+            // Only the measured session is worth remembering; one that declares its own
+            // size costs nothing to read and would only go stale in the index.
+            Assert.True(File.Exists(index));
+            using (var document = JsonDocument.Parse(File.ReadAllText(index)))
+            {
+                Assert.Single(document.RootElement.EnumerateObject());
+                var entry = document.RootElement.GetProperty("legacy.vcat");
+                Assert.Equal(legacySize, entry.GetProperty("Size").GetInt64());
+            }
+
+            // A scan that learns nothing must not touch the disk again.
+            var written = File.GetLastWriteTimeUtc(index);
+            await TemporarySessionRetentionService.ScanAsync(root);
+            Assert.Equal(written, File.GetLastWriteTimeUtc(index));
+
+            // The index is an optimisation: a scan still works when it is unreadable.
+            File.WriteAllText(index, "{ not json");
+            var afterCorruption = await TemporarySessionRetentionService.ScanAsync(root);
+            Assert.Equal(2, afterCorruption.Count);
+
+            // A session that disappears is pruned rather than remembered forever. Here
+            // it was the only measured one, so the index goes with it.
+            Directory.Delete(legacy, true);
+            await TemporarySessionRetentionService.ScanAsync(root);
+            Assert.False(File.Exists(index));
+
+            // With two measured sessions, losing one prunes just that entry.
+            var first = CreateFakeSession(root, "first.vcat", now.AddHours(-2), 32);
+            CreateFakeSession(root, "second.vcat", now.AddHours(-3), 48);
+            await TemporarySessionRetentionService.ScanAsync(root);
+            Directory.Delete(first, true);
+            await TemporarySessionRetentionService.ScanAsync(root);
+            using (var document = JsonDocument.Parse(File.ReadAllText(index)))
+            {
+                Assert.False(document.RootElement.TryGetProperty("first.vcat", out _));
+                Assert.True(document.RootElement.TryGetProperty("second.vcat", out _));
+            }
+        }
+        finally
+        {
+            DeleteIfPresent(root);
         }
     }
 

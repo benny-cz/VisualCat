@@ -315,7 +315,9 @@ internal static class VisualCatCli
             new SyntheticLogOptions(
                 lines,
                 options.GetInt("--seed", 42),
-                Format: ParseFormat(options.Get("--format")) ?? LogcatFormat.ThreadTime),
+                Format: ParseFormat(options.Get("--format")) ?? LogcatFormat.ThreadTime,
+                DistinctTags: options.GetInt("--tags", 0),
+                DistinctTemplates: options.GetInt("--templates", 0)),
             cancellationToken).ConfigureAwait(false);
         Console.WriteLine(Path.GetFullPath(output));
         return 0;
@@ -568,7 +570,9 @@ internal static class VisualCatCli
         // it worked. A plan must not command a CLI option the shipped CLI rejects (PLAN-01).
         ["generate-test-log"] = new(
             "vcat generate-test-log [--output log.txt] [--lines 1000000] [--seed 42] " +
-            "[--format threadtime|time|brief|long|epoch]"),
+            "[--format threadtime|time|brief|long|epoch] [--tags 1900] [--templates 13000]",
+            "--tags and --templates are set together and produce a corpus with that much " +
+            "tag and template diversity, which the default seven-tag corpus does not have."),
         ["adb-devices"] = new("vcat adb-devices [--adb path]"),
         ["capture-adb"] = new(
             "vcat capture-adb --serial SERIAL [--output session.vcat] [--duration-seconds N] " +

@@ -446,7 +446,7 @@ public static class SessionQueryEngine
             .ToArray();
     }
 
-    public static async Task<SearchResult> SearchAsync(
+    public static Task<SearchResult> SearchAsync(
         SessionSnapshot snapshot,
         TextSearchSpec search,
         FilterSpec baseFilter,
@@ -481,7 +481,6 @@ public static class SessionQueryEngine
                 if ((scanned & 0x3fff) == 0)
                 {
                     progress?.Report(new SearchProgress(identity, scanned, matches, false, total == 0 ? 1 : scanned / (double)total));
-                    await Task.Yield();
                     cancellationToken.ThrowIfCancellationRequested();
                 }
             }
@@ -489,7 +488,7 @@ public static class SessionQueryEngine
 
         progress?.Report(new SearchProgress(identity, scanned, matches, true, 1));
         markers.Sort();
-        return new SearchResult(identity, matches, markers, matches > markers.Count);
+        return Task.FromResult(new SearchResult(identity, matches, markers, matches > markers.Count));
     }
 
     public static IReadOnlyList<SourceRecord> GetRawContext(
@@ -840,6 +839,11 @@ public static class SessionQueryEngine
         EntryCursor? cursor,
         EntryOrder order)
     {
+        if (cursor is not null && order == EntryOrder.Chronological)
+        {
+            start = segment.UpperBound(cursor.TimestampUs, cursor.Sequence, start, end);
+        }
+
         for (var index = start; index < end; index++)
         {
             if (!active[index])
@@ -847,16 +851,16 @@ public static class SessionQueryEngine
                 continue;
             }
 
-            if (cursor is null)
+            // Chronological cursors were already applied by UpperBound above. Rechecking
+            // only their sequence component would discard a later timestamp whose source
+            // sequence happens to be lower (the normal shape of out-of-order logcat).
+            if (cursor is null || order == EntryOrder.Chronological)
             {
                 return index;
             }
 
-            var timestamp = segment.TimestampAt(index);
             var sequence = segment.SequenceAt(index);
-            var after = order == EntryOrder.Chronological
-                ? timestamp > cursor.TimestampUs || timestamp == cursor.TimestampUs && sequence > cursor.Sequence
-                : sequence > cursor.Sequence;
+            var after = sequence > cursor.Sequence;
             if (after)
             {
                 return index;
@@ -1036,11 +1040,11 @@ public static class SessionQueryEngine
         QueryIdentity identity,
         CancellationToken cancellationToken)
     {
-        // Segments are timestamp-sorted, so a per-segment merge is not valid for
-        // source order. Retain only the smallest requested page while scanning.
-        var candidates = new SortedSet<SourceCandidate>(SourceCandidateComparer.Instance);
+        // Segments are timestamp-sorted, so each keeps a lazy sequence-sorted index.
+        // Merge one position per segment just as chronological paging merges its native
+        // order; subsequent pages then seek by cursor instead of rescanning the session.
+        var queues = new PriorityQueue<SourcePosition, long>();
         long total = 0;
-        long afterCursor = 0;
         foreach (var segment in snapshot.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1053,41 +1057,75 @@ public static class SessionQueryEngine
 
             var start = segment.LowerBound(effectiveRange.Value.StartInclusive.Value);
             var end = segment.LowerBound(effectiveRange.Value.EndExclusive.Value);
-            for (var index = start; index < end; index++)
+            total += active.CountInRange(start, end);
+            var indices = segment.SourceOrderIndices;
+            var position = cursor is null ? 0 : segment.SourceOrderUpperBound(cursor.Sequence);
+            position = NextSourceMatching(indices, active, position, start, end);
+            if (position < indices.Count)
             {
-                if (!active[index])
-                {
-                    continue;
-                }
-
-                total++;
-                var sequence = segment.SequenceAt(index);
-                if (cursor is not null && sequence <= cursor.Sequence)
-                {
-                    continue;
-                }
-
-                afterCursor++;
-                candidates.Add(new SourceCandidate(segment, index, sequence));
-                if (candidates.Count > pageSize)
-                {
-                    candidates.Remove(candidates.Max);
-                }
+                queues.Enqueue(
+                    new SourcePosition(segment, active, indices, position, start, end),
+                    segment.SequenceAt(indices[position]));
             }
         }
 
-        var entries = candidates
-            .Select(candidate => candidate.Segment.ReadEntry(
-                candidate.Index,
+        var entries = new List<NormalizedEntry>(Math.Min(pageSize, checked((int)Math.Min(total, int.MaxValue))));
+        EntryCursor? next = null;
+        while (queues.Count > 0 && entries.Count < pageSize)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var candidate = queues.Dequeue();
+            var index = candidate.Indices[candidate.Position];
+            var entry = candidate.Segment.ReadEntry(
+                index,
                 snapshot.SessionId,
                 snapshot.Tags,
                 snapshot.Buffers,
-                snapshot.Manifest.ParserVersion))
-            .ToArray();
-        var next = afterCursor > entries.Length
-            ? new EntryCursor(EntryOrder.SourceSequence, entries[^1].Timestamp?.Value ?? long.MinValue, entries[^1].SourceSequence)
-            : null;
+                snapshot.Manifest.ParserVersion);
+            entries.Add(entry);
+            next = new EntryCursor(EntryOrder.SourceSequence, entry.Timestamp?.Value ?? long.MinValue, entry.SourceSequence);
+
+            var following = NextSourceMatching(
+                candidate.Indices,
+                candidate.Active,
+                candidate.Position + 1,
+                candidate.Start,
+                candidate.End);
+            if (following < candidate.Indices.Count)
+            {
+                queues.Enqueue(
+                    candidate with { Position = following },
+                    candidate.Segment.SequenceAt(candidate.Indices[following]));
+            }
+        }
+
+        if (queues.Count == 0)
+        {
+            next = null;
+        }
+
         return new EntryPage(identity, entries, next, total);
+    }
+
+    private static int NextSourceMatching(
+        IReadOnlyList<int> indices,
+        RankBitmap active,
+        int position,
+        int start,
+        int end)
+    {
+        while (position < indices.Count)
+        {
+            var index = indices[position];
+            if (index >= start && index < end && active[index])
+            {
+                break;
+            }
+
+            position++;
+        }
+
+        return position;
     }
 
     private static void Increment<T>(Dictionary<T, long> values, T key)
@@ -1099,14 +1137,13 @@ public static class SessionQueryEngine
 
     private readonly record struct SegmentPosition(SegmentSnapshot Segment, RankBitmap Active, int Index, int End);
 
-    private readonly record struct SourceCandidate(SegmentSnapshot Segment, int Index, long Sequence);
-
-    private sealed class SourceCandidateComparer : IComparer<SourceCandidate>
-    {
-        public static SourceCandidateComparer Instance { get; } = new();
-
-        public int Compare(SourceCandidate x, SourceCandidate y) => x.Sequence.CompareTo(y.Sequence);
-    }
+    private readonly record struct SourcePosition(
+        SegmentSnapshot Segment,
+        RankBitmap Active,
+        IReadOnlyList<int> Indices,
+        int Position,
+        int Start,
+        int End);
 
     private readonly record struct EntryKey(long Primary, long Secondary) : IComparable<EntryKey>
     {

@@ -142,6 +142,46 @@ public sealed class DrainTests
         Assert.Equal(ids[0], ids[2]);
     }
 
+    [Fact]
+    public void SessionWideClusterBudgetIsDeterministicAndCountsUnassignedEntries()
+    {
+        var miner = new ShardedTemplateMiner(new TemplateSettings(Depth: 0, MaximumClusters: 2), 4);
+        MinedEntry[] first =
+        [
+            new("A", "alpha", null, 0),
+            new("B", "bravo", null, 1),
+            new("C", "charlie", null, 2),
+            new("D", "delta", null, 3),
+        ];
+        var ids = new uint[first.Length];
+        miner.AssignBatch(first, ids);
+
+        Assert.Equal([1u, 2u, 0u, 0u], ids);
+        Assert.Equal(2, miner.TemplateCount);
+        Assert.Equal(2, miner.OverflowAssignments);
+
+        MinedEntry[] second =
+        [
+            new("A", "alpha", null, 4),
+            new("E", "echo", null, 5),
+        ];
+        var laterIds = new uint[second.Length];
+        miner.AssignBatch(second, laterIds);
+        Assert.Equal([1u, 0u], laterIds);
+        Assert.Equal(3, miner.OverflowAssignments);
+
+        var changed = miner.GetChangedDefinitions();
+        Assert.Equal(2, changed.Count);
+        miner.MarkDefinitionsPublished();
+        Assert.Empty(miner.GetChangedDefinitions());
+
+        miner.AssignOne(new MinedEntry("A", "alpha", null, 6));
+        Assert.Empty(miner.GetChangedDefinitions());
+
+        miner.AssignOne(new MinedEntry("A", "bravo", null, 7));
+        Assert.Equal(1u, Assert.Single(miner.GetChangedDefinitions()).TemplateId);
+    }
+
     /// <summary>
     /// Deliberately skewed: one very hot tag plus a long tail, which is the shape that
     /// puts many tags on one shard and exercises cross-shard interleaving.

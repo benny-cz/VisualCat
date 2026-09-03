@@ -16,6 +16,9 @@ public static class SessionVerifier
         try
         {
             snapshot = await SessionStore.OpenAsync(sessionPath, cancellationToken).ConfigureAwait(false);
+            // Template data is lazy for ordinary opens. Verification explicitly forces
+            // it so a missing, truncated, or malformed committed sidecar cannot pass.
+            _ = snapshot.Templates.Count;
             var sequences = new HashSet<long>();
             foreach (var segment in snapshot.Segments)
             {

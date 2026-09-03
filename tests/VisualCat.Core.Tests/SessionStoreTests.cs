@@ -1,3 +1,4 @@
+using System.Text.Json;
 using VisualCat.Core.Store;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Sessions;
@@ -14,6 +15,8 @@ namespace VisualCat.Core.Tests;
 /// </summary>
 public sealed class SessionStoreTests
 {
+    private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
+
     [Fact]
     public async Task CompactionBoundsSegmentCountAndPreservesEveryEntryInOrder()
     {
@@ -202,6 +205,51 @@ public sealed class SessionStoreTests
     }
 
     [Fact]
+    public async Task TemplateRevisionsLiveInALazySidecarAndLegacyEmbeddedTablesStillOpen()
+    {
+        using var session = new TemporarySession();
+        var first = Definition("started service", 1);
+        var revised = Definition("started <*>", 2);
+        await using (var writer = new SessionStoreWriter(session.Root, Settings(segmentEntries: 4), Identity()))
+        {
+            await writer.PublishSnapshotAsync(Descriptor(), [first], [], CancellationToken.None);
+            await writer.FinalizeAsync(Descriptor(), [revised], [], CancellationToken.None);
+        }
+
+        var manifestPath = Path.Combine(session.Root, "manifest.json");
+        var manifestBytes = new FileInfo(manifestPath).Length;
+        var manifest = JsonSerializer.Deserialize<SessionManifest>(
+            await File.ReadAllTextAsync(manifestPath),
+            WebJson)!;
+        Assert.Empty(manifest.Templates!);
+        Assert.True(manifest.TemplateSidecarLength > 0);
+        Assert.True(manifestBytes < 8 * 1024);
+
+        using (var snapshot = await SessionStore.OpenAsync(session.Root))
+        {
+            var loaded = Assert.Single(snapshot.Templates);
+            Assert.Equal(revised.CanonicalText, loaded.CanonicalText);
+            Assert.Equal(2, loaded.MatchCount);
+        }
+
+        // Compatibility path: releases before the sidecar embedded the complete table.
+        var legacy = manifest with { Templates = [revised], TemplateSidecarLength = null };
+        await File.WriteAllTextAsync(
+            manifestPath,
+            JsonSerializer.Serialize(legacy, WebJson));
+        // Removing every sidecar the writer can produce is what makes the assertions below
+        // evidence that the embedded table is being read rather than the file.
+        File.Delete(Path.Combine(session.Root, "templates.jsonl"));
+        File.Delete(Path.Combine(session.Root, "templates-final.jsonl"));
+        using var legacySnapshot = await SessionStore.OpenAsync(session.Root);
+        var legacyDefinition = Assert.Single(legacySnapshot.Templates);
+        Assert.Equal(revised.TemplateId, legacyDefinition.TemplateId);
+        Assert.Equal(revised.CanonicalText, legacyDefinition.CanonicalText);
+        Assert.Equal(revised.Tokens, legacyDefinition.Tokens);
+        Assert.Equal(revised.MatchCount, legacyDefinition.MatchCount);
+    }
+
+    [Fact]
     public async Task ASegmentMissingFromDiskIsRefusedWhenTheSessionOpens()
     {
         using var session = new TemporarySession();
@@ -298,6 +346,18 @@ public sealed class SessionStoreTests
         new TimestampPolicy(2026, "UTC", DateTimeOffset.UnixEpoch),
         new TemplateSettings(),
         SegmentEntries: segmentEntries);
+
+    private static TemplateDefinition Definition(string canonicalText, long matchCount) => new(
+        1,
+        canonicalText,
+        "drain",
+        "drain-v2",
+        canonicalText.Split(' '),
+        new InstantUs(1),
+        new InstantUs(matchCount),
+        matchCount,
+        [1],
+        "hash");
 
     private static SourceIdentity Identity() => new("memory", null, 0, null, string.Empty, true);
 

@@ -101,6 +101,25 @@ than the reference machine because their CPU and storage are shared and vary
 between runs. This catches catastrophic regressions and preserves a JSON result
 artifact; it does not replace the strict million-line reference-machine gates.
 
+The workflow runs that corpus twice over. The default one has seven tags and seven
+message shapes, so it mines seventy-seven templates however long it runs and cannot
+exercise any cost that scales with template diversity. The second is generated with
+`--tags 1900 --templates 4000`, the proportions measured on a real device, and adds three
+gates the first cannot meaningfully apply:
+
+- `--max-manifest-bytes 262144`, because the manifest is rewritten in full on every
+  published snapshot and its size is what decides whether a long capture stays openable.
+  Carrying the template table inside it again puts this corpus near 2.7 MB, ten times the
+  ceiling; the sidecar keeps it near 35 KB, seven times under it.
+- `--min-export-entries-per-second 50000`. Paged entry reads are the one hot path that
+  neither ingest nor the heat map can see, because both touch every entry exactly once
+  while export walks the page cursor the way the phone's *Load all* does.
+- `--max-bytes-per-line 8000`, which turns `bytesAllocatedPerLine` from a reported number
+  into a bounded one.
+
+The runner also reports `templates`, `tags`, `manifestBytes` and `templateSidecarBytes`
+so a diversity regression is visible in the summary even where no gate fires.
+
 The original 1.5-million-lines/s full-pipeline target was not supported by measurement: it exceeds the observed safe, mining-enabled pipeline by roughly 20× even on a 12-core NVMe workstation. ADR 0018 therefore replaces it as a release gate with the measured targets above. It remains an optimization direction, not a claim. Larger 10 M / 40 M scale runs remain controlled benchmark jobs rather than source-controlled fixtures.
 
 Generate and run the million-line public baseline outside source control:

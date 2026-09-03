@@ -35,6 +35,7 @@ public sealed class ShardedTemplateMiner
     private readonly DrainTemplateMiner[] _shards;
     private readonly TemplateSettings _settings;
     private readonly List<DrainTemplateMiner.Cluster> _numbered = [];
+    private readonly HashSet<DrainTemplateMiner.Cluster> _dirty = [];
 
     // Reused across batches. AssignBatch is driven by the commit coordinator alone, so
     // these are single-writer scratch, not shared state: allocating a route list per
@@ -44,6 +45,8 @@ public sealed class ShardedTemplateMiner
     private DrainTemplateMiner.Cluster?[] _clusters = [];
     private MinedEntry[] _scratch = [];
     private uint _nextId = 1;
+    private long _overflowAssignments;
+    private bool _limitReached;
 
     public ShardedTemplateMiner(TemplateSettings settings, int shardCount)
     {
@@ -64,6 +67,9 @@ public sealed class ShardedTemplateMiner
     /// <summary>Templates mined so far. Cheap enough for the progress cadence.</summary>
     public int TemplateCount => _numbered.Count;
 
+    /// <summary>Entries left unassigned after the session-wide cluster budget was spent.</summary>
+    public long OverflowAssignments => _overflowAssignments;
+
     /// <summary>
     /// Clusters a batch of already source-ordered entries and returns their template ids,
     /// index-aligned with <paramref name="entries"/>. Entries whose <see cref="MinedEntry.Tag"/>
@@ -79,6 +85,16 @@ public sealed class ShardedTemplateMiner
         if (!_settings.Enabled || entries.Length == 0)
         {
             templateIds.Clear();
+            return;
+        }
+
+        // Close to the global ceiling, drive the tail in source order. Letting every
+        // shard process a large batch first could create one over-budget cluster per
+        // entry before the numbering pass noticed the limit. Source-order fallback is
+        // rare, deterministic, and bounds memory at the configured ceiling.
+        if (_numbered.Count + (long)entries.Length > _settings.MaximumClusters)
+        {
+            AssignNearLimit(entries, templateIds);
             return;
         }
 
@@ -146,11 +162,86 @@ public sealed class ShardedTemplateMiner
 
             if (cluster.GlobalId == 0)
             {
-                cluster.GlobalId = _nextId++;
-                _numbered.Add(cluster);
+                if (_numbered.Count < _settings.MaximumClusters)
+                {
+                    cluster.GlobalId = _nextId++;
+                    _numbered.Add(cluster);
+                }
+                else
+                {
+                    _limitReached = true;
+                }
             }
 
             templateIds[index] = cluster.GlobalId;
+            if (cluster.GlobalId == 0)
+            {
+                _overflowAssignments++;
+            }
+            else if (cluster.PublishedShapeRevision != cluster.ShapeRevision)
+            {
+                _dirty.Add(cluster);
+            }
+        }
+
+        if (_numbered.Count >= _settings.MaximumClusters)
+        {
+            _limitReached = true;
+        }
+
+        if (_limitReached)
+        {
+            foreach (var shard in _shards)
+            {
+                shard.PreventNewClusters = true;
+            }
+        }
+    }
+
+    private void AssignNearLimit(ReadOnlySpan<MinedEntry> entries, Span<uint> templateIds)
+    {
+        for (var index = 0; index < entries.Length; index++)
+        {
+            var entry = entries[index];
+            if (entry.Tag is null)
+            {
+                templateIds[index] = 0;
+                continue;
+            }
+
+            var shard = _shards[ShardOf(entry.Tag, _shards.Length)];
+            var cluster = shard.MatchCluster(entry.Tag, entry.Message, entry.Timestamp, entry.EntryId);
+            if (cluster is not null && cluster.GlobalId == 0)
+            {
+                if (_numbered.Count < _settings.MaximumClusters)
+                {
+                    cluster.GlobalId = _nextId++;
+                    _numbered.Add(cluster);
+                }
+                else
+                {
+                    _limitReached = true;
+                }
+            }
+
+            templateIds[index] = cluster?.GlobalId ?? 0;
+            if (templateIds[index] == 0)
+            {
+                _overflowAssignments++;
+            }
+            else if (cluster!.PublishedShapeRevision != cluster.ShapeRevision)
+            {
+                _dirty.Add(cluster);
+            }
+
+            if (_numbered.Count >= _settings.MaximumClusters)
+            {
+                _limitReached = true;
+                foreach (var value in _shards)
+                {
+                    value.PreventNewClusters = true;
+                }
+            }
         }
     }
 
@@ -178,6 +269,28 @@ public sealed class ShardedTemplateMiner
         }
 
         return definitions;
+    }
+
+    /// <summary>
+    /// Definitions created or structurally generalized since the last successful
+    /// publication. Evidence-only changes are committed once at finalization so a hot
+    /// template cannot grow the sidecar once per live snapshot.
+    /// </summary>
+    public IReadOnlyList<TemplateDefinition> GetChangedDefinitions() =>
+        _dirty
+            .OrderBy(static cluster => cluster.GlobalId)
+            .Select(cluster => DrainTemplateMiner.Describe(cluster, _settings.AlgorithmVersion, cluster.GlobalId))
+            .ToArray();
+
+    /// <summary>Marks the current structural revisions as committed by a published manifest.</summary>
+    public void MarkDefinitionsPublished()
+    {
+        foreach (var cluster in _dirty)
+        {
+            cluster.PublishedShapeRevision = cluster.ShapeRevision;
+        }
+
+        _dirty.Clear();
     }
 
     /// <summary>

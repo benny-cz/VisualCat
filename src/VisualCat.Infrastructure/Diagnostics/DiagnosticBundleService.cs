@@ -119,7 +119,7 @@ public static class DiagnosticBundleService
                         Tags = manifest.Tags
                             .Select(static (_, index) => $"<redacted-tag-{index}>")
                             .ToArray(),
-                        Templates = manifest.Templates
+                        Templates = (manifest.Templates ?? [])
                             .Select(static template => template with
                             {
                                 CanonicalText = "<redacted-template>",
@@ -127,6 +127,10 @@ public static class DiagnosticBundleService
                                 ContentHash = string.Empty,
                             })
                             .ToArray(),
+                        // The bundle carries a redacted manifest and none of the session's
+                        // files, so it must not go on naming a template sidecar either.
+                        TemplateSidecarLength = null,
+                        TemplateSidecarName = null,
                         ProcessNames = manifest.ProcessNames?
                             .Select(static process => process with { Name = "<redacted-process>" })
                             .ToArray(),
