@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-    <XamarinAndroidXAnnotationVersion>1.9.1.7</XamarinAndroidXAnnotationVersion>
+    <XamarinAndroidXAnnotationVersion>1.10.0.1</XamarinAndroidXAnnotationVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Avalonia" Version="12.1.0" />
