@@ -53,11 +53,17 @@ jobs:
         run: dotnet build VisualCat.Desktop.slnx --no-restore --configuration Release
       - name: Test
         if: runner.os != 'Linux'
-        # xUnit serialization applies inside one assembly; MSBuild otherwise launches all
-        # four test projects together. That let the heavy store suites starve the headless UI
-        # process while it was atomically replacing live manifests, producing intermittent
-        # Windows file-lock failures and the long-standing Ubuntu desktop-core instability.
-        run: dotnet test VisualCat.Desktop.slnx --no-restore --no-build --configuration Release -m:1
+        # Test projects and the process-wide Avalonia UI assembly are serialized independently.
+        # The wrapper also preserves TRX files and turns failures into check annotations, so a
+        # platform-only regression remains diagnosable without access to the raw Actions log.
+        run: pwsh ./tools/test-ci.ps1
+      - name: Preserve failed test results
+        if: failure() && runner.os != 'Linux'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-results-${{ runner.os }}
+          path: TestResults/ci/*.trx
+          if-no-files-found: warn
       - name: Test with coverage
         if: runner.os == 'Linux'
         run: dotnet test VisualCat.Desktop.slnx --no-restore --no-build --configuration Release -m:1 --collect:"XPlat Code Coverage" --results-directory TestResults

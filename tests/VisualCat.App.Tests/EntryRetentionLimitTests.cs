@@ -146,10 +146,12 @@ public sealed class EntryRetentionLimitTests
             .Distinct()
             .Single();
 
-    /// <summary>Lets the first refresh's statistics arrive before the state under test.</summary>
+    /// <summary>Lets the first refresh publish its statistics and release the entry-load gate.</summary>
     private static async Task SettleAsync(LiveTestWorkspaceFixture fixture)
     {
-        for (var attempt = 0; attempt < 50 && fixture.Tab.MatchesInView is null; attempt++)
+        for (var attempt = 0;
+             attempt < 50 && (fixture.Tab.MatchesInView is null || fixture.Tab.IsLoadingEntries);
+             attempt++)
         {
             fixture.Window.UpdateLayout();
             Dispatcher.UIThread.RunJobs();

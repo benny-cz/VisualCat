@@ -51,6 +51,9 @@ screenshot says which build it came from.
   incorrect import heading.
 - Settings cleanup can no longer hide the original save failure, capture names use one clock
   observation, and unconstrained filters avoid unnecessary fingerprint work on hot paths.
+- Entry-retention UI tests now wait for the initial page load to release its gate before asking
+  to load all rows, removing a slow-runner race. CI also publishes failed TRX results and exposes
+  test failures as actionable job annotations, making platform-only regressions diagnosable.
 
 ## [2.0.11] - 2026-08-31
 
