@@ -212,7 +212,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(settingsPath);
         _startupPaths = startupPaths?.ToArray() ?? [];
         _settingsStore = new SettingsStore(settingsPath);
-        _launchFilesHandler = files => Dispatcher.UIThread.Post(() => _ = OpenIncomingAsync(files));
+        _launchFilesHandler = files => Dispatcher.UIThread.Post(() => _ = RunAsync(() => OpenIncomingAsync(files)));
         _appResumedHandler = () => Dispatcher.UIThread.Post(() =>
         {
             RestoreAndroidLayoutAfterResume();
@@ -2046,7 +2046,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // straight to the platform picker whenever the plot happened to be fitted, which is
         // the state every import and every reopen starts in (V2-15).
         var scopes = new List<ExportScope>(3);
-        var filtered = tab.Filter.Fingerprint() != VisualCat.Domain.Filters.FilterSpec.All.Fingerprint();
+        var filtered = !tab.Filter.IsUnconstrained;
         var matching = tab.Statistics?.TotalMatching;
         var viewCoversAll = sessionRange is not { } covered ||
             (covered.StartInclusive >= viewportRange.StartInclusive &&
@@ -2477,12 +2477,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             _settings.TimelineMinimumBarWidth);
         workspace.NoticeRaised += (message, failure) =>
             ShowNotice(message, failure ? NoticeKind.Failure : NoticeKind.Information);
-        workspace.ConfirmAsync = async (title, message, confirmText) =>
-            await ShowDialogAsync(new ConfirmationDialog(title, message, confirmText));
-
         // The chip in the count row is the direct route to the same card the More menu offers.
         // Presentation is the shell's, so the workspace asks rather than presents (V2-13).
-        workspace.OffTimelineRequested += () => _ = ShowUnparsedLinesAsync();
+        workspace.OffTimelineRequested += () => _ = RunAsync(ShowUnparsedLinesAsync);
         workspace.AskForNumberAsync = async (title, question, initial, maximum) =>
             await ShowDialogAsync(new NumberPromptDialog(title, question, initial, 1, maximum));
         workspace.PartialRecoveryRaised += message =>
@@ -2497,11 +2494,11 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         workspace.SplitShareChanged += PersistMobileTimelineShare;
         workspace.SplitWidthShareChanged += PersistMobileTimelineWidthShare;
         workspace.CompactEditorChanged += _ => UpdateCompactCommandComposition();
-        workspace.ExportRequested += range => _ = ExportAsync(range);
+        workspace.ExportRequested += range => _ = RunAsync(() => ExportAsync(range));
         workspace.StopRequested += () => _viewModel.StopAsync(viewModel);
 
         // A session that failed with no data offers the only two useful actions there are.
-        workspace.CloseRequested += () => _ = _viewModel.CloseAsync(viewModel);
+        workspace.CloseRequested += () => _ = RunAsync(() => _viewModel.CloseAsync(viewModel));
         workspace.OpenLogRequested += OpenLogAsync;
         return workspace;
     }
@@ -3139,7 +3136,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var shift = eventArgs.KeyModifiers.HasFlag(KeyModifiers.Shift);
         if (control && eventArgs.Key == Key.O)
         {
-            _ = shift ? OpenSessionAsync() : OpenLogAsync();
+            _ = RunAsync(() => shift ? OpenSessionAsync() : OpenLogAsync());
             eventArgs.Handled = true;
             return;
         }
@@ -3161,7 +3158,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
         if (eventArgs.Key == Key.E && eventArgs.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            _ = ExportAsync();
+            _ = RunAsync(() => ExportAsync());
             eventArgs.Handled = true;
         }
     }

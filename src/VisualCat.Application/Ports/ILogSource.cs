@@ -53,7 +53,11 @@ public sealed record SourceMetadata(
     /// and one character narrower than nothing else would be.
     /// </remarks>
     public static string NameCaptureStartedNow(string sourceName) =>
-        $"{sourceName} {DateTimeOffset.Now:HH}h{DateTimeOffset.Now:mm}m{DateTimeOffset.Now:ss}";
+        NameCaptureStartedAt(sourceName, DateTimeOffset.Now);
+
+    /// <summary>Formats a capture name from one coherent local-clock observation.</summary>
+    public static string NameCaptureStartedAt(string sourceName, DateTimeOffset startedAt) =>
+        $"{sourceName} {startedAt:HH}h{startedAt:mm}m{startedAt:ss}";
 
     /// <summary>The declared timestamp zone, or the local zone when the source is silent.</summary>
     public string ResolveLogTimeZoneId() =>

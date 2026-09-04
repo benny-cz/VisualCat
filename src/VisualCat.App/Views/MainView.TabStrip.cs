@@ -278,7 +278,9 @@ public sealed partial class MainView
                 return;
             }
 
-            await _viewModel.CloseAsync(viewModel);
+            // async void: a close that fails has to land in the shell's own failure lane
+            // rather than escaping the handler as an unobserved exception.
+            await RunAsync(() => _viewModel.CloseAsync(viewModel));
         };
 
         var body = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };

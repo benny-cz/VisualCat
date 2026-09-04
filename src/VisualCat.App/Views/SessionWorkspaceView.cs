@@ -708,18 +708,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void Notify(string message, bool failure = false) =>
         NoticeRaised?.Invoke(message, failure);
 
-    /// <summary>
-    /// Asks the shell to put a yes/no question in front of the reader.
-    /// </summary>
-    /// <remarks>
-    /// The workspace has no dialog host of its own — presentation is the shell's, the same way
-    /// export pickers and partial-recovery dispositions are. Installed by
-    /// <c>MainView.CreateWorkspaceView</c>; where it is not installed the answer is "yes", so a
-    /// desktop or a test that never wired it is not blocked by a question nobody can see.
-    /// </remarks>
-    internal Func<string, string, string, Task<bool>>? ConfirmAsync { get; set; }
-
-    /// <summary>The phone workspace mode, in the form settings.json stores.</summary>
+  /// <summary>The phone workspace mode, in the form settings.json stores.</summary>
     internal string DisplayMode => _mobileWorkspaceState.Persisted;
 
     /// <summary>Re-adopts the mode the reader had before this process started.</summary>
@@ -1039,7 +1028,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         _mobileFiltersOpen ||
         _search.IsFocused && !string.IsNullOrWhiteSpace(_viewModel.SearchText) ||
         _viewModel.DetailRange is not null ||
-        _viewModel.Filter.Fingerprint() != FilterSpec.All.Fingerprint();
+        !_viewModel.Filter.IsUnconstrained;
 
     private async Task HandleEscapeAsync()
     {
@@ -1063,7 +1052,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             return;
         }
 
-        if (_viewModel.Filter.Fingerprint() != FilterSpec.All.Fingerprint())
+        if (!_viewModel.Filter.IsUnconstrained)
         {
             await _viewModel.ClearFiltersAsync().ConfigureAwait(false);
         }
@@ -1440,7 +1429,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ApplyLevelToggleColors(toggle, level);
                 if (!_updatingLevelChecks)
                 {
-                    _ = _viewModel.SetLevelAsync(level, toggle.IsChecked == true);
+                    _ = RunUiActionAsync(() => _viewModel.SetLevelAsync(level, toggle.IsChecked == true));
                 }
             };
             ApplyLevelToggleColors(toggle, level);
@@ -1468,8 +1457,8 @@ public sealed partial class SessionWorkspaceView : UserControl
         ToolTip.SetTip(zoomIn, "Zoom in");
         AutomationProperties.SetName(zoomIn, "Zoom in");
         zoomIn.Click += (_, _) => _timeline.ZoomAtCenter(0.5);
-        _follow.Click += (_, _) => _ = _viewModel.ToggleFollowAsync();
-        _newData.Click += (_, _) => _ = _viewModel.ToggleFollowAsync();
+        _follow.Click += (_, _) => _ = RunUiActionAsync(_viewModel.ToggleFollowAsync);
+        _newData.Click += (_, _) => _ = RunUiActionAsync(_viewModel.ToggleFollowAsync);
         _stopCapture.Click += async (_, _) =>
         {
             if (StopRequested is { } handler)
@@ -1957,12 +1946,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             if (_selectedRange is { } range)
             {
-                _ = _viewModel.SetViewportAsync(range);
+                _ = RunUiActionAsync(() => _viewModel.SetViewportAsync(range));
             }
         };
         _rangeActions.Children.Add(zoomRange);
         var filterRange = new Button { Content = "Filter range" };
-        filterRange.Click += (_, _) => _ = _viewModel.SetTimeRangeFilterAsync(_selectedRange);
+        filterRange.Click += (_, _) => _ = RunUiActionAsync(() => _viewModel.SetTimeRangeFilterAsync(_selectedRange));
         _rangeActions.Children.Add(filterRange);
         var exportRange = new Button { Content = "Export range" };
         exportRange.Click += (_, _) => ExportRequested?.Invoke(_selectedRange);
@@ -2050,8 +2039,8 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             RowDefinitions = new RowDefinitions("Auto,Auto,Auto"),
         };
-        _order.SelectionChanged += (_, _) => _ = _viewModel.SetEntryOrderAsync(
-            _order.SelectedIndex == 1 ? EntryOrder.SourceSequence : EntryOrder.Chronological);
+        _order.SelectionChanged += (_, _) => _ = RunUiActionAsync(() => _viewModel.SetEntryOrderAsync(
+            _order.SelectedIndex == 1 ? EntryOrder.SourceSequence : EntryOrder.Chronological));
         ToolTip.SetTip(_loadMore, $"Load the next {SessionTabViewModel.EntryPageSize:N0} matching rows");
         AutomationProperties.SetName(_loadMore, $"Load next {SessionTabViewModel.EntryPageSize:N0} matching rows");
         _loadMore.Click += async (_, _) => await RunUiActionAsync(() => _viewModel.LoadNextEntryPageAsync());

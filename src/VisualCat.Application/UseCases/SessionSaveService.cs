@@ -39,16 +39,22 @@ public static class SessionSaveService
             var manifest = snapshot.Manifest with { UpdatedUtc = DateTimeOffset.UtcNow };
             if (portable)
             {
-                if (snapshot.RawPath is not { } rawPath || !File.Exists(rawPath))
+                if (snapshot.RawPath is null)
                 {
                     throw new InvalidOperationException("A portable session cannot be created because raw source data is unavailable.");
                 }
 
                 var rawDestination = Path.Combine(temporary, "raw.log");
-                if (!File.Exists(rawDestination) &&
-                    !Path.GetFullPath(rawPath).Equals(Path.GetFullPath(rawDestination), comparison))
+                if (!File.Exists(rawDestination))
                 {
-                    await CopyFileAsync(rawPath, rawDestination, cancellationToken).ConfigureAwait(false);
+                    // Embed exactly the bytes this session indexed, verified on the handle the
+                    // copy reads from (ADR 0020). An external capture that has been appended to
+                    // since the import still holds this session's evidence in its recorded
+                    // prefix; copying whatever the file happens to hold now would embed bytes
+                    // the session never saw and then fail its own verification below.
+                    await using var raw = await VerifiedRawSource.OpenAsync(snapshot, cancellationToken)
+                        .ConfigureAwait(false);
+                    await CopyPrefixAsync(raw, rawDestination, cancellationToken).ConfigureAwait(false);
                 }
 
                 manifest = manifest with
@@ -107,6 +113,23 @@ public static class SessionSaveService
         {
             throw new IOException($"Session save refuses symbolic links and reparse points: {path}");
         }
+    }
+
+    private static async Task CopyPrefixAsync(
+        VerifiedRawSource raw,
+        string destination,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(destination) ?? ".");
+        await using var output = new FileStream(
+            destination,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            1024 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await raw.CopyPrefixToAsync(output, cancellationToken).ConfigureAwait(false);
+        await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task CopyFileAsync(string source, string destination, CancellationToken cancellationToken)

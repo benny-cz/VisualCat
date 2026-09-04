@@ -120,6 +120,60 @@ gates the first cannot meaningfully apply:
 The runner also reports `templates`, `tags`, `manifestBytes` and `templateSidecarBytes`
 so a diversity regression is visible in the summary even where no gate fires.
 
+## Presentation layer — settled viewport change, 2026-09-03
+
+Ingest, query and export are gated above; the view's own reaction to a query result never
+was, which is why an audit measurement claiming that rooting the workspace multiplied a
+settled viewport change by about 30x (2.6 ms to 152 ms) went unchallenged for as long as it
+did. That measurement was headless, on Avalonia's null drawing backend, and its harness was
+not retained.
+
+`bench/VisualCat.UiBench` is the retained replacement. It is a real desktop application:
+`UsePlatformDetect().UseSkia()`, a real window on the physical display, one process, one
+50,000-entry session, and the same loop of settled viewport changes run against three
+configurations back to back.
+
+- **A** — the view model alone, no view.
+- **B** — a `SessionWorkspaceView` constructed and subscribed, never rooted in a window.
+- **C** — the same view as the content of a shown 1280 x 800 window.
+
+A *settled* change is one whose queued work has drained to `DispatcherPriority.Background`;
+layout, render and input all sit above it, so nothing the change queued is still outstanding
+when the stopwatch stops. Every configuration uses that one definition, which is what makes
+them comparable. The corpus is generated in-process and its SHA-256 is reported with the
+results, along with the warm-up and per-batch numbers.
+
+Reference machine as above, Release, three runs of 80 warm-up changes then 8 batches of 40:
+
+| Configuration | Median ms/change | p95 ms/change |
+|---|---:|---:|
+| A — view model only | 1.0 – 2.1 | 2.3 – 2.8 |
+| B — view constructed, never rooted | 4.8 – 5.0 | 5.8 – 6.4 |
+| C — view shown in a window | 5.4 – 6.3 | 15.6 – 17.2 |
+
+**The headless result does not reproduce on a real display.** Rooting the view costs about
+0.6 – 1.3 ms of median time, not 148 ms, and a complete settled change costs about one 60 Hz
+frame at p95. The ~30x figure was an artifact of the null drawing backend, and the number to
+carry forward is this one.
+
+What remains is the view's own reaction, A to B, at about 3 ms. Coalescing the thirteen
+property notifications one refresh raises into a single dispatcher job — which removed
+six redundant `UpdateEntryLoadControls` calls, two redundant `UpdateTimelines` calls and
+three jobs matching no case at all — produced **no measurable change** at this scale on this
+machine. It was kept because it is strictly less work and makes the view's reaction legible,
+not because it bought time. The remaining A-to-B cost is the 500-row rebind of the bound
+entry collection; nothing here justifies changing that yet.
+
+This is deliberately **not** a CI gate. The harness needs a real window and a GPU, which the
+hosted runners in [`performance.yml`](../.github/workflows/performance.yml) do not have, and
+a ratio gate would be the wrong instrument: improving B can make `C / B` fail while the
+reader's cost improves. Run it on a reference machine when the presentation layer changes:
+
+```shell
+dotnet run --project bench/VisualCat.UiBench -c Release -- --entries 50000 --warmup 80 --batches 8 --output .tmp/uibench.json
+```
+
+
 The original 1.5-million-lines/s full-pipeline target was not supported by measurement: it exceeds the observed safe, mining-enabled pipeline by roughly 20× even on a 12-core NVMe workstation. ADR 0018 therefore replaces it as a release gate with the measured targets above. It remains an optimization direction, not a claim. Larger 10 M / 40 M scale runs remain controlled benchmark jobs rather than source-controlled fixtures.
 
 Generate and run the million-line public baseline outside source control:

@@ -51,6 +51,25 @@ public sealed record FilterSpec
     /// <summary>Gets an unconstrained filter.</summary>
     public static FilterSpec All { get; } = new();
 
+    /// <summary>Gets whether no filter dimension constrains the session.</summary>
+    public bool IsUnconstrained =>
+        TimeRange is null &&
+        IncludedLevels.Count == 0 &&
+        IncludedTags.Count == 0 &&
+        ExcludedTags.Count == 0 &&
+        IncludedPids.Count == 0 &&
+        ExcludedPids.Count == 0 &&
+        IncludedProcesses.Count == 0 &&
+        ExcludedProcesses.Count == 0 &&
+        IncludedTids.Count == 0 &&
+        ExcludedTids.Count == 0 &&
+        IncludedTemplates.Count == 0 &&
+        ExcludedTemplates.Count == 0 &&
+        IncludedBuffers.Count == 0 &&
+        ExcludedBuffers.Count == 0 &&
+        IncludedOutcomes.Count == 0 &&
+        Search is null;
+
     /// <summary>Returns a deterministic SHA-256 identity for query-cache keys.</summary>
     public string Fingerprint()
     {

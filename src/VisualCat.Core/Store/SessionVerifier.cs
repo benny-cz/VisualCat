@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-
 namespace VisualCat.Core.Store;
 
 public static class SessionVerifier
@@ -20,6 +18,7 @@ public static class SessionVerifier
             // it so a missing, truncated, or malformed committed sidecar cannot pass.
             _ = snapshot.Templates.Count;
             var sequences = new HashSet<long>();
+            var referencedTemplateIds = new HashSet<uint>();
             foreach (var segment in snapshot.Segments)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -39,6 +38,12 @@ public static class SessionVerifier
                     if (!sequences.Add(sequence))
                     {
                         issues.Add(new VerificationIssue("sequence.duplicate", $"Duplicate source sequence {sequence}.", true));
+                    }
+
+                    var templateId = segment.TemplateIdAt(i);
+                    if (templateId != 0)
+                    {
+                        referencedTemplateIds.Add(templateId);
                     }
 
                     previousTimestamp = timestamp;
@@ -92,6 +97,33 @@ public static class SessionVerifier
                 {
                     issues.Add(new VerificationIssue("bitmap.cardinality", $"Severity bitmap total {bitmapTotal} differs from segment count {segment.Count}.", true));
                 }
+            }
+
+            var publishedTemplateIds = snapshot.Templates
+                .Select(static template => template.TemplateId)
+                .ToHashSet();
+            // An entry pointing at a template that is not published is a broken reference:
+            // the session cannot answer a question it claims to be able to answer.
+            foreach (var templateId in referencedTemplateIds.Except(publishedTemplateIds).Order())
+            {
+                issues.Add(new VerificationIssue(
+                    "template.missing",
+                    $"Entries reference template {templateId}, but that template is not published.",
+                    true));
+            }
+
+            // A published template nobody references is a wart, not damage — every entry is
+            // still complete and every question still answerable. It is reported because it is
+            // how a phantom cluster shows itself (IA-08), and reported as a warning because
+            // sessions indexed by 2.0.11 and earlier can contain one through no fault of their
+            // reader: making it an error would open them and then refuse to save, share or
+            // export them (IA-17).
+            foreach (var templateId in publishedTemplateIds.Except(referencedTemplateIds).Order())
+            {
+                issues.Add(new VerificationIssue(
+                    "template.unreferenced",
+                    $"Published template {templateId} is not referenced by any entry.",
+                    false));
             }
 
             var recordsPath = Path.Combine(snapshot.RootPath, "source-order", "records.bin");
@@ -176,18 +208,21 @@ public static class SessionVerifier
                 issues.Add(new VerificationIssue("source.records.missing", "Source-order records are missing.", true));
             }
 
-            if (verifyRawHash && snapshot.RawPath is { } rawPath && File.Exists(rawPath))
+            if (verifyRawHash)
             {
-                await using var source = new FileStream(rawPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, true);
-                var actual = Convert.ToHexString(await SHA256.HashDataAsync(source, cancellationToken).ConfigureAwait(false));
-                if (!string.Equals(actual, snapshot.Manifest.Source.Sha256, StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    issues.Add(new VerificationIssue("source.hash", "Raw source hash differs from the indexed source.", true));
+                    await using var raw = await VerifiedRawSource.OpenAsync(snapshot, cancellationToken).ConfigureAwait(false);
                 }
-            }
-            else if (verifyRawHash)
-            {
-                issues.Add(new VerificationIssue("source.unavailable", "Raw source is unavailable; the index is degraded.", false));
+                catch (RawEvidenceException exception)
+                {
+                    var pathExists = snapshot.RawPath is { } rawPath && File.Exists(rawPath);
+                    var embedded = snapshot.Manifest.Source.Embedded;
+                    issues.Add(new VerificationIssue(
+                        embedded ? "source.embedded" : pathExists ? "source.hash" : "source.unavailable",
+                        exception.Message,
+                        embedded || pathExists));
+                }
             }
 
             if (entries != snapshot.Descriptor.Counters.TimedEntries)

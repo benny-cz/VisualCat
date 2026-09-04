@@ -101,6 +101,10 @@ public sealed class DomainTests
             static pair => pair.Value.Fingerprint(),
             StringComparer.Ordinal);
         Assert.Equal(variants.Count, fingerprints.Values.Distinct(StringComparer.Ordinal).Count());
+        Assert.True(FilterSpec.All.IsUnconstrained);
+        Assert.All(
+            variants.Where(static pair => pair.Key != "all"),
+            static pair => Assert.False(pair.Value.IsUnconstrained, pair.Key));
     }
 
     [Fact]

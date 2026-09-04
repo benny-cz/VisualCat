@@ -525,10 +525,12 @@ public sealed class SessionCoordinator
             for (var index = 0; index < count; index++)
             {
                 var outcome = batch.Outcomes[index];
-                if (outcome.Fields is not { } fields)
+                if (outcome.Fields is not { } fields || fields.Format == LogcatFormat.LongFormat)
                 {
-                    // Meta, blank, unknown, and rejected lines are not entries; they are
-                    // not mined and keep template id zero (§9.3).
+                    // Meta, blank, unknown, and rejected lines are not entries. A long-format
+                    // header inside another primary format is not one either: the commit walk
+                    // assembles it with its body and mines that completed entry later. Mining
+                    // the header here would publish a phantom, unreferenced empty template.
                     continue;
                 }
 

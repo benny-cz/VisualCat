@@ -580,6 +580,12 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
                     SessionActivity.Stopped,
                     $"Stopped · Android's six-hour background limit ended this capture · {Counted.Entries(capturedEntries)} kept");
             }
+            else if (platformStopped == (int)PlatformLiveCaptureStopReason.BackgroundExecutionUnavailable)
+            {
+                tab.ReportActivity(
+                    SessionActivity.Stopped,
+                    $"Stopped · Android could not keep this capture visible in the background · {Counted.Entries(capturedEntries)} kept; reopen VisualCat and try Live again");
+            }
             else if (readerStopped)
             {
                 tab.ReportActivity(
@@ -701,6 +707,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
 
     public async Task CloseAsync(SessionTabViewModel tab)
     {
+        ArgumentNullException.ThrowIfNull(tab);
         SessionOperation? operation;
         lock (_operationGate)
         {
@@ -713,18 +720,32 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             await operation.Completion.Task.ConfigureAwait(false);
         }
 
-        if (!Tabs.Remove(tab))
+        Task? disposal = null;
+        var removed = await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (!Tabs.Remove(tab))
+            {
+                return false;
+            }
+
+            if (ReferenceEquals(Selected, tab))
+            {
+                Selected = Tabs.LastOrDefault();
+            }
+
+            // Calling the async disposer here executes its synchronous cancellation and
+            // heartbeat teardown on the UI thread. Its persistence and lock waits continue
+            // asynchronously, so the dispatcher is never blocked by storage.
+            disposal = tab.DisposeAsync().AsTask();
+            return true;
+        });
+        if (!removed)
         {
             return;
         }
 
-        if (ReferenceEquals(Selected, tab))
-        {
-            Selected = Tabs.LastOrDefault();
-        }
-
-        await tab.DisposeAsync().ConfigureAwait(false);
-        TabRemoved?.Invoke(this, tab);
+        await disposal!.ConfigureAwait(false);
+        await Dispatcher.UIThread.InvokeAsync(() => TabRemoved?.Invoke(this, tab));
     }
 
     public async ValueTask DisposeAsync()

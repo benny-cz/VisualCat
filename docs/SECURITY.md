@@ -19,7 +19,10 @@ untrusted.
   command;
 - Android share URIs are read-only `FileProvider` content URIs scoped to an
   app-private cache directory;
-- source content is never executed;
+- source content is never executed, and no export re-encodes it: a CSV export is exact
+  data, so log text that a spreadsheet application would evaluate as a formula is written
+  through unchanged. That boundary is deliberate and documented — import an untrusted log's
+  CSV as text rather than opening it directly ([ADR 0021](adr/0021-csv-export-fidelity.md));
 - queues, caches, search markers, detail pages, error buffers, batches, and Android
   Wireless-ADB read buffers have explicit bounds.
 

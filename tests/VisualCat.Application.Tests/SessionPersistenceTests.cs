@@ -13,6 +13,7 @@ using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
 using VisualCat.Infrastructure.Configuration;
 using VisualCat.Infrastructure.Diagnostics;
+using VisualCat.Infrastructure.Files;
 using VisualCat.Infrastructure.Testing;
 
 namespace VisualCat.Application.Tests;
@@ -100,6 +101,59 @@ public sealed class SessionPersistenceTests
             DeleteIfPresent(sourceRoot);
             DeleteIfPresent(standard);
             DeleteIfPresent(portable);
+        }
+    }
+
+    /// <summary>
+    /// A portable save embeds the session's recorded prefix, not whatever the external file
+    /// holds at save time, and refuses outright when that prefix no longer matches.
+    /// </summary>
+    /// <remarks>
+    /// Indexing a capture that is still being written to is the ordinary workflow, so the
+    /// append case has to keep working (ADR 0020). Copying the file wholesale embedded bytes
+    /// the session never indexed and then failed the copy's own verification, reporting
+    /// damaged embedded evidence for a source that was merely longer.
+    /// </remarks>
+    [Fact]
+    public async Task PortableSaveEmbedsTheRecordedPrefixOfAGrownSourceAndRefusesARewrittenOne()
+    {
+        var container = Path.Combine(Path.GetTempPath(), $"visualcat-portable-prefix-{Guid.NewGuid():N}");
+        var logPath = Path.Combine(container, "capture.txt");
+        var sourceRoot = Path.Combine(container, "capture.vcat");
+        var portable = Path.Combine(container, "portable.vcat");
+        var refused = Path.Combine(container, "refused.vcat");
+        Directory.CreateDirectory(container);
+        SessionSnapshot? snapshot = null;
+        try
+        {
+            await File.WriteAllTextAsync(logPath, Log);
+            await using (var source = new FileLogSource(logPath))
+            {
+                var result = await SessionCoordinator.ImportAsync(
+                    source,
+                    sourceRoot,
+                    Settings() with { PortableRaw = false });
+                snapshot = result.Snapshot;
+            }
+
+            await File.AppendAllTextAsync(
+                logPath,
+                "05-15 14:13:37.500  1073  1153 I TagC: gamma 3000\n");
+
+            await PortableSessionService.SavePortableAsync(snapshot, portable);
+            Assert.Equal(Log, await File.ReadAllTextAsync(Path.Combine(portable, "raw.log")));
+            Assert.True((await SessionVerifier.VerifyAsync(portable)).IsValid);
+
+            await File.WriteAllTextAsync(logPath, "X" + Log[1..]);
+            var failure = await Assert.ThrowsAsync<RawEvidenceException>(
+                () => PortableSessionService.SavePortableAsync(snapshot, refused));
+            Assert.Contains("no longer matches", failure.Message, StringComparison.Ordinal);
+            Assert.False(Directory.Exists(refused));
+        }
+        finally
+        {
+            snapshot?.Dispose();
+            DeleteIfPresent(container);
         }
     }
 

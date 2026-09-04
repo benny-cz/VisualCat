@@ -120,8 +120,24 @@ public sealed class SettingsStore(string path)
         }
         catch
         {
-            File.Delete(temporary);
+            DeleteTemporaryBestEffort(temporary);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Tries to remove an unpublished settings file without replacing the save failure that
+    /// led here. The unique file is harmless if the filesystem refuses cleanup; losing the
+    /// primary diagnostic is not.
+    /// </summary>
+    internal static void DeleteTemporaryBestEffort(string path, Action<string>? delete = null)
+    {
+        try
+        {
+            (delete ?? File.Delete)(path);
+        }
+        catch (Exception)
+        {
         }
     }
 

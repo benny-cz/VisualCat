@@ -10,6 +10,7 @@ using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 using VisualCat.App.Views;
 using VisualCat.Application.Coordination;
+using VisualCat.Application.Ports;
 using VisualCat.Core.Store;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Queries;
@@ -21,6 +22,59 @@ namespace VisualCat.App.Tests;
 
 public sealed class SessionWorkspaceHeadlessTests
 {
+    [AvaloniaFact]
+    public async Task UiActionGuardReportsFailuresCancellationAndDiagnostics()
+    {
+        await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(BuildLog(12));
+        var diagnostics = new RecordingDiagnosticSink();
+        fixture.Workspace.ConfigureDiagnostics(diagnostics);
+
+        await fixture.View.RunUiActionAsync(() => Task.FromException(new IOException("read failed")));
+        Assert.StartsWith("Failed · ", fixture.Tab.Status, StringComparison.Ordinal);
+        var diagnostic = await diagnostics.Written.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+        Assert.Equal("workspace.action.failed", diagnostic.Name);
+        Assert.Equal(typeof(IOException).FullName, diagnostic.Properties["exceptionType"]);
+        Assert.Equal("read failed", diagnostic.Properties["message"]);
+
+        await fixture.View.RunUiActionAsync(() => Task.FromCanceled(new CancellationToken(canceled: true)));
+        Assert.Equal("Cancelled", fixture.Tab.Status);
+        fixture.Workspace.ConfigureDiagnostics(null);
+    }
+
+    [AvaloniaFact]
+    public async Task EveryRawUiReaderRefusesAChangedSourceAfterAnEarlierSuccessfulRead()
+    {
+        const string Log =
+            "01-01 00:00:01.000   100   101 I Tag: alpha\n" +
+            "unparsed evidence\n" +
+            "01-01 00:00:02.000   100   101 E Tag: bravo\n";
+        await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(Log);
+        var entry = fixture.Tab.Entries.First();
+
+        await fixture.Tab.LoadRawContextAsync(entry, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Contains("alpha", fixture.Tab.RawContextText, StringComparison.Ordinal);
+
+        var rawPath = Assert.IsType<string>(fixture.Tab.Snapshot?.RawPath);
+        var bytes = await File.ReadAllBytesAsync(rawPath, TestContext.Current.CancellationToken);
+        bytes[0] ^= 0x1;
+        await File.WriteAllBytesAsync(rawPath, bytes, TestContext.Current.CancellationToken);
+
+        await fixture.Tab.LoadRawContextAsync(entry, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Contains("no longer matches", fixture.Tab.RawContextText, StringComparison.OrdinalIgnoreCase);
+
+        var unparsed = await fixture.Tab.LoadUnparsedLinesAsync(
+            0,
+            100,
+            TestContext.Current.CancellationToken);
+        Assert.Contains("no longer matches", unparsed.Text, StringComparison.OrdinalIgnoreCase);
+
+        var copyFailure = await Assert.ThrowsAsync<RawEvidenceException>(
+            () => fixture.Tab.ReadRawEntriesAsync([entry], TestContext.Current.CancellationToken));
+        Assert.Contains("no longer matches", copyFailure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [AvaloniaFact]
     public async Task ActiveCaptureKeepsStopActionVisibleDuringSnapshotRefresh()
     {
@@ -726,5 +780,22 @@ public sealed class SessionWorkspaceHeadlessTests
         }
 
         return builder.ToString();
+    }
+
+    private sealed class RecordingDiagnosticSink : IDiagnosticSink
+    {
+        public TaskCompletionSource<DiagnosticEvent> Written { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask WriteAsync(
+            DiagnosticEvent diagnosticEvent,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Written.TrySetResult(diagnosticEvent);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

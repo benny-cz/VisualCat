@@ -33,7 +33,7 @@ Timed entries in each segment are stable-sorted by `(timestamp, source sequence)
 
 Rank bitmap files begin with `VCBM`, version `1`, bit length, word count, and little-endian `UInt64` words. The manifest stores SHA-256 checksums for every column and bitmap. `vcat verify` validates checksums, dimensions, order, unique sequence numbers, bitmap cardinality, byte coverage, source identity, and summary reconciliation.
 
-Major versions are refused safely. A missing or changed external source opens in degraded index-only mode. Portable sessions embed `raw.log` and are verified before publication.
+Major versions are refused safely. A missing or metadata-changed external source opens in degraded index-only mode. Raw access makes the stronger content decision independently: the complete recorded `Source.Length` prefix on the open read handle must match `Source.Sha256`. Safe append-only growth is accepted, appended bytes stay outside the snapshot, and a shorter or changed prefix is refused. A finalized embedded `raw.log` must match both the recorded length and digest. See [ADR 0020](adr/0020-verified-raw-evidence.md).
 
 `view.json` is a versioned, bounded sidecar and is not part of analytical identity. A malformed or unsupported view sidecar is ignored without preventing the immutable session snapshot from opening. Standard and portable save copy it atomically with the session.
 

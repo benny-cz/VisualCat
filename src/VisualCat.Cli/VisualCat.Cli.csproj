@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <InternalsVisibleTo Include="VisualCat.Application.Tests" />
+  </ItemGroup>
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>vcat</AssemblyName>

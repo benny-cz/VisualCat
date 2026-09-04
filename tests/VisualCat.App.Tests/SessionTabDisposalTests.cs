@@ -1,8 +1,12 @@
 using System.Collections.Specialized;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using VisualCat.App.Presentation;
+using VisualCat.Application.Ports;
+using VisualCat.Domain.Sessions;
 
 namespace VisualCat.App.Tests;
 
@@ -31,6 +35,134 @@ namespace VisualCat.App.Tests;
 public sealed class SessionTabDisposalTests
 {
     private const int SessionLines = 8_000;
+
+    [AvaloniaFact]
+    public async Task CloseFromAWorkerMutatesWorkspaceStateAndRaisesEventsOnTheUiThread()
+    {
+        await WithImportedSessionAsync(async (workspace, tab) =>
+        {
+            var collectionAccess = new List<bool>();
+            var selectedAccess = new List<bool>();
+            var removalAccess = new List<bool>();
+            workspace.Tabs.CollectionChanged += (_, _) =>
+                collectionAccess.Add(Dispatcher.UIThread.CheckAccess());
+            workspace.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(WorkspaceViewModel.Selected))
+                {
+                    selectedAccess.Add(Dispatcher.UIThread.CheckAccess());
+                }
+            };
+            workspace.TabRemoved += (_, _) =>
+                removalAccess.Add(Dispatcher.UIThread.CheckAccess());
+
+            await Task.Run(() => workspace.CloseAsync(tab), TestContext.Current.CancellationToken);
+
+            Assert.Equal([true], collectionAccess);
+            Assert.Equal([true], selectedAccess);
+            Assert.Equal([true], removalAccess);
+        });
+    }
+
+    [AvaloniaFact]
+    public async Task ClosingAnActiveOperationKeepsCollectionAndSelectionChangesOnTheUiThread()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        WorkspaceViewModel.ConfigureTemporarySessionRoot(root);
+        try
+        {
+            await using var workspace = new WorkspaceViewModel();
+            await using var source = new BlockingCaptureSource();
+            var capture = workspace.CaptureAsync(source, duration: null, TestContext.Current.CancellationToken);
+            await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            var tab = Assert.Single(workspace.Tabs);
+            var collectionOnUi = false;
+            var selectedOnUi = false;
+            workspace.Tabs.CollectionChanged += (_, _) => collectionOnUi = Dispatcher.UIThread.CheckAccess();
+            workspace.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(WorkspaceViewModel.Selected))
+                {
+                    selectedOnUi = Dispatcher.UIThread.CheckAccess();
+                }
+            };
+
+            await Task.Run(() => workspace.CloseAsync(tab), TestContext.Current.CancellationToken);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => capture);
+
+            Assert.True(collectionOnUi);
+            Assert.True(selectedOnUi);
+            Assert.Empty(workspace.Tabs);
+        }
+        finally
+        {
+            WorkspaceViewModel.ConfigureTemporarySessionRoot(null);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task MultiTabShutdownKeepsEveryRemovalOnTheUiThread()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        WorkspaceViewModel.ConfigureTemporarySessionRoot(root);
+        var workspace = new WorkspaceViewModel();
+        try
+        {
+            var firstPath = Path.Combine(root, "first.txt");
+            var secondPath = Path.Combine(root, "second.txt");
+            await File.WriteAllTextAsync(firstPath, BuildLog(20), TestContext.Current.CancellationToken);
+            await File.WriteAllTextAsync(secondPath, BuildLog(20), TestContext.Current.CancellationToken);
+            await workspace.ImportFileAsync(firstPath, TestContext.Current.CancellationToken);
+            await workspace.ImportFileAsync(secondPath, TestContext.Current.CancellationToken);
+
+            var removalAccess = new List<bool>();
+            workspace.Tabs.CollectionChanged += (_, args) =>
+            {
+                if (args.Action == NotifyCollectionChangedAction.Remove)
+                {
+                    removalAccess.Add(Dispatcher.UIThread.CheckAccess());
+                }
+            };
+
+            await Task.Run(() => workspace.DisposeAsync().AsTask(), TestContext.Current.CancellationToken);
+            Assert.Equal([true, true], removalAccess);
+            Assert.Empty(workspace.Tabs);
+        }
+        finally
+        {
+            WorkspaceViewModel.ConfigureTemporarySessionRoot(null);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task RefreshesRacingWorkerDisposalDoNotFault()
+    {
+        await WithImportedSessionAsync(async (workspace, tab) =>
+        {
+            _ = workspace;
+            var range = Assert.IsType<VisualCat.Domain.Time.TimeRange>(tab.Viewport);
+            var refreshes = Enumerable.Range(0, 80)
+                .Select(_ => Task.Run(() => tab.SetViewportAsync(range), TestContext.Current.CancellationToken))
+                .ToArray();
+            var disposal = Task.Run(
+                () => tab.DisposeAsync().AsTask(),
+                TestContext.Current.CancellationToken);
+
+            var exception = await Record.ExceptionAsync(() => Task.WhenAll(refreshes.Append(disposal)));
+            Assert.Null(exception);
+            Assert.True(tab.IsDisposed);
+        });
+    }
 
     [AvaloniaFact]
     public async Task DisposalStopsAnInFlightLoadAllInsteadOfWaitingForIt()
@@ -236,5 +368,51 @@ public sealed class SessionTabDisposalTests
         }
 
         return builder.ToString();
+    }
+
+    private sealed class BlockingCaptureSource : ILogSource
+    {
+        private static readonly byte[] Probe =
+            "01-01 00:00:01.000   100   101 I Tag: probe\n"u8.ToArray();
+
+        public TaskCompletionSource ReadStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public SourceMetadata Metadata { get; } = new(
+            SourceKind.Adb,
+            "Blocking capture",
+            "Deterministic active-operation test source",
+            null,
+            null,
+            DateTimeOffset.UtcNow,
+            IsFinite: false,
+            IsReplayable: false);
+
+        public Task<IReadOnlyList<ReadOnlyMemory<byte>>> ProbeAsync(
+            int maximumUsefulLines,
+            CancellationToken cancellationToken)
+        {
+            _ = maximumUsefulLines;
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<ReadOnlyMemory<byte>>>([Probe]);
+        }
+
+        public async IAsyncEnumerable<SourceChunk> ReadAsync(
+            SourceReadContext context,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            _ = context;
+            ReadStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

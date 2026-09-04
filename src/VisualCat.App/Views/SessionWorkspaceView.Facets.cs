@@ -357,7 +357,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Background = Brushes.Transparent,
             };
             ToolTip.SetTip(clear, $"Remove every {heading.ToLowerInvariant()} filter");
-            clear.Click += (_, _) => _ = _viewModel.ClearFacetDimensionAsync(dimension);
+            clear.Click += (_, _) => _ = RunUiActionAsync(() => _viewModel.ClearFacetDimensionAsync(dimension));
             Grid.SetColumn(clear, 1);
             header.Children.Add(clear);
         }
@@ -482,7 +482,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             active
                 ? $"Stop {(exclude ? "excluding" : "including")} {subject}"
                 : $"{(exclude ? "Exclude" : "Include")} {subject}");
-        button.Click += (_, _) => _ = _viewModel.ToggleFacetAsync(dimension, key, exclude);
+        button.Click += (_, _) => _ = RunUiActionAsync(() => _viewModel.ToggleFacetAsync(dimension, key, exclude));
         return button;
     }
 

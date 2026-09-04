@@ -126,6 +126,23 @@ public sealed partial class SessionWorkspaceView : UserControl
         var failed = _viewModel.Activity == SessionActivity.Failed &&
                      (_viewModel.Snapshot is null ||
                       _viewModel.Snapshot.Descriptor.Counters.TimedEntries == 0);
+
+        // A capture that never started is not a log that could not be read: nothing was
+        // opened, and "Open another log" is not the remedy for Android refusing a lease.
+        var capture = _viewModel.IsCaptureSession;
+        if (_failureBadgeText is { } badgeText)
+        {
+            badgeText.Text = capture ? "CAPTURE FAILED" : "IMPORT FAILED";
+        }
+
+        if (_failureTitle is { } cardTitle)
+        {
+            cardTitle.Text = capture
+                ? "This capture could not run"
+                : "This log could not be read";
+            AutomationProperties.SetName(_failureCard!, cardTitle.Text);
+        }
+
         if (failed && _failureReason is { } reason)
         {
             reason.Text = _viewModel.FailureReason ?? "The import ended in a failure.";

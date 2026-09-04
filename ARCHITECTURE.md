@@ -134,7 +134,10 @@ verify the complete result, and publish it atomically. The byte-level contract
 is specified in [`docs/SESSION-FORMAT.md`](docs/SESSION-FORMAT.md); storage
 choices are explained by [ADR 0003](docs/adr/0003-columns.md),
 [ADR 0004](docs/adr/0004-container.md), and
-[ADR 0007](docs/adr/0007-bitmaps.md).
+[ADR 0007](docs/adr/0007-bitmaps.md). Every raw reader verifies the manifest's
+complete recorded prefix on the same open handle it reads, accepts safe append-only
+growth, and refuses changed evidence; see
+[ADR 0020](docs/adr/0020-verified-raw-evidence.md).
 
 ## Query path
 

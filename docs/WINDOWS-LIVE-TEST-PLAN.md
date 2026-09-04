@@ -1700,10 +1700,13 @@ page file. Import/query/load-all, minimize/restore, stop/finalize. Product slows
 without corrupting data; cancellation and close remain reachable; no OOM/WER;
 after pressure release resource/latency recovers inside baseline envelope.
 
-### X-17 · Load-all completion, cancellation, close, and shutdown
+### X-17 · Bulk-load completion, cancellation, close, and shutdown
 
-On ≥1 M matches choose Load all; accept large-memory confirmation; cancel at
-early/middle/late points; retry to completion; close tab and app while walking.
+On ≥1 M matches choose the bounded bulk load (`Load up to 100,000` on desktop);
+cancel at early/middle/late points; retry to completion; close tab and app while
+walking. There is no confirmation to accept: the fill is bounded by the platform
+ceiling and takes about 1.5 s on the reference machine, so the control simply
+becomes Cancel for the duration.
 Cancel keeps rows already loaded and returns promptly; close/shutdown cancels
 session lifetime before disposal lock and completes within 5 s; no unclosable
 window, ObjectDisposedException or post-close callback.
@@ -1718,8 +1721,8 @@ exact, and pan bounds contain no phantom time.
 
 ### X-19 · Paging to the end of huge filtered results
 
-Page forward/back where offered, jump markers first/last/index, Load all, filter
-mid-page, and inspect boundary identities. No gaps/duplicates, stable source/
+Page forward/back where offered, jump markers first/last/index, run the bounded
+bulk load, filter mid-page, and inspect boundary identities. No gaps/duplicates, stable source/
 chronological ordering, correct remain count, fixed actions, bounded memory on
 ordinary paging, and exact final total.
 
@@ -2337,7 +2340,7 @@ means it must pass before the next tag.
 | **R-02** | Final query cannot fail capture | X-13, search while finalizing | Finished capture is not relabelled failed by a superseded query | Unreleased |
 | **R-03** | Scanner/indexer lock is tolerated | X-14 | Bounded transient lock succeeds; cancellation/persistent failure is truthful | 2.0.9 |
 | **R-04** | Idle growing follow does not churn LOH | X-06 | One reusable read buffer; no ~4 MiB/s idle allocation/gen2 cadence | 2.0.9 |
-| **R-05** | Closing during Load all is prompt | X-17 | Tab/app closes within 5 s without waiting for all rows or throwing | 2.0.9 |
+| **R-05** | Closing during a bulk load is prompt | X-17 | Tab/app closes within 5 s without waiting for all rows or throwing | 2.0.9 |
 | **R-06** | Live statistics/facets do not rescan history | X-03 | Per-refresh cost plateaus with cached published segments | 2.0.9 |
 | **R-07** | Diagnostic logger is safe at shutdown | B-17, X-22 | Late failure cannot write into disposed sink or root process lifetime | 2.0.9 |
 | **R-08** | Displayed version tracks artifact | B-01/B-02 | UI/file/README/release agree; non-release says `-dev` | 2.0.4 |
@@ -2386,7 +2389,7 @@ means it must pass before the next tag.
 | **R-51** | Text scale reaches the active session | A-13/U-10 | Chrome and every open workspace remeasure together without replacing the session or capture | Unreleased |
 | **R-52** | A clipped session tab remains closable | A-05/U-01 | First action brings the tab into view; its close action then works and never stays silently disabled | Unreleased |
 | **R-53** | Search can reach first, last, and numbered match | B-06 | Direct controls land on the exact oracle identity without thousands of steps or zoom drift | Unreleased |
-| **R-54** | Load all is explicit, bounded, and cancellable | X-17/X-19 | Action names remaining rows/memory risk, asks at the large threshold, streams progress, and cancels promptly | Unreleased |
+| **R-54** | The bulk row load is explicit, bounded, and cancellable | X-17/X-19 | Action names the platform ceiling and the remaining rows, stops at that ceiling and says so, streams progress, and cancels promptly | Unreleased |
 | **R-55** | Export can ignore the active filter honestly | B-14/I-07 | Everything-in-session scope appears when distinct and contains the exact unfiltered row set | Unreleased |
 | **R-56** | Manual update route matches install origin | A-28/P-01 | Desktop command is present when documented, never checks silently, and opens the official page only on request | 2.0.9 |
 | **R-57** | Test-log generator honors requested format | I-14 | All five formats are deterministic and detected exactly; `long` never falls back to threadtime | Unreleased |
@@ -2930,7 +2933,7 @@ row plus the change-based selection in §12.1.
 | Heat map/minimap/axis | B-04/B-07, A-04, X-01/X-04/X-18/X-23, U-01–U-03/U-08–U-14/U-21, R-13/R-16/R-18/R-19/R-23/R-36/R-37/R-42 |
 | Search/regex/markers | B-06, A-03/A-05/A-08, X-04/X-19, U-05/U-15, I-02/I-07, R-47/R-53 |
 | Filters/facets/statistics/templates | B-05/B-08, A-01–A-04, X-03/X-04/X-19, I-02/I-07, R-06/R-20–R-22 |
-| Paging/load all | B-08/B-19, A-05, X-04/X-17/X-19, U-06/U-22, R-05/R-20/R-54 |
+| Paging/bulk load | B-08/B-19, A-05, X-04/X-17/X-19, U-06/U-22, R-05/R-20/R-54 |
 | Entry inspector/source context/clipboard | B-04/B-08/B-19, A-08–A-10/A-24, X-04/X-18/X-19, U-06/U-13–U-16, P-05/P-14, R-17/R-24/R-25/R-33/R-34/R-39/R-40/R-49/R-50 |
 | Sessions/recent/cache/retention | B-12/B-13/B-16, A-03/A-05/A-10–A-14/A-29/A-33, X-12/X-13/X-20/X-22/X-26/X-28, P-16, R-09/R-12/R-41/R-44/R-46 |
 | Save/portable/archive | B-12/B-13, A-08/A-10/A-25/A-29/A-33, X-12–X-15/X-24–X-26, I-03/I-04/I-08, P-04/P-07/P-10 |

@@ -172,12 +172,15 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             if (_templates.SelectedItem is TemplateSummary template)
             {
-                _ = _viewModel.IncludeTemplateAsync(template.TemplateId);
+                _ = RunUiActionAsync(async () =>
+                {
+                    await _viewModel.IncludeTemplateAsync(template.TemplateId);
 
-                // The chip that records this lives on a bar the phone may not be showing —
-                // in Details mode it is off screen entirely — so the action says what it did
-                // where the reader is looking (audit 2, C4).
-                Notify("Filtered to this template. Clear it from the filter chips.");
+                    // The chip that records this lives on a bar the phone may not be showing —
+                    // in Details mode it is off screen entirely — so the action says what it did
+                    // where the reader is looking (audit 2, C4).
+                    Notify("Filtered to this template. Clear it from the filter chips.");
+                });
             }
         };
         actions.Children.Add(include);
@@ -192,8 +195,11 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             if (_templates.SelectedItem is TemplateSummary template)
             {
-                _ = _viewModel.ExcludeTemplateAsync(template.TemplateId);
-                Notify("Muted this template. Clear it from the filter chips.");
+                _ = RunUiActionAsync(async () =>
+                {
+                    await _viewModel.ExcludeTemplateAsync(template.TemplateId);
+                    Notify("Muted this template. Clear it from the filter chips.");
+                });
             }
         };
         actions.Children.Add(exclude);

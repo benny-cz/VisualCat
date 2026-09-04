@@ -71,18 +71,34 @@ public sealed partial class MainView
             return;
         }
 
+        ApplicationSettings snapshot;
+        SessionTabViewModel[] tabs;
         if (Dispatcher.UIThread.CheckAccess())
         {
             PersistOpenWorkspace();
+            snapshot = _settings;
+            tabs = _viewModel.Tabs.ToArray();
+        }
+        else
+        {
+            // Lifecycle adapters are expected to call on the main thread, but preserve a
+            // current workspace even if a host invokes pause elsewhere. Capture both the
+            // settings record and observed collection in one dispatcher-owned operation.
+            var captured = Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                PersistOpenWorkspace();
+                return (Settings: _settings, Tabs: _viewModel.Tabs.ToArray());
+            }).GetAwaiter().GetResult();
+            snapshot = captured.Settings;
+            tabs = captured.Tabs;
         }
 
-        var snapshot = _settings;
         Interlocked.Increment(ref _workspacePersistVersion);
         var persistedViews = 0;
         var failedViews = 0;
         try
         {
-            foreach (var tab in _viewModel.Tabs.ToArray())
+            foreach (var tab in tabs)
             {
                 try
                 {

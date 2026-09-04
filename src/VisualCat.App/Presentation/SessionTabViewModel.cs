@@ -101,6 +101,24 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public const int EntryPageSize = 500;
     private const int LoadAllBatchSize = 2_000;
 
+    /// <summary>
+    /// Maximum rows retained by the bound entry collection. Android receives the smaller
+    /// budget because process death under memory pressure cannot be caught or explained.
+    /// </summary>
+    public static int EntryRetentionLimit => EntryRetentionLimitOverride ?? (OperatingSystem.IsAndroid() ? 25_000 : 100_000);
+
+    /// <summary>
+    /// Forces a smaller row window, for tests that need to reach the ceiling.
+    /// </summary>
+    /// <remarks>
+    /// Everything about the limit-reached state — the label, the footer band, the sentence,
+    /// the stopped cursor — is only observable once a session outgrows the window, and
+    /// building a hundred thousand rows to see it would make the test slower than the
+    /// behaviour it checks. Null means "ask the platform", which is what every shipping
+    /// build does.
+    /// </remarks>
+    internal static int? EntryRetentionLimitOverride { get; set; }
+
     private readonly string _sessionPath;
     private readonly SessionViewStore _viewStore;
     private readonly SemaphoreSlim _loadLock = new(1, 1);
@@ -152,7 +170,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         }
     }
 
-    private CancellationTokenSource _queryCancellation = new();
+    private readonly object _queryCancellationGate = new();
+    private CancellationTokenSource? _queryCancellation = new();
     private SessionSnapshot? _snapshot;
     private HeatMapResult? _heatMap;
     private HeatMapResult? _overview;
@@ -647,7 +666,29 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public FilterSpec Filter { get => _filter; private set => Set(ref _filter, value); }
     public TimeRange? Viewport { get => _viewport; private set => Set(ref _viewport, value); }
     public bool FollowLatest { get => _followLatest; set => Set(ref _followLatest, value); }
-    public bool IsLiveCaptureActive { get => _isLiveCaptureActive; set => Set(ref _isLiveCaptureActive, value); }
+    public bool IsLiveCaptureActive
+    {
+        get => _isLiveCaptureActive;
+        set
+        {
+            if (value)
+            {
+                IsCaptureSession = true;
+            }
+
+            Set(ref _isLiveCaptureActive, value);
+        }
+    }
+
+    /// <summary>
+    /// Whether this tab was opened as a live capture rather than a file import.
+    /// </summary>
+    /// <remarks>
+    /// Sticky once set, because it is read after the capture has ended — a capture Android
+    /// refused to start was told the reader it was an import that could not be read, which
+    /// names an operation nobody performed and a file that was never involved.
+    /// </remarks>
+    public bool IsCaptureSession { get; private set; }
     public bool HasNewData { get => _hasNewData; private set => Set(ref _hasNewData, value); }
     public EntryOrder EntryOrder { get => _entryOrder; private set => Set(ref _entryOrder, value); }
     public string RawContextText { get => _rawContextText; private set => Set(ref _rawContextText, value); }
@@ -659,7 +700,9 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     /// range belonging to the previous entry.
     /// </summary>
     public RawContextMarker? RawContextMarker { get; private set; }
-    public bool CanLoadMore => _nextEntryCursor is not null;
+    public bool IsEntryRetentionLimitReached =>
+        Entries.Count >= EntryRetentionLimit && RemainingEntryCount > 0;
+    public bool CanLoadMore => _nextEntryCursor is not null && !IsEntryRetentionLimitReached;
     public bool IsLoadingEntries => Volatile.Read(ref _entryLoadInProgress) != 0;
     public int LoadedEntryCount => Entries.Count;
     public long RemainingEntryCount => Math.Max(0, (MatchesInView ?? Entries.Count) - Entries.Count);
@@ -926,10 +969,38 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             return;
         }
 
-        var previous = Interlocked.Exchange(ref _queryCancellation, replacement);
-        previous.Cancel();
-        previous.Dispose();
-        var token = _queryCancellation.Token;
+        // Capture before publication: disposal is allowed to cancel and dispose a published
+        // source as soon as it owns it, but an already captured token remains safe to read.
+        var token = replacement.Token;
+        CancellationTokenSource? previous = null;
+        var published = false;
+        lock (_queryCancellationGate)
+        {
+            // The first IsDisposed check is only a fast path. This one closes the window in
+            // which disposal could pass the field before this refresh publishes its source.
+            if (!IsDisposed && _queryCancellation is not null)
+            {
+                previous = _queryCancellation;
+                _queryCancellation = replacement;
+                published = true;
+            }
+        }
+
+        if (!published)
+        {
+            replacement.Cancel();
+            replacement.Dispose();
+            return;
+        }
+
+        try
+        {
+            previous?.Cancel();
+        }
+        finally
+        {
+            previous?.Dispose();
+        }
 
         // Queueing for the lock is part of this refresh's life, so being superseded while
         // queued has to mean what it means everywhere else in this method: stop, quietly.
@@ -1285,9 +1356,9 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         LoadEntryPagesAsync(loadAll: false, cancellationToken);
 
     /// <summary>
-    /// Loads every remaining row in bounded batches. Keeping the regular refresh at 500
-    /// rows makes viewport changes cheap, while this explicit path gives the user full
-    /// control over finite captures without turning one click into an unresponsive query.
+    /// Loads remaining rows in bounded batches until the platform's retained-row safety
+    /// limit is reached. Keeping the regular refresh at 500 rows makes viewport changes
+    /// cheap, while the ceiling prevents an explicit bulk load from ending the process.
     /// </summary>
     public Task LoadAllEntriesAsync(CancellationToken cancellationToken = default) =>
         LoadEntryPagesAsync(loadAll: true, cancellationToken);
@@ -1339,9 +1410,16 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     return;
                 }
 
+                var retained = await Dispatcher.UIThread.InvokeAsync(() => Entries.Count);
+                var capacity = EntryRetentionLimit - retained;
+                if (capacity <= 0)
+                {
+                    return;
+                }
+
                 var generation = Volatile.Read(ref _queryGeneration);
                 var filter = DetailFilter(Filter, _detailLevel);
-                var pageSize = loadAll ? LoadAllBatchSize : EntryPageSize;
+                var pageSize = Math.Min(loadAll ? LoadAllBatchSize : EntryPageSize, capacity);
                 var page = await Task.Run(
                     () => SessionQueryEngine.GetEntries(
                         snapshot,
@@ -1732,23 +1810,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 throw new InvalidDataException(
                     $"No published source record exists for entry {entry.SourceSequence}.");
             }
-            var path = snapshot.RawPath;
-            if (path is null || !File.Exists(path))
-            {
-                RawContextMarker = null;
-                RawContextText = snapshot.Descriptor.Degraded
-                    ? "Raw source is unavailable; the index remains queryable in degraded mode."
-                    : "Raw source is unavailable.";
-                return;
-            }
-
-            await using var stream = new FileStream(
-                path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete,
-                64 * 1024,
-                FileOptions.Asynchronous | FileOptions.RandomAccess);
+            await using var raw = await VerifiedRawSource.OpenAsync(snapshot, linked.Token).ConfigureAwait(false);
             var builder = new StringBuilder();
             RawContextMarker? selectedLine = null;
 
@@ -1763,8 +1825,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var bytes = new byte[record.Raw.Length];
-                stream.Position = record.Raw.Offset;
-                await stream.ReadExactlyAsync(bytes, cancellationToken).ConfigureAwait(false);
+                await raw.ReadExactlyAsync(record.Raw.Offset, bytes, linked.Token).ConfigureAwait(false);
                 var selected = record.Sequence == entry.SourceSequence;
                 var start = builder.Length;
                 builder.Append(selected ? '▶' : ' ')
@@ -1783,10 +1844,10 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             RawContextMarker = selectedLine;
             RawContextText = builder.ToString();
         }
-        catch (EndOfStreamException)
+        catch (RawEvidenceException exception)
         {
             RawContextMarker = null;
-            RawContextText = "Raw source changed or is truncated; the indexed entry is still available.";
+            RawContextText = exception.Message;
         }
         finally
         {
@@ -1887,19 +1948,12 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     and not ParseOutcomeKind.MetaRecord,
                 linked.Token);
 
-            var path = snapshot.RawPath;
-            if (page.Records.Count == 0 || path is null || !File.Exists(path))
+            if (page.Records.Count == 0)
             {
                 return new UnparsedLinePage(string.Empty, 0, page.NextSequence, page.Completed);
             }
 
-            await using var stream = new FileStream(
-                path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete,
-                64 * 1024,
-                FileOptions.Asynchronous | FileOptions.RandomAccess);
+            await using var raw = await VerifiedRawSource.OpenAsync(snapshot, linked.Token).ConfigureAwait(false);
             var builder = new StringBuilder();
             var width = SourceLineNumber(page.Records[^1].Sequence)
                 .ToString(System.Globalization.CultureInfo.InvariantCulture).Length;
@@ -1907,8 +1961,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             {
                 linked.Token.ThrowIfCancellationRequested();
                 var bytes = new byte[record.Raw.Length];
-                stream.Position = record.Raw.Offset;
-                await stream.ReadExactlyAsync(bytes, linked.Token).ConfigureAwait(false);
+                await raw.ReadExactlyAsync(record.Raw.Offset, bytes, linked.Token).ConfigureAwait(false);
                 builder
                     .Append(SourceLineNumber(record.Sequence)
                         .ToString(System.Globalization.CultureInfo.InvariantCulture).PadLeft(width))
@@ -1925,10 +1978,10 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 page.NextSequence,
                 page.Completed);
         }
-        catch (EndOfStreamException)
+        catch (RawEvidenceException exception)
         {
             return new UnparsedLinePage(
-                "Raw source changed or is truncated; the indexed entries are still available.",
+                exception.Message,
                 0,
                 fromSequence,
                 true);
@@ -1985,19 +2038,18 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         try
         {
             var snapshot = _snapshot;
-            if (snapshot?.RawPath is not { } path || !File.Exists(path))
+            if (snapshot is null)
             {
                 throw new InvalidOperationException("Raw source is unavailable.");
             }
 
             var selected = entries.OrderBy(static entry => entry.SourceSequence).Take(10_000).ToArray();
-            await using var stream = new FileStream(
-                path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete,
-                64 * 1024,
-                FileOptions.Asynchronous | FileOptions.RandomAccess);
+            if (selected.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            await using var raw = await VerifiedRawSource.OpenAsync(snapshot, linked.Token).ConfigureAwait(false);
             var builder = new StringBuilder();
             foreach (var entry in selected)
             {
@@ -2008,8 +2060,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 }
 
                 var bytes = new byte[entry.Raw.Length];
-                stream.Position = entry.Raw.Offset;
-                await stream.ReadExactlyAsync(bytes, linked.Token).ConfigureAwait(false);
+                await raw.ReadExactlyAsync(entry.Raw.Offset, bytes, linked.Token).ConfigureAwait(false);
                 builder.Append(Encoding.UTF8.GetString(bytes));
             }
 
@@ -2347,8 +2398,21 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         // the wait below from "however long a walk over the whole session takes" into a
         // wait for those readers to notice and leave.
         _lifetime.Cancel();
-        _queryCancellation.Cancel();
-        _queryCancellation.Dispose();
+        CancellationTokenSource? queryCancellation;
+        lock (_queryCancellationGate)
+        {
+            queryCancellation = _queryCancellation;
+            _queryCancellation = null;
+        }
+
+        try
+        {
+            queryCancellation?.Cancel();
+        }
+        finally
+        {
+            queryCancellation?.Dispose();
+        }
         var templateDebounce = Interlocked.Exchange(ref _templateDebounce, null);
         templateDebounce?.Cancel();
         templateDebounce?.Dispose();
@@ -2523,5 +2587,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(LoadedEntryCount)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RemainingEntryCount)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEntryRetentionLimitReached)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanLoadMore)));
     }
 }

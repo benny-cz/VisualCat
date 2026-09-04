@@ -1296,10 +1296,11 @@ at the configured minimum bar width; Fit returns exactly to the full session.
 budget.
 
 **X-13 · Paging to the end of a huge result set**
-*Steps* With 1 M entries and no filter, page with `+500` repeatedly, then
-*Load all*.
+*Steps* With 1 M entries and no filter, page with `+500` repeatedly, then tap the
+bounded bulk load (labelled with the platform ceiling, `25K` on a phone).
 *Expect* Keyset paging never repeats or skips a record — verify by exporting and
-checking for duplicates. *Load all* either completes or is explicitly bounded.
+checking for duplicates. The bulk load stops at the ceiling, the control becomes
+`Full`, and the status line says the limit was reached; the process survives it.
 *Fail if* Paging duplicates records or scrambles after new data arrives.
 
 **X-14 · Live capture with concurrent import**

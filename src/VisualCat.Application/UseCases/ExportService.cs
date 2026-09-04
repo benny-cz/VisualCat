@@ -19,8 +19,7 @@ public static class ExportService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        var rawPath = RequireRaw(snapshot);
-        await using var source = new FileStream(rawPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, true);
+        await using var source = await VerifiedRawSource.OpenAsync(snapshot, cancellationToken).ConfigureAwait(false);
         await using var output = new AtomicDestination(destination);
         var buffer = new byte[1024 * 1024];
         var cursor = (EntryCursor?)null;
@@ -30,7 +29,7 @@ public static class ExportService
             var page = SessionQueryEngine.GetEntries(snapshot, range, filter, order, cursor, 4096, generation++, cancellationToken);
             foreach (var entry in page.Entries)
             {
-                await CopySpanAsync(source, output.Stream, entry.Raw.Offset, entry.Raw.Length, buffer, cancellationToken).ConfigureAwait(false);
+                await source.CopyToAsync(output.Stream, entry.Raw.Offset, entry.Raw.Length, buffer, cancellationToken).ConfigureAwait(false);
             }
 
             cursor = page.NextCursor;
@@ -48,14 +47,14 @@ public static class ExportService
         int after,
         CancellationToken cancellationToken = default)
     {
-        var rawPath = RequireRaw(snapshot);
+        ArgumentNullException.ThrowIfNull(snapshot);
         var records = SessionQueryEngine.GetRawContext(snapshot, sourceSequence, before, after);
-        await using var source = new FileStream(rawPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, true);
+        await using var source = await VerifiedRawSource.OpenAsync(snapshot, cancellationToken).ConfigureAwait(false);
         await using var output = new AtomicDestination(destination);
         var buffer = new byte[1024 * 1024];
         foreach (var record in records)
         {
-            await CopySpanAsync(source, output.Stream, record.Raw.Offset, record.Raw.Length, buffer, cancellationToken).ConfigureAwait(false);
+            await source.CopyToAsync(output.Stream, record.Raw.Offset, record.Raw.Length, buffer, cancellationToken).ConfigureAwait(false);
         }
 
         await output.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -228,43 +227,6 @@ public static class ExportService
         }
 
         await output.CommitAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private static string RequireRaw(SessionSnapshot snapshot)
-    {
-        if (snapshot.RawPath is not { } path || !File.Exists(path))
-        {
-            throw new InvalidOperationException("Raw source is unavailable; this session is open in degraded index-only mode.");
-        }
-
-        return path;
-    }
-
-    private static async Task CopySpanAsync(
-        FileStream source,
-        Stream destination,
-        long offset,
-        int length,
-        byte[] buffer,
-        CancellationToken cancellationToken)
-    {
-        if (source.Position != offset)
-        {
-            source.Position = offset;
-        }
-
-        var remaining = length;
-        while (remaining > 0)
-        {
-            var read = await source.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), cancellationToken).ConfigureAwait(false);
-            if (read == 0)
-            {
-                throw new EndOfStreamException("Raw span extends beyond the available source.");
-            }
-
-            await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-            remaining -= read;
-        }
     }
 
     private static string EscapeCsv(string value) =>

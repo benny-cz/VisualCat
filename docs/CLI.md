@@ -196,6 +196,13 @@ vcat export crash.vcat errors.csv --type csv --levels E,F
 vcat export crash.vcat portable.vcat.zip --type portable-zip
 ```
 
+A CSV export is exact data, not a spreadsheet document: fields are quoted per RFC 4180 and
+nothing is rewritten. Quoting is not a defence against formula interpretation, so a log line
+beginning with `=`, `+`, `-` or `@` can be evaluated as a formula by spreadsheet software.
+**Import a CSV of an untrusted log as text rather than opening it directly.** The contract
+and its boundary are [ADR 0021](adr/0021-csv-export-fidelity.md); `raw` and `portable`
+exports carry the source bytes and are unaffected.
+
 ## `verify`
 
 ```text

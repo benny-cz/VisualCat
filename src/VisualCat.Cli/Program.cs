@@ -120,7 +120,7 @@ internal static class VisualCatCli
     private static async Task<int> IndexAsync(Arguments options, CancellationToken cancellationToken)
     {
         var input = options.RequiredPosition(0, "index requires a log file path.");
-        var output = options.Get("--output") ?? Path.GetFullPath(input) + ".vcat";
+        var output = options.GetValue("--output") ?? Path.GetFullPath(input) + ".vcat";
         if (Directory.Exists(output) && !options.Has("--force"))
         {
             throw new CommandException($"Output already exists: {output}. Use --force to replace it.");
@@ -198,7 +198,7 @@ internal static class VisualCatCli
 
         await using var source = new FileLogSource(path);
         var policy = Policy(options, source.Metadata.ReferenceInstant);
-        var preview = await ImportPreviewService.PreviewAsync(source, policy, ParseFormat(options.Get("--format")), cancellationToken).ConfigureAwait(false);
+        var preview = await ImportPreviewService.PreviewAsync(source, policy, ParseFormat(options.GetValue("--format")), cancellationToken).ConfigureAwait(false);
         Console.WriteLine(JsonSerializer.Serialize(preview, JsonOptions));
         return 0;
     }
@@ -207,18 +207,22 @@ internal static class VisualCatCli
     {
         using var snapshot = await OpenRequiredAsync(options, cancellationToken).ConfigureAwait(false);
         var filter = Filter(options);
-        var statistics = SessionQueryEngine.QueryStatistics(snapshot, filter, 1, options.GetInt("--top", 20), cancellationToken);
+        var statistics = SessionQueryEngine.QueryStatistics(snapshot, filter, 1, options.GetInt("--top", 20, 1), cancellationToken);
         Console.WriteLine(JsonSerializer.Serialize(statistics, JsonOptions));
         return 0;
     }
 
     private static async Task<int> QueryAsync(Arguments options, CancellationToken cancellationToken)
     {
+        // Parse public option values before touching a positional path. If a value-taking
+        // option consumed what the reader intended as that path, the error must name the
+        // option/value pair instead of claiming the session path is simply missing.
+        var order = ParseOrder(options.GetValue("--order"));
+        var limit = options.GetInt("--limit", 100, 1, 10_000);
         using var snapshot = await OpenRequiredAsync(options, cancellationToken).ConfigureAwait(false);
         var range = Range(options, snapshot);
         var filter = Filter(options);
-        var order = ParseOrder(options.Get("--order"));
-        var page = SessionQueryEngine.GetEntries(snapshot, range, filter, order, null, options.GetInt("--limit", 100), 1, cancellationToken);
+        var page = SessionQueryEngine.GetEntries(snapshot, range, filter, order, null, limit, 1, cancellationToken);
         foreach (var entry in page.Entries)
         {
             Console.WriteLine(JsonSerializer.Serialize(entry, JsonOptions));
@@ -235,7 +239,7 @@ internal static class VisualCatCli
             query,
             options.Has("--regex"),
             options.Has("--case-sensitive"),
-            TimeSpan.FromMilliseconds(options.GetInt("--timeout-ms", 250)));
+            TimeSpan.FromMilliseconds(options.GetInt("--timeout-ms", 250, 1, 60_000)));
         var result = await SessionQueryEngine.SearchAsync(snapshot, search, Filter(options), 1, null, 20_000, cancellationToken).ConfigureAwait(false);
         Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
         return 0;
@@ -248,7 +252,7 @@ internal static class VisualCatCli
             snapshot,
             Range(options, snapshot),
             Filter(options),
-            options.GetInt("--top", 50),
+            options.GetInt("--top", 50, 1),
             1,
             cancellationToken: cancellationToken);
         Console.WriteLine(JsonSerializer.Serialize(templates, JsonOptions));
@@ -257,12 +261,12 @@ internal static class VisualCatCli
 
     private static async Task<int> ExportAsync(Arguments options, CancellationToken cancellationToken)
     {
+        var type = options.GetValue("--type") ?? "raw";
+        var order = ParseOrder(options.GetValue("--order"));
         using var snapshot = await OpenRequiredAsync(options, cancellationToken).ConfigureAwait(false);
         var destination = options.RequiredPosition(1, "export requires a session path and destination.");
-        var type = options.Get("--type") ?? "raw";
         var range = Range(options, snapshot);
         var filter = Filter(options);
-        var order = ParseOrder(options.Get("--order"));
         switch (type.ToLowerInvariant())
         {
             case "raw":
@@ -307,17 +311,17 @@ internal static class VisualCatCli
 
     private static async Task<int> GenerateAsync(Arguments options, CancellationToken cancellationToken)
     {
-        var output = options.Get("--output") ?? options.PositionOrDefault(0) ?? "synthetic-logcat.txt";
-        var lines = options.GetLong("--lines", 1_000_000);
+        var output = options.GetValue("--output") ?? options.PositionOrDefault(0) ?? "synthetic-logcat.txt";
+        var lines = options.GetLong("--lines", 1_000_000, 0);
         await using var stream = new FileStream(output, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true);
         await SyntheticLogGenerator.GenerateAsync(
             stream,
             new SyntheticLogOptions(
                 lines,
                 options.GetInt("--seed", 42),
-                Format: ParseFormat(options.Get("--format")) ?? LogcatFormat.ThreadTime,
-                DistinctTags: options.GetInt("--tags", 0),
-                DistinctTemplates: options.GetInt("--templates", 0)),
+                Format: ParseFormat(options.GetValue("--format")) ?? LogcatFormat.ThreadTime,
+                DistinctTags: options.GetInt("--tags", 0, 0),
+                DistinctTemplates: options.GetInt("--templates", 0, 0)),
             cancellationToken).ConfigureAwait(false);
         Console.WriteLine(Path.GetFullPath(output));
         return 0;
@@ -325,7 +329,7 @@ internal static class VisualCatCli
 
     private static async Task<int> AdbDevicesAsync(Arguments options, CancellationToken cancellationToken)
     {
-        var adb = AdbLocator.Find(options.Get("--adb")) ?? throw new CommandException("ADB was not found. Set --adb, ANDROID_SDK_ROOT, or PATH.");
+        var adb = AdbLocator.Find(options.GetValue("--adb")) ?? throw new CommandException("ADB was not found. Set --adb, ANDROID_SDK_ROOT, or PATH.");
         var devices = await new ProcessAdbClient(adb).ListDevicesAsync(cancellationToken).ConfigureAwait(false);
         Console.WriteLine(JsonSerializer.Serialize(devices, JsonOptions));
         return 0;
@@ -333,15 +337,15 @@ internal static class VisualCatCli
 
     private static async Task<int> CaptureAdbAsync(Arguments options, CancellationToken cancellationToken)
     {
-        var serial = options.Get("--serial") ?? throw new CommandException("capture-adb requires --serial.");
-        var output = options.Get("--output") ?? $"adb-{Sanitize(serial)}-{DateTime.UtcNow:yyyyMMdd-HHmmss}.vcat";
-        var adb = AdbLocator.Find(options.Get("--adb")) ?? throw new CommandException("ADB was not found. Set --adb, ANDROID_SDK_ROOT, or PATH.");
-        var buffers = (options.Get("--buffers") ?? "main,system,crash").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var maximumBytes = options.GetLong("--max-bytes", 0);
-        var seconds = options.GetInt("--duration-seconds", 0);
-        var preRollSeconds = options.GetInt("--pre-roll-seconds", 0);
+        var serial = options.GetValue("--serial") ?? throw new CommandException("capture-adb requires --serial.");
+        var output = options.GetValue("--output") ?? $"adb-{Sanitize(serial)}-{DateTime.UtcNow:yyyyMMdd-HHmmss}.vcat";
+        var adb = AdbLocator.Find(options.GetValue("--adb")) ?? throw new CommandException("ADB was not found. Set --adb, ANDROID_SDK_ROOT, or PATH.");
+        var buffers = SplitValues("--buffers", options.GetValue("--buffers") ?? "main,system,crash");
+        var maximumBytes = options.GetLong("--max-bytes", 0, 0);
+        var seconds = options.GetInt("--duration-seconds", 0, 0);
+        var preRollSeconds = options.GetInt("--pre-roll-seconds", 0, 0, 3600);
         var includeBufferHistory = options.Has("--include-buffer-history");
-        var requestedFormat = options.Get("--format");
+        var requestedFormat = options.GetValue("--format");
         if (buffers.Length == 0)
         {
             throw new CommandException("capture-adb requires at least one buffer in --buffers.");
@@ -424,12 +428,12 @@ internal static class VisualCatCli
 
     private static IngestSettings Settings(Arguments options, DateTimeOffset reference, string? sourceZoneId = null) =>
         new(
-            ParseFormat(options.Get("--format")),
+            ParseFormat(options.GetValue("--format")),
             "utf-8",
             Policy(options, reference, sourceZoneId),
             new TemplateSettings(!options.Has("--no-templates")),
-            SegmentEntries: options.GetInt("--segment-entries", 100_000),
-            ParseWorkers: options.GetInt("--workers", 0),
+            SegmentEntries: options.GetInt("--segment-entries", 100_000, 1, 5_000_000),
+            ParseWorkers: options.GetInt("--workers", 0, 0, 256),
             PortableRaw: options.Has("--portable"));
 
     // sourceZoneId is the zone the source says its own timestamps are written in, when it
@@ -437,16 +441,16 @@ internal static class VisualCatCli
     // local zone as it always was. An explicit --timezone still wins over both.
     private static TimestampPolicy Policy(Arguments options, DateTimeOffset reference, string? sourceZoneId = null) =>
         new(
-            options.GetNullableInt("--year"),
-            options.Get("--timezone") ?? sourceZoneId ?? TimeZoneInfo.Local.Id,
+            options.GetNullableInt("--year", 1, 9999),
+            options.GetValue("--timezone") ?? sourceZoneId ?? TimeZoneInfo.Local.Id,
             reference);
 
     private static FilterSpec Filter(Arguments options)
     {
         var levels = ImmutableHashSet<LogLevel>.Empty;
-        if (options.Get("--levels") is { } value)
+        if (options.GetValue("--levels") is { } value)
         {
-            levels = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            levels = SplitValues("--levels", value)
                 .Select(ParseLevel)
                 .ToImmutableHashSet();
         }
@@ -454,13 +458,13 @@ internal static class VisualCatCli
         return new FilterSpec
         {
             IncludedLevels = levels,
-            IncludedTags = Split(options.Get("--tags")),
-            ExcludedTags = Split(options.Get("--exclude-tags")),
-            IncludedPids = SplitInts(options.Get("--pids")),
-            IncludedProcesses = Split(options.Get("--processes")),
-            ExcludedProcesses = Split(options.Get("--exclude-processes")),
-            IncludedTids = SplitInts(options.Get("--tids")),
-            IncludedBuffers = Split(options.Get("--buffers")),
+            IncludedTags = Split(options, "--tags"),
+            ExcludedTags = Split(options, "--exclude-tags"),
+            IncludedPids = options.GetIntSet("--pids"),
+            IncludedProcesses = Split(options, "--processes"),
+            ExcludedProcesses = Split(options, "--exclude-processes"),
+            IncludedTids = options.GetIntSet("--tids"),
+            IncludedBuffers = Split(options, "--buffers"),
         };
     }
 
@@ -468,14 +472,28 @@ internal static class VisualCatCli
     {
         var available = snapshot.TimedRange ?? throw new CommandException("Session has no timed entries.");
         return new TimeRange(
-            options.Get("--from") is { } from ? ParseInstant(from) : available.StartInclusive,
-            options.Get("--to") is { } to ? ParseInstant(to) : available.EndExclusive);
+            options.GetValue("--from") is { } from ? ParseInstant("--from", from) : available.StartInclusive,
+            options.GetValue("--to") is { } to ? ParseInstant("--to", to) : available.EndExclusive);
     }
 
-    private static InstantUs ParseInstant(string value) =>
-        long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var microseconds)
-            ? new InstantUs(microseconds)
-            : InstantUs.FromDateTimeOffset(DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal));
+    internal static InstantUs ParseInstant(string option, string value)
+    {
+        if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var microseconds))
+        {
+            return new InstantUs(microseconds);
+        }
+
+        if (DateTimeOffset.TryParse(
+                value,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal,
+                out var instant))
+        {
+            return InstantUs.FromDateTimeOffset(instant);
+        }
+
+        throw new CommandException($"{option} value '{value}' must be an ISO-8601 timestamp or integer microseconds.");
+    }
 
     private static LogcatFormat? ParseFormat(string? value) => value?.ToLowerInvariant() switch
     {
@@ -500,19 +518,26 @@ internal static class VisualCatCli
         _ => throw new CommandException($"Unknown level '{value}'."),
     };
 
-    private static EntryOrder ParseOrder(string? value) =>
-        value?.Equals("source", StringComparison.OrdinalIgnoreCase) == true
-            ? EntryOrder.SourceSequence
-            : EntryOrder.Chronological;
+    internal static EntryOrder ParseOrder(string? value) => value?.ToLowerInvariant() switch
+    {
+        null or "chronological" => EntryOrder.Chronological,
+        "source" => EntryOrder.SourceSequence,
+        _ => throw new CommandException(
+            $"--order value '{value}' must be 'chronological' or 'source'."),
+    };
 
-    private static ImmutableHashSet<string> Split(string? value) =>
-        value?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToImmutableHashSet(StringComparer.Ordinal) ?? ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal);
+    private static ImmutableHashSet<string> Split(Arguments options, string name) =>
+        options.GetValue(name) is { } value
+            ? SplitValues(name, value).ToImmutableHashSet(StringComparer.Ordinal)
+            : ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal);
 
-    private static ImmutableHashSet<int> SplitInts(string? value) =>
-        value?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(static item => int.Parse(item, CultureInfo.InvariantCulture))
-            .ToImmutableHashSet() ?? ImmutableHashSet<int>.Empty;
+    private static string[] SplitValues(string name, string value)
+    {
+        var values = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return values.Length > 0
+            ? values
+            : throw new CommandException($"{name} requires one or more comma-separated values.");
+    }
 
     private static string Sanitize(string value) =>
         string.Concat(value.Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
@@ -723,11 +748,99 @@ internal sealed class Arguments
 
     public bool Has(string name) => _options.ContainsKey(name);
     public string? Get(string name) => _options.GetValueOrDefault(name);
+    public string? GetValue(string name)
+    {
+        if (!_options.TryGetValue(name, out var value))
+        {
+            return null;
+        }
+
+        return !string.IsNullOrWhiteSpace(value)
+            ? value
+            : throw new CommandException($"{name} requires a value.");
+    }
+
     public string? PositionOrDefault(int index) => index < _positions.Count ? _positions[index] : null;
     public string RequiredPosition(int index, string message) => PositionOrDefault(index) ?? throw new CommandException(message);
-    public int GetInt(string name, int defaultValue) => Get(name) is { } value ? int.Parse(value, CultureInfo.InvariantCulture) : defaultValue;
-    public int? GetNullableInt(string name) => Get(name) is { } value ? int.Parse(value, CultureInfo.InvariantCulture) : null;
-    public long GetLong(string name, long defaultValue) => Get(name) is { } value ? long.Parse(value, CultureInfo.InvariantCulture) : defaultValue;
+
+    public int GetInt(
+        string name,
+        int defaultValue,
+        int minimum = int.MinValue,
+        int maximum = int.MaxValue) =>
+        GetValue(name) is { } value ? ParseInt(name, value, minimum, maximum) : defaultValue;
+
+    public int? GetNullableInt(
+        string name,
+        int minimum = int.MinValue,
+        int maximum = int.MaxValue) =>
+        GetValue(name) is { } value ? ParseInt(name, value, minimum, maximum) : null;
+
+    public long GetLong(
+        string name,
+        long defaultValue,
+        long minimum = long.MinValue,
+        long maximum = long.MaxValue) =>
+        GetValue(name) is { } value ? ParseLong(name, value, minimum, maximum) : defaultValue;
+
+    public ImmutableHashSet<int> GetIntSet(string name)
+    {
+        if (GetValue(name) is not { } value)
+        {
+            return ImmutableHashSet<int>.Empty;
+        }
+
+        var items = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (items.Length == 0)
+        {
+            throw new CommandException($"{name} requires one or more comma-separated integers.");
+        }
+
+        var result = ImmutableHashSet.CreateBuilder<int>();
+        foreach (var item in items)
+        {
+            // Name the whole option's shape rather than the one item that failed to parse:
+            // the reader typed a list, and int.MinValue..int.MaxValue is not the constraint
+            // they broke.
+            if (!int.TryParse(item, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                throw new CommandException(
+                    $"{name} value '{value}' must be a comma-separated list of integers.");
+            }
+
+            result.Add(parsed);
+        }
+
+        return result.ToImmutable();
+    }
+
+    private static int ParseInt(string name, string value, int minimum, int maximum)
+    {
+        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) &&
+            parsed >= minimum &&
+            parsed <= maximum)
+        {
+            return parsed;
+        }
+
+        throw new CommandException(
+            $"{name} value '{value}' must be an integer between " +
+            $"{minimum.ToString(CultureInfo.InvariantCulture)} and {maximum.ToString(CultureInfo.InvariantCulture)}.");
+    }
+
+    private static long ParseLong(string name, string value, long minimum, long maximum)
+    {
+        if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) &&
+            parsed >= minimum &&
+            parsed <= maximum)
+        {
+            return parsed;
+        }
+
+        throw new CommandException(
+            $"{name} value '{value}' must be an integer between " +
+            $"{minimum.ToString(CultureInfo.InvariantCulture)} and {maximum.ToString(CultureInfo.InvariantCulture)}.");
+    }
 }
 
 internal sealed class CommandException(string message) : Exception(message);

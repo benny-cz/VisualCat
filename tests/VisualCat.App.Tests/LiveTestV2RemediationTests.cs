@@ -484,7 +484,7 @@ public sealed class LiveTestV2RemediationTests
     // ---------------------------------------------------------------- V2-19 ---
 
     /// <summary>
-    /// V2-19 — the phone footer offers a cancellable Load all beside Load 500 more.
+    /// V2-19 — the phone footer offers a cancellable bounded bulk load beside Load 500 more.
     /// </summary>
     /// <remarks>
     /// The implementation only ever wrote <c>_loadAll</c> inside <c>if (!_mobile)</c>, so the
@@ -494,7 +494,7 @@ public sealed class LiveTestV2RemediationTests
     /// action nor an explanation.
     /// </remarks>
     [AvaloniaFact]
-    public async Task ThePhoneFooterOffersLoadAll()
+    public async Task ThePhoneFooterOffersABoundedBulkLoad()
     {
         SessionWorkspaceView.PhoneCompositionOverride = true;
         TouchTarget.TouchOverride = true;
@@ -516,26 +516,27 @@ public sealed class LiveTestV2RemediationTests
                 .OfType<Border>()
                 .First(static border => AutomationProperties.GetName(border) == "End of the loaded rows");
             var buttons = footer.GetLogicalDescendants().OfType<Button>().ToArray();
+            var bulkLabel = $"{SessionTabViewModel.EntryRetentionLimit / 1000:N0}K";
             var loadAll = Assert.Single(
                 buttons,
-                static button => button.Content as string == "All");
+                button => button.Content as string == bulkLabel);
 
             Assert.True(loadAll.IsEffectivelyVisible);
             Assert.True(loadAll.IsEnabled);
             Assert.True(loadAll.Bounds.Height >= TouchTarget.Minimum, $"height {loadAll.Bounds.Height} dp");
             Assert.True(loadAll.Bounds.Width >= TouchTarget.Minimum, $"width {loadAll.Bounds.Width} dp");
 
-            // The label is three characters wide on a phone; the number lives in the name a
-            // screen reader speaks and a tooltip shows.
+            // The compact label is honest about the ceiling; the full count and remainder
+            // live in the name a screen reader speaks and a tooltip shows.
             Assert.Contains(
-                "remaining matching rows",
+                "matching rows in batches",
                 AutomationProperties.GetName(loadAll)!,
                 StringComparison.Ordinal);
 
             // Load 500 more keeps its own full-width target beside it.
             var loadMore = Assert.Single(
                 buttons,
-                static button => button.Content as string != "All");
+                button => button.Content as string != bulkLabel);
             Assert.True(loadMore.Bounds.Width > loadAll.Bounds.Width);
         }
         finally

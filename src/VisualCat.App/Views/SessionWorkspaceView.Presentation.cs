@@ -297,9 +297,13 @@ public sealed partial class SessionWorkspaceView : UserControl
                 // capture" — an instruction to do the thing that is finishing right now.
                 return ("Finishing this capture…", "Saving what was captured and closing the session.");
             case SessionActivity.Failed:
-                return (
-                    "This log could not be read",
-                    _viewModel.FailureReason ?? "The import ended in a failure.");
+                // Same distinction as the failure card: a capture that never started did not
+                // fail to read a log, because no log was ever opened.
+                return _viewModel.IsCaptureSession
+                    ? ("This capture could not run",
+                        _viewModel.FailureReason ?? "The capture ended in a failure.")
+                    : ("This log could not be read",
+                        _viewModel.FailureReason ?? "The import ended in a failure.");
             case SessionActivity.Ready or SessionActivity.Stopped
                 when _viewModel.Snapshot?.Descriptor.Counters.ParsedEntries == 0:
                 // An own-app capture of an idle app is empty for a reason the platform
@@ -349,7 +353,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             remedies.Add("clear the query");
         }
 
-        if (remedies.Count == 0 && filter.Fingerprint() != FilterSpec.All.Fingerprint())
+        if (remedies.Count == 0 && !filter.IsUnconstrained)
         {
             remedies.Add("clear the active filters");
         }
@@ -436,7 +440,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         var stats = _viewModel.Statistics;
-        var filtered = _viewModel.Filter.Fingerprint() != FilterSpec.All.Fingerprint();
+        var filtered = !_viewModel.Filter.IsUnconstrained;
         var empty = _viewModel.Entries.Count == 0 &&
                     _viewModel.Snapshot is not null &&
                     !_viewModel.IsSessionWorkInFlight;
@@ -735,9 +739,9 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         var padding = Math.Max(1_000, (last.Value - first.Value) / 40);
-        _ = _viewModel.SetViewportAsync(new TimeRange(
+        _ = RunUiActionAsync(() => _viewModel.SetViewportAsync(new TimeRange(
             new InstantUs(first.Value - padding),
-            new InstantUs(last.Value + padding)));
+            new InstantUs(last.Value + padding))));
     }
 
 

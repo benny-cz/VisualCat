@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -407,6 +408,325 @@ public sealed class PipelineIntegrationTests
                 cancelled.Token));
         Assert.False(File.Exists(cancelledExport));
         Assert.Empty(Directory.GetFiles(imported.Root, "cancelled.csv.tmp-*"));
+    }
+
+    [Fact]
+    public async Task ExternalRawEvidenceAcceptsAppendButRefusesAnyRecordedPrefixChange()
+    {
+        const string Original =
+            "01-01 00:00:01.000   100   101 I Tag: alpha\n" +
+            "01-01 00:00:02.000   100   101 I Tag: bravo\n";
+        const string Appended = "01-01 00:00:03.000   100   101 I Tag: charlie\n";
+        var container = Path.Combine(Path.GetTempPath(), $"visualcat-raw-lease-{Guid.NewGuid():N}");
+        var sourcePath = Path.Combine(container, "capture.txt");
+        var root = Path.Combine(container, "capture.vcat");
+        Directory.CreateDirectory(container);
+        SessionSnapshot? snapshot = null;
+        try
+        {
+            await File.WriteAllTextAsync(sourcePath, Original);
+            await using (var source = new FileLogSource(sourcePath))
+            {
+                var result = await SessionCoordinator.ImportAsync(
+                    source,
+                    root,
+                    Settings(2) with { PortableRaw = false });
+                snapshot = result.Snapshot;
+            }
+
+            await File.AppendAllTextAsync(sourcePath, Appended);
+            var accepted = Path.Combine(container, "accepted.log");
+            await ExportService.ExportRawAsync(
+                snapshot,
+                accepted,
+                snapshot.TimedRange!.Value,
+                FilterSpec.All,
+                EntryOrder.SourceSequence);
+            Assert.Equal(Original, await File.ReadAllTextAsync(accepted));
+
+            // Revalidate every operation, even when an earlier one succeeded. Preserve length
+            // and timestamp so metadata equality cannot authorize changed evidence.
+            var timestamp = File.GetLastWriteTimeUtc(sourcePath);
+            var changed = "X" + (Original + Appended)[1..];
+            Assert.Equal((Original + Appended).Length, changed.Length);
+            await File.WriteAllTextAsync(sourcePath, changed);
+            File.SetLastWriteTimeUtc(sourcePath, timestamp);
+
+            var rejected = Path.Combine(container, "rejected.log");
+            var exception = await Assert.ThrowsAsync<RawEvidenceException>(() =>
+                ExportService.ExportRawAsync(
+                    snapshot,
+                    rejected,
+                    snapshot.TimedRange!.Value,
+                    FilterSpec.All,
+                    EntryOrder.SourceSequence));
+            Assert.Contains("no longer matches", exception.Message, StringComparison.Ordinal);
+            Assert.False(File.Exists(rejected));
+        }
+        finally
+        {
+            snapshot?.Dispose();
+            if (Directory.Exists(container))
+            {
+                Directory.Delete(container, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A source another process still holds open for writing is readable, and still checked.
+    /// </summary>
+    /// <remarks>
+    /// The verified lease prefers to exclude other writers, because that closes the window
+    /// between its verification and its reads. `adb logcat &gt; capture.txt` is the workflow
+    /// this product is for, and it holds the file open for the whole capture — so on Windows
+    /// the exclusive open fails with a sharing violation, and every raw surface told the
+    /// reader "the original log file is unavailable" about a file that was sitting there
+    /// unchanged and verifying. The fallback keeps the contract: an appending writer never
+    /// moves a recorded byte, and the prefix is re-verified on the handle each operation
+    /// reads from.
+    /// </remarks>
+    [Fact]
+    public async Task RawEvidenceIsReadableWhileTheCapturingWriterStillHoldsTheFile()
+    {
+        const string Original =
+            "01-01 00:00:01.000   100   101 I Tag: alpha\n" +
+            "01-01 00:00:02.000   100   101 I Tag: bravo\n";
+        var container = Path.Combine(Path.GetTempPath(), $"visualcat-raw-share-{Guid.NewGuid():N}");
+        var logPath = Path.Combine(container, "capture.txt");
+        var root = Path.Combine(container, "capture.vcat");
+        Directory.CreateDirectory(container);
+        SessionSnapshot? snapshot = null;
+        try
+        {
+            await File.WriteAllTextAsync(logPath, Original, TestContext.Current.CancellationToken);
+            await using (var source = new FileLogSource(logPath))
+            {
+                var result = await SessionCoordinator.ImportAsync(source, root, Settings(2) with { PortableRaw = false });
+                snapshot = result.Snapshot;
+            }
+
+            // The shape of a shell redirect that is still running: open for append, sharing
+            // reads only.
+            await using (var writer = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.Read))
+            {
+                await using (var lease = await VerifiedRawSource.OpenAsync(snapshot, TestContext.Current.CancellationToken))
+                {
+                    Assert.Equal(Original.Length, lease.RecordedLength);
+                }
+
+                // Still growing, and still exactly the two indexed lines.
+                await writer.WriteAsync(
+                    Encoding.UTF8.GetBytes("01-01 00:00:03.000   100   101 I Tag: charlie\n"),
+                    TestContext.Current.CancellationToken);
+                await writer.FlushAsync(TestContext.Current.CancellationToken);
+
+                var exported = Path.Combine(container, "while-writing.log");
+                await ExportService.ExportRawAsync(
+                    snapshot,
+                    exported,
+                    snapshot.TimedRange!.Value,
+                    FilterSpec.All,
+                    EntryOrder.SourceSequence,
+                    TestContext.Current.CancellationToken);
+                Assert.Equal(Original, await File.ReadAllTextAsync(exported, TestContext.Current.CancellationToken));
+            }
+
+            // Sharing the file does not lower the bar: a rewritten prefix is still refused.
+            await File.WriteAllTextAsync(logPath, "X" + Original[1..], TestContext.Current.CancellationToken);
+            await using (var writer = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.Read))
+            {
+                var refusal = await Assert.ThrowsAsync<RawEvidenceException>(
+                    () => VerifiedRawSource.OpenAsync(snapshot, TestContext.Current.CancellationToken));
+                Assert.Contains("no longer matches", refusal.Message, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            snapshot?.Dispose();
+            if (Directory.Exists(container))
+            {
+                Directory.Delete(container, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The raw-context export shares the one gate, and is held to it like every other reader.
+    /// </summary>
+    [Fact]
+    public async Task RawContextExportUsesTheSameVerifiedGate()
+    {
+        await using var imported = await ImportAsync([4096], workers: 2);
+        var destination = Path.Combine(imported.Root, "context.log");
+        await ExportService.ExportRawContextAsync(
+            imported.Snapshot,
+            destination,
+            sourceSequence: 1,
+            before: 1,
+            after: 1,
+            TestContext.Current.CancellationToken);
+        Assert.True(new FileInfo(destination).Length > 0);
+
+        var rawPath = Assert.IsType<string>(imported.Snapshot.RawPath);
+        var bytes = await File.ReadAllBytesAsync(rawPath, TestContext.Current.CancellationToken);
+        bytes[0] ^= 0x1;
+        await File.WriteAllBytesAsync(rawPath, bytes, TestContext.Current.CancellationToken);
+
+        var refused = Path.Combine(imported.Root, "refused-context.log");
+        await Assert.ThrowsAsync<RawEvidenceException>(() => ExportService.ExportRawContextAsync(
+            imported.Snapshot,
+            refused,
+            sourceSequence: 1,
+            before: 1,
+            after: 1,
+            TestContext.Current.CancellationToken));
+        Assert.False(File.Exists(refused));
+    }
+
+    [Fact]
+    public async Task EmbeddedRawCorruptionIsRefusedWithACorruptionSpecificMessage()
+    {
+        await using var imported = await ImportAsync([4096], workers: 2);
+        var rawPath = Assert.IsType<string>(imported.Snapshot.RawPath);
+        var bytes = await File.ReadAllBytesAsync(rawPath);
+        bytes[0] ^= 0x1;
+        await File.WriteAllBytesAsync(rawPath, bytes);
+
+        var exception = await Assert.ThrowsAsync<RawEvidenceException>(
+            () => VerifiedRawSource.OpenAsync(imported.Snapshot));
+        Assert.Contains("embedded raw evidence is damaged", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task MixedLongFormatFragmentDoesNotPublishAPhantomTemplate()
+    {
+        const string Mixed =
+            "01-01 00:00:01.000   100   101 I Tag: alpha one\n" +
+            "01-01 00:00:02.000   100   101 I Tag: alpha two\n" +
+            "[ 01-01 00:00:03.000   100:  101 I/Intruder ]\n" +
+            "body line for the intruder\n" +
+            "01-01 00:00:04.000   100   101 I Tag: alpha three\n";
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-mixed-format-{Guid.NewGuid():N}.vcat");
+        await using var source = new MemoryLogSource(Encoding.UTF8.GetBytes(Mixed), [4096]);
+        var result = await SessionCoordinator.ImportAsync(source, root, Settings(2) with { SegmentEntries = 100 });
+        await using var imported = new ImportedSession(root, result.Snapshot);
+
+        Assert.Equal(4, imported.Snapshot.Descriptor.Counters.Templates);
+        Assert.Equal(4, imported.Snapshot.Templates.Count);
+        var referenced = imported.Snapshot.Segments
+            .SelectMany(static segment => Enumerable.Range(0, segment.Count).Select(segment.TemplateIdAt))
+            .Where(static id => id != 0)
+            .ToHashSet();
+        Assert.All(imported.Snapshot.Templates, template => Assert.Contains(template.TemplateId, referenced));
+        Assert.DoesNotContain(imported.Snapshot.Templates, static template => template.CanonicalText.Length == 0);
+
+        var report = await SessionVerifier.VerifyAsync(root);
+        Assert.True(report.IsValid, string.Join(Environment.NewLine, report.Issues.Select(static issue => issue.Message)));
+    }
+
+    /// <summary>An entry pointing at a template that is not published is damage, and refused.</summary>
+    [Fact]
+    public async Task VerifierRejectsAnEntryReferencingAnUnpublishedTemplate()
+    {
+        const string TwoTemplates =
+            "01-01 00:00:01.000   100   101 I First: alpha stable\n" +
+            "01-01 00:00:02.000   100   101 E Second: omega failed\n";
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-template-missing-{Guid.NewGuid():N}.vcat");
+        await using (var source = new MemoryLogSource(Encoding.UTF8.GetBytes(TwoTemplates), [4096]))
+        {
+            var result = await SessionCoordinator.ImportAsync(source, root, Settings(2) with { SegmentEntries = 100 });
+            result.Snapshot.Dispose();
+        }
+
+        try
+        {
+            var segment = Directory.GetDirectories(Path.Combine(root, "segments")).Single();
+            var templatePath = Path.Combine(segment, "template.bin");
+            var ids = await File.ReadAllBytesAsync(templatePath, TestContext.Current.CancellationToken);
+            BitConverter.GetBytes(99u).CopyTo(ids.AsSpan(sizeof(uint), sizeof(uint)));
+            await File.WriteAllBytesAsync(templatePath, ids, TestContext.Current.CancellationToken);
+
+            var checksumsPath = Path.Combine(segment, "checksums.json");
+            var checksums = JsonSerializer.Deserialize<Dictionary<string, string>>(
+                await File.ReadAllTextAsync(checksumsPath, TestContext.Current.CancellationToken),
+                WebJson)!;
+            checksums["template.bin"] = Convert.ToHexString(SHA256.HashData(ids));
+            await File.WriteAllTextAsync(checksumsPath, JsonSerializer.Serialize(checksums, WebJson), TestContext.Current.CancellationToken);
+
+            var report = await SessionVerifier.VerifyAsync(root);
+            Assert.False(report.IsValid);
+            var issue = Assert.Single(report.Issues, static candidate => candidate.Code == "template.missing");
+            Assert.True(issue.IsError);
+            Assert.Contains("99", issue.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// An unreferenced template is reported, and does not condemn the session.
+    /// </summary>
+    /// <remarks>
+    /// The check exists because a phantom cluster has no other symptom (IA-08). It reports a
+    /// warning rather than an error because every VisualCat up to 2.0.11 could mint one from
+    /// an ordinary mixed-format log: as an error it opened such a session and then refused to
+    /// save, share or export it — `Saved session verification failed: Published template 2 is
+    /// not referenced by any entry` — for data that is completely intact (IA-17).
+    /// </remarks>
+    [Fact]
+    public async Task VerifierWarnsAboutAPublishedTemplateThatNoEntryReferences()
+    {
+        const string TwoTemplates =
+            "01-01 00:00:01.000   100   101 I First: alpha stable\n" +
+            "01-01 00:00:02.000   100   101 E Second: omega failed\n";
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-template-ref-{Guid.NewGuid():N}.vcat");
+        await using (var source = new MemoryLogSource(Encoding.UTF8.GetBytes(TwoTemplates), [4096]))
+        {
+            var result = await SessionCoordinator.ImportAsync(source, root, Settings(2) with { SegmentEntries = 100 });
+            result.Snapshot.Dispose();
+        }
+
+        try
+        {
+            var segment = Directory.GetDirectories(Path.Combine(root, "segments")).Single();
+            var templatePath = Path.Combine(segment, "template.bin");
+            var ids = await File.ReadAllBytesAsync(templatePath);
+            Assert.Equal(8, ids.Length);
+            ids.AsSpan(0, sizeof(uint)).CopyTo(ids.AsSpan(sizeof(uint), sizeof(uint)));
+            await File.WriteAllBytesAsync(templatePath, ids);
+
+            var checksumsPath = Path.Combine(segment, "checksums.json");
+            var checksums = JsonSerializer.Deserialize<Dictionary<string, string>>(
+                await File.ReadAllTextAsync(checksumsPath),
+                WebJson)!;
+            checksums["template.bin"] = Convert.ToHexString(SHA256.HashData(ids));
+            await File.WriteAllTextAsync(checksumsPath, JsonSerializer.Serialize(checksums, WebJson));
+
+            var report = await SessionVerifier.VerifyAsync(root);
+            var issue = Assert.Single(report.Issues, static candidate => candidate.Code == "template.unreferenced");
+            Assert.False(issue.IsError);
+            Assert.True(report.IsValid, string.Join("; ", report.Issues.Select(static i => i.Code)));
+
+            // The session is intact, so every disposition of it still works.
+            using var snapshot = await SessionStore.OpenAsync(root, TestContext.Current.CancellationToken);
+            var saved = root + ".saved";
+            await SessionSaveService.SaveAsync(snapshot, saved, portable: false, TestContext.Current.CancellationToken);
+            Assert.True(Directory.Exists(saved));
+            Directory.Delete(saved, recursive: true);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
     }
 
     [Fact]

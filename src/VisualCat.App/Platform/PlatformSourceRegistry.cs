@@ -45,6 +45,9 @@ public enum PlatformLiveCaptureStopReason
 
     /// <summary>The operating system's foreground-work allowance expired.</summary>
     SystemTimeLimit,
+
+    /// <summary>Android could not establish the required visible foreground state.</summary>
+    BackgroundExecutionUnavailable,
 }
 
 /// <summary>Where this installation came from, which decides whether it can update itself.</summary>

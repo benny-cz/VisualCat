@@ -712,11 +712,12 @@ public static class SessionQueryEngine
 
     private static RankBitmap ActiveBitmap(SessionSnapshot snapshot, SegmentSnapshot segment, FilterSpec filter)
     {
-        var key = filter.Fingerprint();
-        if (ReferenceEquals(filter, FilterSpec.All) || IsAll(filter))
+        if (ReferenceEquals(filter, FilterSpec.All) || filter.IsUnconstrained)
         {
             return segment.GetOrCreateFilter("all", static _ => true);
         }
+
+        var key = filter.Fingerprint();
 
         StringComparison comparison = filter.Search is { CaseSensitive: false }
             ? StringComparison.OrdinalIgnoreCase
@@ -785,23 +786,7 @@ public static class SessionQueryEngine
         });
     }
 
-    private static bool IsAll(FilterSpec filter) =>
-        filter.TimeRange is null &&
-        filter.IncludedLevels.Count == 0 &&
-        filter.IncludedTags.Count == 0 &&
-        filter.ExcludedTags.Count == 0 &&
-        filter.IncludedPids.Count == 0 &&
-        filter.ExcludedPids.Count == 0 &&
-        filter.IncludedProcesses.Count == 0 &&
-        filter.ExcludedProcesses.Count == 0 &&
-        filter.IncludedTids.Count == 0 &&
-        filter.ExcludedTids.Count == 0 &&
-        filter.IncludedTemplates.Count == 0 &&
-        filter.ExcludedTemplates.Count == 0 &&
-        filter.IncludedBuffers.Count == 0 &&
-        filter.ExcludedBuffers.Count == 0 &&
-        filter.IncludedOutcomes.Count == 0 &&
-        filter.Search is null;
+    private static bool IsAll(FilterSpec filter) => filter.IsUnconstrained;
 
     private static bool IsUnfilteredForUntimed(FilterSpec filter) =>
         IsAll(filter) || filter.IncludedOutcomes.Contains(ParseOutcomeKind.UntimedEntry);

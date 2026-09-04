@@ -767,7 +767,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     {
         // Moving the view releases any cell scope (SetViewportAsync), which in turn
         // clears the outline through the DetailRange notification below (§14.7).
-        _timeline.ViewportChanged += (_, range) => _ = _viewModel.SetViewportAsync(range);
+        _timeline.ViewportChanged += (_, range) => _ = RunUiActionAsync(() => _viewModel.SetViewportAsync(range));
         _timeline.CellSelected += (_, cell) => _ = SelectTimelineCellAsync(cell);
         _timeline.HoverChanged += (_, cell) => _viewModel.RequestCellPattern(cell?.Range, cell?.Level);
         _timeline.RangeSelected += (_, range) =>
@@ -776,9 +776,9 @@ public sealed partial class SessionWorkspaceView : UserControl
             _rangeText.Text = $"{FormatInstant(range.StartInclusive)} — {FormatInstant(range.EndExclusive)}";
             _rangeActions.IsVisible = true;
             UpdateChipBarVisibility();
-            _ = _viewModel.RefreshCellAsync(range, null);
+            _ = RunUiActionAsync(() => _viewModel.RefreshCellAsync(range, null));
         };
-        _timeline.FollowRequested += (_, _) => _ = _viewModel.ToggleFollowAsync();
+        _timeline.FollowRequested += (_, _) => _ = RunUiActionAsync(_viewModel.ToggleFollowAsync);
         _timeline.SearchFocusRequested += (_, _) => _search.Focus();
         _timeline.SearchMarkerPicked += (_, instant) => _ = RunUiActionAsync(() => GoToNearestMatchAsync(instant));
         _timeline.ExportRequested += (_, _) => ExportRequested?.Invoke(null);
@@ -786,10 +786,10 @@ public sealed partial class SessionWorkspaceView : UserControl
         _timeline.SizeChanged += (_, eventArgs) =>
         {
             var scale = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
-            _ = _viewModel.SetRenderWidthAsync(
-                Math.Max(64, (int)Math.Round((eventArgs.NewSize.Width - 88) * scale)));
+            _ = RunUiActionAsync(() => _viewModel.SetRenderWidthAsync(
+                Math.Max(64, (int)Math.Round((eventArgs.NewSize.Width - 88) * scale))));
         };
-        _minimap.ViewportChanged += (_, range) => _ = _viewModel.SetViewportAsync(range);
+        _minimap.ViewportChanged += (_, range) => _ = RunUiActionAsync(() => _viewModel.SetViewportAsync(range));
         _entries.SelectionChanged += (_, _) =>
         {
             SyncEntryActionAvailability();
@@ -994,130 +994,249 @@ public sealed partial class SessionWorkspaceView : UserControl
     // while the tab was alive can arrive after it has been closed — and a redraw then reads a
     // session that is being torn down. A closed session does not drive a view: the work is
     // dropped rather than performed against a corpse.
-    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs eventArgs) =>
-        Dispatcher.UIThread.Post(() =>
+    /// <summary>The state-derived refreshers one batch of notifications has asked for.</summary>
+    [Flags]
+    private enum WorkspaceRefresh
+    {
+        None = 0,
+        TimelineLevels = 1 << 0,
+        Timelines = 1 << 1,
+        MarkerNavigation = 1 << 2,
+        SelectionHint = 1 << 3,
+        Statistics = 1 << 4,
+        EntryLoadControls = 1 << 5,
+        InspectedEntryFilterScope = 1 << 6,
+        CaptureActions = 1 << 7,
+        SessionInfo = 1 << 8,
+        FollowButton = 1 << 9,
+    }
+
+    /// <summary>Guards the pending notification names, which arrive from query threads too.</summary>
+    private readonly object _notificationGate = new();
+
+    /// <summary>Distinct property names awaiting the one job that will answer all of them.</summary>
+    private readonly List<string> _pendingNotifications = [];
+    private readonly HashSet<string> _pendingNotificationNames = new(StringComparer.Ordinal);
+    private bool _notificationDrainQueued;
+
+    /// <summary>
+    /// Collects a refresh's property notifications and answers them together.
+    /// </summary>
+    /// <remarks>
+    /// One settled viewport change raises thirteen notifications. Answering each in its own
+    /// posted job ran <c>UpdateEntryLoadControls</c> seven times, <c>UpdateTimelines</c> and
+    /// <c>UpdateMarkerNavigation</c> three times each, and three jobs that matched no case at
+    /// all, for one state the view could read once. The names are gathered in arrival order;
+    /// arms that are not idempotent still run once each, in that order, and the state-derived
+    /// refreshers run once for the union (IA-06).
+    /// </remarks>
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs eventArgs)
+    {
+        var name = eventArgs.PropertyName ?? string.Empty;
+        lock (_notificationGate)
         {
-            if (_viewModel.IsDisposed)
+            if (_pendingNotificationNames.Add(name))
+            {
+                _pendingNotifications.Add(name);
+            }
+
+            if (_notificationDrainQueued)
             {
                 return;
             }
 
-            switch (eventArgs.PropertyName)
-            {
-                case nameof(SessionTabViewModel.HeatMap):
-                case nameof(SessionTabViewModel.Overview):
-                case nameof(SessionTabViewModel.Viewport):
-                    UpdateTimelines();
-                    UpdateMarkerNavigation();
-                    break;
-                case nameof(SessionTabViewModel.SearchText):
-                    _search.Text = _viewModel.SearchText;
-                    break;
-                case nameof(SessionTabViewModel.EntryOrder):
-                    _order.SelectedIndex = _viewModel.EntryOrder == EntryOrder.SourceSequence ? 1 : 0;
-                    break;
-                case nameof(SessionTabViewModel.SearchResult):
-                    _timeline.SetSearchResult(_viewModel.SearchResult);
-                    UpdateMarkerNavigation();
-                    break;
-                case nameof(SessionTabViewModel.Status):
-                    ApplyStatusText();
-                    UpdateCaptureActions();
-                    break;
-                case nameof(SessionTabViewModel.Activity):
-                case nameof(SessionTabViewModel.FailureReason):
-                    UpdateCaptureActions();
-                    AnnouncePartialRecovery();
-                    break;
-                case nameof(SessionTabViewModel.Completion):
-                    UpdateSessionInfo();
-                    AnnouncePartialRecovery();
-                    break;
-                case nameof(SessionTabViewModel.CaptureScopeRemedy):
-                case nameof(SessionTabViewModel.CaptureScopeSummary):
-                    // What the capture can see is settled several seconds in, so the empty
-                    // plot's explanation and the session pane both have to be able to
-                    // acquire it after the fact (audit 2, C1).
-                    UpdateCaptureActions();
-                    UpdateSessionInfo();
-                    break;
-                case nameof(SessionTabViewModel.CaptureHealthWarning):
-                    // The status bar can only carry a marker pointing here, so the pane
-                    // has to rebuild the moment the warning appears or clears rather than
-                    // waiting for whatever refresh happens to come next.
-                    UpdateSessionInfo();
-                    break;
-                case nameof(SessionTabViewModel.QueuedBehind):
-                    UpdateStatistics();
-                    break;
-                case nameof(SessionTabViewModel.SearchStatus):
-                case nameof(SessionTabViewModel.SearchInProgress):
-                    _searchStatus.Text = _viewModel.SearchStatus;
-                    UpdateMarkerNavigation();
-                    break;
-                case nameof(SessionTabViewModel.DetailRange):
-                    // The outline and the detail scope are one state: whoever releases
-                    // the scope releases the outline with it, so the plot can never claim
-                    // a selection the table is not listing.
-                    if (_viewModel.DetailRange is null)
-                    {
-                        _timeline.ClearSelection();
-                    }
+            _notificationDrainQueued = true;
+        }
 
-                    // The inspector says which of a bar's entries is on screen, so releasing
-                    // the bar has to be able to change that sentence (finding 6).
-                    UpdateSelectionHint();
-                    UpdateStatistics();
-                    break;
-                case nameof(SessionTabViewModel.Statistics):
-                    UpdateStatistics();
-                    break;
-                case nameof(SessionTabViewModel.Filter):
-                    UpdateTimelineLevels();
-                    UpdateStatistics();
-                    UpdateInspectedEntryFilterScope();
-                    break;
-                case nameof(SessionTabViewModel.MatchesInView):
-                    UpdateSelectionHint();
-                    UpdateStatistics();
-                    UpdateEntryLoadControls();
-                    break;
-                case nameof(SessionTabViewModel.HoverPattern):
-                    _timeline.SetHoverInsight(_viewModel.HoverPattern is { } pattern
-                        ? new TimelineHoverInsight(
-                            pattern.Range,
-                            pattern.Level,
-                            pattern.TemplateText,
-                            pattern.TemplateCount)
-                        : null);
-                    break;
-                case nameof(SessionTabViewModel.RawContextText):
-                    // Property changes are marshalled to this queue. A canceled source
-                    // read can therefore leave a stale notification behind even after a
-                    // newer timeline tap. The current request presents itself explicitly.
-                    if (!_timelineEntryPending && !HasRawContextLoad())
-                    {
-                        PresentRawContext();
-                    }
+        Dispatcher.UIThread.Post(DrainViewModelNotifications);
+    }
 
-                    break;
-                case nameof(SessionTabViewModel.CanLoadMore):
-                case nameof(SessionTabViewModel.IsLoadingEntries):
-                case nameof(SessionTabViewModel.LoadedEntryCount):
-                case nameof(SessionTabViewModel.RemainingEntryCount):
-                    UpdateEntryLoadControls();
-                    break;
-                case nameof(SessionTabViewModel.FollowLatest):
-                    UpdateFollowButton();
-                    break;
-                case nameof(SessionTabViewModel.HasNewData):
-                    UpdateCaptureActions();
-                    break;
-                case nameof(SessionTabViewModel.IsLiveCaptureActive):
-                    UpdateCaptureActions();
-                    break;
-            }
-        });
+    private void DrainViewModelNotifications()
+    {
+        string[] names;
+        lock (_notificationGate)
+        {
+            names = [.. _pendingNotifications];
+            _pendingNotifications.Clear();
+            _pendingNotificationNames.Clear();
+            _notificationDrainQueued = false;
+        }
+
+        if (_viewModel.IsDisposed)
+        {
+            return;
+        }
+
+        var pending = WorkspaceRefresh.None;
+        foreach (var name in names)
+        {
+            pending |= AnswerNotification(name);
+        }
+
+        ApplyWorkspaceRefresh(pending);
+    }
+
+    /// <summary>
+    /// Performs whatever one notification uniquely owns, and names the shared refreshers it
+    /// needs rather than running them.
+    /// </summary>
+    private WorkspaceRefresh AnswerNotification(string name)
+    {
+        switch (name)
+        {
+            case nameof(SessionTabViewModel.HeatMap):
+            case nameof(SessionTabViewModel.Overview):
+            case nameof(SessionTabViewModel.Viewport):
+                return WorkspaceRefresh.Timelines | WorkspaceRefresh.MarkerNavigation;
+            case nameof(SessionTabViewModel.SearchText):
+                _search.Text = _viewModel.SearchText;
+                return WorkspaceRefresh.None;
+            case nameof(SessionTabViewModel.EntryOrder):
+                _order.SelectedIndex = _viewModel.EntryOrder == EntryOrder.SourceSequence ? 1 : 0;
+                return WorkspaceRefresh.None;
+            case nameof(SessionTabViewModel.SearchResult):
+                _timeline.SetSearchResult(_viewModel.SearchResult);
+                return WorkspaceRefresh.MarkerNavigation;
+            case nameof(SessionTabViewModel.Status):
+                ApplyStatusText();
+                return WorkspaceRefresh.CaptureActions;
+            case nameof(SessionTabViewModel.Activity):
+            case nameof(SessionTabViewModel.FailureReason):
+                AnnouncePartialRecovery();
+                return WorkspaceRefresh.CaptureActions;
+            case nameof(SessionTabViewModel.Completion):
+                AnnouncePartialRecovery();
+                return WorkspaceRefresh.SessionInfo;
+            case nameof(SessionTabViewModel.CaptureScopeRemedy):
+            case nameof(SessionTabViewModel.CaptureScopeSummary):
+                // What the capture can see is settled several seconds in, so the empty
+                // plot's explanation and the session pane both have to be able to
+                // acquire it after the fact (audit 2, C1).
+                return WorkspaceRefresh.CaptureActions | WorkspaceRefresh.SessionInfo;
+            case nameof(SessionTabViewModel.CaptureHealthWarning):
+                // The status bar can only carry a marker pointing here, so the pane
+                // has to rebuild the moment the warning appears or clears rather than
+                // waiting for whatever refresh happens to come next.
+                return WorkspaceRefresh.SessionInfo;
+            case nameof(SessionTabViewModel.QueuedBehind):
+                return WorkspaceRefresh.Statistics;
+            case nameof(SessionTabViewModel.SearchStatus):
+            case nameof(SessionTabViewModel.SearchInProgress):
+                _searchStatus.Text = _viewModel.SearchStatus;
+                return WorkspaceRefresh.MarkerNavigation;
+            case nameof(SessionTabViewModel.DetailRange):
+                // The outline and the detail scope are one state: whoever releases
+                // the scope releases the outline with it, so the plot can never claim
+                // a selection the table is not listing.
+                if (_viewModel.DetailRange is null)
+                {
+                    _timeline.ClearSelection();
+                }
+
+                // The inspector says which of a bar's entries is on screen, so releasing
+                // the bar has to be able to change that sentence (finding 6).
+                return WorkspaceRefresh.SelectionHint | WorkspaceRefresh.Statistics;
+            case nameof(SessionTabViewModel.Statistics):
+                return WorkspaceRefresh.Statistics;
+            case nameof(SessionTabViewModel.Filter):
+                return WorkspaceRefresh.TimelineLevels |
+                       WorkspaceRefresh.Statistics |
+                       WorkspaceRefresh.InspectedEntryFilterScope;
+            case nameof(SessionTabViewModel.MatchesInView):
+                return WorkspaceRefresh.SelectionHint |
+                       WorkspaceRefresh.Statistics |
+                       WorkspaceRefresh.EntryLoadControls;
+            case nameof(SessionTabViewModel.HoverPattern):
+                _timeline.SetHoverInsight(_viewModel.HoverPattern is { } pattern
+                    ? new TimelineHoverInsight(
+                        pattern.Range,
+                        pattern.Level,
+                        pattern.TemplateText,
+                        pattern.TemplateCount)
+                    : null);
+                return WorkspaceRefresh.None;
+            case nameof(SessionTabViewModel.RawContextText):
+                // Property changes are marshalled to this queue. A canceled source
+                // read can therefore leave a stale notification behind even after a
+                // newer timeline tap. The current request presents itself explicitly.
+                if (!_timelineEntryPending && !HasRawContextLoad())
+                {
+                    PresentRawContext();
+                }
+
+                return WorkspaceRefresh.None;
+            case nameof(SessionTabViewModel.CanLoadMore):
+            case nameof(SessionTabViewModel.IsLoadingEntries):
+            case nameof(SessionTabViewModel.LoadedEntryCount):
+            case nameof(SessionTabViewModel.RemainingEntryCount):
+            case nameof(SessionTabViewModel.IsEntryRetentionLimitReached):
+                return WorkspaceRefresh.EntryLoadControls;
+            case nameof(SessionTabViewModel.FollowLatest):
+                return WorkspaceRefresh.FollowButton;
+            case nameof(SessionTabViewModel.HasNewData):
+            case nameof(SessionTabViewModel.IsLiveCaptureActive):
+                return WorkspaceRefresh.CaptureActions;
+            default:
+                return WorkspaceRefresh.None;
+        }
+    }
+
+    /// <summary>
+    /// Runs each requested refresher once, in the order the individual arms used to imply.
+    /// </summary>
+    private void ApplyWorkspaceRefresh(WorkspaceRefresh pending)
+    {
+        if ((pending & WorkspaceRefresh.TimelineLevels) != 0)
+        {
+            UpdateTimelineLevels();
+        }
+
+        if ((pending & WorkspaceRefresh.Timelines) != 0)
+        {
+            UpdateTimelines();
+        }
+
+        if ((pending & WorkspaceRefresh.MarkerNavigation) != 0)
+        {
+            UpdateMarkerNavigation();
+        }
+
+        if ((pending & WorkspaceRefresh.SelectionHint) != 0)
+        {
+            UpdateSelectionHint();
+        }
+
+        if ((pending & WorkspaceRefresh.Statistics) != 0)
+        {
+            UpdateStatistics();
+        }
+
+        if ((pending & WorkspaceRefresh.EntryLoadControls) != 0)
+        {
+            UpdateEntryLoadControls();
+        }
+
+        if ((pending & WorkspaceRefresh.InspectedEntryFilterScope) != 0)
+        {
+            UpdateInspectedEntryFilterScope();
+        }
+
+        if ((pending & WorkspaceRefresh.CaptureActions) != 0)
+        {
+            UpdateCaptureActions();
+        }
+
+        if ((pending & WorkspaceRefresh.SessionInfo) != 0)
+        {
+            UpdateSessionInfo();
+        }
+
+        if ((pending & WorkspaceRefresh.FollowButton) != 0)
+        {
+            UpdateFollowButton();
+        }
+    }
+
     private void OnViewModelSnapshotChanged(object? sender, EventArgs eventArgs) =>
         Dispatcher.UIThread.Post(() =>
         {
@@ -1263,7 +1382,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         return applied;
     }
 
-    private async Task RunUiActionAsync(Func<Task> action)
+    internal async Task RunUiActionAsync(Func<Task> action)
     {
         try
         {
@@ -1299,17 +1418,24 @@ public sealed partial class SessionWorkspaceView : UserControl
     }
 
     /// <summary>
-    /// Above this many outstanding rows, loading them all is a decision rather than a tap.
+    /// Fills the bounded row window, or stops a fill that is already running.
     /// </summary>
     /// <remarks>
-    /// X-13's session had 996,385 rows outstanding. Loading them is supported, it is
-    /// cancellable, and it holds every one of them in memory — which is a thing to be told
-    /// before it starts, not after. Below the threshold the wait is short enough that a
-    /// question would be the more annoying half of the exchange.
+    /// This used to ask first. X-13's session had 996,385 rows outstanding and loading them
+    /// meant retaining every one, so a confirmation above 100,000 outstanding rows was the
+    /// honest thing to put in front of a reader. The ceiling replaced the retention it was
+    /// warning about (IA-07), and the question went with it: the whole 100,000-row desktop
+    /// fill measures 1,492 ms in Release on the reference machine, and the control turns into
+    /// Cancel for the duration. A modal in front of a second and a half of cancellable work is
+    /// friction, not care.
+    ///
+    /// The gate was kept for one revision and became unreachable, which is worse than either
+    /// answer: it read `loadCount >= 100,000` where `loadCount` is at most
+    /// `limit - loaded`, so with the desktop limit also 100,000 it could not fire once a
+    /// single row was bound, and on Android the ceiling of 25,000 put it four times further
+    /// out of reach (IA-18).
     /// </remarks>
-    internal const long LoadAllConfirmationThreshold = 100_000;
-
-    private async Task ToggleLoadAllEntriesAsync()
+    internal async Task ToggleLoadAllEntriesAsync()
     {
         if (_loadAllEntriesCancellation is { } active)
         {
@@ -1318,27 +1444,22 @@ public sealed partial class SessionWorkspaceView : UserControl
             return;
         }
 
-        var outstanding = _viewModel.RemainingEntryCount;
-        if (outstanding >= LoadAllConfirmationThreshold && ConfirmAsync is { } confirm)
-        {
-            var accepted = await confirm(
-                "Load every matching row?",
-                $"{outstanding:N0} rows are not loaded yet. VisualCat will read them in batches and keep " +
-                "all of them in memory, which on a large session takes a while and a lot of it. " +
-                "You can cancel at any point and keep the rows already loaded.",
-                "Load all");
-            if (!accepted)
-            {
-                return;
-            }
-        }
-
         var cancellation = new CancellationTokenSource();
         _loadAllEntriesCancellation = cancellation;
         UpdateEntryLoadControls();
         try
         {
             await _viewModel.LoadAllEntriesAsync(cancellation.Token);
+            if (_viewModel.IsEntryRetentionLimitReached)
+            {
+                // Measured on the device: the long form rendered as "…refine filters to
+                // narrow t…", and a sentence cut mid-word is the one thing a status line
+                // must not do. The phone gets the short form; the footer control's name and
+                // tooltip carry the exact remainder either way.
+                _viewModel.ReportTransientStatus(_mobile
+                    ? $"Showing {_viewModel.LoadedEntryCount:N0} rows · limit reached"
+                    : $"Showing {_viewModel.LoadedEntryCount:N0} rows · safety limit reached; refine filters to narrow the results");
+            }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -1360,6 +1481,19 @@ public sealed partial class SessionWorkspaceView : UserControl
             UpdateEntryLoadControls();
         }
     }
+
+    /// <summary>
+    /// A row count in the four characters the phone footer can spare beside Load 500 more.
+    /// </summary>
+    /// <remarks>
+    /// Thousands only when there are thousands: dividing unconditionally rendered a 600-row
+    /// ceiling as <c>0K</c>, which is both wrong and the most alarming thing a button could
+    /// say about how much of the session is reachable.
+    /// </remarks>
+    private static string CompactRowCount(int rows) =>
+        rows >= 1_000
+            ? $"{rows / 1_000:N0}K"
+            : rows.ToString("N0", DisplayCulture.Current);
 
     /// <summary>The width the footer label may draw in, unbounded until the band is arranged.</summary>
     private double _loadMoreRoom = double.PositiveInfinity;
@@ -1492,16 +1626,24 @@ public sealed partial class SessionWorkspaceView : UserControl
         var loading = _viewModel.IsLoadingEntries;
         var loadingAll = _loadAllEntriesCancellation is { IsCancellationRequested: false };
         var stopping = _loadAllEntriesCancellation is { IsCancellationRequested: true };
+        var retentionLimit = SessionTabViewModel.EntryRetentionLimit;
+        var limitReached = _viewModel.IsEntryRetentionLimitReached;
 
         _loadMore.IsEnabled = _viewModel.CanLoadMore && !loading && _loadAllEntriesCancellation is null;
         _loadMore.IsVisible = !_mobile || _viewModel.CanLoadMore;
         if (_entryFooter is { } footer)
         {
-            // The footer's frame is only worth a band while it is holding the control; in the
+            // The footer's frame is only worth a band while it is holding a control; in the
             // short composition the control has moved into the header row (see MoveLoadMore).
             // Whether the pane can seat the band at all is EnforceLoadMoreFooterFit's, and it
             // answers on the next layout pass, so this must not assert a band it can't have.
-            footer.IsVisible = _loadMore.IsVisible &&
+            //
+            // Load 500 more goes away when the row window is full, and the band used to go
+            // with it — taking the only thing on a phone that says the list stops short of
+            // the session (IA-07). The band is earned by either control: at the limit it is
+            // holding the sentence that explains why there is nothing more to tap.
+            var footerHasControl = _loadMore.IsVisible || limitReached;
+            footer.IsVisible = footerHasControl &&
                                footer.Child is not null &&
                                (footer.IsVisible || _entryFooterBand <= 0 || !_mobile ||
                                 _entries.Bounds.Height >= _entryRowMinimumHeight + _entryFooterBand);
@@ -1535,30 +1677,41 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         UpdateEntryActionRows();
 
-        // Load all is a phone control too now. Its label is the state it is in — Load all,
-        // Cancel, Stopping… — and its spoken name carries the exact remainder, because on a
-        // phone the label is three characters wide and the number is the part that matters
-        // (V2-19).
+        // The bulk load is a phone control too. Its label is the state it is in — the
+        // ceiling, Cancel, Stopping… — and its spoken name carries the exact remainder,
+        // because on a phone the label has about four characters of room and the number is
+        // the part that matters (V2-19). That budget is not cosmetic: the button shares the
+        // footer band with Load 500 more, which is the primary action and has to keep the
+        // full-width target it earned, so a phone label that spells the sentence out takes
+        // the remaining-count clause off the control beside it (F-42).
         _loadAll.Content = stopping
             ? "Stopping…"
             : loadingAll
                 ? "Cancel"
-                : _mobile ? "All" : "Load all";
-        _loadAll.IsEnabled = !stopping && (loadingAll || (_viewModel.CanLoadMore && !loading));
-        _loadAll.IsVisible = !_mobile || _viewModel.CanLoadMore || loadingAll || stopping;
+                : limitReached
+                    ? _mobile ? "Full" : $"{retentionLimit:N0}-row limit"
+                    : _mobile ? CompactRowCount(retentionLimit) : $"Load up to {retentionLimit:N0}";
+        // Enabled at the limit as well: there is nothing further to load, and tapping it is
+        // how a reader who missed the transient status asks for the sentence again.
+        _loadAll.IsEnabled = !stopping && (loadingAll || limitReached || (_viewModel.CanLoadMore && !loading));
+        _loadAll.IsVisible = !_mobile || _viewModel.CanLoadMore || loadingAll || stopping || limitReached;
         var loadAllName = stopping
-            ? "Stopping the all-rows load"
+            ? "Stopping the row load"
             : loadingAll
-                ? $"Cancel loading all rows; {remaining:N0} remain"
-                : remaining > 0
-                    ? $"Load all {remaining:N0} remaining matching rows in batches"
-                    : "All matching rows are loaded";
+                ? $"Cancel loading rows; {remaining:N0} remain"
+                : limitReached
+                    ? $"{retentionLimit:N0}-row safety limit reached; {remaining:N0} matching rows are not loaded; refine filters to inspect them"
+                    : remaining > 0
+                        ? $"Load up to {retentionLimit:N0} matching rows in batches; {remaining:N0} remain"
+                        : "All matching rows are loaded";
         ToolTip.SetTip(_loadAll, loadAllName);
         AutomationProperties.SetName(_loadAll, loadAllName);
 
         if (!_mobile)
         {
-            _entryLoadStatus.Text = total is { } count
+            _entryLoadStatus.Text = limitReached
+                ? $"{loaded:N0} / {(total ?? loaded):N0} rows · safety limit; refine filters"
+                : total is { } count
                 ? loading
                     ? $"{loaded:N0} / {count:N0} rows · loading…"
                     : loaded >= count

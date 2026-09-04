@@ -81,6 +81,19 @@ public sealed class CaptureForegroundService : Service
                 "Started the user-visible data-sync foreground service for Live capture.");
             return new Lease(applicationContext, generation);
         }
+        catch (Exception exception) when (ForegroundPromotion.Classify(exception) is { } failure)
+        {
+            // Refused, not broken. The platform's own message is an intent dump, and the
+            // workspace shows a failure reason verbatim, so the translation has to happen
+            // here rather than in a presenter that would have to parse it back (IA-12b).
+            ClearLease(generation);
+            global::Android.Util.Log.Error(
+                LogTag,
+                $"Android refused the Live capture background lease ({failure}, {exception.GetType().Name}): {exception.Message}");
+            throw new BackgroundExecutionUnavailableException(
+                ForegroundPromotion.Explain(failure),
+                exception);
+        }
         catch
         {
             ClearLease(generation);
@@ -157,8 +170,14 @@ public sealed class CaptureForegroundService : Service
             global::Android.Util.Log.Info(
                 LogTag,
                 "The reader requested Stop and save from the ongoing capture notification.");
-            PublishForegroundNotification(stopping: true);
-            RequestGracefulStop(PlatformLiveCaptureStopReason.NotificationAction);
+            if (TryPublishForegroundNotification(
+                    stopping: true,
+                    startId,
+                    PlatformLiveCaptureStopReason.NotificationAction))
+            {
+                RequestGracefulStop(PlatformLiveCaptureStopReason.NotificationAction);
+            }
+
             return StartCommandResult.NotSticky;
         }
 
@@ -167,12 +186,18 @@ public sealed class CaptureForegroundService : Service
             global::Android.Util.Log.Info(
                 LogTag,
                 "Reposting the active capture notification after notification permission was granted.");
-            PublishForegroundNotification(stopping: false);
+            _ = TryPublishForegroundNotification(
+                stopping: false,
+                startId,
+                PlatformLiveCaptureStopReason.BackgroundExecutionUnavailable);
             return StartCommandResult.NotSticky;
         }
 
         _summary = intent?.GetStringExtra(ExtraSummary) ?? _summary;
-        PublishForegroundNotification(stopping: false);
+        _ = TryPublishForegroundNotification(
+            stopping: false,
+            startId,
+            PlatformLiveCaptureStopReason.BackgroundExecutionUnavailable);
         return StartCommandResult.NotSticky;
     }
 
@@ -248,6 +273,32 @@ public sealed class CaptureForegroundService : Service
             notification,
             (int)ForegroundService.TypeDataSync);
     }
+
+    /// <summary>
+    /// Promotes or refreshes the service without allowing a documented Android foreground
+    /// restriction or manifest/configuration failure to crash the process. A failed promotion
+    /// cannot leave capture running invisibly: it requests the normal drain-and-seal path and
+    /// immediately releases the service itself.
+    /// </summary>
+    /// <remarks>
+    /// The policy is <see cref="ForegroundPromotion"/> in the cross-platform layer, so every
+    /// documented failure category can be injected by a unit test that no device can run
+    /// (IA-12b). This method supplies the four platform operations and nothing else.
+    /// </remarks>
+    private bool TryPublishForegroundNotification(
+        bool stopping,
+        int startId,
+        PlatformLiveCaptureStopReason stopReason) =>
+        ForegroundPromotion.TryPublish(
+            () => PublishForegroundNotification(stopping),
+            stopReason,
+            RequestGracefulStop,
+            () => StopForeground(StopForegroundFlags.Remove),
+            () => StopSelf(startId),
+            static (failure, exception) => global::Android.Util.Log.Error(
+                LogTag,
+                $"Foreground promotion failed ({failure}, {exception.GetType().Name}); " +
+                $"Live capture will stop and save: {exception.Message}"));
 
     private static bool HasActiveLease()
     {
