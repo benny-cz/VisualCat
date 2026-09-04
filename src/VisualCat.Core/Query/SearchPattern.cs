@@ -10,12 +10,40 @@ namespace VisualCat.Core.Query;
 /// <param name="Error">The parser's own classification, kept for diagnostics and tests.</param>
 /// <param name="Offset">Where in the pattern the parser stopped, or -1 if it did not say.</param>
 /// <param name="Description">One plain clause, with no trailing punctuation.</param>
-public readonly record struct SearchPatternProblem(RegexParseError Error, int Offset, string Description)
+/// <param name="Kind">Whether compilation failed or matching exceeded its time budget.</param>
+public readonly record struct SearchPatternProblem(
+    RegexParseError Error,
+    int Offset,
+    string Description,
+    SearchPatternProblemKind Kind = SearchPatternProblemKind.Invalid)
 {
     /// <summary>The whole sentence, position included where the parser gave one.</summary>
-    public string Sentence => Offset >= 0
-        ? $"Not a valid regular expression: {Description} (position {Offset})."
-        : $"Not a valid regular expression: {Description}.";
+    public string Sentence => Kind == SearchPatternProblemKind.TimedOut
+        ? SearchTimeoutException.UserMessage
+        : Offset >= 0
+            ? $"Not a valid regular expression: {Description} (position {Offset})."
+            : $"Not a valid regular expression: {Description}.";
+
+    public static SearchPatternProblem Timeout() =>
+        new(RegexParseError.Unknown, -1, "matching took too long", SearchPatternProblemKind.TimedOut);
+}
+
+public enum SearchPatternProblemKind
+{
+    Invalid,
+    TimedOut,
+}
+
+/// <summary>A regex compiled successfully but exceeded its bounded match time.</summary>
+public sealed class SearchTimeoutException : Exception
+{
+    public const string UserMessage =
+        "This regular expression took too long. Simplify it or remove lookarounds/backreferences.";
+
+    public SearchTimeoutException(RegexMatchTimeoutException innerException)
+        : base(UserMessage, innerException)
+    {
+    }
 }
 
 /// <summary>

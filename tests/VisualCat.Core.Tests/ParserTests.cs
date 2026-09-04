@@ -112,6 +112,36 @@ public sealed class ParserTests
         Assert.True(invalid.Fields?.Attributes.HasFlag(EntryAttributes.EncodingFallback));
     }
 
+    [Theory]
+    [InlineData(new byte[] { 0xc3 })]
+    [InlineData(new byte[] { 0x80 })]
+    [InlineData(new byte[] { 0xc0, 0xaf })]
+    [InlineData(new byte[] { 0xed, 0xa0, 0x80 })]
+    public void EveryMalformedUtf8ShapeUsesReplacementAndMarksTheEntry(byte[] malformed)
+    {
+        var prefix = "D/Tag(1): "u8.ToArray();
+        var bytes = prefix.Concat(malformed).ToArray();
+        var source = new SourceLine(Guid.NewGuid(), 0, new RawSpan(0, bytes.Length), bytes);
+
+        var outcome = LogcatParser.Parse(source, LogcatFormat.Brief);
+
+        var fields = Assert.IsType<ParsedFields>(outcome.Fields);
+        Assert.True(fields.Attributes.HasFlag(EntryAttributes.EncodingFallback));
+        Assert.Contains('\ufffd', fields.Message);
+    }
+
+    [Fact]
+    public void MultibyteUtf8StillDecodesWithoutAFallbackMarker()
+    {
+        var bytes = Encoding.UTF8.GetBytes("D/Tag(1): π 猫");
+        var source = new SourceLine(Guid.NewGuid(), 0, new RawSpan(0, bytes.Length), bytes);
+
+        var outcome = LogcatParser.Parse(source, LogcatFormat.Brief);
+
+        Assert.Equal("π 猫", outcome.Fields?.Message);
+        Assert.False(outcome.Fields?.Attributes.HasFlag(EntryAttributes.EncodingFallback));
+    }
+
     [Fact]
     public void DetectsFormatUsingValidFields()
     {

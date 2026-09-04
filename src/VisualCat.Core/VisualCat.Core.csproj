@@ -1,4 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- MappedColumn holds one read-only mapping pointer for the column lifetime. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../VisualCat.Domain/VisualCat.Domain.csproj" />
   </ItemGroup>
@@ -6,5 +10,8 @@
     <!-- The mask oracle and segment contract are implementation detail that the test
          suite pins directly; neither belongs on the public surface. -->
     <InternalsVisibleTo Include="VisualCat.Core.Tests" />
+    <InternalsVisibleTo Include="VisualCat.App.Tests" />
+    <InternalsVisibleTo Include="VisualCat.Infrastructure" />
+    <InternalsVisibleTo Include="VisualCat.Android" />
   </ItemGroup>
 </Project>

@@ -100,6 +100,13 @@ internal static class VisualCatCli
             Console.Error.WriteLine($"error: {exception.Message}");
             return 2;
         }
+        catch (SearchTimeoutException exception)
+        {
+            // Product wording only: framework timeout text varies by runtime and may be
+            // trimmed to a resource key on constrained builds.
+            Console.Error.WriteLine($"error: {exception.Message}");
+            return 3;
+        }
         catch (Exception exception)
         {
             Console.Error.WriteLine($"error: {exception.Message}");

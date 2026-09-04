@@ -8,6 +8,7 @@ using Avalonia.Threading;
 using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
+using VisualCat.App.Theme;
 using VisualCat.App.Views;
 
 namespace VisualCat.App.Tests;
@@ -63,7 +64,7 @@ public sealed class PixelGestureAndTextScaleTests
             Assert.True(((IEdgeGestureSurface)rows).ClaimedWhole);
             Assert.Equal(rows.Bounds.Width, claim.Width, 3);
             Assert.Equal(MobilePaneSplitter.LaneBandExtent, claim.Height, 3);
-            Assert.Equal(MobilePaneSplitter.HitTargetExtent, rows.Bounds.Height, 3);
+            Assert.Equal(TouchTarget.MinimumWithEdgeReserve, rows.Bounds.Height, 3);
 
             // Centred on the boundary the divider draws, so the band the reader can grab and
             // the band the platform is told about are the same band.

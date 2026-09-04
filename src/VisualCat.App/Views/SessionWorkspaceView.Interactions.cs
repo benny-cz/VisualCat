@@ -273,6 +273,170 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void ApplyEntryTemplate() =>
         _entries.ItemTemplate = _mobile ? BuildMobileEntryTemplate() : BuildDesktopEntryTemplate();
 
+    internal readonly record struct DesktopEntryColumnLayout(
+        string Columns,
+        bool Process,
+        bool Tid,
+        bool Buffer,
+        bool Template)
+    {
+        public bool IsVisible(int column) => column switch
+        {
+            2 => Process,
+            3 => Tid,
+            4 => Buffer,
+            6 => Template,
+            _ => true,
+        };
+    }
+
+    /// <summary>
+    /// Design widths of the fixed entry columns at text scale 1.0, in header order:
+    /// TIME, L, PROCESS / PID, TID, BUFFER, TAG, TPL. MESSAGE takes the rest.
+    /// </summary>
+    private static readonly double[] EntryColumnDesignWidths = [165, 32, 112, 56, 68, 96, 52];
+
+    /// <summary>Message text is given this much before any optional fact keeps its column.</summary>
+    private const double MinimumMessageWidth = 320;
+
+    /// <summary>
+    /// The share of the row message text keeps even after every optional column is gone.
+    /// Below this the table has stopped being a log and become a list of timestamps.
+    /// </summary>
+    private const double MessageFloor = 120;
+
+    /// <summary>
+    /// Enough for <c>MM-DD HH:MM:SS</c>. TIME is the one durable column that degrades
+    /// gracefully — what it loses first is the microsecond tail, not the reading — so it is
+    /// what yields when the message would otherwise get nothing at all.
+    /// </summary>
+    private const double TimeColumnFloor = 104;
+
+    /// <summary>Header order of the columns that collapse, least useful first.</summary>
+    private static readonly int[] CollapseOrder = [6, 4, 3, 2];
+
+    /// <summary>
+    /// Gives message text the first 320 logical pixels available after the durable scanning
+    /// set (time, level and tag). Optional facts then return in usefulness order as room grows.
+    /// </summary>
+    /// <remarks>
+    /// Every width scales with the reader's text size. The cells inherit
+    /// <c>TextScale.Of(12.5)</c> and the headers <c>TextScale.Of(9)</c>, so a fixed literal
+    /// would ellipsize its own value long before the collapse order ever ran: at 200% a
+    /// timestamp needs about 310 px and the column would still be 165. Scaling the budget
+    /// instead means a reader who enlarged the text loses whole optional facts, which is what
+    /// the collapse order is for, rather than the ends of every value in the table.
+    /// </remarks>
+    internal static DesktopEntryColumnLayout EntryLayoutFor(double availableWidth, double? textScale = null)
+    {
+        var scale = textScale ?? TextScale.Effective;
+        var widths = new double[EntryColumnDesignWidths.Length];
+        var fixedWidth = 0d;
+        for (var column = 0; column < widths.Length; column++)
+        {
+            widths[column] = Math.Round(EntryColumnDesignWidths[column] * scale);
+            fixedWidth += widths[column];
+        }
+
+        var fixedBudget = availableWidth - (MinimumMessageWidth * scale);
+        var visible = new bool[widths.Length];
+        Array.Fill(visible, true);
+        foreach (var column in CollapseOrder)
+        {
+            if (fixedWidth <= fixedBudget)
+            {
+                break;
+            }
+
+            visible[column] = false;
+            fixedWidth -= widths[column];
+        }
+
+        // A narrow window at a large text size can leave the durable set alone wider than the
+        // pane — the 900 px minimum at 200% is 524 px of table against 586 px of TIME, L and
+        // TAG. Collapsing has nothing left to collapse there, so TIME gives up its tail
+        // rather than the message column reaching zero and the table saying nothing at all.
+        // The reader's real remedy at that size is Hide insights, which the toolbar keeps
+        // reachable; this only makes the intermediate state legible instead of empty.
+        var shortfall = fixedWidth + (MessageFloor * scale) - availableWidth;
+        if (shortfall > 0)
+        {
+            var yielded = Math.Min(shortfall, widths[0] - (TimeColumnFloor * scale));
+            if (yielded > 0)
+            {
+                widths[0] = Math.Round(widths[0] - yielded);
+            }
+        }
+
+        var tracks = string.Join(
+            ',',
+            widths.Select((width, column) =>
+                (visible[column] ? width : 0).ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        return new DesktopEntryColumnLayout(
+            tracks + ",*",
+            visible[2],
+            visible[3],
+            visible[4],
+            visible[6]);
+    }
+
+    private void ApplyDesktopEntryLayout(double availableWidth)
+    {
+        var layout = EntryLayoutFor(availableWidth);
+        if (layout == _desktopEntryLayout)
+        {
+            return;
+        }
+
+        _desktopEntryLayout = layout;
+        if (_columnHeader is { } header)
+        {
+            header.ColumnDefinitions = new ColumnDefinitions(layout.Columns);
+            foreach (var label in header.Children)
+            {
+                label.IsVisible = layout.IsVisible(Grid.GetColumn(label));
+            }
+        }
+
+        if (_entries.ItemTemplate is not null)
+        {
+            ApplyEntryTemplate();
+        }
+    }
+
+    /// <summary>
+    /// Keeps content-recovery actions inline and folds the rest into a keyboard-accessible
+    /// menu before any label can be clipped. The conservative threshold includes the two
+    /// contextual actions, so their appearance cannot suddenly overrun the row.
+    /// </summary>
+    private void ApplyDesktopEntryToolbar(double availableWidth)
+    {
+        const double completeToolbarWidth = 1100;
+        var compact = availableWidth < completeToolbarWidth * TextScale.Effective;
+        if (compact == _desktopEntryToolbarCompact &&
+            _desktopEntryMoreMenu?.IsVisible == compact)
+        {
+            return;
+        }
+
+        _desktopEntryToolbarCompact = compact;
+        _order.IsVisible = !compact;
+        _entryLoadStatus.IsVisible = !compact;
+        if (_copyRaw is { } copyRaw)
+        {
+            copyRaw.IsVisible = !compact;
+        }
+
+        _loadMore.IsVisible = !compact;
+        _loadAll.IsVisible = !compact;
+        _fitMatches.IsVisible = !compact && _desktopFitMatchesItem?.IsVisible == true;
+        _clearScope.IsVisible = !compact && _desktopClearScopeItem?.IsVisible == true;
+        if (_desktopEntryMoreMenu is { } more)
+        {
+            more.IsVisible = compact;
+        }
+    }
+
     private FuncDataTemplate<NormalizedEntry> BuildDesktopEntryTemplate()
     {
         var dark = ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light;
@@ -285,27 +449,39 @@ public sealed partial class SessionWorkspaceView : UserControl
 
             var row = new Grid
             {
-                ColumnDefinitions = new ColumnDefinitions(EntryColumns),
+                ColumnDefinitions = new ColumnDefinitions(_desktopEntryLayout.Columns),
                 // Notable severities only: tinting every row would decorate the table
                 // instead of ranking it, and the tint has to stay faint enough that the
                 // selection highlight underneath still reads (§14.1 density).
                 Background = RowTint(entry.Level, dark),
-                Children =
-                {
-                    // The edge sits inside the 4px gutter the time cell's margin already
-                    // leaves, so the severity ribbon costs no width and every value stays
-                    // under its column header.
-                    SeverityEdge(entry.Level),
-                    Cell(FormatInstant(entry.Timestamp), 0),
-                    Cell(entry.Level.ToLetter().ToString(), 1, LevelPalette.InkBrushOf(entry.Level, dark)),
-                    Cell(ProcessLabel(entry), 2),
-                    Cell(entry.Tid.ToString(System.Globalization.CultureInfo.InvariantCulture), 3),
-                    Cell(entry.Buffer, 4),
-                    Cell(entry.Tag, 5),
-                    Cell(entry.TemplateId.ToString(System.Globalization.CultureInfo.InvariantCulture), 6),
-                    MessageCell(entry, 7),
-                },
             };
+            // The edge sits inside the 4px gutter the time cell's margin already leaves, so
+            // it costs no width and every value stays under its column header.
+            row.Children.Add(SeverityEdge(entry.Level));
+            row.Children.Add(Cell(FormatInstant(entry.Timestamp), 0));
+            row.Children.Add(Cell(entry.Level.ToLetter().ToString(), 1, LevelPalette.InkBrushOf(entry.Level, dark)));
+            if (_desktopEntryLayout.Process)
+            {
+                row.Children.Add(Cell(ProcessLabel(entry), 2));
+            }
+
+            if (_desktopEntryLayout.Tid)
+            {
+                row.Children.Add(Cell(entry.Tid.ToString(System.Globalization.CultureInfo.InvariantCulture), 3));
+            }
+
+            if (_desktopEntryLayout.Buffer)
+            {
+                row.Children.Add(Cell(entry.Buffer, 4));
+            }
+
+            row.Children.Add(Cell(entry.Tag, 5));
+            if (_desktopEntryLayout.Template)
+            {
+                row.Children.Add(Cell(entry.TemplateId.ToString(System.Globalization.CultureInfo.InvariantCulture), 6));
+            }
+
+            row.Children.Add(MessageCell(entry, 7));
             return row;
         });
     }
@@ -594,11 +770,11 @@ public sealed partial class SessionWorkspaceView : UserControl
         return limit >= message.Length ? message : message[..limit];
     }
 
-    private static Grid EntryColumnHeader()
+    private Grid EntryColumnHeader()
     {
         var header = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions(EntryColumns),
+            ColumnDefinitions = new ColumnDefinitions(_desktopEntryLayout.Columns),
             Background = new SolidColorBrush(Color.Parse("#111C2D")),
         };
         foreach (var (text, column) in new[]
@@ -620,6 +796,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 FontWeight = FontWeight.Bold,
                 Foreground = new SolidColorBrush(Color.Parse("#8FA5C4")),
                 Margin = new Thickness(4, 5),
+                IsVisible = _desktopEntryLayout.IsVisible(column),
             };
             Grid.SetColumn(label, column);
             header.Children.Add(label);
@@ -1630,7 +1807,9 @@ public sealed partial class SessionWorkspaceView : UserControl
         var limitReached = _viewModel.IsEntryRetentionLimitReached;
 
         _loadMore.IsEnabled = _viewModel.CanLoadMore && !loading && _loadAllEntriesCancellation is null;
-        _loadMore.IsVisible = !_mobile || _viewModel.CanLoadMore;
+        _loadMore.IsVisible = _mobile
+            ? _viewModel.CanLoadMore
+            : !_desktopEntryToolbarCompact;
         if (_entryFooter is { } footer)
         {
             // The footer's frame is only worth a band while it is holding a control; in the
@@ -1673,6 +1852,12 @@ public sealed partial class SessionWorkspaceView : UserControl
             AutomationProperties.SetName(_loadMore, fullLabel);
             AutomationProperties.SetHelpText(_loadMore, fullLabel);
             ToolTip.SetTip(_loadMore, fullLabel);
+            if (_desktopLoadMoreItem is { } loadMoreItem)
+            {
+                loadMoreItem.Header = fullLabel;
+                loadMoreItem.IsEnabled = _loadMore.IsEnabled;
+                loadMoreItem.IsVisible = _viewModel.CanLoadMore || loading;
+            }
         }
 
         UpdateEntryActionRows();
@@ -1694,7 +1879,9 @@ public sealed partial class SessionWorkspaceView : UserControl
         // Enabled at the limit as well: there is nothing further to load, and tapping it is
         // how a reader who missed the transient status asks for the sentence again.
         _loadAll.IsEnabled = !stopping && (loadingAll || limitReached || (_viewModel.CanLoadMore && !loading));
-        _loadAll.IsVisible = !_mobile || _viewModel.CanLoadMore || loadingAll || stopping || limitReached;
+        _loadAll.IsVisible = _mobile
+            ? _viewModel.CanLoadMore || loadingAll || stopping || limitReached
+            : !_desktopEntryToolbarCompact;
         var loadAllName = stopping
             ? "Stopping the row load"
             : loadingAll
@@ -1706,6 +1893,11 @@ public sealed partial class SessionWorkspaceView : UserControl
                         : "All matching rows are loaded";
         ToolTip.SetTip(_loadAll, loadAllName);
         AutomationProperties.SetName(_loadAll, loadAllName);
+        if (_desktopLoadAllItem is { } loadAllItem)
+        {
+            loadAllItem.Header = loadAllName;
+            loadAllItem.IsEnabled = _loadAll.IsEnabled;
+        }
 
         if (!_mobile)
         {
@@ -1832,6 +2024,11 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_copyRaw is { } copyRaw)
         {
             copyRaw.IsEnabled = hasTarget;
+        }
+
+        if (_desktopCopyRawItem is { } copyRawItem)
+        {
+            copyRawItem.IsEnabled = hasTarget;
         }
 
         if (_openInspector is { } inspector)

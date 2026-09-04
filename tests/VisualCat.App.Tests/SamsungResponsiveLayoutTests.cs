@@ -238,7 +238,14 @@ public sealed class SamsungResponsiveLayoutTests
 
         Assert.Equal(message, text.Text);
         Assert.Equal(0, text.MaxLines);
-        Assert.Equal(48, scroller.MaxHeight);
+
+        // Whole lines out of the touch floor, not the floor itself: the row is already 48 dp
+        // because Dismiss is, so rounding the text down into it costs the workspace nothing
+        // and is what stops the lane drawing 2.67 lines with the last one sliced.
+        Assert.True(
+            scroller.MaxHeight <= TouchTarget.Minimum,
+            $"compact height must not exceed the touch floor, was {scroller.MaxHeight}");
+        Assert.Equal(text.LineHeight * 2, scroller.MaxHeight, 6);
         Assert.Equal(1, host.BorderThickness.Bottom);
         Assert.Equal(0, host.Padding.Top);
         Assert.Equal(0, host.Padding.Bottom);
@@ -272,6 +279,73 @@ public sealed class SamsungResponsiveLayoutTests
         // one-line confirmation a four-line lane.
         view.ShowNotice("Copied the raw text of 1 entry.", MainView.NoticeKind.Information);
         Assert.True(scroller.MaxHeight < 108);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(1.0)]
+    [InlineData(1.3)]
+    [InlineData(2.0)]
+    public async Task TheNoticeLaneNeverSlicesTheLineAtTheBottomOfItsViewport(double platformScale)
+    {
+        var platform = TextScale.Platform;
+        TextScale.Platform = platformScale;
+        try
+        {
+            await using var view = new MainView();
+
+            // Long enough to overflow both states, which is the only condition under which the
+            // bottom of the viewport lands inside the text at all.
+            view.ShowNotice(
+                string.Join(' ', Enumerable.Repeat("VisualCat closed its Wireless debugging connection.", 12)),
+                MainView.NoticeKind.Completion);
+            view.ApplyNoticeLayout(compactHeight: false);
+
+            var text = view.GetLogicalDescendants()
+                .OfType<TextBlock>()
+                .Single(block => AutomationProperties.GetName(block) == "Application status message");
+            var scroller = text.GetLogicalAncestors().OfType<ScrollViewer>().Single();
+
+            // The lane draws at a stated line box rather than at whatever the resolved face
+            // reports. Sizing "two lines" as FontSize * 1.4 * 2 while the font drew nearer
+            // 1.2x put 2.33 drawn lines in the box, and the device sliced the third along its
+            // x-height: readable top halves of letters under a scrollbar, which looks like a
+            // rendering fault rather than like a message that continues.
+            Assert.True(text.LineHeight > 0, "the lane must state its line box");
+            Assert.Equal(Math.Ceiling(text.FontSize * 1.4), text.LineHeight, 6);
+
+            // Collapsed is exactly two lines: whole lines, and the two the lane promises.
+            Assert.Equal(text.LineHeight * 2, scroller.MaxHeight, 6);
+
+            // Compact height is what a split-screen pane and a landscape phone get, and it
+            // withholds the More disclosure, so a sliced line there is the only sign the
+            // sentence continues. Whole lines, and never more than the floor it rounds into.
+            view.ApplyNoticeLayout(compactHeight: true);
+            var compactLines = scroller.MaxHeight / text.LineHeight;
+            Assert.Equal(Math.Round(compactLines), compactLines, 6);
+            Assert.True(compactLines >= 1, $"compact height must keep a whole line, was {compactLines}");
+            Assert.True(
+                scroller.MaxHeight <= TouchTarget.Minimum,
+                $"compact height must round into the touch floor, was {scroller.MaxHeight}");
+            view.ApplyNoticeLayout(compactHeight: false);
+
+            var expand = view.GetLogicalDescendants()
+                .OfType<Button>()
+                .Single(button => AutomationProperties.GetName(button) is
+                    "Show the whole message" or "Show less of the message");
+            expand.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+
+            // Expanded is a whole number of lines as well, rounded up so the state the reader
+            // asked for still clears the lane's old budget.
+            var lines = scroller.MaxHeight / text.LineHeight;
+            Assert.Equal(Math.Round(lines), lines, 6);
+            Assert.True(
+                scroller.MaxHeight >= 108,
+                $"the expanded lane should still clear its budget, not {scroller.MaxHeight}");
+        }
+        finally
+        {
+            TextScale.Platform = platform;
+        }
     }
 
     [AvaloniaFact]

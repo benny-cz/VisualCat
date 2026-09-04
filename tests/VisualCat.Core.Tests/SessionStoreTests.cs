@@ -1,5 +1,8 @@
+using System.Collections.Immutable;
 using System.Text.Json;
+using VisualCat.Core.Query;
 using VisualCat.Core.Store;
+using VisualCat.Domain.Filters;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Templates;
@@ -156,6 +159,49 @@ public sealed class SessionStoreTests
         Assert.Equal(first.Segments[0].TimestampAt(0), first.Segments[0].TimestampAt(0));
     }
 
+    /// <summary>
+    /// The other half of the sharing contract, and the invariant the pointer-based
+    /// <c>MappedColumn</c> depends on for its safety: reads stay valid for exactly as long as
+    /// a snapshot holds the segment, and the release that closes the mappings turns a later
+    /// read into a managed exception rather than a read of unmapped memory.
+    /// </summary>
+    [Fact]
+    public async Task MappingsSurviveEveryHeldReferenceAndAReadAfterTheLastReleaseIsAManagedFailure()
+    {
+        using var session = new TemporarySession();
+        await WriteSessionAsync(session.Root, segments: 5, perSegment: 2);
+
+        var first = await SessionStore.OpenAsync(session.Root);
+        var second = await SessionStore.OpenAsync(session.Root, first);
+        var segment = first.Segments[0];
+        var expected = segment.TimestampAt(0);
+        var expectedMessage = segment.ReadEntry(0, first.SessionId, first.Tags, first.Buffers, "2").Message;
+        var mapped = first.MappedColumnCount;
+        Assert.True(mapped > 0);
+
+        // Releasing one holder of a shared segment leaves every column readable through the
+        // other, payload included: the reference count, not disposal order, owns the mapping.
+        second.Dispose();
+        Assert.Equal(expected, segment.TimestampAt(0));
+        Assert.Equal(
+            expectedMessage,
+            segment.ReadEntry(0, first.SessionId, first.Tags, first.Buffers, "2").Message);
+        Assert.Equal(mapped, first.MappedColumnCount);
+
+        // The last release closes them, and a caller that broke the contract by reading on
+        // gets ObjectDisposedException instead of whatever the freed mapping now holds.
+        first.Dispose();
+        Assert.Equal(0, first.MappedColumnCount);
+        Assert.Throws<ObjectDisposedException>(() => segment.TimestampAt(0));
+        Assert.Throws<ObjectDisposedException>(
+            () => segment.ReadEntry(0, first.SessionId, first.Tags, first.Buffers, "2"));
+
+        // Repeated disposal cannot release the pointer a second time.
+        first.Dispose();
+        second.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => segment.TimestampAt(0));
+    }
+
     [Fact]
     public async Task OpeningWithoutReuseProducesIndependentSegments()
     {
@@ -297,6 +343,38 @@ public sealed class SessionStoreTests
         using var snapshot = await SessionStore.OpenAsync(session.Root);
         Assert.True(snapshot.Manifest.Finalized);
         Assert.Single(snapshot.Segments);
+    }
+
+    /// <summary>
+    /// The filter fingerprint is a SHA-256 over the whole filter; recomputing it once per
+    /// segment made a query's identity work scale with segment count instead of with the
+    /// query. It is hoisted, and every segment is therefore keyed with the very same string
+    /// instance — reference identity is what a per-segment recomputation could not produce.
+    /// </summary>
+    [Fact]
+    public async Task OneQueryFingerprintsItsFilterOnceAndKeysEverySegmentWithThatSameString()
+    {
+        using var session = new TemporarySession();
+        await WriteSessionAsync(session.Root, segments: 6, perSegment: 4);
+
+        using var snapshot = await SessionStore.OpenAsync(session.Root);
+        Assert.True(snapshot.Segments.Count > 1, "The invariant is only observable across segments.");
+
+        var keys = new List<string>();
+        foreach (var segment in snapshot.Segments)
+        {
+            segment.BitmapFactoryStartedForTests = key => { lock (keys) { keys.Add(key); } };
+        }
+
+        // A constrained filter, so ActiveBitmap actually builds rather than short-circuiting
+        // on FilterSpec.All.
+        var filter = FilterSpec.All with { IncludedLevels = ImmutableHashSet.Create(LogLevel.Error) };
+        var expected = filter.Fingerprint();
+        _ = SessionQueryEngine.QueryStatistics(snapshot, filter, queryGeneration: 1);
+
+        var activeKeys = keys.Where(key => string.Equals(key, expected, StringComparison.Ordinal)).ToArray();
+        Assert.Equal(snapshot.Segments.Count, activeKeys.Length);
+        Assert.All(activeKeys, key => Assert.Same(activeKeys[0], key));
     }
 
     private static async Task WriteSessionAsync(string root, int segments, int perSegment)

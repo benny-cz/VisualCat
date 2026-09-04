@@ -12,6 +12,7 @@ using Avalonia.VisualTree;
 using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
+using VisualCat.App.Theme;
 using VisualCat.App.Views;
 using VisualCat.Infrastructure.Configuration;
 
@@ -263,7 +264,7 @@ public sealed class MobilePaneSplitTests
             Assert.True(splitter.IsVisible);
             Assert.True(splitter.IsHitTestVisible);
             Assert.True(splitter.Focusable);
-            Assert.True(splitter.Bounds.Height >= MobilePaneSplitter.HitTargetExtent);
+            Assert.True(splitter.Bounds.Height >= TouchTarget.MinimumWithEdgeReserve);
             Assert.Equal(MobilePaneSplitter.LaneExtent, root.RowDefinitions[4].ActualHeight, 1);
             Assert.Equal("Resize plot and details", AutomationProperties.GetName(splitter));
             Assert.Contains("Double tap", AutomationProperties.GetHelpText(splitter), StringComparison.Ordinal);
@@ -406,7 +407,7 @@ public sealed class MobilePaneSplitTests
             Assert.True(splitter.HitTest(new Point(splitter.Bounds.Width / 2, 1)));
             Assert.True(splitter.HitTest(
                 new Point((splitter.Bounds.Width / 2) + grip - 1, splitter.Bounds.Height - 1)));
-            Assert.True(splitter.Bounds.Height >= MobilePaneSplitter.HitTargetExtent);
+            Assert.True(splitter.Bounds.Height >= TouchTarget.MinimumWithEdgeReserve);
 
             // And a real press at the far edge of the line drags, not just the grip.
             var start = Plot();
@@ -523,7 +524,7 @@ public sealed class MobilePaneSplitTests
             Assert.True(splitter.IsVisible);
             Assert.Equal(MobilePaneAxis.Columns, splitter.Axis);
             Assert.Equal(MobilePaneSplitter.LaneExtent, root.ColumnDefinitions[1].ActualWidth, 1);
-            Assert.True(splitter.Bounds.Width >= MobilePaneSplitter.HitTargetExtent);
+            Assert.True(splitter.Bounds.Width >= TouchTarget.MinimumWithEdgeReserve);
             Assert.Equal(2, Grid.GetColumn(fixture.View.GetLogicalDescendants()
                 .OfType<TabControl>()
                 .Single(t => AutomationProperties.GetName(t) == "Session detail views")

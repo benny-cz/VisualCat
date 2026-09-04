@@ -7,8 +7,6 @@ namespace VisualCat.Core.Parsing;
 
 public sealed class LogcatParser
 {
-    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
-
     // Enum.GetValues allocates a fresh array on every call, and this runs for every
     // line the primary format rejects (§19.3: no allocation in parse loops).
     private static readonly LogcatFormat[] FallbackFormats =
@@ -703,16 +701,8 @@ public sealed class LogcatParser
 
     private static string Decode(ReadOnlySpan<byte> bytes, out bool fallback)
     {
-        try
-        {
-            fallback = false;
-            return StrictUtf8.GetString(bytes);
-        }
-        catch (DecoderFallbackException)
-        {
-            fallback = true;
-            return Encoding.UTF8.GetString(bytes);
-        }
+        fallback = !System.Text.Unicode.Utf8.IsValid(bytes);
+        return Encoding.UTF8.GetString(bytes);
     }
 
     private static ReadOnlySpan<byte> TrimLine(ReadOnlySpan<byte> line)

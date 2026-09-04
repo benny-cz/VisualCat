@@ -120,6 +120,85 @@ gates the first cannot meaningfully apply:
 The runner also reports `templates`, `tags`, `manifestBytes` and `templateSidecarBytes`
 so a diversity regression is visible in the summary even where no gate fires.
 
+## Search baseline — 2026-09-04
+
+The retained runner now performs a cold literal miss and a cold regex match over a newly
+opened snapshot for every sample. Its JSON records the corpus SHA-256, runtime/OS/CPU
+identity, exact query, stable match count, one labelled warm-up, every measured elapsed time,
+entries/s and allocated bytes, plus median throughput and p95 latency. Source identity is
+reported as both the commit and `sourceRevision`; the latter gains a `+dirty` suffix when Git
+finds tracked or untracked working-tree changes, with the nullable `workingTreeDirty` field
+preserving the distinction between clean and unavailable Git status. The scheduled workflow
+publishes both corpora and both search shapes in its summary.
+
+Search is intentionally informational on hosted runners at first. The reference machine now
+reads 6.08 million entries/s for a million-entry literal scan and 8.20 million on the
+400,000-entry corpus (medians; see the A/B below), but choosing a Linux shared-runner floor
+from a workstation median would turn machine variance into a product gate. After several scheduled artifacts establish the hosted distribution, pass the
+runner's `--min-search-entries-per-second` option with a deliberately loose catastrophic-
+regression floor. The deterministic app test independently protects the presentation-layer
+invariant that one cold filter builds one active bitmap per segment; engine timing alone
+cannot detect duplicated orchestration work.
+
+## Mapped column reads — paired A/B, 2026-09-04
+
+`MappedColumn` held a `MemoryMappedViewAccessor` and read each element through it, which
+takes and releases a ref-count on the safe handle **per element**. It now acquires the
+mapping pointer once for the object's lifetime and decodes payload UTF-8 straight out of the
+mapping instead of through an intermediate `byte[]`.
+
+The measurement below is a controlled A/B: one worktree at `ece618e` with *only*
+`MappedColumn`/`SegmentSnapshot.ReadPayload` at their old form, the other the change, both
+carrying the identical benchmark runner and both driven over the same two corpora
+(SHA-256 recorded in each JSON and verified equal). Reference machine: AMD Ryzen 9 5900X,
+Windows 11 Pro 10.0.26220 x64, .NET SDK 10.0.400, Release. Search figures are the median of
+nine measured samples after one labelled warm-up, each on a freshly opened snapshot so the
+per-segment caches start cold; every sample is retained in the JSON.
+
+| Corpus | Measurement | Before | After | Ratio |
+|---|---|---:|---:|---:|
+| `clean.vcat` (399,955 entries, 4 segments) | literal search | 4,177,839 entries/s | 8,199,647 entries/s | **1.96x** |
+| | regex search | 3,457,190 entries/s | 5,752,100 entries/s | **1.66x** |
+| | search allocation | 60.2 MiB | 36.0 MiB | **0.60x** |
+| | CSV export | 425,419 entries/s | 665,307 entries/s | **1.56x** |
+| `diverse.vcat` (999,890 entries, 10 segments) | literal search | 3,498,754 entries/s | 6,084,969 entries/s | **1.74x** |
+| | regex search | 2,865,884 entries/s | 4,960,434 entries/s | **1.73x** |
+| | search allocation | 159.8 MiB | 98.8 MiB | **0.62x** |
+| | CSV export | 628,182 entries/s | 663,714 entries/s | 1.06x |
+
+Match counts were identical in both arms (0 for the literal miss, all 999,890 / 399,955 for
+the regex), so the two arms answered the same question. The export ratio is corpus-dependent
+— 1.56x where column reads dominate, 1.06x on the high-cardinality corpus where CSV
+formatting does — and is reported as measured rather than averaged into one claim.
+
+The pointer path retains a cheap unsigned per-element bounds check, and the rest of its safety
+boundary is stated and tested rather than assumed: the constructor refuses a column whose file
+length is not exactly `elementSize * expectedCount`, payload spans keep an explicit
+overflow-safe bound check, and `SegmentSnapshot`'s reference count — not disposal order — owns
+the mapping lifetime. `MappedColumnTests` and
+`SessionStoreTests.MappingsSurviveEveryHeldReferenceAndAReadAfterTheLastReleaseIsAManagedFailure`
+pin all four.
+
+## Decode baseline — paired A/B, 2026-09-04
+
+Invalid UTF-8 used to be detected by letting a strict `UTF8Encoding` throw
+`DecoderFallbackException` and catching it, once per malformed line. `Utf8.IsValid` answers
+the same question without the throw. The runner now measures whole-line
+`LogcatParser.Parse` over 50,000 synthetic lines in two shapes — every line well-formed, and
+every line carrying a malformed byte — asserting the fallback-marked count so an arm cannot
+silently stop measuring the path it names.
+
+| Shape | Before | After | Ratio |
+|---|---:|---:|---:|
+| Valid multi-byte UTF-8 | 260.9 ns/line | 251.0 ns/line | 1.04x |
+| Invalid UTF-8 | 5,354.1 ns/line | 403.1 ns/line | **13.3x** |
+| Invalid-shape allocation | 69.5 MB / 50k lines | 24.7 MB / 50k lines | **0.36x** |
+
+The valid path is flat within run-to-run noise, which is the criterion that matters there —
+the change must not buy the invalid path with the common one. The invalid figure is
+whole-line parse, not decode in isolation, so it is smaller than a decode-only comparison
+would be and is the number a device emitting binary records actually pays.
+
 ## Presentation layer — settled viewport change, 2026-09-03
 
 Ingest, query and export are gated above; the view's own reaction to a query result never

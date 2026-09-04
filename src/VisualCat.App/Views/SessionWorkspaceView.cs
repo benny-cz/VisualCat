@@ -246,8 +246,8 @@ public sealed partial class SessionWorkspaceView : UserControl
     private static readonly ControlTheme LevelToggleTheme = BuildLevelToggleTheme();
 
     // The column header and each row are separate grids; they only line up while both use
-    // the exact same track sizes, so the layout lives in one place instead of two literals.
-    private const string EntryColumns = "165,32,112,56,68,96,52,*";
+    // the exact same responsive track set, so the layout lives in one place.
+    private DesktopEntryColumnLayout _desktopEntryLayout = EntryLayoutFor(double.PositiveInfinity);
     private readonly Grid _root = new();
     private readonly DockPanel _chipBar = new();
     private Grid? _columnHeader;
@@ -268,6 +268,15 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Grid? _mobileModeSelector;
     private Grid? _entryPrimaryActions;
     private Panel? _entryContextActions;
+    private bool _desktopEntryToolbarCompact = true;
+    private Menu? _desktopEntryMoreMenu;
+    private MenuItem? _desktopLoadMoreItem;
+    private MenuItem? _desktopLoadAllItem;
+    private MenuItem? _desktopCopyRawItem;
+    private MenuItem? _desktopFitMatchesItem;
+    private MenuItem? _desktopClearScopeItem;
+    private MenuItem? _desktopChronologicalItem;
+    private MenuItem? _desktopSourceOrderItem;
     private Border? _entryFooter;
     private TextBlock? _severityLegend;
     private TextBlock? _chipEmptyLabel;
@@ -353,6 +362,10 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ? "Search message text or regular expression. Filters the entries as you type. The keyboard's action key applies it and closes this panel."
                 : "Ctrl+F focuses search; Enter applies it; F3 or N moves between matches.");
         SizeChanged += (_, eventArgs) => ApplyMobileLayout(eventArgs.NewSize);
+        if (!_mobile)
+        {
+            _entries.SizeChanged += (_, eventArgs) => ApplyDesktopEntryLayout(eventArgs.NewSize.Width);
+        }
 
         // The controls whose whole purpose is a drag, and which reach far enough across the
         // screen to collide with a platform edge gesture. On gesture navigation a pan started
@@ -2039,8 +2052,21 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             RowDefinitions = new RowDefinitions("Auto,Auto,Auto"),
         };
-        _order.SelectionChanged += (_, _) => _ = RunUiActionAsync(() => _viewModel.SetEntryOrderAsync(
-            _order.SelectedIndex == 1 ? EntryOrder.SourceSequence : EntryOrder.Chronological));
+        _order.SelectionChanged += (_, _) =>
+        {
+            if (_desktopChronologicalItem is { } chronological)
+            {
+                chronological.IsChecked = _order.SelectedIndex != 1;
+            }
+
+            if (_desktopSourceOrderItem is { } sourceOrder)
+            {
+                sourceOrder.IsChecked = _order.SelectedIndex == 1;
+            }
+
+            _ = RunUiActionAsync(() => _viewModel.SetEntryOrderAsync(
+                _order.SelectedIndex == 1 ? EntryOrder.SourceSequence : EntryOrder.Chronological));
+        };
         ToolTip.SetTip(_loadMore, $"Load the next {SessionTabViewModel.EntryPageSize:N0} matching rows");
         AutomationProperties.SetName(_loadMore, $"Load next {SessionTabViewModel.EntryPageSize:N0} matching rows");
         _loadMore.Click += async (_, _) => await RunUiActionAsync(() => _viewModel.LoadNextEntryPageAsync());
@@ -2143,25 +2169,99 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             _loadAll.Click += async (_, _) => await ToggleLoadAllEntriesAsync();
             _insightsToggle.Click += (_, _) => ToggleInsights();
-            var dock = new DockPanel { LastChildFill = false };
-            foreach (var control in new Control[]
-                     {
-                         _order,
-                         _loadAll,
-                         _loadMore,
-                         _entryLoadStatus,
-                         copyRaw,
-                         openInspector,
-                         _fitMatches,
-                         _clearScope,
-                         _insightsToggle,
-                     })
+
+            MenuItem Action(string label, Func<Task> action)
             {
-                DockPanel.SetDock(control, Dock.Right);
-                dock.Children.Add(control);
+                var item = new MenuItem { Header = label };
+                // Overflow actions are the narrow-window route to the same operations as
+                // the visible toolbar. Keep their cancellation, diagnostics and transient
+                // failure status identical instead of letting an async event exception escape.
+                item.Click += async (_, _) => await RunUiActionAsync(action);
+                return item;
             }
 
-            entryActions = dock;
+            var chronological = _desktopChronologicalItem = Action(
+                "Chronological",
+                () =>
+                {
+                    _order.SelectedIndex = 0;
+                    return Task.CompletedTask;
+                });
+            chronological.ToggleType = MenuItemToggleType.Radio;
+            chronological.IsChecked = true;
+            var sourceOrder = _desktopSourceOrderItem = Action(
+                "Source order",
+                () =>
+                {
+                    _order.SelectedIndex = 1;
+                    return Task.CompletedTask;
+                });
+            sourceOrder.ToggleType = MenuItemToggleType.Radio;
+            var orderMenu = new MenuItem { Header = "Sort entries", Items = { chronological, sourceOrder } };
+            var loadAllItem = _desktopLoadAllItem = Action("Load all matching rows", ToggleLoadAllEntriesAsync);
+            var loadMoreItem = _desktopLoadMoreItem = Action(
+                $"Load next {SessionTabViewModel.EntryPageSize:N0} matching rows",
+                () => _viewModel.LoadNextEntryPageAsync());
+            var copyItem = _desktopCopyRawItem = Action("Copy raw", CopySelectedRawAsync);
+            copyItem.IsEnabled = false;
+            var fitItem = _desktopFitMatchesItem = Action(
+                "Fit to matches",
+                () =>
+                {
+                    FitToMatches();
+                    return Task.CompletedTask;
+                });
+            fitItem.IsVisible = false;
+            var clearItem = _desktopClearScopeItem = Action(
+                "Clear selected cell",
+                () => _viewModel.ClearDetailScopeAsync());
+            clearItem.IsVisible = false;
+
+            var moreRoot = new MenuItem
+            {
+                Header = "More  ▾",
+                Items =
+                {
+                    orderMenu,
+                    new Separator(),
+                    loadMoreItem,
+                    loadAllItem,
+                    new Separator(),
+                    copyItem,
+                    fitItem,
+                    clearItem,
+                },
+            };
+            AutomationProperties.SetName(moreRoot, "More entry actions");
+            var moreMenu = _desktopEntryMoreMenu = new Menu { Items = { moreRoot } };
+
+            var flexible = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                ClipToBounds = true,
+                Children = { _order, _loadAll, _loadMore, _entryLoadStatus, copyRaw, _fitMatches, _clearScope },
+            };
+            foreach (var control in flexible.Children)
+            {
+                control.IsVisible = false;
+            }
+
+            var recovery = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Children = { openInspector, _insightsToggle, moreMenu },
+            };
+            var toolbar = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+                ClipToBounds = true,
+                Children = { flexible, recovery },
+            };
+            Grid.SetColumn(recovery, 1);
+            toolbar.SizeChanged += (_, eventArgs) => ApplyDesktopEntryToolbar(eventArgs.NewSize.Width);
+            entryActions = toolbar;
         }
 
         UpdateEntryLoadControls();

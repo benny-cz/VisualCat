@@ -36,7 +36,8 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
     private readonly WirelessAdbService _service;
     private readonly CancellationTokenSource _stop = new();
     private readonly NewlineRecordFramer _recordFramer = new(MaximumBufferedRecordBytes);
-    private readonly List<byte> _timestampLineBuffer = new(512);
+    private readonly BoundedLinePrefixScanner _resumeLinePrefixes =
+        new(LogcatRecordOrigin.MaximumPrefixLength);
     private readonly LogcatResumeCursor _resumeCursor = new();
     private readonly object _streamSync = new();
     private AdbStream? _activeStream;
@@ -143,7 +144,10 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
                 });
 
                 using var cancellationRegistration = linked.Token.Register(
-                    () => CloseStreamSafely(currentStream, "capture cancellation"));
+                    () => CloseStreamSafely(
+                        currentStream,
+                        "capture cancellation",
+                        expectedDuringShutdown: true));
                 var pumpTask = PumpStreamAsync(currentStream, pumpQueue.Writer, linked.Token);
                 PumpResult pumpResult;
                 try
@@ -167,7 +171,10 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
                 finally
                 {
                     ClearActiveStream(currentStream);
-                    CloseStreamSafely(currentStream, "stream iteration completion");
+                    CloseStreamSafely(
+                        currentStream,
+                        "stream iteration completion",
+                        expectedDuringShutdown: linked.IsCancellationRequested);
                     stream = null;
                 }
 
@@ -186,7 +193,7 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
                 }
 
                 var discardedPartialBytes = _recordFramer.DiscardPending();
-                _timestampLineBuffer.Clear();
+                _resumeLinePrefixes.Clear();
                 consecutiveTransportGaps++;
                 Interlocked.Increment(ref _reconnectGaps);
                 var resumeArgument = _resumeCursor.ResumeArgument;
@@ -271,7 +278,9 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
         }
         finally
         {
-            CloseCurrentStream("read loop completion");
+            CloseCurrentStream(
+                "read loop completion",
+                expectedDuringShutdown: linked.IsCancellationRequested);
             await ReleaseCaptureOnceAsync().ConfigureAwait(false);
         }
     }
@@ -367,7 +376,7 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
             _stop.Cancel();
         }
 
-        CloseCurrentStream("explicit stop");
+        CloseCurrentStream("explicit stop", expectedDuringShutdown: true);
         await ReleaseCaptureOnceAsync().ConfigureAwait(false);
     }
 
@@ -442,7 +451,7 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
         }
     }
 
-    private void CloseCurrentStream(string reason)
+    private void CloseCurrentStream(string reason, bool expectedDuringShutdown = false)
     {
         AdbStream? stream;
         lock (_streamSync)
@@ -451,10 +460,13 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
             _activeStream = null;
         }
 
-        CloseStreamSafely(stream, reason);
+        CloseStreamSafely(stream, reason, expectedDuringShutdown);
     }
 
-    private static void CloseStreamSafely(AdbStream? stream, string reason)
+    private static void CloseStreamSafely(
+        AdbStream? stream,
+        string reason,
+        bool expectedDuringShutdown = false)
     {
         if (stream is null)
         {
@@ -467,6 +479,15 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
         }
         catch (Exception exception)
         {
+            if (expectedDuringShutdown)
+            {
+                // LibADB can surface its protocol-level internal_error(80) while Close is doing
+                // exactly what cancellation requested. ReleaseCaptureOnceAsync still disconnects
+                // and discards the manager, whose own failure boundary remains visible. Do not put
+                // a false warning into the full-device log a user has just chosen to stop.
+                return;
+            }
+
             global::Android.Util.Log.Warn(
                 LogTag,
                 $"Wireless ADB stream close failed during {reason}: {exception.GetType().Name}: {exception.Message}");
@@ -489,31 +510,12 @@ internal sealed class WirelessAdbLogSource : ILogSource, ISourceDefectSource, IS
 
     private void TrackResumeTimestamp(ReadOnlySpan<byte> bytes)
     {
-        foreach (var value in bytes)
-        {
-            if (value is (byte)'\r')
-            {
-                continue;
-            }
-
-            if (value == (byte)'\n')
-            {
-                ObserveResumeRecord(_timestampLineBuffer);
-
-                _timestampLineBuffer.Clear();
-                continue;
-            }
-
-            if (_timestampLineBuffer.Count < 512)
-            {
-                _timestampLineBuffer.Add(value);
-            }
-        }
+        _resumeLinePrefixes.Append(bytes, ObserveResumeRecord);
     }
 
-    private void ObserveResumeRecord(List<byte> line)
+    private void ObserveResumeRecord(ReadOnlySpan<byte> line)
     {
-        var length = Math.Min(line.Count, LogcatRecordOrigin.MaximumPrefixLength);
+        var length = Math.Min(line.Length, LogcatRecordOrigin.MaximumPrefixLength);
         if (length == 0)
         {
             return;

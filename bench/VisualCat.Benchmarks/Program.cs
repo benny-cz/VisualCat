@@ -1,9 +1,16 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using Microsoft.Win32;
 using VisualCat.Application.Coordination;
 using VisualCat.Application.UseCases;
+using VisualCat.Core.Parsing;
 using VisualCat.Core.Query;
+using VisualCat.Core.Store;
+using VisualCat.Domain.Entries;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
 using VisualCat.Domain.Sessions;
@@ -15,12 +22,13 @@ if (args.Length == 0)
     Console.Error.WriteLine(
         "Usage: VisualCat.Benchmarks <logcat-file> [iterations] [--output report.json] " +
         "[--min-lines-per-second N] [--max-heat-map-ms N] [--min-export-entries-per-second N] " +
-        "[--max-manifest-bytes N] [--max-bytes-per-line N]");
+        "[--min-search-entries-per-second N] [--max-manifest-bytes N] [--max-bytes-per-line N]");
     return 2;
 }
 
 var options = BenchmarkOptions.Parse(args);
 var input = Path.GetFullPath(args[0]);
+var inputSha256 = await Sha256Async(input);
 var root = Path.Combine(Path.GetTempPath(), $"visualcat-bench-{Guid.NewGuid():N}.vcat");
 try
 {
@@ -89,9 +97,37 @@ try
         // the number that decided whether a long capture stayed openable.
         var manifestBytes = FileLength(Path.Combine(root, "manifest.json"));
         var templateSidecarBytes = FileLength(Path.Combine(root, "templates.jsonl"));
+        var searchIterations = Math.Clamp(options.Iterations, 1, 10);
+        var literalSearch = await MeasureSearchAsync(
+            root,
+            new TextSearchSpec("␟visualcat-benchmark-guaranteed-miss␟", IsRegex: false, CaseSensitive: true),
+            searchIterations);
+        var regexSearch = await MeasureSearchAsync(
+            root,
+            new TextSearchSpec(".", IsRegex: true, CaseSensitive: true, TimeSpan.FromMilliseconds(250)),
+            searchIterations);
+        var decodeIterations = Math.Clamp(options.Iterations, 1, 10);
+        var validDecode = MeasureDecode("valid", Valid: true, decodeIterations);
+        var invalidDecode = MeasureDecode("invalid", Valid: false, decodeIterations);
+        var commit = Environment.GetEnvironmentVariable("GITHUB_SHA") ??
+                     TryReadProcessLine("git", "rev-parse", "HEAD") ??
+                     "unknown";
+        var workingTreeDirty = IsWorkingTreeDirty();
         var report = JsonSerializer.Serialize(new
         {
+            commit,
+            workingTreeDirty,
+            sourceRevision = workingTreeDirty == true ? $"{commit}+dirty" : commit,
+            arguments = args,
+            machine = Environment.MachineName,
+            cpu = CpuDescription(),
+            sdk = TryReadProcessLine("dotnet", "--version") ?? "unknown",
+            os = RuntimeInformation.OSDescription,
+            runtime = RuntimeInformation.FrameworkDescription,
+            architecture = RuntimeInformation.ProcessArchitecture.ToString(),
+            processors = Environment.ProcessorCount,
             input,
+            inputSha256,
             bytes = source.Metadata.Length,
             entries,
             templates = result.Snapshot.Descriptor.Counters.Templates,
@@ -103,6 +139,8 @@ try
             heatMapIterations = options.Iterations,
             averageHeatMapMilliseconds,
             exportEntriesPerSecond,
+            search = new { literal = literalSearch, regex = regexSearch },
+            decode = new { valid = validDecode, invalid = invalidDecode },
             manifestBytes,
             templateSidecarBytes,
             workingSetBytes = Environment.WorkingSet,
@@ -130,6 +168,16 @@ try
         {
             failures.Add(
                 $"CSV export {exportEntriesPerSecond:N0} entries/s is below the {exportFloor:N0} entries/s floor");
+        }
+
+        if (options.MinimumSearchEntriesPerSecond is { } searchFloor)
+        {
+            var observed = Math.Min(literalSearch.MedianEntriesPerSecond, regexSearch.MedianEntriesPerSecond);
+            if (observed < searchFloor)
+            {
+                failures.Add(
+                    $"search {observed:N0} entries/s is below the {searchFloor:N0} entries/s floor");
+            }
         }
 
         if (options.MaximumManifestBytes is { } manifestCeiling && manifestBytes > manifestCeiling)
@@ -164,12 +212,295 @@ return 0;
 
 static long FileLength(string path) => File.Exists(path) ? new FileInfo(path).Length : 0;
 
+static async Task<string> Sha256Async(string path)
+{
+    await using var stream = File.OpenRead(path);
+    return Convert.ToHexString(await SHA256.HashDataAsync(stream));
+}
+
+static string CpuDescription()
+{
+    try
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return (Registry.GetValue(
+                       @"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+                       "ProcessorNameString",
+                       null) as string)?.Trim() ??
+                   $"{RuntimeInformation.ProcessArchitecture}, {Environment.ProcessorCount} logical processors";
+        }
+
+        if (OperatingSystem.IsLinux() && File.Exists("/proc/cpuinfo"))
+        {
+            var model = File.ReadLines("/proc/cpuinfo")
+                .FirstOrDefault(static line => line.StartsWith("model name", StringComparison.OrdinalIgnoreCase));
+            var separator = model?.IndexOf(':') ?? -1;
+            if (separator >= 0)
+            {
+                return model![(separator + 1)..].Trim();
+            }
+        }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            return TryReadProcessLine("sysctl", "-n", "machdep.cpu.brand_string") ??
+                   $"{RuntimeInformation.ProcessArchitecture}, {Environment.ProcessorCount} logical processors";
+        }
+    }
+    catch (Exception exception) when (
+        exception is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+    {
+        // Metadata must never prevent the benchmark itself from running.
+    }
+
+    return $"{RuntimeInformation.ProcessArchitecture}, {Environment.ProcessorCount} logical processors";
+}
+
+static string? TryReadProcessLine(string fileName, params string[] arguments)
+{
+    if (!TryRunProcess(fileName, arguments, out var output))
+    {
+        return null;
+    }
+
+    return output
+        .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .FirstOrDefault();
+}
+
+static bool? IsWorkingTreeDirty()
+{
+    return TryRunProcess(
+        "git",
+        ["status", "--porcelain=v1", "--untracked-files=normal"],
+        out var output)
+        ? !string.IsNullOrWhiteSpace(output)
+        : null;
+}
+
+static bool TryRunProcess(string fileName, IReadOnlyList<string> arguments, out string output)
+{
+    output = string.Empty;
+    try
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            return false;
+        }
+
+        // Drain both pipes while the child runs so a verbose tool cannot fill one and
+        // deadlock the benchmark's metadata probe before the timeout is observed.
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var errorTask = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(5_000))
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit();
+            Task.WhenAll(outputTask, errorTask).GetAwaiter().GetResult();
+            return false;
+        }
+
+        Task.WhenAll(outputTask, errorTask).GetAwaiter().GetResult();
+        output = outputTask.Result.Trim();
+        return process.ExitCode == 0;
+    }
+    catch (Exception exception) when (
+        exception is InvalidOperationException or IOException or UnauthorizedAccessException or
+                     System.ComponentModel.Win32Exception)
+    {
+        return false;
+    }
+}
+
+static async Task<SearchBenchmarkResult> MeasureSearchAsync(
+    string sessionRoot,
+    TextSearchSpec search,
+    int iterations)
+{
+    var samples = new List<SearchBenchmarkSample>(iterations + 1);
+    long? expectedMatches = null;
+    long entries = 0;
+    for (var iteration = -1; iteration < iterations; iteration++)
+    {
+        using var snapshot = await SessionStore.OpenAsync(sessionRoot);
+        entries = snapshot.Segments.Sum(static segment => (long)segment.Count);
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        var timer = Stopwatch.StartNew();
+        var result = await SessionQueryEngine.SearchAsync(snapshot, search, FilterSpec.All, iteration + 2);
+        timer.Stop();
+        var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
+        expectedMatches ??= result.Matches;
+        if (result.Matches != expectedMatches)
+        {
+            throw new InvalidDataException(
+                $"Search benchmark match count changed from {expectedMatches:N0} to {result.Matches:N0}.");
+        }
+
+        samples.Add(new SearchBenchmarkSample(
+            Warmup: iteration < 0,
+            ElapsedMilliseconds: timer.Elapsed.TotalMilliseconds,
+            EntriesPerSecond: timer.Elapsed.TotalSeconds <= 0 ? 0 : entries / timer.Elapsed.TotalSeconds,
+            AllocatedBytes: allocated,
+            Matches: result.Matches));
+    }
+
+    var measured = samples.Where(static sample => !sample.Warmup).ToArray();
+    return new SearchBenchmarkResult(
+        search.Query,
+        search.IsRegex,
+        search.CaseSensitive,
+        (search.RegexTimeout ?? TimeSpan.FromMilliseconds(250)).TotalMilliseconds,
+        entries,
+        expectedMatches ?? 0,
+        Median(measured.Select(static sample => sample.EntriesPerSecond)),
+        Percentile(measured.Select(static sample => sample.ElapsedMilliseconds), 0.95),
+        Median(measured.Select(static sample => (double)sample.AllocatedBytes)),
+        samples);
+}
+
+// Decode cost per parsed line, split by whether the line is well-formed UTF-8. Invalid bytes
+// used to be detected by throwing and catching a DecoderFallbackException per line, which is
+// a cliff no corpus of valid lines can expose: a device that emits one binary record per line
+// pays it on every one of them. Both shapes are reported so a change that buys the invalid
+// path with the valid path is visible too.
+static DecodeBenchmarkResult MeasureDecode(string shape, bool Valid, int iterations)
+{
+    const int lines = 50_000;
+    var sources = new SourceLine[lines];
+    var sessionId = Guid.NewGuid();
+    for (var index = 0; index < lines; index++)
+    {
+        var text = Encoding.UTF8.GetBytes($"D/Tag{index % 7}({1000 + (index % 9)}): message π {index} 猫");
+        var bytes = Valid ? text : [.. text, (byte)0xc3];
+        sources[index] = new SourceLine(sessionId, index, new RawSpan(index * 64L, bytes.Length), bytes);
+    }
+
+    var samples = new List<DecodeBenchmarkSample>(iterations + 1);
+    long fallbacks = 0;
+    for (var iteration = -1; iteration < iterations; iteration++)
+    {
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        var timer = Stopwatch.StartNew();
+        long marked = 0;
+        foreach (var source in sources)
+        {
+            var outcome = LogcatParser.Parse(source, LogcatFormat.Brief);
+            if (outcome.Fields?.Attributes.HasFlag(EntryAttributes.EncodingFallback) == true)
+            {
+                marked++;
+            }
+        }
+
+        timer.Stop();
+        var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
+        if (iteration < 0)
+        {
+            fallbacks = marked;
+        }
+        else if (marked != fallbacks)
+        {
+            throw new InvalidDataException(
+                $"Decode benchmark fallback count changed from {fallbacks:N0} to {marked:N0}.");
+        }
+
+        samples.Add(new DecodeBenchmarkSample(
+            Warmup: iteration < 0,
+            ElapsedMilliseconds: timer.Elapsed.TotalMilliseconds,
+            NanosecondsPerLine: timer.Elapsed.TotalMilliseconds * 1_000_000 / lines,
+            AllocatedBytes: allocated));
+    }
+
+    // Every line of the invalid shape must be marked, or the arm is not measuring the
+    // fallback path at all; none of the valid shape may be.
+    var expectedFallbacks = Valid ? 0 : lines;
+    if (fallbacks != expectedFallbacks)
+    {
+        throw new InvalidDataException(
+            $"Decode benchmark '{shape}' marked {fallbacks:N0} of {lines:N0} lines, expected {expectedFallbacks:N0}.");
+    }
+
+    var measured = samples.Where(static sample => !sample.Warmup).ToArray();
+    return new DecodeBenchmarkResult(
+        shape,
+        lines,
+        fallbacks,
+        Median(measured.Select(static sample => sample.NanosecondsPerLine)),
+        Percentile(measured.Select(static sample => sample.NanosecondsPerLine), 0.95),
+        Median(measured.Select(static sample => (double)sample.AllocatedBytes)),
+        samples);
+}
+
+static double Median(IEnumerable<double> values) => Percentile(values, 0.5);
+
+static double Percentile(IEnumerable<double> values, double percentile)
+{
+    var sorted = values.Order().ToArray();
+    if (sorted.Length == 0)
+    {
+        return 0;
+    }
+
+    var index = (int)Math.Ceiling(percentile * sorted.Length) - 1;
+    return sorted[Math.Clamp(index, 0, sorted.Length - 1)];
+}
+
+internal sealed record SearchBenchmarkSample(
+    bool Warmup,
+    double ElapsedMilliseconds,
+    double EntriesPerSecond,
+    long AllocatedBytes,
+    long Matches);
+
+internal sealed record SearchBenchmarkResult(
+    string Query,
+    bool IsRegex,
+    bool CaseSensitive,
+    double TimeoutMilliseconds,
+    long Entries,
+    long Matches,
+    double MedianEntriesPerSecond,
+    double P95ElapsedMilliseconds,
+    double MedianAllocatedBytes,
+    IReadOnlyList<SearchBenchmarkSample> Samples);
+
+internal sealed record DecodeBenchmarkSample(
+    bool Warmup,
+    double ElapsedMilliseconds,
+    double NanosecondsPerLine,
+    long AllocatedBytes);
+
+internal sealed record DecodeBenchmarkResult(
+    string Shape,
+    int Lines,
+    long FallbackLines,
+    double MedianNanosecondsPerLine,
+    double P95NanosecondsPerLine,
+    double MedianAllocatedBytes,
+    IReadOnlyList<DecodeBenchmarkSample> Samples);
+
 internal sealed record BenchmarkOptions(
     int Iterations,
     string? Output,
     double? MinimumLinesPerSecond,
     double? MaximumHeatMapMilliseconds,
     double? MinimumExportEntriesPerSecond,
+    double? MinimumSearchEntriesPerSecond,
     long? MaximumManifestBytes,
     double? MaximumBytesPerLine)
 {
@@ -186,6 +517,7 @@ internal sealed record BenchmarkOptions(
         double? minimumLines = null;
         double? maximumHeatMap = null;
         double? minimumExport = null;
+        double? minimumSearch = null;
         long? maximumManifest = null;
         double? maximumBytesPerLine = null;
         while (index < arguments.Count)
@@ -211,6 +543,9 @@ internal sealed record BenchmarkOptions(
                 case "--min-export-entries-per-second":
                     minimumExport = ParsePositiveDouble(value, name);
                     break;
+                case "--min-search-entries-per-second":
+                    minimumSearch = ParsePositiveDouble(value, name);
+                    break;
                 case "--max-manifest-bytes":
                     maximumManifest = ParsePositiveInt(value, name);
                     break;
@@ -228,6 +563,7 @@ internal sealed record BenchmarkOptions(
             minimumLines,
             maximumHeatMap,
             minimumExport,
+            minimumSearch,
             maximumManifest,
             maximumBytesPerLine);
     }

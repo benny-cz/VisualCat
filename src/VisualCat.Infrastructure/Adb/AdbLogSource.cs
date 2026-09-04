@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Text;
 using VisualCat.Application.Ports;
+using VisualCat.Core.Parsing;
 using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
 
@@ -61,7 +61,7 @@ public sealed class AdbLogSource :
     private readonly TimeSpan? _durationLimit;
     private readonly DateTimeOffset _captureRequestedAtUtc;
     private readonly CancellationTokenSource _stop = new();
-    private readonly List<byte> _lineBuffer = new(512);
+    private readonly BoundedLinePrefixScanner _resumeLinePrefixes = new(ResumeTimestampLength);
     private IAdbProcess? _activeProcess;
     private string? _resumeTimestamp;
     private string? _negotiatedFormat;
@@ -394,6 +394,7 @@ public sealed class AdbLogSource :
                 }
 
                 reconnectAttempt++;
+                _resumeLinePrefixes.Clear();
                 OpenReconnectGap();
                 if (reconnectAttempt > 5)
                 {
@@ -914,35 +915,28 @@ public sealed class AdbLogSource :
 
     private void TrackResumeTimestamp(ReadOnlySpan<byte> bytes)
     {
-        foreach (var value in bytes)
+        _resumeLinePrefixes.Append(bytes, ObserveResumeRecord);
+    }
+
+    private void ObserveResumeRecord(ReadOnlySpan<byte> prefix)
+    {
+        if (TryReadTimestamp(prefix, out var timestamp))
         {
-            if (value is (byte)'\r')
-            {
-                continue;
-            }
-
-            if (value == (byte)'\n')
-            {
-                if (TryReadTimestamp(CollectionsMarshal.AsSpan(_lineBuffer), out var timestamp))
-                {
-                    _resumeTimestamp = timestamp;
-                }
-
-                _lineBuffer.Clear();
-                continue;
-            }
-
-            if (_lineBuffer.Count < 512)
-            {
-                _lineBuffer.Add(value);
-            }
+            _resumeTimestamp = timestamp;
         }
     }
+
+    /// <summary>
+    /// Characters in a `MM-DD hh:mm:ss.uuuuuu` logcat timestamp, which is the whole of the
+    /// line prefix the resume cursor needs. The scanner retains exactly this much and skips
+    /// the rest of each record.
+    /// </summary>
+    private const int ResumeTimestampLength = 26;
 
     private static bool TryReadTimestamp(ReadOnlySpan<byte> line, out string timestamp)
     {
         timestamp = string.Empty;
-        if (line.Length < 26 ||
+        if (line.Length < ResumeTimestampLength ||
             line[4] != (byte)'-' ||
             line[7] != (byte)'-' ||
             line[10] != (byte)' ' ||
@@ -953,7 +947,7 @@ public sealed class AdbLogSource :
             return false;
         }
 
-        for (var index = 0; index < 26; index++)
+        for (var index = 0; index < ResumeTimestampLength; index++)
         {
             if (index is 4 or 7 or 10 or 13 or 16 or 19)
             {
@@ -966,7 +960,7 @@ public sealed class AdbLogSource :
             }
         }
 
-        timestamp = Encoding.ASCII.GetString(line[..26]);
+        timestamp = Encoding.ASCII.GetString(line[..ResumeTimestampLength]);
         return true;
     }
 }

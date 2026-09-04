@@ -8,6 +8,7 @@ using VisualCat.Infrastructure.Testing;
 
 namespace VisualCat.Application.Tests;
 
+[Collection(ProcessConsoleTestGroup.Name)]
 public sealed class CliValidationTests
 {
     [Fact]

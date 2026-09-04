@@ -395,11 +395,21 @@ public sealed partial class SessionWorkspaceView : UserControl
         var inView = _viewModel.MatchesInView;
         var scoped = _viewModel.DetailRange is not null;
         UpdateSummaryText();
-        _clearScope.IsVisible = scoped;
-        _fitMatches.IsVisible = stats is { TotalMatching: > 0 } &&
-                                inView is 0 or null &&
-                                stats.FirstInstant is not null &&
-                                stats.LastInstant is not null;
+        var canFitMatches = stats is { TotalMatching: > 0 } &&
+                            inView is 0 or null &&
+                            stats.FirstInstant is not null &&
+                            stats.LastInstant is not null;
+        _clearScope.IsVisible = scoped && (_mobile || !_desktopEntryToolbarCompact);
+        _fitMatches.IsVisible = canFitMatches && (_mobile || !_desktopEntryToolbarCompact);
+        if (_desktopClearScopeItem is { } clearScopeItem)
+        {
+            clearScopeItem.IsVisible = scoped;
+        }
+
+        if (_desktopFitMatchesItem is { } fitMatchesItem)
+        {
+            fitMatchesItem.IsVisible = canFitMatches;
+        }
         UpdateEmptyResults();
         UpdateEntryActionRows();
 

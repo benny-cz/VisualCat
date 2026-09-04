@@ -41,7 +41,7 @@ public static class SessionQueryEngine
                 continue;
             }
 
-            var active = ActiveBitmap(snapshot, segment, filter);
+            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint);
 
             // Adjacent columns share a boundary, so N+1 bounds describe N cells and the
             // 2N searches the pair-at-a-time form performed are halved. Clamping each
@@ -142,7 +142,7 @@ public static class SessionQueryEngine
                         ? severity
                         : segment.GetOrCreateBitmap(
                             LevelBitmapKey(identity.FilterFingerprint, level),
-                            () => ActiveBitmap(snapshot, segment, filter).And(severity));
+                            () => ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint).And(severity));
                     count += composed.CountInRange(
                         segment.LowerBound(effective.Value.StartInclusive.Value),
                         segment.LowerBound(effective.Value.EndExclusive.Value));
@@ -171,7 +171,7 @@ public static class SessionQueryEngine
         // One fingerprint for the whole pass rather than one per segment: it hashes the
         // entire filter, and with the scans below now answered from cache it would otherwise
         // be a visible share of the query's remaining cost.
-        var fingerprint = filter.Fingerprint();
+        var fingerprint = identity.FilterFingerprint;
         var storageOrder = LogLevels.StorageOrder;
         foreach (var segment in snapshot.Segments)
         {
@@ -310,7 +310,7 @@ public static class SessionQueryEngine
         foreach (var segment in snapshot.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var active = ActiveBitmap(snapshot, segment, filter);
+            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint);
             var effectiveRange = ApplyTimeFilter(range, filter.TimeRange);
             if (effectiveRange is null)
             {
@@ -380,7 +380,7 @@ public static class SessionQueryEngine
         foreach (var segment in snapshot.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var active = ActiveBitmap(snapshot, segment, filter);
+            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint);
             if (level is { } severityLevel)
             {
                 var severity = segment.SeverityBitmaps[severityLevel];
@@ -465,7 +465,7 @@ public static class SessionQueryEngine
         foreach (var segment in snapshot.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var bitmap = ActiveBitmap(snapshot, segment, filter);
+            var bitmap = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint);
             for (var i = 0; i < segment.Count; i++)
             {
                 if (bitmap[i])
@@ -710,14 +710,16 @@ public static class SessionQueryEngine
     private static QueryIdentity Identity(SessionSnapshot snapshot, FilterSpec filter, long generation) =>
         new(snapshot.SessionId, snapshot.Generation, filter.Fingerprint(), generation);
 
-    private static RankBitmap ActiveBitmap(SessionSnapshot snapshot, SegmentSnapshot segment, FilterSpec filter)
+    private static RankBitmap ActiveBitmap(
+        SessionSnapshot snapshot,
+        SegmentSnapshot segment,
+        FilterSpec filter,
+        string filterFingerprint)
     {
         if (ReferenceEquals(filter, FilterSpec.All) || filter.IsUnconstrained)
         {
             return segment.GetOrCreateFilter("all", static _ => true);
         }
-
-        var key = filter.Fingerprint();
 
         StringComparison comparison = filter.Search is { CaseSensitive: false }
             ? StringComparison.OrdinalIgnoreCase
@@ -727,63 +729,70 @@ public static class SessionQueryEngine
         // Regex is orders of magnitude dearer than the dictionary lookup it replaces.
         var regex = filter.Search is { IsRegex: true } regexSearch ? CompileSearchRegex(regexSearch) : null;
 
-        return segment.GetOrCreateFilter(key, index =>
+        try
         {
-            var level = segment.LevelAt(index);
-            if (filter.IncludedLevels.Count > 0 && !filter.IncludedLevels.Contains(level))
+            return segment.GetOrCreateFilter(filterFingerprint, index =>
             {
-                return false;
-            }
-
-            var tag = snapshot.Tags[(int)segment.TagIdAt(index)];
-            if (filter.IncludedTags.Count > 0 && !filter.IncludedTags.Contains(tag) ||
-                filter.ExcludedTags.Contains(tag) ||
-                filter.IncludedPids.Count > 0 && !filter.IncludedPids.Contains(segment.PidAt(index)) ||
-                filter.ExcludedPids.Contains(segment.PidAt(index)) ||
-                filter.IncludedTids.Count > 0 && !filter.IncludedTids.Contains(segment.TidAt(index)) ||
-                filter.ExcludedTids.Contains(segment.TidAt(index)) ||
-                filter.IncludedTemplates.Count > 0 && !filter.IncludedTemplates.Contains(segment.TemplateIdAt(index)) ||
-                filter.ExcludedTemplates.Contains(segment.TemplateIdAt(index)))
-            {
-                return false;
-            }
-
-            if (filter.IncludedProcesses.Count > 0 || filter.ExcludedProcesses.Count > 0)
-            {
-                var pid = segment.PidAt(index);
-                var process = snapshot.ResolveProcessName(
-                                  pid,
-                                  new InstantUs(segment.TimestampAt(index)))
-                              ?? $"PID {pid}";
-                if (filter.IncludedProcesses.Count > 0 && !filter.IncludedProcesses.Contains(process) ||
-                    filter.ExcludedProcesses.Contains(process))
+                var level = segment.LevelAt(index);
+                if (filter.IncludedLevels.Count > 0 && !filter.IncludedLevels.Contains(level))
                 {
                     return false;
                 }
-            }
 
-            var buffer = snapshot.Buffers[(int)segment.BufferIdAt(index)];
-            if (filter.IncludedBuffers.Count > 0 && !filter.IncludedBuffers.Contains(buffer) ||
-                filter.ExcludedBuffers.Contains(buffer))
-            {
-                return false;
-            }
+                var tag = snapshot.Tags[(int)segment.TagIdAt(index)];
+                if (filter.IncludedTags.Count > 0 && !filter.IncludedTags.Contains(tag) ||
+                    filter.ExcludedTags.Contains(tag) ||
+                    filter.IncludedPids.Count > 0 && !filter.IncludedPids.Contains(segment.PidAt(index)) ||
+                    filter.ExcludedPids.Contains(segment.PidAt(index)) ||
+                    filter.IncludedTids.Count > 0 && !filter.IncludedTids.Contains(segment.TidAt(index)) ||
+                    filter.ExcludedTids.Contains(segment.TidAt(index)) ||
+                    filter.IncludedTemplates.Count > 0 && !filter.IncludedTemplates.Contains(segment.TemplateIdAt(index)) ||
+                    filter.ExcludedTemplates.Contains(segment.TemplateIdAt(index)))
+                {
+                    return false;
+                }
 
-            if (filter.IncludedOutcomes.Count > 0 && !filter.IncludedOutcomes.Contains(ParseOutcomeKind.ParsedEntry))
-            {
-                return false;
-            }
+                if (filter.IncludedProcesses.Count > 0 || filter.ExcludedProcesses.Count > 0)
+                {
+                    var pid = segment.PidAt(index);
+                    var process = snapshot.ResolveProcessName(
+                                      pid,
+                                      new InstantUs(segment.TimestampAt(index)))
+                                  ?? $"PID {pid}";
+                    if (filter.IncludedProcesses.Count > 0 && !filter.IncludedProcesses.Contains(process) ||
+                        filter.ExcludedProcesses.Contains(process))
+                    {
+                        return false;
+                    }
+                }
 
-            if (filter.Search is not { } textSearch)
-            {
-                return true;
-            }
+                var buffer = snapshot.Buffers[(int)segment.BufferIdAt(index)];
+                if (filter.IncludedBuffers.Count > 0 && !filter.IncludedBuffers.Contains(buffer) ||
+                    filter.ExcludedBuffers.Contains(buffer))
+                {
+                    return false;
+                }
 
-            var message = segment.MessageAt(index);
-            return textSearch.IsRegex
-                ? regex!.IsMatch(message)
-                : message.Contains(textSearch.Query, comparison);
-        });
+                if (filter.IncludedOutcomes.Count > 0 && !filter.IncludedOutcomes.Contains(ParseOutcomeKind.ParsedEntry))
+                {
+                    return false;
+                }
+
+                if (filter.Search is not { } textSearch)
+                {
+                    return true;
+                }
+
+                var message = segment.MessageAt(index);
+                return textSearch.IsRegex
+                    ? regex!.IsMatch(message)
+                    : message.Contains(textSearch.Query, comparison);
+            });
+        }
+        catch (RegexMatchTimeoutException timeout)
+        {
+            throw new SearchTimeoutException(timeout);
+        }
     }
 
     private static bool IsAll(FilterSpec filter) => filter.IsUnconstrained;
@@ -905,7 +914,7 @@ public static class SessionQueryEngine
             {
                 var storageOrder = LogLevels.StorageOrder;
                 var counts = new long[storageOrder.Length];
-                var active = ActiveBitmap(snapshot, segment, filter);
+                var active = ActiveBitmap(snapshot, segment, filter, fingerprint);
                 var (start, end) = RangeIndices(segment, filter.TimeRange);
                 long timed = 0;
                 long first = 0;
@@ -973,11 +982,12 @@ public static class SessionQueryEngine
         bool volatileAcrossGenerations = false)
         where T : notnull
     {
+        var fingerprint = filter.Fingerprint();
         var key = string.Concat(
             "facet.",
             dimension,
             "|",
-            filter.Fingerprint(),
+            fingerprint,
             volatileAcrossGenerations
                 ? "|pn=" + snapshot.ProcessNames.Count.ToString(CultureInfo.InvariantCulture)
                 : string.Empty);
@@ -991,7 +1001,7 @@ public static class SessionQueryEngine
                 () =>
                 {
                     var counts = new Dictionary<T, long>(comparer);
-                    var active = ActiveBitmap(snapshot, segment, filter);
+                    var active = ActiveBitmap(snapshot, segment, filter, fingerprint);
                     var (start, end) = RangeIndices(segment, filter.TimeRange);
                     for (var index = start; index < end; index++)
                     {
@@ -1033,7 +1043,7 @@ public static class SessionQueryEngine
         foreach (var segment in snapshot.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var active = ActiveBitmap(snapshot, segment, filter);
+            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint);
             var effectiveRange = ApplyTimeFilter(range, filter.TimeRange);
             if (effectiveRange is null)
             {

@@ -91,11 +91,23 @@ public sealed partial class MainView
 
     private Border BuildNotice()
     {
+        var fontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 12.5 : 12);
         var text = _noticeText = new TextBlock
         {
             TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center,
-            FontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 12.5 : 12),
+            FontSize = fontSize,
+
+            // The collapsed lane is two lines, and it was sized as FontSize * 1.4 * 2 while
+            // the font's own line box drew nearer 1.2x. Two lines of budget therefore held
+            // 2.33 drawn lines, and the third was painted into the box and sliced along its
+            // x-height: on the device the stop notice read "VisualCat closed its Wireless /
+            // debugging connection and / discarded the decrypted key" with that last line cut
+            // in half lengthwise, which reads as broken rendering rather than as more text.
+            // Stating the line box makes "two lines" a fact about the layout instead of a
+            // guess about the font, so the same arithmetic sizes the lane on any device, at
+            // any text scale, and for whatever face the platform resolves.
+            LineHeight = NoticeLineBox(fontSize),
         };
         AutomationProperties.SetName(text, "Application status message");
 
@@ -250,7 +262,7 @@ public sealed partial class MainView
 
         _noticeCompactHeight = compactHeight;
         scroller.MaxHeight = compactHeight
-            ? TouchTarget.Minimum
+            ? CompactNoticeHeight
             : _noticeExpanded
                 ? ExpandedNoticeHeight
                 : CollapsedNoticeHeight;
@@ -261,14 +273,6 @@ public sealed partial class MainView
     private bool _noticeCompactHeight;
 
     /// <summary>
-    /// Two lines of the lane's own type, which is what it costs the workspace by default.
-    /// </summary>
-    /// <remarks>
-    /// Derived from the drawn font size rather than written as a constant, so a reader who has
-    /// raised their text size gets two lines of <em>their</em> text rather than a fixed band
-    /// that holds one and a half of it.
-    /// </remarks>
-    /// <summary>
     /// What the lane may grow to once the reader has asked to see the whole message.
     /// </summary>
     /// <remarks>
@@ -278,11 +282,67 @@ public sealed partial class MainView
     /// costs the workspace nothing except in the one state the reader explicitly asked for.
     /// A quarter of the shell keeps two thirds of the screen for the log even then.
     /// </remarks>
-    private double ExpandedNoticeHeight =>
-        Math.Max(NoticeTextMaximumHeight, Bounds.Height * 0.25);
+    private double ExpandedNoticeHeight
+    {
+        get
+        {
+            var line = CurrentNoticeLineBox;
+            var budget = Math.Max(NoticeTextMaximumHeight, Bounds.Height * 0.25);
 
-    private double CollapsedNoticeHeight =>
-        Math.Ceiling((_noticeText?.FontSize ?? TextScale.Of(12.5)) * 1.4 * 2);
+            // Rounded up, not down: this is the state the reader explicitly asked for, so
+            // spending the remainder of one line is the right way to pay for never slicing
+            // one, and the lane still clears the old budget rather than dropping below it.
+            return Math.Max(2, Math.Ceiling(budget / line)) * line;
+        }
+    }
+
+    /// <summary>
+    /// Two lines of the lane's own type, which is what it costs the workspace by default.
+    /// </summary>
+    /// <remarks>
+    /// Derived from the drawn line box rather than written as a constant, so a reader who has
+    /// raised their text size gets two lines of <em>their</em> text rather than a fixed band
+    /// that holds one and a half of it.
+    /// </remarks>
+    private double CollapsedNoticeHeight => CurrentNoticeLineBox * 2;
+
+    /// <summary>
+    /// What the lane's text may take where the workspace is too short to spend two lines on it.
+    /// </summary>
+    /// <remarks>
+    /// Rounded down into the touch floor rather than up out of it. The floor is what the row is
+    /// already worth — Dismiss and the action button set its height, not the text — so taking
+    /// whole lines out of it costs the workspace nothing and stops the lane from slicing the
+    /// line at its edge. This is the state a split-screen pane and a landscape phone both land
+    /// in, which makes it the one the slicing was most often seen in: stopping a wireless
+    /// capture in a split-screen pane drew 2.67 lines of the closing notice, the last of them
+    /// cut lengthwise, and compact height withholds the <em>More</em> disclosure as well, so the
+    /// sliced line was the only sign that the sentence continued.
+    /// </remarks>
+    private double CompactNoticeHeight =>
+        Math.Max(1, Math.Floor(TouchTarget.Minimum / CurrentNoticeLineBox)) * CurrentNoticeLineBox;
+
+    /// <summary>
+    /// The height of one drawn line of the lane's text, in logical pixels.
+    /// </summary>
+    /// <remarks>
+    /// Read back from the control so the viewport and the text it holds cannot disagree, with
+    /// the same arithmetic as a fallback for the window between construction and the first
+    /// layout pass.
+    /// </remarks>
+    private double CurrentNoticeLineBox =>
+        _noticeText is { LineHeight: > 0 } text
+            ? text.LineHeight
+            : NoticeLineBox(TextScale.Of(OperatingSystem.IsAndroid() ? 12.5 : 12));
+
+    /// <summary>
+    /// The line box the lane draws at, for a given drawn font size.
+    /// </summary>
+    /// <remarks>
+    /// Whole logical pixels, so that a whole number of lines is also a whole number of pixels
+    /// and the last one cannot be left a fraction short of the viewport that holds it.
+    /// </remarks>
+    private static double NoticeLineBox(double fontSize) => Math.Ceiling(fontSize * 1.4);
 
     /// <summary>
     /// Offers <em>More</em> exactly when there is more, and takes it away again when there is

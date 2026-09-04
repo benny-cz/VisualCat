@@ -399,6 +399,41 @@ public sealed class WindowsLiveTestRemediationTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reading);
     }
 
+    [Fact]
+    public async Task ATruncatedRecordAtAReconnectDoesNotSwallowTheNextStreamsResumePoint()
+    {
+        // A dropped stream almost always ends inside a record. The resume scanner carries an
+        // unterminated prefix across chunks on purpose - that is how a record split by a read
+        // boundary still yields its timestamp - but a reconnect is a different boundary: the
+        // bytes before it and the bytes after it are not one record. Without a reset at that
+        // seam the truncated tail is glued to the first record of the new stream, the 26-byte
+        // prefix is assembled from two different records and parses as nothing, and the
+        // capture goes on resuming from an ever-staler cursor - re-delivering records it
+        // already has instead of resuming at the frontier. Three streams are what makes that
+        // visible: the third spawn's cursor is the second stream's record only if the seam
+        // between the first and second was reset.
+        var present = new AdbDevice("ABC", AdbDeviceState.Device, "Galaxy", "r9q", "1", new Dictionary<string, string>());
+        var client = new ScriptedAdbClient
+        {
+            Outputs =
+            {
+                "2026-08-30 16:00:00.000000  100  101 I Test: complete\n2026-08-30 16:00:0",
+                "2026-08-30 16:00:09.000000  100  101 I Test: after the gap\n",
+                string.Empty,
+            },
+            ExitCodes = { 1, 1, 0 },
+        };
+        client.DevicesByListCall = _ => [present];
+        await using var source = new AdbLogSource(client, "ABC", ["main"]) { Timing = FastTiming };
+
+        var captured = await DrainAsync(source);
+
+        Assert.Contains("complete", captured, StringComparison.Ordinal);
+        Assert.Contains("after the gap", captured, StringComparison.Ordinal);
+        Assert.Equal("2026-08-30 16:00:09.000000", CursorOf(client.StartArguments));
+        Assert.Equal(2, source.GetDefects().ReconnectGaps);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private static string? CursorOf(IReadOnlyList<string> arguments)

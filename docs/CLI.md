@@ -3,7 +3,8 @@
 `vcat` indexes Android logcat text into verified local VisualCat sessions, queries
 those sessions, exports results, and captures live logs through ADB. Commands use
 exit code `0` on success, `2` for invalid command input, `3` when verification
-finds corruption, `130` when cancelled, and `1` for other failures. Diagnostics
+finds corruption or a bounded search times out, `130` when cancelled, and `1` for
+other failures. Diagnostics
 go to standard error; structured results go to standard output.
 
 NuGet.org publication is not currently configured. Download
@@ -147,7 +148,9 @@ vcat search <session.vcat> <text> [--regex] [--case-sensitive]
 
 Searches message text. Regex matching has a per-match timeout, `250` ms by
 default. The result JSON contains `identity`, `matches`, timestamp `markers`,
-and `markersTruncated`. At most 20,000 markers are retained.
+and `markersTruncated`. At most 20,000 markers are retained. If a valid regex
+exceeds its match budget, the command writes a stable diagnostic to standard
+error, emits no partial JSON, and exits with code `3`; the session remains usable.
 
 ```shell
 vcat search crash.vcat "FATAL EXCEPTION" --case-sensitive

@@ -9,6 +9,7 @@ using Avalonia.Media;
 using Avalonia.Rendering;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using VisualCat.App.Theme;
 using VisualCat.App.Timeline;
 
 namespace VisualCat.App.Views;
@@ -30,7 +31,7 @@ internal enum MobilePaneAxis
 internal sealed class MobilePaneSplitter : Thumb, ICustomHitTest, Platform.IEdgeGestureSurface
 {
     internal const double LaneExtent = 12;
-    internal const double HitTargetExtent = 48;
+    internal const double HitTargetExtent = TouchTarget.MinimumWithEdgeReserve;
     internal const double GripZoneLength = 96;
     internal const double KeyboardIncrement = 16;
 

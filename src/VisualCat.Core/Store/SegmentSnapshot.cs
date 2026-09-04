@@ -28,6 +28,12 @@ namespace VisualCat.Core.Store;
 /// </remarks>
 public sealed class SegmentSnapshot : IDisposable
 {
+    /// <summary>
+    /// Test-only observer for cache misses. Kept on the segment instance so parallel tests
+    /// cannot interfere with one another; production leaves it null and pays one null check.
+    /// </summary>
+    internal Action<string>? BitmapFactoryStartedForTests { get; set; }
+
     private const int FilterCacheCapacity = 64;
 
     /// <summary>
@@ -336,6 +342,7 @@ public sealed class SegmentSnapshot : IDisposable
             }
         }
 
+        BitmapFactoryStartedForTests?.Invoke(key);
         var created = factory();
         lock (_filterLock)
         {
@@ -554,7 +561,7 @@ public sealed class SegmentSnapshot : IDisposable
     private string ReadPayload(long offset, int length) =>
         length == 0
             ? string.Empty
-            : Encoding.UTF8.GetString(Column(SegmentFileContract.Column.Payload).ReadBytes(offset, length));
+            : Column(SegmentFileContract.Column.Payload).ReadString(offset, length);
 
     private static void EnsureWithin(string root, string candidate)
     {

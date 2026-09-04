@@ -119,6 +119,9 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     /// </remarks>
     internal static int? EntryRetentionLimitOverride { get; set; }
 
+    /// <summary>Shortens the production timeout only for deterministic timeout tests.</summary>
+    internal static TimeSpan? SearchRegexTimeoutOverride { get; set; }
+
     private readonly string _sessionPath;
     private readonly SessionViewStore _viewStore;
     private readonly SemaphoreSlim _loadLock = new(1, 1);
@@ -1073,9 +1076,11 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     token);
                 return (heat, overview, stats, details);
             }, token).ConfigureAwait(false);
-            var searchTask = Task.Run(RunSearchAsync, token);
+            // The heat-map pass materialises the active filter bitmap. Starting the search
+            // beside it made both cold consumers build that same expensive bitmap and throw
+            // one result away. Search starts only after the shared cache is warm.
             var results = await queryTask;
-            var searchResult = await searchTask.ConfigureAwait(false);
+            var searchResult = await Task.Run(RunSearchAsync, token).ConfigureAwait(false);
             if (generation != Volatile.Read(ref _queryGeneration) ||
                 results.heat.Identity.SnapshotGeneration != _snapshot?.Generation)
             {
@@ -1538,16 +1543,39 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     {
         var search = string.IsNullOrWhiteSpace(SearchText)
             ? null
-            : new TextSearchSpec(SearchText, regex, caseSensitive, TimeSpan.FromMilliseconds(250));
+            : new TextSearchSpec(
+                SearchText,
+                regex,
+                caseSensitive,
+                SearchRegexTimeoutOverride ?? TimeSpan.FromMilliseconds(250));
         if (search is { IsRegex: true } &&
             !SearchPattern.TryCompile(search, out _, out var problem))
         {
             return problem;
         }
 
-        Filter = Filter with { Search = search };
-        await RefreshAsync().ConfigureAwait(false);
-        return null;
+        var previousFilter = Filter;
+        var candidateFilter = previousFilter with { Search = search };
+        Filter = candidateFilter;
+        try
+        {
+            await RefreshAsync().ConfigureAwait(false);
+            return null;
+        }
+        catch (SearchTimeoutException)
+        {
+            // A superseded request no longer owns the field or the chip. The current one
+            // rolls back atomically: RefreshAsync publishes only after every query succeeds,
+            // so the prior rows, plot, count and markers are still one consistent result.
+            if (ReferenceEquals(Filter, candidateFilter))
+            {
+                Filter = previousFilter;
+                SearchInProgress = false;
+                return SearchPatternProblem.Timeout();
+            }
+
+            return null;
+        }
     }
 
     public async Task SetLevelAsync(LogLevel level, bool included)
