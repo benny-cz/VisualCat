@@ -1,7 +1,7 @@
-using VisualCat.Domain.Queries;
 using System.Text;
 using VisualCat.Application.Coordination;
 using VisualCat.Domain.Entries;
+using VisualCat.Domain.Queries;
 using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
 using VisualCat.Infrastructure.Testing;

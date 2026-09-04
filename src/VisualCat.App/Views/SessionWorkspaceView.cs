@@ -708,7 +708,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     private void Notify(string message, bool failure = false) =>
         NoticeRaised?.Invoke(message, failure);
 
-  /// <summary>The phone workspace mode, in the form settings.json stores.</summary>
+    /// <summary>The phone workspace mode, in the form settings.json stores.</summary>
     internal string DisplayMode => _mobileWorkspaceState.Persisted;
 
     /// <summary>Re-adopts the mode the reader had before this process started.</summary>

@@ -203,7 +203,7 @@ jobs:
       RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
       # versionCode is deliberately not set here. The project derives it from the
       # release version and an explicit build counter — major*1000000 + minor*10000 +
-      # patch*100 + build, so 2.0.11 -> 2001100 and 2.1.0 with -VisualCatBuildNumber 3
+      # patch*100 + build, so 2.0.12 -> 2001200 and 2.1.0 with -VisualCatBuildNumber 3
       # -> 2010003 — which Google Play requires to increase with every upload; a
       # workflow run number would let a rebuild of an older version outrank a newer one.
       # A prerelease tag does not move the counter by itself: two builds of the same

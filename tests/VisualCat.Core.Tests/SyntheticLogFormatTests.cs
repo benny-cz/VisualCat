@@ -1,10 +1,10 @@
 using System.Text;
 using VisualCat.Core.Generation;
+using VisualCat.Core.Mining;
 using VisualCat.Core.Parsing;
 using VisualCat.Domain.Entries;
-using VisualCat.Domain.Time;
 using VisualCat.Domain.Sessions;
-using VisualCat.Core.Mining;
+using VisualCat.Domain.Time;
 
 namespace VisualCat.Core.Tests;
 

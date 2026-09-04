@@ -4,7 +4,7 @@
     <LangVersion>14.0</LangVersion>
     <Authors>Marek Strihavka</Authors>
     <Product>VisualCat</Product>
-    <VersionPrefix>2.0.11</VersionPrefix>
+    <VersionPrefix>2.0.12</VersionPrefix>
     <!-- Android reserves two decimal digits for a rebuild of the same release
          version. Keep this checked in so tags and local packaging are reproducible. -->
     <VisualCatBuildNumber>0</VisualCatBuildNumber>
@@ -25,7 +25,7 @@
 
              dotnet build -c Release -p:ReleaseChannel=stable
 
-         Anything else is "2.0.11-dev+<commit>", which a screenshot can carry and a tester can
+         Anything else is "2.0.12-dev+<commit>", which a screenshot can carry and a tester can
          read off the device. -->
     <VersionSuffix Condition="'$(VersionSuffix)' == '' And '$(ReleaseChannel)' != 'stable'">dev</VersionSuffix>
     <Description>Interactive, local-first Android logcat analysis with a severity-by-time heat map.</Description>

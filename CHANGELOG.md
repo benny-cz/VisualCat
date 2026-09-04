@@ -7,11 +7,50 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Version numbers correspond to git tags and the GitHub [Releases](https://github.com/benny-cz/VisualCat/releases)
 page.
 
-The current stable release is `2.0.11`. Ongoing work is recorded under
+The current stable release is `2.0.12`. Ongoing work is recorded under
 `[Unreleased]`, and development builds carry a `-dev` version suffix so a
 screenshot says which build it came from.
 
 ## [Unreleased]
+
+## [2.0.12] - 2026-09-04
+
+### Added
+- Every raw-evidence surface now verifies the complete indexed byte prefix on the same open
+  source handle it reads. Source context, Copy raw, unparsed-line inspection, raw exports and
+  portable saves accept safe append-only growth but refuse a rewritten or truncated source
+  instead of returning bytes that no longer belong to the session.
+- A retained Skia UI benchmark measures settled viewport changes in an actual desktop window,
+  and the hosted performance workflow now covers high template/tag diversity, manifest size,
+  paged export throughput and allocation per source line.
+
+### Changed
+- **Load all** retains at most 100,000 rows on desktop and 25,000 on Android. The action,
+  footer and status line name the platform ceiling, keeping large sessions responsive and
+  memory-bounded while every entry remains queryable in pages.
+- CLI option parsing is now presence-aware, invariant-culture and range-checked. Invalid
+  orders, limits, timeouts and integer sets exit through the documented usage-error path and
+  name both the rejected value and the accepted form.
+- Template metadata is stored in a checksummed sidecar instead of being repeatedly embedded
+  in the manifest, keeping long, high-diversity captures compact and cheaper to publish.
+- CSV remains an exact data export. The CLI and security documentation now explicitly advise
+  importing untrusted CSV as text because spreadsheet applications can interpret log-derived
+  cells as formulas.
+
+### Fixed
+- Mixed-format input no longer mines long-format headers as phantom message templates, and
+  verification distinguishes harmless legacy unreferenced templates from invalid missing
+  template references.
+- Closing tabs, replacing queries and shutting down with work in flight now share one
+  dispatcher-safe cancellation/ownership protocol, eliminating disposal races and orphaned
+  failures. Workspace and shell actions also surface failures consistently.
+- Portable saves of a growing external capture embed exactly the verified indexed prefix,
+  rather than silently including bytes the session never indexed.
+- Android foreground-service refusals now stop and seal capture cleanly and explain the
+  product-level remedy without exposing Intent, exception or app-op internals under an
+  incorrect import heading.
+- Settings cleanup can no longer hide the original save failure, capture names use one clock
+  observation, and unconstrained filters avoid unnecessary fingerprint work on hot paths.
 
 ## [2.0.11] - 2026-08-31
 
@@ -1152,7 +1191,8 @@ Initial public baseline — the greenfield .NET 10 rewrite described in
   archive, a CycloneDX SBOM, build provenance attestations, and the
   `tools/verify-public-release.ps1` one-command local preflight.
 
-[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.11...HEAD
+[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.12...HEAD
+[2.0.12]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.12
 [2.0.11]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.11
 [2.0.10]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.10
 [2.0.9]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.9
