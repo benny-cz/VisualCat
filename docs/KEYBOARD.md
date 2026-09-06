@@ -52,6 +52,35 @@ The divider is exposed to automation as a named range control, so assistive
 technology can also set its value directly. The same reset is available without
 a keyboard under **Appearance & timeline**.
 
+## Recent captures
+
+These act inside the list of stored captures and nowhere else. A focused button, checkbox or
+text selection keeps its own keys, and nothing here is claimed while a confirmation or the
+results view owns the keyboard.
+
+| Shortcut | Action |
+|---|---|
+| Arrows / Home / End | Move through the list; no check changes |
+| Space | Toggle the focused row's check, when that capture can be deleted |
+| Ctrl+A | Check every capture that can be deleted |
+| Ctrl+Shift+A | Clear every check |
+| Delete | Confirm deletion of the checked captures |
+| Enter or double-click | Open the highlighted capture |
+| Escape | Clear checks; a second press closes the dialog |
+
+After a deletion the keyboard stays where it was working: a reader who deleted from the list
+lands on the nearest surviving capture, and one who used the buttons stays at the decision row.
+When the last capture goes, focus moves to the action that is left.
+
+The highlight and the checks are independent: **Open** acts on the highlighted capture, and
+**Delete** acts on the checked ones. Deleting always confirms, the confirmation's initial focus
+and default action is **Cancel**, and Enter there never deletes.
+
+On Android the system Back gesture does this instead: it leaves selection first, and closes the
+dialog on a second press. Escape is not additionally claimed there, because Android delivers
+Back as an Escape key-down followed by the platform callback, and answering both would take two
+steps for one press.
+
 ## Accessibility behavior
 
 - Interactive filters, panes, lists, source controls, and timeline actions have

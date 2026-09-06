@@ -193,7 +193,7 @@ public sealed class AndroidAuditFixTests
     }
 
     /// <summary>
-    /// F21.1 — "THIS SESSION" sat above Recent sessions…, Open portable archive… and Open
+    /// F21.1 — "THIS SESSION" sat above Recent captures…, Open portable archive… and Open
     /// session…, three commands that open a <em>different</em> session. Only Share and Export
     /// CSV act on the one the reader is looking at.
     /// </summary>
@@ -214,8 +214,8 @@ public sealed class AndroidAuditFixTests
         Assert.True(openHeading >= 0, "The sheet names the group that opens another session.");
         Assert.True(settingsHeading > openHeading, "Settings come after the commands.");
         Assert.True(
-            Array.IndexOf(labels, "Recent sessions…") > openHeading,
-            "Recent sessions… is under the opening group.");
+            Array.IndexOf(labels, "Recent captures…") > openHeading,
+            "Recent captures… is under the opening group.");
         Assert.True(
             Array.IndexOf(labels, "Appearance & timeline…") > settingsHeading,
             "Appearance & timeline… is under settings.");

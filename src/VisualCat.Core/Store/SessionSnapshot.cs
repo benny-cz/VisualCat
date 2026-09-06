@@ -7,6 +7,7 @@ namespace VisualCat.Core.Store;
 public sealed class SessionSnapshot : IDisposable
 {
     private bool _disposed;
+    internal IDisposable? Usage { get; set; }
     private readonly Lazy<IReadOnlyList<TemplateDefinition>> _templates;
 
     internal SessionSnapshot(
@@ -127,5 +128,7 @@ public sealed class SessionSnapshot : IDisposable
         {
             segment.Dispose();
         }
+
+        Usage?.Dispose();
     }
 }

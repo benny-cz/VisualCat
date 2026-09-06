@@ -11,8 +11,8 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
-using VisualCat.App.Timeline;
 using VisualCat.App.Theme;
+using VisualCat.App.Timeline;
 using VisualCat.App.Views;
 using VisualCat.Infrastructure.Configuration;
 

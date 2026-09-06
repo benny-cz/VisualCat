@@ -212,7 +212,10 @@ public sealed class WindowsLiveTestRemediationUiTests
         var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         WorkspaceViewModel.ConfigureTemporarySessionRoot(root);
-        var main = new MainView();
+        var settings = Path.Combine(root, "settings.json");
+        await new VisualCat.Infrastructure.Configuration.SettingsStore(settings).SaveAsync(
+            new VisualCat.Infrastructure.Configuration.ApplicationSettings(SessionDirectory: root), TestContext.Current.CancellationToken);
+        var main = new MainView([], settings);
         var window = new Window { Content = main, Width = 1280, Height = 800 };
         var tabs = new List<WeakReference>(50);
         var views = new List<WeakReference>(50);

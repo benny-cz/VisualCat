@@ -37,7 +37,7 @@ public sealed class MainViewReviewFixTests
                 static button => button,
                 StringComparer.Ordinal);
 
-        Assert.Contains("Recent sessions…", commands.Keys);
+        Assert.Contains("Recent captures…", commands.Keys);
         Assert.Contains("Open portable archive…", commands.Keys);
         Assert.Contains("Export CSV…", commands.Keys);
         Assert.Contains("Appearance & timeline…", commands.Keys);
@@ -52,7 +52,7 @@ public sealed class MainViewReviewFixTests
             StringComparison.OrdinalIgnoreCase);
 
         // Opening a log never needs a session, so it is never disabled.
-        Assert.True(commands["Recent sessions…"].IsEnabled);
+        Assert.True(commands["Recent captures…"].IsEnabled);
     }
 
     /// <summary>

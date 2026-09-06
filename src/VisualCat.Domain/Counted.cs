@@ -26,6 +26,9 @@ public static class Counted
     /// <summary>"1 session", "46 sessions".</summary>
     public static string Sessions(long count) => Of(count, "session", "sessions");
 
+    /// <summary>"1 capture", "46 captures".</summary>
+    public static string Captures(long count) => Of(count, "capture", "captures");
+
     public static string Of(long count, string singular, string plural) =>
         count == 1
             ? $"1 {singular}"

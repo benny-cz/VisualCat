@@ -39,4 +39,39 @@ Major versions are refused safely. A missing or metadata-changed external source
 
 Live manifests may include bounded `(pid, name, firstSeen, lastSeen)` process-name ranges. PID reuse creates a new range; process lookup is time-aware and failures to sample a process list never fail capture.
 
+## Reserved names in a temporary-storage root
+
+Two names beside a capture are reserved, and a scan of stored captures excludes both by an
+explicit `.vcat` suffix check rather than by a glob.
+
+```text
+<temporary root>/
+  20260905-091200-pixel-boot-{guid:N}.vcat/
+    .capture-identity              # 32 lowercase hex characters, one random GUID
+  .{guid:N}.vcat-deleting/         # a staged payload, mid-removal
+  .{guid:N}.vcat-deleting.json     # its ownership record, version 1
+```
+
+`.capture-identity` is the capture's identity marker. It is written when a capture is first
+listed for deletion, is never rewritten, and is what separates "the same capture" from "a
+different directory at the same path". It is not part of analytical identity: a session opens,
+verifies and exports exactly as it would without one, and a copy or an extracted archive that
+carries one is a different directory at a different path.
+
+A staged directory is a capture whose removal has been committed by rename and whose contents
+have not finished being reclaimed. Its ownership record is published — written, flushed and
+renamed into place — *before* the rename, and carries the version, the validated staging
+basename, the source basename, the source identity and an optional size estimate. Recovery
+validates all of that, plus direct-child membership and the absence of links, on every pass.
+
+| Last durable step | What recovery does |
+|---|---|
+| Record published, rename not committed | The original capture remains. The obsolete record is removed once the source and stage states are resolved; a record alone never authorises deleting the original. |
+| Rename committed, payload present or partial | Only the validated owned payload is reclaimed. It never becomes a capture again. |
+| Payload removed, record remains | The obsolete record is removed after verifying the payload is absent. |
+| A folder with no valid record, or inconsistent metadata | Automatic deletion is refused and the leftover is surfaced as unresolved. Ownership is never inferred from the suffix. |
+
+Atomic publication and recovery from process termination are not, on every filesystem, a
+guarantee against sudden power loss. See [ADR 0022](adr/0022-capture-deletion.md).
+
 A `.vcat.zip` file is a portable transport envelope for a verified portable session directory. Extraction rejects absolute paths, traversal, symbolic links, duplicate paths, unreasonable entry counts, and excessive expanded size, then runs the normal session verifier before atomically publishing the extracted directory.

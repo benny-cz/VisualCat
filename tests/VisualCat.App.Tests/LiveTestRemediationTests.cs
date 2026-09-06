@@ -1553,7 +1553,7 @@ public sealed partial class LiveTestRemediationTests
     private static TextBlock SheetLabel(MainView view) =>
         view.GetLogicalDescendants()
             .OfType<TextBlock>()
-            .First(block => block.Text == "Recent sessions…");
+            .First(block => block.Text == "Recent captures…");
 
     // --------------------------------------------------------------- F-41 ---
 

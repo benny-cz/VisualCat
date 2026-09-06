@@ -2291,6 +2291,61 @@ recomputed execution target exact eligible cache children only; failures leave
 remaining valid; no source, saved session, evidence root or another user's path
 is touched; wording admits deletion is not forensic erase.
 
+### P-16.1 · Deleting captures from Recent captures
+
+Seed a disposable cache root (§2.7) with at least five captures: one recording,
+one open in a tab, one held by a second VisualCat process, and two idle.
+
+*Keyboard only.* Open **Recent**, move through the list with the arrow keys,
+toggle a check with Space, check everything with Ctrl+A, clear with
+Ctrl+Shift+A, confirm with Delete, decline with Escape, and close with a second
+Escape. The highlight and the checks stay independent — **Open** acts on the
+highlight and **Delete** on the checks — and the confirmation's initial focus and
+default action is **Cancel**, so Enter there never deletes.
+
+*Protection.* The recording capture cannot be checked by any route and says why.
+The capture held by the second process is refused at execution with *This capture
+is in use*, nothing on disk changes, and the same delete succeeds once that
+process exits — counted once, with no outstanding failure left in the summary.
+Hold a real sharing handle open on a file inside a capture (an explicit
+`FileStream` whose sharing flags deny deletion, released in `finally`) and
+confirm the failure is classified and reported rather than leaving a half-removed
+directory.
+
+*Tab lifetime and Stop.* The open capture's tab closes before that capture is
+removed, and only when its turn arrives. **Stop** during a multi-capture deletion
+leaves later captures *and their tabs* untouched and reports them as not
+attempted.
+
+*Window lifetime.* Close the dialog window with its **X** while nothing is
+running, and again while a deletion is in progress: the first is an ordinary
+dismissal, the second is refused with the in-progress explanation rather than
+leaving a pending task behind. Closing the main window during a deletion settles
+the operation once and preserves the committed removals.
+
+*Storage truth.* After every case, list the cache root: only the confirmed
+captures are gone, no `.vcat-deleting` directory or `.json` record survives a
+settled sweep, and nothing outside the root is touched. Leftovers that cannot be
+reclaimed stay visible as pending cleanup with **Retry storage cleanup**, and a
+directory with the staging suffix and no valid ownership record is reported as
+unresolved instead of being swept.
+
+*A small dialog window.* Drag the dialog down to about its minimum height. The
+explanation and the state legend go first, then **Details** and **Refresh** join
+the row with **Delete** and **Close** rather than keeping a band of their own, and
+the capture list grows accordingly. Grow it again and both come back. Nothing may
+overlap, leave the window, or stop responding at any size in between.
+
+*Verified (2026-09-06, Windows 11, UI Automation against the running app)* All of
+the above except the keyboard pass, which needs an unlocked session: selection
+counts and sizes, the confirmation's copy and its Cancel default, cancellation
+changing nothing on disk, a second process's writer refused with the capture left
+intact, the same delete succeeding once that process exited and counting once, a
+real sharing handle classified without a half-removed directory, an unowned
+`.vcat-deleting` remnant refused with its payload intact and reported through
+**Details**, the emptied list's own state and notice, and the small-window
+behaviour above in both directions.
+
 ### P-17 · Multi-user/profile isolation
 
 Use two local Windows test users. Each runs same extracted candidate and creates

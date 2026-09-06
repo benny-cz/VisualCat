@@ -307,7 +307,7 @@ internal static class SheetForm
     }
 }
 
-public sealed class RecentSessionsDialog : DialogBody<string>
+public sealed partial class RecentSessionsDialog : DialogBody<string>
 {
     /// <summary>
     /// The result this dialog completes with when the reader chooses to start a capture rather
@@ -329,13 +329,30 @@ public sealed class RecentSessionsDialog : DialogBody<string>
     /// present tense can be said in it (audit 3, E1).
     /// </param>
     public RecentSessionsDialog(IReadOnlyList<TemporarySessionInfo> sessions, IReadOnlySet<string>? capturing = null)
-        : base("Recent VisualCat sessions")
+        : this(sessions, capturing, legacy: true)
     {
+    }
+
+    /// <summary>
+    /// The shared construction. <c>legacy</c> asks for the opening-only content; the
+    /// deletion-capable composition replaces <see cref="ContentControl.Content"/> with its own
+    /// panel, and building a second list only to discard it would leave live subscriptions on a
+    /// control nothing shows.
+    /// </summary>
+    private RecentSessionsDialog(IReadOnlyList<TemporarySessionInfo> sessions, IReadOnlySet<string>? capturing, bool legacy)
+        : base("Recent captures")
+    {
+        ArgumentNullException.ThrowIfNull(sessions);
         _capturing = capturing ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         PreferredSize = new Size(760, 480);
         MinimumSize = new Size(560, 320);
         ScrollsInternally = true;
-        var mobile = OperatingSystem.IsAndroid();
+        if (!legacy)
+        {
+            return;
+        }
+
+        var mobile = MobileOverride ?? OperatingSystem.IsAndroid();
         _sessions.ItemsSource = sessions;
         _sessions.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<TemporarySessionInfo>((session, _) =>
             session is null

@@ -7,8 +7,8 @@ using Avalonia.LogicalTree;
 using Avalonia.Threading;
 using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
-using VisualCat.App.Timeline;
 using VisualCat.App.Theme;
+using VisualCat.App.Timeline;
 using VisualCat.App.Views;
 
 namespace VisualCat.App.Tests;
@@ -272,7 +272,10 @@ public sealed class PixelGestureAndTextScaleTests
 
     private static async Task RaiseTheTextScaleFromTheAppearanceSheet(string logPath, string directory)
     {
-        await using var view = new MainView([logPath], Path.Combine(directory, "settings.json"));
+        var settings = Path.Combine(directory, "settings.json");
+        await new VisualCat.Infrastructure.Configuration.SettingsStore(settings).SaveAsync(
+            new VisualCat.Infrastructure.Configuration.ApplicationSettings(SessionDirectory: directory), TestContext.Current.CancellationToken);
+        await using var view = new MainView([logPath], settings);
         var window = new Window { Content = view, Width = 420, Height = 900 };
         window.Show();
         try

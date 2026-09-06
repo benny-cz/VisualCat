@@ -88,6 +88,7 @@ public sealed class SessionCoordinator
             }).ConfigureAwait(false);
 
         var root = Path.GetFullPath(sessionDirectory);
+        using var usage = SessionAccess.Write(root);
         Directory.CreateDirectory(root);
         var identity = await InitialIdentityAsync(source.Metadata, settings.PortableRaw, cancellationToken).ConfigureAwait(false);
         await using var store = new SessionStoreWriter(root, settings, identity, presence);

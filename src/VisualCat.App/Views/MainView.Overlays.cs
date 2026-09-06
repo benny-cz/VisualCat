@@ -179,7 +179,7 @@ public sealed partial class MainView : IDialogHost
     /// </summary>
     /// <remarks>
     /// "THIS SESSION" was emitted before the first non-setting command and then covered every
-    /// one of them, so it sat above Recent sessions…, Open portable archive… and Open
+    /// one of them, so it sat above Recent captures…, Open portable archive… and Open
     /// session… — three commands whose whole purpose is to open a <em>different</em> session
     /// (finding 21.1). Only Share and Export CSV act on the session the reader is looking at.
     /// </remarks>
@@ -520,6 +520,13 @@ public sealed partial class MainView : IDialogHost
             }
 
             surface.Apply(dark, height, inputPaneTop);
+            if (surface.BodyHost.Content is TemplatedControl body &&
+                body is RecentSessionsDialog or CaptureDeleteConfirmation or CaptureResultDetails)
+            {
+                // Font changes on Android keep the activity and its confirmed selection alive.
+                // Resize the existing dialog instead of discarding that state by rebuilding it.
+                body.FontSize = TextScale.Of(14);
+            }
             if (entry.RebuildBody is { } rebuild)
             {
                 surface.BodyHost.Content = rebuild(dark);
@@ -691,13 +698,23 @@ public sealed partial class MainView : IDialogHost
     /// </remarks>
     internal static bool? InPageDialogOverride { get; set; }
 
+    private readonly List<Window> _desktopDialogs = [];
+    private readonly List<Action> _forceDialogDismissals = [];
+
+    private void ForceDismissDialogs()
+    {
+        foreach (var dismiss in _forceDialogDismissals.ToArray().Reverse()) dismiss();
+    }
+
     public async Task<TResult?> ShowDialogAsync<TResult>(DialogBody<TResult> body)
     {
         ArgumentNullException.ThrowIfNull(body);
         body.Host = this;
+        _forceDialogDismissals.Add(body.ForceDismiss);
         var inPage = InPageDialogOverride ?? OperatingSystem.IsAndroid();
         if (!inPage && TopLevel.GetTopLevel(this) is Window owner)
         {
+            owner = _desktopDialogs.LastOrDefault() ?? owner;
             var window = new Window
             {
                 Title = body.DialogTitle,
@@ -710,12 +727,27 @@ public sealed partial class MainView : IDialogHost
             };
 
             // Closing the window is a dismissal, and a decided dialog closes its window.
-            window.Closed += (_, _) => body.Dismiss();
+            window.Closing += (_, args) =>
+            {
+                if (body.Completion.IsCompleted) return;
+                body.Dismiss();
+                args.Cancel = !body.Completion.IsCompleted;
+            };
+            window.Closed += (_, _) => body.ForceDismiss();
             window.Opened += (_, _) => body.NotifyPresented();
-            _ = window.ShowDialog(owner);
-            var windowResult = await body.Completion;
-            window.Close();
-            return windowResult;
+            _desktopDialogs.Add(window);
+            try
+            {
+                _ = window.ShowDialog(owner);
+                return await body.Completion;
+            }
+            finally
+            {
+                _desktopDialogs.Remove(window);
+                _forceDialogDismissals.Remove(body.ForceDismiss);
+                window.Close();
+                body.Host = null;
+            }
         }
 
         var dark = ActualThemeVariant != ThemeVariant.Light;
@@ -740,6 +772,8 @@ public sealed partial class MainView : IDialogHost
         }
         finally
         {
+            _forceDialogDismissals.Remove(body.ForceDismiss);
+            body.Host = null;
             host.Content = null;
             RemoveOverlay(card);
         }

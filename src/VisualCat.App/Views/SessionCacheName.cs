@@ -36,7 +36,7 @@ internal static class SessionCacheName
             name = name[..^GuidSuffixLength];
         }
 
-        return name.IsEmpty ? fileName : name.ToString();
+        return SafeLabel(name.ToString());
     }
 
     /// <summary>
@@ -63,7 +63,23 @@ internal static class SessionCacheName
         }
 
         var stored = StripMaterializationPrefix(storedDisplayName.Trim());
-        return stored.Length == 0 || LooksMachineGenerated(stored) ? Describe(path) : stored;
+        return stored.Length == 0 || LooksMachineGenerated(stored) ? Describe(path) : SafeLabel(stored);
+    }
+
+    internal static string SafeLabel(string value)
+    {
+        value = value.Replace('\\', '/').Split('/')[^1];
+        value = System.Text.RegularExpressions.Regex.Replace(value,
+            @"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32,}", "",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        var characters = value.Select(c => char.IsControl(c) || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format ? ' ' : c).ToArray();
+        value = string.Join(' ', new string(characters).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim(' ', '-', '_', '.', '{', '}');
+        if (string.IsNullOrWhiteSpace(value) || LooksMachineGenerated(value) || value.All(c => char.IsDigit(c) || c == '-'))
+        {
+            return "Unnamed capture";
+        }
+
+        return value.Length > 120 ? value[..117] + "…" : value;
     }
 
     /// <summary>Number of characters in <c>{Guid:N}-</c>.</summary>
@@ -83,7 +99,7 @@ internal static class SessionCacheName
     private static bool LooksMachineGenerated(string value)
     {
         var stem = Path.GetFileNameWithoutExtension(value.AsSpan());
-        return stem.Length >= 32 && IsAsciiHex(stem);
+        return Guid.TryParse(stem, out _) || stem.Length >= 32 && IsAsciiHex(stem);
     }
 
     private static bool IsAsciiDigits(ReadOnlySpan<char> value)

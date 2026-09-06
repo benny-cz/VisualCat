@@ -45,6 +45,25 @@ public static class SessionStore
         SessionSnapshot? reuseFrom,
         CancellationToken cancellationToken = default)
     {
+        var usage = SessionAccess.Read(path);
+        try
+        {
+            var snapshot = await OpenCoreAsync(path, reuseFrom, cancellationToken).ConfigureAwait(false);
+            snapshot.Usage = usage;
+            return snapshot;
+        }
+        catch
+        {
+            usage.Dispose();
+            throw;
+        }
+    }
+
+    private static async Task<SessionSnapshot> OpenCoreAsync(
+        string path,
+        SessionSnapshot? reuseFrom,
+        CancellationToken cancellationToken)
+    {
         var root = Path.GetFullPath(path);
         var reusable = BuildReuseIndex(root, reuseFrom);
         for (var attempt = 1; ; attempt++)

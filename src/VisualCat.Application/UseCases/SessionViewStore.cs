@@ -36,6 +36,7 @@ public sealed class SessionViewStore
 
     public async Task<SessionViewCatalog> LoadAsync(CancellationToken cancellationToken = default)
     {
+        using var usage = VisualCat.Core.Store.SessionAccess.Read(Path.GetDirectoryName(_path)!);
         try
         {
             if (!File.Exists(_path) ||
@@ -81,6 +82,7 @@ public sealed class SessionViewStore
     {
         ArgumentNullException.ThrowIfNull(active);
         ArgumentNullException.ThrowIfNull(presets);
+        using var usage = VisualCat.Core.Store.SessionAccess.Write(Path.GetDirectoryName(_path)!);
         if (presets.Count > MaximumPresets)
         {
             throw new ArgumentOutOfRangeException(nameof(presets), $"At most {MaximumPresets} saved views are allowed.");

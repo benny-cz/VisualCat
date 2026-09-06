@@ -13,6 +13,7 @@
     <PackageReference Include="xunit.runner.visualstudio">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <ProjectReference Include="../../tools/VisualCat.StorageProbe/VisualCat.StorageProbe.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../../src/VisualCat.Application/VisualCat.Application.csproj" />
     <ProjectReference Include="../../src/VisualCat.Cli/VisualCat.Cli.csproj" />
     <ProjectReference Include="../../src/VisualCat.Infrastructure/VisualCat.Infrastructure.csproj" />

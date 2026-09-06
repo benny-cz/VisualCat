@@ -12,6 +12,7 @@ using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
 using VisualCat.Application.Ports;
 using VisualCat.Application.UseCases;
+using VisualCat.Core.Store;
 using VisualCat.Domain;
 using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
@@ -220,6 +221,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             // Ordered after the layout restore so the first refreshed frame lands in the
             // layout the user left, not the one being rebuilt underneath it.
             _viewModel.ResumeLiveViews();
+
+            // Coming back to an open Recent captures means its list may be stale: another
+            // process, or this one in the background, can have changed temporary storage.
+            _recentDialog?.RequestRefresh();
 
             // Last, and only if the channel's throttle allows it: a store answer is the least
             // urgent thing about coming back to the app, and it must not delay the frame.
@@ -1102,6 +1107,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
+        var mutationVersion = _recentMutationVersion;
         IReadOnlyList<TemporarySessionInfo> sessions;
         try
         {
@@ -1114,9 +1120,24 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        if (!ReferenceEquals(_recentList, list))
+        if (!ReferenceEquals(_recentList, list) || mutationVersion != _recentMutationVersion)
         {
             // The empty state was rebuilt (a theme change) while the scan was running.
+            return;
+        }
+
+        ApplyRecentHomeSnapshot(sessions);
+    }
+
+    /// <summary>
+    /// Paints the home card from one set of captures, whether it came from a scan or from a
+    /// deletion this workspace just committed.
+    /// </summary>
+    private void ApplyRecentHomeSnapshot(IReadOnlyList<TemporarySessionInfo> sessions)
+    {
+        _recentHomeSnapshot = sessions;
+        if (_recentList is not { } list || _recentSection is not { } section)
+        {
             return;
         }
 
@@ -1231,7 +1252,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         {
             links.Add(("OPEN LOG", OpenLogAsync, "Open a saved logcat file"));
             links.Add(("ADB LIVE", StartAdbAsync, "Capture live from a device over ADB"));
-            links.Add(("REOPEN SESSION", OpenRecentAsync, "Reopen a recent session"));
+            links.Add(("RECENT CAPTURES", OpenRecentAsync, "Reopen a capture this device already holds"));
         }
 
         if (mobile)
@@ -1433,7 +1454,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             // SESSION" with Share and Export CSV (finding 21.1).
             Flexible(
                 "Recent",
-                "Recent sessions…",
+                "Recent captures…",
                 OpenRecentAsync,
                 "Reopen a capture this device already holds",
                 group: CommandGroup.Open);
@@ -1476,7 +1497,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         {
             Primary("●  ADB live", StartAdbAsync);
             Flexible("Open session", "Open session…", OpenSessionAsync, group: CommandGroup.Open);
-            Flexible("Recent", "Recent sessions…", OpenRecentAsync, group: CommandGroup.Open);
+            Flexible("Recent", "Recent captures…", OpenRecentAsync, group: CommandGroup.Open);
             Flexible("Follow file", "Follow growing file…", FollowFileAsync, group: CommandGroup.Open);
             Flexible("Open archive", "Open portable archive…", OpenArchiveAsync, group: CommandGroup.Open);
             Flexible(
@@ -2532,33 +2553,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 break;
 
             case RecoveredSessionAction.Delete when canDelete:
-                var confirmed = await ShowDialogAsync(new ConfirmationDialog(
-                    "Delete recovered capture?",
-                    $"{tab.Title} and its {Counted.Entries(entries)} will be permanently removed from this device. " +
-                    "This cannot be undone."));
-                if (confirmed != true)
-                {
-                    break;
-                }
-
-                var path = tab.SessionPath;
-                try
-                {
-                    await _viewModel.CloseAsync(tab);
-                    await Task.Run(() => TemporarySessionRetentionService.DeleteExactSession(
-                        WorkspaceViewModel.TemporarySessionRoot,
-                        path));
-                    ShowNotice($"Deleted recovered capture {tab.Title}.", NoticeKind.Completion);
-                }
-                catch (Exception exception) when (
-                    exception is IOException or UnauthorizedAccessException)
-                {
-                    ShowNotice(
-                        $"The recovered capture was closed but could not be deleted: " +
-                        WorkspaceViewModel.FriendlyMessage(exception),
-                        NoticeKind.Failure);
-                }
-
+                await DeleteRecoveredCaptureAsync(tab);
                 break;
         }
     }
@@ -2833,7 +2828,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// </remarks>
     private HashSet<string> CapturingSessionPaths()
     {
-        var capturing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var capturing = new HashSet<string>(SessionPath.Comparer);
         foreach (var tab in _viewModel.Tabs)
         {
             if (tab.IsLiveCaptureActive)
@@ -2852,31 +2847,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private HashSet<string> OpenSessionPaths() =>
         _viewModel.Tabs
             .Select(static tab => Path.GetFullPath(tab.SessionPath))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .ToHashSet(SessionPath.Comparer);
 
-    private async Task OpenRecentAsync()
-    {
-        var sessions = await TemporarySessionRetentionService.ScanAsync(WorkspaceViewModel.TemporarySessionRoot);
-        var path = await ShowDialogAsync(new RecentSessionsDialog(sessions, CapturingSessionPaths()));
-        if (path is null)
-        {
-            return;
-        }
-
-        // The empty card offers the one action that changes what it is empty of, and the
-        // shell owns that action (V2-03).
-        if (string.Equals(path, RecentSessionsDialog.CaptureThisDevice, StringComparison.Ordinal))
-        {
-            if (OperatingSystem.IsAndroid() && PlatformSourceRegistry.CreateOnDeviceSource is not null)
-            {
-                await StartOnDeviceWithAccessSetupAsync();
-            }
-
-            return;
-        }
-
-        await RunAsync(() => _viewModel.OpenSessionAsync(path));
-    }
+    private Task OpenRecentAsync() => OpenRecentWithDeletionAsync();
 
     private async Task ShowAppearanceAsync()
     {
@@ -3062,7 +3035,19 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
         if (_noticeText is { } notice)
         {
-            notice.FontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 12.5 : 12);
+            var noticeSize = TextScale.Of(OperatingSystem.IsAndroid() ? 12.5 : 12);
+            notice.FontSize = noticeSize;
+
+            // The stated line box is what "two lines" means, and the lane's collapsed height
+            // is derived from it. Restating the size without it left the box the lane was
+            // built with: Android handles a font-scale change as a configuration change
+            // rather than by recreating the activity, so raising the device's text size to
+            // 1.8 drew 22.5 px glyphs into 18 px boxes. The lane's own arithmetic then agreed
+            // with itself — two boxes of 18, an extent of 36 in a viewport of 36 — so the
+            // overflow test found nothing to disclose and withheld More while the second line
+            // was sliced along its x-height (A-30). The pair moves together or not at all.
+            notice.LineHeight = NoticeLineBox(noticeSize);
+            ApplyNoticeLayout(_noticeCompactHeight);
         }
 
         foreach (var chip in _chips.Values)
@@ -3259,6 +3244,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             _recentRefreshLifetime.Cancel();
         }
 
+        _recentDialog?.ForceDismiss();
+        ForceDismissDialogs();
+        if (_captureDeletionTask is { } deletion) await deletion;
         await WaitForRecentSessionsRefreshAsync();
 
         // No settings writer may still be waiting on the semaphore when it is disposed. The

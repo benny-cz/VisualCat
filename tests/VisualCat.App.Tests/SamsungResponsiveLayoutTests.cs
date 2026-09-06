@@ -348,6 +348,61 @@ public sealed class SamsungResponsiveLayoutTests
         }
     }
 
+    /// <summary>
+    /// A text scale raised while the app is running has to reach the lane's line box, not
+    /// only its font size.
+    /// </summary>
+    /// <remarks>
+    /// Android answers a font-scale change as a configuration change rather than by recreating
+    /// the activity, so the lane is re-sized in place. Restating the font size alone left the
+    /// box the lane was built with, and on the device at scale 1.8 that drew 22.5 px glyphs
+    /// into 18 px boxes: <em>Deleted 1 capture from temporary storage.</em> came out over two
+    /// lines with the second sliced along its x-height, and no <em>More</em> — because the
+    /// lane's own arithmetic agreed with itself, an extent of two stale boxes in a viewport of
+    /// two stale boxes, and found nothing to disclose (A-30).
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task RaisingTheTextScaleInPlaceResizesTheNoticeLinesAndItsViewport()
+    {
+        var platform = TextScale.Platform;
+        TextScale.Platform = 1.0;
+        try
+        {
+            await using var view = new MainView();
+            view.ShowNotice("Deleted 1 capture from temporary storage.", MainView.NoticeKind.Completion);
+
+            var text = view.GetLogicalDescendants()
+                .OfType<TextBlock>()
+                .Single(block => AutomationProperties.GetName(block) == "Application status message");
+            var scroller = text.GetLogicalAncestors().OfType<ScrollViewer>().Single();
+            var before = text.LineHeight;
+            Assert.Equal(Math.Ceiling(text.FontSize * 1.4), before, 6);
+
+            // The route the platform uses: the scale moves and the activity stays.
+            PlatformSourceRegistry.PlatformFontScale = 1.8;
+            try
+            {
+                PlatformSourceRegistry.PublishDisplayConfigurationChanged();
+                Dispatcher.UIThread.RunJobs();
+            }
+            finally
+            {
+                PlatformSourceRegistry.PlatformFontScale = null;
+            }
+
+            Assert.True(text.FontSize > before, "the reader's larger text must reach the lane");
+            Assert.Equal(Math.Ceiling(text.FontSize * 1.4), text.LineHeight, 6);
+
+            // And the viewport that holds those lines moves with them, so two lines of the
+            // reader's text still get two lines of room.
+            Assert.Equal(text.LineHeight * 2, scroller.MaxHeight, 6);
+        }
+        finally
+        {
+            TextScale.Platform = platform;
+        }
+    }
+
     [AvaloniaFact]
     public async Task PhoneDialogSheetsKeepACompleteVisibleFrame()
     {

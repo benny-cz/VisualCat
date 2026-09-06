@@ -67,6 +67,9 @@ public abstract class DialogBody<TResult> : UserControl
     /// <summary>Dismissal: closing a window, tapping the scrim, or the system Back gesture.</summary>
     internal virtual void Dismiss() => _completion.TrySetResult(default);
 
+    /// <summary>Owner teardown must settle even when normal dismissal is blocked.</summary>
+    internal virtual void ForceDismiss() => _completion.TrySetResult(default);
+
     /// <summary>Runs once the body is on screen, for work that needs a live visual tree.</summary>
     protected virtual void OnPresented()
     {

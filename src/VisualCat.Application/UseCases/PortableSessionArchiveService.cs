@@ -83,6 +83,7 @@ public static class PortableSessionArchiveService
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
         var source = Path.GetFullPath(archivePath);
         var destination = Path.GetFullPath(destinationDirectory);
+        using var usage = SessionAccess.Write(destination);
         if (Directory.Exists(destination) || File.Exists(destination))
         {
             throw new IOException($"Archive destination already exists: {destination}");
@@ -128,6 +129,7 @@ public static class PortableSessionArchiveService
                 }
 
                 var relative = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+                if (relative == ".capture-identity" || relative.StartsWith(".capture-identity.", StringComparison.Ordinal)) continue;
                 var path = Path.GetFullPath(Path.Combine(temporary, relative));
                 if (!path.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
                 {

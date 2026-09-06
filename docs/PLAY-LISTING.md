@@ -44,6 +44,7 @@ WHAT YOU CAN DO
 • Inspect ranked message templates under Insights to collapse repetitive spam into useful patterns.
 • Inspect byte-faithful source context around any entry.
 • Share a verified portable session through Android's normal share sheet and reopen it on Windows, Linux or macOS.
+• Delete captures you no longer want from Recent captures: select as many as you like, see exactly what will be removed, and confirm. Deleting is permanent, a capture being recorded is never touched, and saved copies and shared archives are left alone.
 
 FULL-DEVICE LIVE CAPTURE
 
@@ -178,7 +179,7 @@ Also answer:
 | Question | Answer |
 |---|---|
 | Is all of the user data collected by your app encrypted in transit? | Not applicable — VisualCat does not collect user data to a remote service. Wireless debugging uses Android's authenticated local ADB/TLS transport. |
-| Do you provide a way for users to request that their data is deleted? | Not applicable — no account and no server-side data. Sessions are deleted from within the app. |
+| Do you provide a way for users to request that their data is deleted? | Not applicable — no account and no server-side data. Captures are deleted from within the app, from Recent captures or through cache cleanup. |
 
 ### Permissions
 

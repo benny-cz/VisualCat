@@ -13,6 +13,61 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Added
+- **Recent captures** can delete stored captures. Select any subset — or all of the ones that
+  are free to delete — review exactly what will happen, and delete them. Confirmation names the
+  captures, their approximate total size and the tabs that will close, defaults to **Cancel**,
+  and says that deleting is permanent. Every capture selected gets its own result: deleted,
+  already missing, in use, changed since you selected it, or a storage error you can act on,
+  each reachable in full under **Details**.
+- A capture being recorded, or one this app is still working on, cannot be selected or deleted
+  by any route, and neither can one another VisualCat process is writing to. An idle capture
+  that is open in a tab is closed first, and only after that closes is it removed.
+- **Stop** ends a deletion after the capture in progress. Captures it has not reached — and
+  their tabs — are left untouched, and the results say which were deleted and which were not
+  attempted.
+- Leftover storage from an interrupted deletion is visible as **Storage cleanup pending** with
+  **Retry storage cleanup**, survives a restart, and is reclaimed in bounded slices that never
+  hold up listing your captures. Storage VisualCat cannot prove it owns is left alone and
+  reported rather than swept.
+
+### Changed
+- Deleting a recovered capture from its review now reports the same per-capture outcome as
+  *Recent captures*, including storage cleanup that finishes later.
+- The dialog is titled **Recent captures** and says *captures* throughout. The command that
+  opens it is **Recent captures…** rather than *Recent sessions…*, and the desktop home screen
+  offers **RECENT CAPTURES** where it offered *REOPEN SESSION*. Sizes are described as
+  approximate: removing a capture from the list is reported separately from storage actually
+  being reclaimed, and no figure claims bytes returned to the disk.
+- On a short screen — a phone in landscape, a split-screen pane — **Recent captures** now moves
+  **Details**, **Refresh** and **Retry storage cleanup** down into the row with **Delete** and
+  **Close** instead of keeping a band of its own for them. At 1.8x text in landscape that took
+  the capture list from under a third of a row to most of one, with every action still on the
+  card.
+
+### Fixed
+- A capture name made only of a machine-generated identifier no longer reaches the screen or a
+  screen reader; it reads as **Unnamed capture**. Names are treated as text throughout, so
+  control characters and path separators in a name cannot change how a row reads.
+- Raising the device's text size while VisualCat is running no longer slices the last line of a
+  status message. Android answers that as a configuration change rather than by restarting the
+  app, and the message lane was resizing its type without resizing the lines it draws them on:
+  at 1.8x the second line of *Deleted 1 capture from temporary storage.* was cut through the
+  middle, and **More** was not offered because the lane believed the message fitted.
+- Text that has to be shortened on a small screen now gives up a whole line rather than drawing
+  half of one, in the notice lane and in the *Recent captures* status line.
+- **Recent captures** could stop responding on a phone in landscape at an enlarged text size.
+  The sheet decides whether to give up its explanation and state legend from how much room the
+  capture list has left, and the allowance for putting them back was a fixed number of pixels
+  while the text they hold grows with the reader's setting — so above about 1.5x the sheet
+  could hand the room back and immediately need it again.
+- The actions on an emptied *Recent captures* now wrap onto a second line instead of the last
+  one running off the side of the card.
+- Storage bookkeeping left behind by a deletion that could not start — a capture held open by
+  another program, say — is now cleared by the ordinary cleanup pass. It was asking for
+  exclusive use of the capture it named, which listing the captures briefly holds, so it lost
+  that race on every pass and the file stayed in the folder indefinitely.
+
 ## [2.0.12] - 2026-09-04
 
 ### Added

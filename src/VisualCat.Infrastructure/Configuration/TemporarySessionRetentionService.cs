@@ -4,7 +4,10 @@ public sealed record TemporarySessionInfo(
     string Path,
     DateTimeOffset UpdatedUtc,
     long SizeBytes,
-    bool Finalized);
+    bool Finalized)
+{
+    public string? Identity { get; init; }
+}
 
 public sealed record TemporaryCleanupResult(
     IReadOnlyList<TemporarySessionInfo> Sessions,
@@ -25,6 +28,9 @@ public static class TemporarySessionRetentionService
     private static readonly Lock SizeCacheLock = new();
     private static readonly Dictionary<string, SizeCacheEntry> SizeCache = new(PathComparer);
     private static readonly HashSet<string> SeededRoots = new(PathComparer);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lock> IndexGates = new(PathComparer);
+    private static readonly Dictionary<string, long> MutationVersions = new(PathComparer);
+    internal static Action? BeforeIndexPublicationForTest { get; set; }
 
     public static Task<IReadOnlyList<TemporarySessionInfo>> ScanAsync(
         string cacheRoot,
@@ -46,22 +52,25 @@ public static class TemporarySessionRetentionService
         string root,
         CancellationToken cancellationToken)
     {
+        var version = MutationVersion(root);
+        CaptureDeletionService.RequestCleanup(root);
         var sessions = new System.Collections.Concurrent.ConcurrentBag<TemporarySessionInfo>();
-        var directories = Directory.EnumerateDirectories(root, "*.vcat", SearchOption.TopDirectoryOnly).ToArray();
+        var directories = Directory.EnumerateDirectories(root, "*.vcat", SearchOption.TopDirectoryOnly)
+            .Where(path => path.EndsWith(".vcat", PathComparison)).ToArray();
         SeedSizeIndex(root);
         await Parallel.ForEachAsync(
             directories,
             new ParallelOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = 4 },
             async (directory, token) =>
             {
-                var info = await TryInspectAsync(root, directory, token).ConfigureAwait(false);
+                var info = await TryInspectAsync(root, directory, version, token).ConfigureAwait(false);
                 if (info is not null)
                 {
                     sessions.Add(info);
                 }
             }).ConfigureAwait(false);
 
-        PersistSizeIndex(root, directories);
+        PersistSizeIndex(root, directories, version);
 
         return sessions
             .OrderByDescending(static session => session.UpdatedUtc)
@@ -137,7 +146,7 @@ public static class TemporarySessionRetentionService
     }
 
     /// <summary>Writes measured sizes back, pruning sessions that no longer exist.</summary>
-    private static void PersistSizeIndex(string root, IReadOnlyList<string> directories)
+    private static void PersistSizeIndex(string root, IReadOnlyList<string> directories, long version)
     {
         var temporary = string.Empty;
         try
@@ -162,9 +171,9 @@ public static class TemporarySessionRetentionService
             {
                 // Every measured session is gone. Leaving the index behind would keep
                 // sizes for directories that no longer exist.
-                if (File.Exists(path))
+                lock (IndexGates.GetOrAdd(root, static _ => new Lock()))
                 {
-                    File.Delete(path);
+                    if (MutationVersion(root) == version && File.Exists(path)) File.Delete(path);
                 }
 
                 return;
@@ -183,7 +192,16 @@ public static class TemporarySessionRetentionService
 
             temporary = Path.Combine(root, $".session-sizes.{Guid.NewGuid():N}.tmp");
             File.WriteAllBytes(temporary, json);
-            File.Move(temporary, path, overwrite: true);
+            BeforeIndexPublicationForTest?.Invoke();
+            lock (IndexGates.GetOrAdd(root, static _ => new Lock()))
+            {
+                if (MutationVersion(root) != version)
+                {
+                    File.Delete(temporary);
+                    return;
+                }
+                File.Move(temporary, path, overwrite: true);
+            }
             temporary = string.Empty;
         }
         catch (Exception exception) when (
@@ -318,8 +336,13 @@ public static class TemporarySessionRetentionService
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                ValidateDeletionTarget(root, session.Path);
-                Directory.Delete(session.Path, recursive: true);
+                var target = await CaptureDeletionService.PrepareAsync(root, session, cancellationToken).ConfigureAwait(false);
+                var results = await CaptureDeletionService.DeleteAsync(root, [target], cancellationToken).ConfigureAwait(false);
+                var result = results[0];
+                if (!result.Removed)
+                {
+                    throw result.Error ?? new IOException("The capture could not be deleted.");
+                }
                 deleted.Add(session.Path);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -339,15 +362,13 @@ public static class TemporarySessionRetentionService
     /// </summary>
     public static void DeleteExactSession(string cacheRoot, string sessionPath)
     {
-        var root = Path.GetFullPath(cacheRoot);
-        var path = Path.GetFullPath(sessionPath);
-        ValidateDeletionTarget(root, path);
-        Directory.Delete(path, recursive: true);
+        CaptureDeletionService.DeleteExact(cacheRoot, sessionPath);
     }
 
     private static async Task<TemporarySessionInfo?> TryInspectAsync(
         string root,
         string directory,
+        long version,
         CancellationToken cancellationToken)
     {
         try
@@ -360,6 +381,11 @@ public static class TemporarySessionRetentionService
 
             var manifestPath = Path.Combine(directory, "manifest.json");
             if (!File.Exists(manifestPath))
+            {
+                return null;
+            }
+
+            if (File.GetAttributes(manifestPath).HasFlag(FileAttributes.ReparsePoint))
             {
                 return null;
             }
@@ -377,6 +403,7 @@ public static class TemporarySessionRetentionService
                 cancellationToken).ConfigureAwait(false);
             var rootElement = document.RootElement;
             var updated = rootElement.TryGetProperty("updatedUtc", out var updatedElement) &&
+                          updatedElement.ValueKind == System.Text.Json.JsonValueKind.String &&
                           updatedElement.TryGetDateTimeOffset(out var parsedUpdated)
                 ? parsedUpdated
                 : Directory.GetLastWriteTimeUtc(directory);
@@ -385,6 +412,7 @@ public static class TemporarySessionRetentionService
             var manifestInfo = new FileInfo(manifestPath);
             long size;
             if (rootElement.TryGetProperty("sessionSizeBytes", out var sizeElement) &&
+                sizeElement.ValueKind == System.Text.Json.JsonValueKind.Number &&
                 sizeElement.TryGetInt64(out var declaredSize) &&
                 declaredSize >= 0)
             {
@@ -397,13 +425,13 @@ public static class TemporarySessionRetentionService
             else
             {
                 size = MeasureDirectory(directory, cancellationToken);
-                CacheSize(directory, manifestInfo, size);
+                CacheSize(root, directory, manifestInfo, size, version);
             }
 
             return new TemporarySessionInfo(Path.GetFullPath(directory), updated, size, finalized);
         }
         catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or OverflowException)
+            exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or OverflowException or InvalidOperationException)
         {
             return null;
         }
@@ -448,10 +476,34 @@ public static class TemporarySessionRetentionService
         return false;
     }
 
-    private static void CacheSize(string directory, FileInfo manifest, long size)
+    internal static void ForgetSize(string path)
+    {
+        var root = Path.GetDirectoryName(path)!;
+        // Publication and invalidation share a separate gate; SizeCacheLock never spans I/O.
+        lock (IndexGates.GetOrAdd(root, static _ => new Lock()))
+        {
+            lock (SizeCacheLock)
+            {
+                SizeCache.Remove(path);
+                MutationVersions[root] = MutationVersions.GetValueOrDefault(root) + 1;
+            }
+            // The index is disposable. A stale on-disk entry must not seed a recreated path
+            // during a later process, even if no refresh follows this deletion.
+            try { File.Delete(Path.Combine(root, SizeIndexFileName)); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private static long MutationVersion(string root)
+    {
+        lock (SizeCacheLock) return MutationVersions.GetValueOrDefault(root);
+    }
+
+    private static void CacheSize(string root, string directory, FileInfo manifest, long size, long version)
     {
         lock (SizeCacheLock)
         {
+            if (MutationVersions.GetValueOrDefault(root) != version) return;
             if (SizeCache.Count >= 8192)
             {
                 SizeCache.Clear();

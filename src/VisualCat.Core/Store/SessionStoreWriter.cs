@@ -10,6 +10,7 @@ namespace VisualCat.Core.Store;
 
 public sealed class SessionStoreWriter : IAsyncDisposable
 {
+    private readonly IDisposable _usage;
     private static readonly TimeSpan InitialFlushInterval = TimeSpan.FromSeconds(1);
 
     // A live tail should feel continuous, so the time-triggered flush ceiling is a few
@@ -127,47 +128,59 @@ public sealed class SessionStoreWriter : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(settings);
         _root = Path.GetFullPath(root);
-        _settings = settings;
-        _source = source;
-        _presence = presence;
-        _pending = new List<NormalizedEntry>(settings.SegmentEntries);
-        Directory.CreateDirectory(_root);
-        Directory.CreateDirectory(Path.Combine(_root, "segments"));
-        Directory.CreateDirectory(Path.Combine(_root, "source-order"));
-        Directory.CreateDirectory(Path.Combine(_root, "diagnostics"));
-        _sourceRecordsStream = new FileStream(
-            Path.Combine(_root, "source-order", "records.bin"),
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.Read,
-            1024 * 1024,
-            FileOptions.SequentialScan);
-        _sourceRecords = new BinaryWriter(_sourceRecordsStream);
+        _usage = SessionAccess.Write(_root);
+        try
+        {
+            _settings = settings;
+            _source = source;
+            _presence = presence;
+            _pending = new List<NormalizedEntry>(settings.SegmentEntries);
+            Directory.CreateDirectory(_root);
+            Directory.CreateDirectory(Path.Combine(_root, "segments"));
+            Directory.CreateDirectory(Path.Combine(_root, "source-order"));
+            Directory.CreateDirectory(Path.Combine(_root, "diagnostics"));
+            _sourceRecordsStream = new FileStream(
+                Path.Combine(_root, "source-order", "records.bin"),
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.Read,
+                1024 * 1024,
+                FileOptions.SequentialScan);
+            _sourceRecords = new BinaryWriter(_sourceRecordsStream);
 
-        // Source records are variable length, so raw context could only be located by
-        // reading the file from the start. This sidecar stores the byte offset of every
-        // record, keyed by its (dense, monotonic) source sequence (§12.10).
-        _sourceIndexStream = new FileStream(
-            Path.Combine(_root, "source-order", "index.bin"),
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.Read,
-            256 * 1024,
-            FileOptions.SequentialScan);
-        _sourceIndex = new BinaryWriter(_sourceIndexStream);
+            // Source records are variable length, so raw context could only be located by
+            // reading the file from the start. This sidecar stores the byte offset of every
+            // record, keyed by its (dense, monotonic) source sequence (§12.10).
+            _sourceIndexStream = new FileStream(
+                Path.Combine(_root, "source-order", "index.bin"),
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.Read,
+                256 * 1024,
+                FileOptions.SequentialScan);
+            _sourceIndex = new BinaryWriter(_sourceIndexStream);
 
-        // Definitions are mutable while their cluster keeps matching, so the sidecar is
-        // a revision log rather than a one-record-per-id table. A manifest commits a byte
-        // prefix; readers fold that prefix by id and ignore later live revisions.
-        _templateStream = new FileStream(
-            Path.Combine(_root, TemplateTable.FileName),
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.Read,
-            256 * 1024,
-            FileOptions.SequentialScan);
-        InternTag(string.Empty);
-        InternBuffer(string.Empty);
+            // Definitions are mutable while their cluster keeps matching, so the sidecar is
+            // a revision log rather than a one-record-per-id table. A manifest commits a byte
+            // prefix; readers fold that prefix by id and ignore later live revisions.
+            _templateStream = new FileStream(
+                Path.Combine(_root, TemplateTable.FileName),
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.Read,
+                256 * 1024,
+                FileOptions.SequentialScan);
+            InternTag(string.Empty);
+            InternBuffer(string.Empty);
+        }
+        catch
+        {
+            _sourceRecordsStream?.Dispose();
+            _sourceIndexStream?.Dispose();
+            _templateStream?.Dispose();
+            _usage.Dispose();
+            throw;
+        }
     }
 
     public string RootPath => _root;
@@ -450,6 +463,7 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         }
 
         _manifestWriteLock.Dispose();
+        _usage.Dispose();
     }
 
     public static async Task<SourceIdentity> CreateFileIdentityAsync(

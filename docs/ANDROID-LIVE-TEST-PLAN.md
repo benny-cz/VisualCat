@@ -1137,6 +1137,175 @@ session's manifest, or the two verdicts oscillate.
 
 ---
 
+**A-26 · Selecting and deleting captures from Recent captures**
+*Risk* Deleting is permanent, so the reader has to be able to see exactly what
+will go and be right about it afterwards.
+*Pre* At least four stored captures, none of them recording. Note each one's
+name, time and size, and `ls` the sessions directory.
+*Steps* Open **Recent captures** · **Select** · check two captures by tapping a
+row and by tapping a checkbox · read the count, the approximate size and the
+Delete label · **Delete 2…** · read the confirmation · **Cancel**, then repeat
+and **Delete permanently** · read the result line · **Details** · **Close** ·
+read the notice lane · re-`ls` the sessions directory and the home screen.
+*Expect* The count, size and Delete label agree with what is checked. The
+confirmation names both captures with their date and size, says the deletion
+cannot be undone, discloses that open tabs close first, and takes its initial
+focus on Cancel. Cancel changes nothing on disk. After deleting, exactly those
+two directories are gone, no `.vcat-deleting` directory or `.json` record is left
+behind, the surviving captures are untouched, the dialog says how many were
+deleted, Details gives a reason for each, and the home screen and the notice lane
+agree with the list.
+*Fail if* A capture that was not checked is removed, a leftover staging directory
+remains after the sweep settles, the result claims bytes freed, or the home
+screen still offers a card for a deleted capture.
+
+---
+
+**A-27 · A recording or busy capture cannot be selected or deleted**
+*Risk* Deleting the capture that is being written to is the one failure this
+feature must never have.
+*Pre* At least three stored captures.
+*Steps* Start an on-device capture and leave it running · open **Recent
+captures** · **Select** · try to check the live capture, and use **Select all** ·
+read the explanation under the summary · long-press the live capture's row ·
+delete a different, idle capture while the live one keeps recording · stop the
+capture and confirm it becomes selectable.
+*Expect* The live capture cannot be checked by any route, its row says it is
+being recorded and to stop the capture first, and the denominator counts only
+captures that can be deleted. A long press may enter selection but leaves the
+protected row unchecked and announces why. The idle capture deletes normally and
+the live capture keeps recording without interruption; its file grows across the
+deletion. After Stop it becomes selectable.
+*Fail if* A live capture can be checked, is stopped as a side effect, is deleted,
+or its capture is interrupted or truncated by another capture's deletion.
+*Verified (2026-09-05, RFCRC0A9GND, on-device capture running)* Reached through
+**More actions → Recent captures…**, which is an ordinary sheet rather than a popup
+menu and does accept synthetic taps — the earlier note about **More** applies to the
+desktop composition's flyout, not to this one. The recording capture read
+*capture in progress · open in a tab* with *This capture is being recorded. Stop the
+capture first.* beneath it; its checkbox was disabled, **Select all** was disabled,
+the denominator read **0 of 0 available captures selected** with *1 capture is being
+recorded.* separately, and two row taps set the highlight without checking it. The
+capture kept recording throughout — its directory grew 6732K → 6943K and its density
+plot advanced from 1.28 to 2.05 minutes across the attempt.
+
+---
+
+**A-28 · An open capture closes its tab first, and Stop leaves later captures alone**
+*Risk* Closing tabs is a visible side effect, and Stop has to mean "and nothing
+after this".
+*Pre* Three idle stored captures; open two of them in tabs.
+*Steps* Open **Recent captures** · check all three, with the open ones first ·
+confirm and read the disclosure of how many are open · delete · during the run,
+press **Stop** · read the decision row and the result.
+*Expect* Confirmation says how many of the selected captures are currently open.
+Each capture's tabs close before it is removed, one capture at a time. Stop shows
+a disabled **Stopping…** and finishes the capture in progress. Captures Stop
+never reached are still present *and their tabs are still open*. The result
+separates deleted from not attempted.
+*Fail if* Every tab closes up front, Stop leaves an enabled control that appears
+to have done nothing, a capture Stop did not reach loses its tab, or a committed
+removal is reported as cancelled.
+
+---
+
+**A-29 · Interrupted cleanup survives a restart and retries safely**
+*Risk* Storage that could not be reclaimed must stay visible and stay owned.
+*Pre* One stored capture large enough to take more than one cleanup slice.
+*Steps* Delete it and force-stop the app during the sweep (§Appendix A) ·
+relaunch · open **Recent captures** · read the storage status · **Details** ·
+**Retry storage cleanup** · re-read · `ls` the sessions directory throughout.
+*Expect* The capture is gone from the list and from the home screen and never
+comes back. Storage cleanup is reported as pending and offers Retry. Retry
+reclaims the staged payload without touching any other capture, and the status
+clears when it finishes. A directory with the staging suffix but no valid
+ownership record is never swept and is reported as unresolved instead.
+*Fail if* A deleted capture reappears, the leftover is silently forgotten, Retry
+deletes anything it does not own, or the sweep blocks the list from appearing.
+
+---
+
+**A-30 · Deletion survives rotation, background and enlarged text, with TalkBack**
+*Risk* Configuration changes and assistive technology are where dialog state is
+usually lost.
+*Pre* Font scale 1.8, TalkBack on, at least five stored captures.
+*Steps* Open **Recent captures** · **Select** · check two · rotate to landscape ·
+background the app and return · read the selection and the summary · confirm and
+delete · rotate again during the run where possible · read every announcement ·
+delete the remaining captures until the list is empty.
+*Expect* Selection, the summary, the result and any pending cleanup survive
+rotation and backgrounding. In a short landscape viewport the list and the
+decision row remain usable — help is what gets dropped, not the list. Every
+control measures at least 48 dp on both axes at font scale 1.8. TalkBack reads
+each row's name, state and reason, reads the select-all control's real state
+including mixed, and announces the result once rather than repeating the whole
+failure list. The last deletion leaves *No captures remain in temporary storage.*
+with its result still readable.
+*Fail if* Rotation cancels committed work or loses the result, a control falls
+below 48 dp, a private path or generated identifier is spoken, or the list or the
+decision row becomes unreachable.
+*Resolved (2026-09-05, RFCRC0A9GND at 360 dpi)* At font scale 1.8 the notice lane
+rendered *Deleted 1 capture from temporary storage.* over two lines with the second
+cut about half way through, and offered no **More**: the lane border measured 62.2 dp
+and the message's own bounds 36.0 dp, which is two line boxes of *unscaled* type.
+Android answers a font-scale change as a configuration change rather than by
+recreating the activity, and the lane restated its font size in place without
+restating the line box it had been built with — so 22.5 px glyphs were drawn into
+18 px boxes, and the lane's own arithmetic agreed with itself well enough that the
+overflow test found nothing to disclose. `ApplyTextScaleToShell` now moves the two
+together and re-applies the layout, covered by
+`RaisingTheTextScaleInPlaceResizesTheNoticeLinesAndItsViewport`. Re-measured on the
+device at 1.8: the lane is **78.2 dp** (two 32 dp line boxes plus padding and border),
+the two ink bands are 21.3 dp and 20.0 dp with 10.2 dp of clear space below the
+second, and nothing is clipped.
+
+*Resolved (2026-09-06, review pass)* Two more defects at the same viewport. The
+sheet's compaction band was a fixed 140 logical pixels, but what compaction hands back
+— the state legend and the explanation above the list — is text and grows with the
+reader's scale: at 1.8 it is worth about 182, so leaving compact freed less room than
+restoring the help immediately consumed, the list fell back under its floor, and the
+sheet compacted again. Avalonia reports that as an infinite layout pass, and it happens
+at 620 x 394 dp, which is exactly the card a landscape phone gives at that scale. The
+band is now eight line boxes of the reader's own type. Separately, an emptied sheet
+stopped answering whether the reconciling actions should be folded, so the actions of
+an emptied list ended up in one row that did not wrap and whose last button ran off the
+side; the fold is about the panel's height rather than the list's, so it is answered
+whether or not there is a list. Re-measured on the device: the empty sheet's four
+actions end 7 dp inside the card, and select mode holds a 73.8 dp list with an
+unreadable-capture warning on screen and 112.9 dp without one.
+
+*TalkBack limit (2026-09-05, RFCRC0A9GND)* The screen-reader half of this scenario
+still needs a person. Samsung TalkBack runs and draws its focus over VisualCat, and a
+hardware **Tab** does move that focus into the sheet and onto a capture row — but its
+linear-navigation flick and its double-tap activation are not reproducible with
+`input swipe` or `input tap` at any duration between 30 ms and 250 ms, and its
+first-run permission prompt can only be dismissed by a real double tap (grant
+`READ_PHONE_STATE` to get past it, and revoke it afterwards). What the accessibility
+tree exports is verified instead, and that is what TalkBack reads: row speech as
+*name · date · size. state · reason*, checkbox names as **Select {name} · {date} ·
+{size}** with the real toggle state, the select-all control reporting unchecked, mixed
+and checked, the live region under the list, and no path or generated identifier
+anywhere. Swipe navigation order and announcement behaviour remain unverified.
+
+*Observed (2026-09-05)* Starting a capture while **Recent captures** is open refreshes
+the list in place: the new capture arrives already protected — *capture in progress ·
+open in a tab*, its checkbox disabled, *1 recording* beside the count — and it does
+**not** inherit the select-all check that was already set. The denominator stayed at
+the one capture that could still be deleted, and that capture kept its check across
+the refresh.
+
+*Resolved (2026-09-05, same pass)* In landscape at 1.8 the sheet's list measured
+**37.3 dp** — less than a third of one row — while a whole 49 dp band below it held
+*Details*, *Refresh* and *Retry storage cleanup*. Compaction had already given up the
+explanation and the state legend, and those are help; reconciling actions are not, so
+they now move into the decision row, which already wraps and had the width to spare.
+Re-measured on the device: the list is **112.9 dp** with a whole capture visible, and
+every action is still on the card. The compact status budget is also a whole number of
+line boxes now, so *Selecting captures. Tap a capture to select it.* gives up its
+second line rather than drawing half of it.
+
+---
+
 ## 7. Tier X — complex, stress, and soak scenarios
 
 Purpose: the conditions that break real software — volume, duration, resource
@@ -2379,20 +2548,21 @@ should re-run at least the scenarios in its row.
 | Filters, facets, ranges, saved views | B-05, A-02, A-03, A-04, R-36 |
 | Templates and mining | A-01, H-06 |
 | Entry details, selection, and raw source | B-04, A-10, A-24, U-13, X-13, R-31, R-39, R-40 |
-| Sessions, cache, retention, recents | B-02, B-13, A-05, A-15, A-19, X-18, X-19, X-20, X-21, X-22, R-07, R-12, R-30 |
+| Sessions, cache, retention, recents | B-02, B-13, A-05, A-15, A-19, A-26, A-27, A-28, A-29, X-18, X-19, X-20, X-21, X-22, R-07, R-12, R-30 |
+| Deleting captures | A-26, A-27, A-28, A-29, A-30 |
 | Upgrade, signing, and distribution | A-19, A-22, H-06, H-07 |
 | Export and reports | B-14, A-04, A-20, A-21, H-08, X-19, P-10, P-12 |
 | Diagnostics bundle | A-16, P-03, P-12 |
 | Settings | A-17, U-04, U-06, R-08 |
 | Workspace modes and layout | B-09, U-01, U-02, R-06, R-34 |
-| Back, sheets, and dismissal | B-15, A-20, U-18, R-19, R-26 |
+| Back, sheets, and dismissal | B-15, A-20, A-26, A-30, U-18, R-19, R-26 |
 | Keyboard and IME | U-03, U-10, R-16 |
-| Accessibility | U-08, U-09, U-10, U-16, U-17, U-18, R-10, R-11, R-24, R-25, R-26 |
+| Accessibility | U-08, U-09, U-10, U-16, U-17, U-18, A-30, R-10, R-11, R-24, R-25, R-26 |
 | Theme, contrast, text scale, and product identity | U-04, U-05, U-06, U-16, U-19, R-05, R-27, R-28 |
 | Notices and messaging | A-18, U-12, U-13, R-09, R-15, R-22 |
 | Locale, culture, and layout direction | A-13, U-11, R-35 |
 | Time, zones, and clocks | A-23, X-11, R-20 |
-| Cancellation and idempotence | A-20, U-18, X-15, X-18, X-19 |
+| Cancellation and idempotence | A-20, A-28, U-18, X-15, X-18, X-19 |
 | Volume and responsiveness | X-01, X-02, X-03, X-13, X-14, X-21, X-22 |
 | Endurance and resource pressure | X-05, X-06, X-07, X-09, X-10, X-16, X-21, X-22, P-12 |
 | Data integrity and loss evidence | A-10, A-11, A-19, X-04, X-11, X-19, X-20, X-24, H-06, H-07 |

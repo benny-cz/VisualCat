@@ -139,6 +139,19 @@ complete recorded prefix on the same open handle it reads, accepts safe append-o
 growth, and refuses changed evidence; see
 [ADR 0020](docs/adr/0020-verified-raw-evidence.md).
 
+Every entry point that uses a stored session takes a lease over it first
+(`SessionAccess` in Core): readers share, and a writer or a deletion is
+exclusive. That is what makes removing a capture safe against this app's own
+work and against a second cooperating process. Deleting is staged — an ownership
+record is published, the capture is renamed within its root, and reclaiming the
+staged payload is a separate budgeted obligation that survives restart — so a
+capture is never half-removed from the list, and cleanup that cannot finish stays
+visible and retryable instead of disappearing. Infrastructure owns the filesystem
+outcomes; the shell owns tab lifetime, the result ledger and the home screen; the
+dialog owns only selection, confirmation and reporting. See
+[ADR 0022](docs/adr/0022-capture-deletion.md) and
+[`docs/SESSION-FORMAT.md`](docs/SESSION-FORMAT.md) for the reserved names.
+
 ## Query path
 
 ```text

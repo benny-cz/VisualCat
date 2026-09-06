@@ -16,6 +16,8 @@ public static class SessionSaveService
         ArgumentNullException.ThrowIfNull(snapshot);
         var sourceRoot = Path.GetFullPath(snapshot.RootPath);
         var destinationRoot = Path.GetFullPath(destination);
+        using var sourceUsage = SessionAccess.Read(sourceRoot);
+        using var destinationUsage = SessionAccess.Write(destinationRoot);
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (Directory.Exists(destinationRoot) || File.Exists(destinationRoot))
         {
@@ -103,6 +105,9 @@ public static class SessionSaveService
             cancellationToken.ThrowIfCancellationRequested();
             RejectLink(file);
             var relative = Path.GetFullPath(file)[sourcePrefix.Length..];
+            // Storage identity belongs to the original directory. Saved/imported copies must
+            // receive a fresh identity even on filesystems without a stable birth time.
+            if (relative == ".capture-identity" || relative.StartsWith(".capture-identity.", StringComparison.Ordinal)) continue;
             await CopyFileAsync(file, Path.Combine(destination, relative), cancellationToken).ConfigureAwait(false);
         }
     }
