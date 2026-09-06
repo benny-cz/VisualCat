@@ -59,8 +59,6 @@ public sealed class MainActivity : AvaloniaMainActivity
     protected override void OnCreate(global::Android.OS.Bundle? savedInstanceState)
     {
         s_current = new WeakReference<MainActivity>(this);
-        if (FilesDir?.AbsolutePath is { } privateFiles)
-            VisualCat.Infrastructure.Configuration.CaptureDeletionService.ConfigurePrivateStorageAnchor(privateFiles);
 
         // Read before Avalonia builds anything: every font size in the product is resolved
         // against this while its view is being constructed (audit 2, B5). Android recreates

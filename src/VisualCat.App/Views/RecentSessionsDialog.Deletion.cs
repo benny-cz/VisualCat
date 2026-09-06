@@ -681,6 +681,14 @@ internal sealed class RecentCapturePanel : UserControl
 
             _all.IsChecked = selected.Length == 0 ? false : selected.Length == eligible ? true : null;
             _all.IsEnabled = eligible > 0 && !_busy && available;
+
+            // Android's accessibility node has no third state: a mixed check reaches TalkBack
+            // as plainly unticked, so a reader choosing two captures out of five is told that
+            // nothing is selected. Verified on the device — the row checks report their own
+            // state correctly, and this one cannot. The state it cannot carry is said in words.
+            AutomationProperties.SetHelpText(
+                _all,
+                selected.Length > 0 && selected.Length < eligible ? "Some captures are selected." : string.Empty);
             _selection.IsVisible = !empty && _selecting;
             _summary.Text = (_compact
                 ? $"{selected.Length:N0} of {eligible:N0} selected"

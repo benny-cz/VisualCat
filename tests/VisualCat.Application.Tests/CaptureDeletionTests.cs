@@ -171,6 +171,68 @@ public sealed class CaptureDeletionTests : IDisposable
         Assert.Empty(Directory.EnumerateDirectories(_root, "*.vcat-deleting"));
     }
 
+    /// <summary>
+    /// T-I4. A root reached through a linked ancestor still works; a linked root does not.
+    /// </summary>
+    /// <remarks>
+    /// macOS reaches its standard temporary directory through <c>/var</c>, which is a symlink,
+    /// so refusing every reparse point up to the volume made the whole feature report
+    /// unavailable storage on that platform and failed every filesystem test with it. Above the
+    /// root is the reader's own layout; the guarantee is that the root itself is real and that
+    /// nothing inside it is followed.
+    /// </remarks>
+    [Fact]
+    public async Task ARootBehindALinkedAncestorIsUsableAndALinkedRootIsNot()
+    {
+        var linked = Path.Combine(Path.GetTempPath(), "VisualCat.Delete.Tests", Guid.NewGuid().ToString("N"));
+        var real = Path.Combine(linked, "real");
+        Directory.CreateDirectory(real);
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(Path.Combine(linked, "via"), real);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+            {
+                // Creating links needs a privilege this account may not hold. Explicit skip:
+                // the check is real, the fixture is not always available.
+                return;
+            }
+
+            // The root is a real directory that happens to be reached through a link.
+            var root = Path.Combine(linked, "via", "root");
+            Directory.CreateDirectory(root);
+            var capture = Path.Combine(root, "sample.vcat");
+            Directory.CreateDirectory(capture);
+            await File.WriteAllTextAsync(
+                Path.Combine(capture, "manifest.json"),
+                "{\"updatedUtc\":\"2026-09-06T10:00:00Z\",\"finalized\":true,\"sessionSizeBytes\":4096}",
+                TestContext.Current.CancellationToken);
+
+            var inventory = await CaptureDeletionService.InventoryAsync(root);
+            Assert.True(inventory.Available, $"storage reported unavailable: {inventory.Error?.GetType().Name}");
+            var target = await CaptureDeletionService.PrepareAsync(
+                root, new TemporarySessionInfo(capture, DateTimeOffset.UtcNow, 4096, true));
+            Assert.True(Assert.Single(await CaptureDeletionService.DeleteAsync(root, [target])).Committed);
+            Assert.False(Directory.Exists(capture));
+
+            // The root being the link itself is still refused: that is the boundary this
+            // operation owns, and it has to be a real directory.
+            var throughLink = Path.Combine(linked, "via");
+            var other = Path.Combine(real, "root", "other.vcat");
+            Directory.CreateDirectory(other);
+            var refused = Assert.Single(await CaptureDeletionService.DeleteAsync(
+                throughLink, [new CaptureDeleteTarget(Path.Combine(throughLink, "other.vcat"), "id", null)]));
+            Assert.Equal(CaptureDeleteOutcome.Refused, refused.Outcome);
+            Assert.True(Directory.Exists(other));
+        }
+        finally
+        {
+            try { Directory.Delete(linked, true); } catch (IOException) { }
+        }
+    }
+
     /// <summary>T-I14. A staging suffix with no valid record is refused, not swept.</summary>
     [Fact]
     public async Task SuffixAloneNeverAuthorisesRecovery()

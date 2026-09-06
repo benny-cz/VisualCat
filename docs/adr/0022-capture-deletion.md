@@ -71,12 +71,18 @@ Timestamp and size are not identity: a capture can be replaced at the same path 
    omit identity markers so each copy receives a fresh one. An external restored copy that
    preserves the marker and has no distinguishable birth time remains outside this guarantee.
 
-4. **No-follow validation respects the platform's private-storage boundary.** The source must
-   be a direct `.vcat` child of the prepared root, with no linked root, ancestor or descendant.
-   On Android the OS-provided application files directory is the trusted anchor; the anchor and
-   everything below it are checked. Stat calls against SELinux-protected system ancestors are
-   neither required nor a useful test of whether this application's private storage is usable.
-   On Windows, both UNC roots and mapped network drives are refused.
+4. **No-follow validation, bounded by the storage root.** The source must be a direct `.vcat`
+   child of the prepared root. The root itself must be a real directory rather than a link, and
+   nothing inside the tree being walked or reclaimed is ever followed. Above the root is the
+   reader's own filesystem layout, which this product does not own and does not inspect: a link
+   there is resolved once by the operating system, consistently, for every call the operation
+   makes. Refusing those as well made the feature unusable on whole platforms — macOS reaches
+   its standard temporary directory through `/var`, a symlink, so every root beneath it reported
+   unavailable storage — and it never closed the hostile-mutation gap it appeared to, since an
+   ancestor can be swapped after any check. It also removes the need for a platform anchor:
+   stopping at the root already means no stat call is made against SELinux-protected ancestors
+   above an Android app's sandbox. On Windows, both UNC roots and mapped network drives are
+   refused.
 
 5. **Refresh and result lifetimes are separate from deletion.** The post-operation inventory
    has its own cancellable lifetime. A cancelled or older inventory cannot replace the list or

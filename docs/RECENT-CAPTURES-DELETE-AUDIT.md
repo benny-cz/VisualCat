@@ -51,6 +51,31 @@ override), debug APK built from this working tree:
 The device was left locked with empty capture storage, text size 1.0 and rotation
 unlocked.
 
-The plan's human TalkBack speech/gesture pass and physical Windows keyboard pass
-remain manual acceptance items. Headless accessibility/keyboard assertions and
-ADB-driven device interaction do not establish those results.
+## The two manual acceptance items, 2026-09-06
+
+**Windows keyboard-only pass (`P-16.1`).** Run against the real app on an unlocked
+session with synthetic keystrokes: `Ctrl+A` checks all five, `Ctrl+Shift+A` clears,
+arrows move the highlight without changing a check, `Space` checks the highlighted
+capture, `Delete` opens the confirmation with focus on **Cancel**, `Enter` there
+activates Cancel and deletes nothing, the selection survives that, the first `Escape`
+clears the checks while the dialog stays, and the second closes it. A capture was then
+deleted end to end without the mouse — list focus, `Down`, `Space`, `Delete`, `Tab` to
+**Delete permanently**, `Enter` — taking the folder from five captures to four.
+
+**TalkBack pass.** Samsung TalkBack driven with a hardware key stream, with each move
+confirmed as spoken by the platform's own text-to-speech synthesis events. Focus reaches
+**Recent captures** from the home screen and opens it, then traverses every capture row
+— each announced as *name · date · size. date · size · state* — and the state legend.
+Row checkboxes carry their own name (*Select echo · 2026-09-06 12:05 · 4 MiB*), their
+help text, and their real ticked state, with no path or generated identifier anywhere.
+
+That pass found one defect. An Android accessibility node is ticked or not; it has no
+third value, so the mixed select-all reached TalkBack as plainly unticked and a reader
+who had chosen two captures out of five was told nothing was selected. The control now
+carries *Some captures are selected.* as help text in exactly that state, verified on
+the device across all three: nothing selected and everything selected leave it empty,
+the mixed state supplies it.
+
+TalkBack's own flick navigation and double-tap activation remain unreachable with
+synthetic input at any speed, so gesture-only operation is still a human check. What is
+established here is reading order, reachability, announced content and toggle state.

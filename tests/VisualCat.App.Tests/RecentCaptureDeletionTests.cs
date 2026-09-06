@@ -256,6 +256,41 @@ public sealed class RecentCaptureDeletionTests
 
     // ---- selection ---------------------------------------------------------------------
 
+    /// <summary>
+    /// T-U3, section 13. The one selection state Android cannot carry is said in words.
+    /// </summary>
+    /// <remarks>
+    /// An accessibility node is checked or not; there is no third value. On the device a mixed
+    /// select-all reached TalkBack as plainly unticked, so a reader who had chosen two captures
+    /// out of five was told nothing was selected. The row checks report themselves correctly and
+    /// need no help; only this one does.
+    /// </remarks>
+    [AvaloniaFact]
+    public void TheMixedSelectAllSaysSoWhereItsStateCannotBeCarried()
+    {
+        var snapshot = Snapshot(3);
+        var dialog = new RecentSessionsDialog(snapshot, Actions(snapshot));
+        var window = Show(dialog);
+        try
+        {
+            var all = SelectAll(dialog);
+            Assert.True(string.IsNullOrEmpty(AutomationProperties.GetHelpText(all)), "nothing selected needs no explanation");
+
+            Toggle(RowChecks(dialog).First());
+            Assert.Null(all.IsChecked);
+            Assert.Equal("Some captures are selected.", AutomationProperties.GetHelpText(all));
+
+            Toggle(all);
+            Assert.True(all.IsChecked);
+            Assert.True(string.IsNullOrEmpty(AutomationProperties.GetHelpText(all)), "a full selection carries its own state");
+        }
+        finally
+        {
+            dialog.ForceDismiss();
+            window.Close();
+        }
+    }
+
     /// <summary>T-U3, T-U4. false → mixed → true → false, and a busy capture is never in it.</summary>
     [AvaloniaFact]
     public void SelectAllHasCorrectMixedCycleAndSkipsBusyRows()

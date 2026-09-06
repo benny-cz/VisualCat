@@ -51,16 +51,6 @@ public static class CaptureDeletionService
     private const int ReclaimEntryBudget = 128;
     private const int ReclaimMillisecondBudget = 100;
     private static readonly TimeSpan CleanupDrainBudget = TimeSpan.FromSeconds(20);
-    private static string? s_privateStorageAnchor;
-
-    /// <summary>Android's OS-owned app files directory is the validation boundary; SELinux
-    /// need not permit an app to stat system-owned ancestors above its sandbox.</summary>
-    public static void ConfigurePrivateStorageAnchor(string path)
-    {
-        if (!OperatingSystem.IsAndroid()) throw new PlatformNotSupportedException();
-        s_privateStorageAnchor = SessionPath.Canonical(path);
-    }
-
     // Deterministic barriers/faults for commit and recovery tests; never configured by production.
     internal static Action<string>? TestPhase { get; set; }
 
@@ -104,7 +94,7 @@ public static class CaptureDeletionService
             var root = SessionPath.Canonical(cacheRoot);
             try
             {
-                ValidateAncestors(root);
+                ValidateRoot(root);
                 if (!DirectoryPresent(root))
                 {
                     if (Path.GetPathRoot(root) is { } volume && !DirectoryPresent(volume))
@@ -383,7 +373,7 @@ public static class CaptureDeletionService
             throw new CaptureRefusedException();
         }
 
-        ValidateAncestors(root);
+        ValidateRoot(root);
         if (!DirectoryPresent(root))
         {
             throw new DirectoryNotFoundException("Temporary storage is unavailable.");
@@ -392,7 +382,24 @@ public static class CaptureDeletionService
 
     private static bool IsCapture(string path) => path.EndsWith(".vcat", SessionPath.Comparison);
 
-    private static void ValidateAncestors(string path)
+    /// <summary>
+    /// The storage root is the boundary: it must be a real directory rather than a link, and
+    /// nothing above it is inspected.
+    /// </summary>
+    /// <remarks>
+    /// This used to walk every ancestor to the volume and refuse any reparse point among them,
+    /// which made the feature unusable wherever a platform's own layout puts one there. macOS
+    /// reaches its standard temporary directory through <c>/var</c>, a symlink, so every root
+    /// under it reported <em>Temporary storage is unavailable</em> and every capture refused;
+    /// a Windows junction or a redirected profile does the same. Above the root is the reader's
+    /// filesystem, not this product's: a link there is followed once by the operating system,
+    /// consistently, for every call this operation makes. What the guarantee actually rests on
+    /// is unchanged — the target must be a direct <c>.vcat</c> child of this root, and
+    /// <see cref="ValidateTree"/> refuses a link anywhere inside it. Swapping an ancestor
+    /// between validation and rename remains the documented hostile-mutation boundary, which
+    /// walking it never closed either.
+    /// </remarks>
+    private static void ValidateRoot(string path)
     {
         if (OperatingSystem.IsWindows() && path.StartsWith(@"\\", StringComparison.Ordinal))
         {
@@ -403,16 +410,12 @@ public static class CaptureDeletionService
             new DriveInfo(drive).DriveType == DriveType.Network)
             throw new CaptureRefusedException();
 
-        for (string? current = path; current is not null; current = Path.GetDirectoryName(current))
+        try
         {
-            try
-            {
-                RequireDirectory(current);
-            }
-            catch (DirectoryNotFoundException) { }
-            catch (FileNotFoundException) { }
-            if (OperatingSystem.IsAndroid() && SessionPath.Comparer.Equals(current, s_privateStorageAnchor)) break;
+            RequireDirectory(path);
         }
+        catch (DirectoryNotFoundException) { }
+        catch (FileNotFoundException) { }
     }
 
     private static FileAttributes Attributes(string path)
@@ -709,7 +712,7 @@ public static class CaptureDeletionService
         var progress = false;
         try
         {
-            ValidateAncestors(root);
+            ValidateRoot(root);
             RequireDirectory(root);
             using var rootReservation = SessionAccess.ReserveDeletion(Path.Combine(root, ".cleanup-worker"));
             rootReservation.RequireExclusive();

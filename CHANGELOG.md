@@ -78,6 +78,15 @@ screenshot says which build it came from.
   could hand the room back and immediately need it again.
 - The actions on an emptied *Recent captures* now wrap onto a second line instead of the last
   one running off the side of the card.
+- **Select all** told a screen reader that nothing was selected when only some captures were.
+  Android has no third state for a tick box, so the control now says *Some captures are
+  selected.* in the one state it cannot otherwise carry.
+- **Recent captures** reported *Temporary storage is unavailable* on macOS, and would have on
+  any machine whose capture folder is reached through a symbolic link or a Windows junction —
+  a redirected profile, for example. It refused every folder above the capture root as well as
+  the root itself, and macOS reaches its standard temporary directory through one. The root is
+  now the boundary: it must be a real folder, nothing inside it is ever followed, and what is
+  above it is left to the operating system.
 - Storage bookkeeping left behind by a deletion that could not start — a capture held open by
   another program, say — is now cleared by the ordinary cleanup pass. It was asking for
   exclusive use of the capture it named, which listing the captures briefly holds, so it lost
