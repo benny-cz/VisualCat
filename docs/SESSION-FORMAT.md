@@ -41,7 +41,7 @@ Live manifests may include bounded `(pid, name, firstSeen, lastSeen)` process-na
 
 ## Reserved names in a temporary-storage root
 
-Two names beside a capture are reserved, and a scan of stored captures excludes both by an
+Three names beside a capture are reserved, and a scan of stored captures excludes them by an
 explicit `.vcat` suffix check rather than by a glob.
 
 ```text
@@ -50,6 +50,7 @@ explicit `.vcat` suffix check rather than by a glob.
     .capture-identity              # 32 lowercase hex characters, one random GUID
   .{guid:N}.vcat-deleting/         # a staged payload, mid-removal
   .{guid:N}.vcat-deleting.json     # its ownership record, version 1
+  .{guid:N}.vcat-deleting.json.tmp # an ownership record being published
 ```
 
 `.capture-identity` is the capture's identity marker. It is written when a capture is first
@@ -66,6 +67,7 @@ validates all of that, plus direct-child membership and the absence of links, on
 
 | Last durable step | What recovery does |
 |---|---|
+| Record temporary written, not published | Retire only a regular, non-linked file of at most 4 KiB with this exact reserved name, after an exclusive open proves no publisher holds it. Other occupants are unresolved and untouched. |
 | Record published, rename not committed | The original capture remains. The obsolete record is removed once the source and stage states are resolved; a record alone never authorises deleting the original. |
 | Rename committed, payload present or partial | Only the validated owned payload is reclaimed. It never becomes a capture again. |
 | Payload removed, record remains | The obsolete record is removed after verifying the payload is absent. |

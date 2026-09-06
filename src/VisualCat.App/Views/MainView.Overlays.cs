@@ -35,6 +35,7 @@ public sealed partial class MainView : IDialogHost
     /// </summary>
     private sealed record OverlayEntry(
         Control Root,
+        ModalWorkspaceBand AccessibilityBand,
         Action Dismiss,
         SheetSurface? Surface = null,
         Func<bool, Control>? RebuildBody = null);
@@ -477,8 +478,10 @@ public sealed partial class MainView : IDialogHost
         SheetSurface? surface = null,
         Func<bool, Control>? rebuildBody = null)
     {
-        _overlays.Add(new OverlayEntry(root, dismiss, surface, rebuildBody));
-        _overlayHost.Children.Add(root);
+        var band = new ModalWorkspaceBand();
+        band.Children.Add(root);
+        _overlays.Add(new OverlayEntry(root, band, dismiss, surface, rebuildBody));
+        _overlayHost.Children.Add(band);
         _overlayHost.IsVisible = true;
         ApplyOverlayModality();
     }
@@ -636,8 +639,11 @@ public sealed partial class MainView : IDialogHost
 
     private void RemoveOverlay(Control root)
     {
+        var entry = _overlays.FirstOrDefault(entry => ReferenceEquals(entry.Root, root));
+        if (entry is null) return;
         _overlays.RemoveAll(entry => ReferenceEquals(entry.Root, root));
-        _overlayHost.Children.Remove(root);
+        _overlayHost.Children.Remove(entry.AccessibilityBand);
+        entry.AccessibilityBand.Children.Clear();
         _overlayHost.IsVisible = _overlayHost.Children.Count > 0;
         ApplyOverlayModality();
     }
@@ -668,6 +674,13 @@ public sealed partial class MainView : IDialogHost
     {
         var covered = _overlays.Count > 0;
         _rootPanel.IsSealedForModal = covered;
+        for (var index = 0; index < _overlays.Count; index++)
+        {
+            // A confirmation covers its parent just as the first sheet covers the
+            // workspace. Hide the whole subtree from accessibility, retaining its visual
+            // state and restoring it when it becomes the top sheet again.
+            _overlays[index].AccessibilityBand.IsSealedForModal = index != _overlays.Count - 1;
+        }
 
         // Nothing behind the scrim can be dragged, so nothing behind it has any business
         // holding the platform's edge gesture — least of all while the reader has a layer

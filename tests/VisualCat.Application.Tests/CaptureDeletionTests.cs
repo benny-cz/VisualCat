@@ -731,6 +731,82 @@ public sealed class CaptureDeletionTests : IDisposable
         Assert.Equal("not ours", await File.ReadAllTextAsync(junk, TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task PublicationCleanupReportsDirectoriesAsUnresolvedAndLeavesThemUntouched()
+    {
+        var directory = Path.Combine(_root, "." + Guid.NewGuid().ToString("N") + ".vcat-deleting.json.tmp");
+        Directory.CreateDirectory(directory);
+        var payload = Path.Combine(directory, "survivor");
+        await File.WriteAllTextAsync(payload, "not metadata", TestContext.Current.CancellationToken);
+
+        await CaptureDeletionService.RetryCleanupAsync(_root);
+        var inventory = await CaptureDeletionService.InventoryAsync(_root);
+        Assert.Equal(0, inventory.PendingCleanup);
+        Assert.Equal(1, inventory.UnresolvedCleanup);
+        Assert.Equal("not metadata", await File.ReadAllTextAsync(payload, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task PublicationCleanupLeavesLinkedFilesAndTheirTargetsUntouched()
+    {
+        var capture = await Capture();
+        var target = Path.Combine(capture.Path, "manifest.json");
+        var before = await File.ReadAllBytesAsync(target, TestContext.Current.CancellationToken);
+        var link = Path.Combine(_root, "." + Guid.NewGuid().ToString("N") + ".vcat-deleting.json.tmp");
+        try { File.CreateSymbolicLink(link, target); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            // The Android acceptance pass also covers this on storage that permits links.
+            return;
+        }
+
+        await CaptureDeletionService.RetryCleanupAsync(_root);
+        Assert.True(File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint));
+        Assert.Equal(before, await File.ReadAllBytesAsync(target, TestContext.Current.CancellationToken));
+        var inventory = await CaptureDeletionService.InventoryAsync(_root);
+        Assert.Equal(0, inventory.PendingCleanup);
+        Assert.Equal(1, inventory.UnresolvedCleanup);
+    }
+
+    [Fact]
+    public async Task PublicationCleanupRefusesFilesLargerThanItsOwnRecords()
+    {
+        var path = Path.Combine(_root, "." + Guid.NewGuid().ToString("N") + ".vcat-deleting.json.tmp");
+        var bytes = new byte[4097];
+        Random.Shared.NextBytes(bytes);
+        await File.WriteAllBytesAsync(path, bytes, TestContext.Current.CancellationToken);
+        await CaptureDeletionService.RetryCleanupAsync(_root);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
+        var inventory = await CaptureDeletionService.InventoryAsync(_root);
+        Assert.Equal(0, inventory.PendingCleanup);
+        Assert.Equal(1, inventory.UnresolvedCleanup);
+    }
+
+    [Fact]
+    public async Task BusyPublicationsDoNotStarveLaterAbandonedMetadataOrSpinThroughTheDrainBudget()
+    {
+        for (var index = 0; index < 129; index++)
+            await File.WriteAllTextAsync(
+                Path.Combine(_root, "." + Guid.NewGuid().ToString("N") + ".vcat-deleting.json.tmp"),
+                "{", TestContext.Current.CancellationToken);
+
+        // Fix the fixture to this filesystem's enumeration order: the first slice is all
+        // busy and the next contains work recovery can finish. No filename-order assumption.
+        var paths = Directory.EnumerateFiles(_root, "*.vcat-deleting.json.tmp").ToArray();
+        var held = paths.Take(128).Select(path => new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None)).ToArray();
+        try
+        {
+            await CaptureDeletionService.RetryCleanupAsync(_root).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            Assert.False(File.Exists(paths[^1]));
+            Assert.All(paths[..^1], path => Assert.True(File.Exists(path)));
+        }
+        finally
+        {
+            foreach (var stream in held) stream.Dispose();
+            await CaptureDeletionService.RetryCleanupAsync(_root);
+        }
+    }
+
     /// <summary>T-I14. An unreadable record is surfaced and left exactly as it was.</summary>
     [Fact]
     public async Task CorruptOwnershipWithoutAPayloadIsVisibleAndNeverModified()

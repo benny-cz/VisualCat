@@ -4,8 +4,8 @@ using Avalonia.Controls;
 namespace VisualCat.App.Views;
 
 /// <summary>
-/// The workspace band, with a switch that takes it out of the accessibility tree while a
-/// modal sheet is over it.
+/// A workspace or overlay band, with a switch that takes its whole subtree out of
+/// accessibility while another modal sheet is over it.
 /// </summary>
 /// <remarks>
 /// The scrim under a sheet catches every pointer, so touch was already safe. Assistive

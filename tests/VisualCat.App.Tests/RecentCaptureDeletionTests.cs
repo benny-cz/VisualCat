@@ -762,6 +762,63 @@ public sealed class RecentCaptureDeletionTests
         }
     }
 
+    [AvaloniaTheory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task HoldingKeepsTheTouchedRowStableUntilReleaseAndCancelledHoldsLeaveNoSelection(bool cancelled, bool recording)
+    {
+        MainView.InPageDialogOverride = true;
+        RecentSessionsDialog.MobileOverride = true;
+        await using var host = new MainView();
+        var window = new Window { Content = host, Width = 480, Height = 960 };
+        window.Show();
+        try
+        {
+            var sessions = new[] { Session("held"), Session("other") };
+            var snapshot = Snapshot(sessions, capturing: recording ? [sessions[0]] : []);
+            var recent = new RecentSessionsDialog(snapshot, Actions(snapshot));
+            var presented = host.ShowDialogAsync(recent);
+            await Settle();
+            var label = recent.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == "held");
+            var position = label.TranslatePoint(default, window);
+            Hold(HoldingState.Started);
+            await Settle();
+            Assert.Equal(position, label.TranslatePoint(default, window));
+
+            Hold(cancelled ? HoldingState.Canceled : HoldingState.Completed);
+            label.RaiseEvent(new TappedEventArgs(InputElement.TappedEvent, PointerEvent()));
+            await Settle();
+            Assert.False(recent.Completion.IsCompleted);
+            if (cancelled)
+            {
+                Assert.True(Find(recent, "Select").IsEffectivelyVisible);
+                Assert.DoesNotContain("Selecting captures. Tap a capture to select it.", Texts(recent));
+            }
+            else
+            {
+                Assert.True(Find(recent, "Done").IsEffectivelyVisible);
+                Assert.Equal(recording ? 0 : 1, RowChecks(recent).Count(check => check.IsChecked == true));
+                if (recording) Assert.Contains(Texts(recent), text => text.Contains("being recorded", StringComparison.Ordinal));
+            }
+            recent.ForceDismiss();
+            await presented;
+
+            PointerEventArgs PointerEvent() => new(InputElement.PointerMovedEvent, label,
+                new Pointer(0, PointerType.Touch, true), label, default, 0, default, KeyModifiers.None);
+            void Hold(HoldingState state) => label.RaiseEvent((HoldingRoutedEventArgs)Activator.CreateInstance(
+                typeof(HoldingRoutedEventArgs), System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+                null, [state, default(Point), PointerType.Touch, PointerEvent()], null)!);
+        }
+        finally
+        {
+            window.Close();
+            MainView.InPageDialogOverride = null;
+            RecentSessionsDialog.MobileOverride = null;
+        }
+    }
+
     /// <summary>T-U12. A tap on the check never opens the capture it belongs to.</summary>
     [AvaloniaFact]
     public void CheckboxActivationNeverOpensACapture()
@@ -2823,6 +2880,69 @@ public sealed class RecentCaptureDeletionTests
             window.Close();
             MainView.InPageDialogOverride = null;
             Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task NestedPhoneDialogsExposeOnlyTheTopSheetToAccessibilityAndRestoreTheirParent()
+    {
+        MainView.InPageDialogOverride = true;
+        RecentSessionsDialog.MobileOverride = true;
+        await using var host = new MainView();
+        var window = Show(host);
+        try
+        {
+            var snapshot = Snapshot(2);
+            var recent = new RecentSessionsDialog(snapshot, Actions(snapshot));
+            var outer = host.ShowDialogAsync(recent);
+            await Settle();
+            Click(Find(recent, "Select"));
+            Toggle(SelectAll(recent));
+            var root = ControlAutomationPeer.CreatePeerForElement(host)!;
+            Assert.Contains("Select all", Names(root));
+
+            var confirmation = new CaptureDeleteConfirmation(new PreparedCaptures(Guid.NewGuid(), Path.GetTempPath(),
+                snapshot.Inventory.Sessions.Select(session => Prepared(new CaptureSelection(session, "Frozen capture"))).ToArray(), []), true);
+            var inner = host.ShowDialogAsync(confirmation);
+            await Settle();
+            Assert.Contains("Delete permanently", Names(root));
+            Assert.DoesNotContain("Select all", Names(root));
+            Assert.DoesNotContain("Refresh", Names(root));
+
+            confirmation.ForceDismiss();
+            await inner;
+            await Settle();
+            Assert.Contains("Select all", Names(root));
+            Assert.All(RowChecks(recent), check => Assert.True(check.IsChecked));
+            Assert.True(recent.GetVisualDescendants().OfType<Button>()
+                .Single(button => AutomationProperties.GetName(button) == "Delete 2 captures").IsEnabled);
+
+            // Teardown can remove a covered parent before its child: the top sheet stays
+            // reachable, and closing it restores the workspace without a stranded barrier.
+            var details = new CaptureResultDetails(["Saved result"], true);
+            var last = host.ShowDialogAsync(details);
+            await Settle();
+            recent.ForceDismiss();
+            await outer;
+            await Settle();
+            Assert.Contains("Close", Names(root));
+            details.ForceDismiss();
+            await last;
+            await Settle();
+            Assert.DoesNotContain(host.GetVisualDescendants().OfType<ModalWorkspaceBand>(), band => band.IsSealedForModal);
+        }
+        finally
+        {
+            window.Close();
+            MainView.InPageDialogOverride = null;
+            RecentSessionsDialog.MobileOverride = null;
+        }
+
+        static IEnumerable<string> Names(AutomationPeer peer)
+        {
+            yield return peer.GetName();
+            foreach (var child in peer.GetChildren())
+                foreach (var name in Names(child)) yield return name;
         }
     }
 

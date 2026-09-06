@@ -58,12 +58,17 @@ Timestamp and size are not identity: a capture can be replaced at the same path 
    unresolved remnant, even beside a valid record. The one thing recovery removes without a
    record is the half-written record itself: a publication killed before its move leaves a
    temporary whose name this operation issued, holding metadata rather than payload, so
-   retiring it can never reach a capture. It is opened exclusively first, which leaves a
-   publication running in another process to its owner, and a publication whose temporary is
+   retiring it can never reach a capture. Its exact reserved name, regular-file type, absence
+   of links and 4 KiB size limit are checked before opening it for deletion. A directory, link
+   or oversized file at that name is unresolved storage and remains untouched. It is opened
+   exclusively first, which leaves a publication running in another process to its owner, and
+   a publication whose temporary is
    retired underneath it takes a fresh name rather than failing. Until then it counts as
    pending, because it is work recovery will do, rather than as cleanup that could not be
-   verified, which is what storage this product refuses to touch means. Inventories include the
-   identities still awaiting owned cleanup, so results can settle individually without waiting
+   verified, which is what storage this product refuses to touch means. Each temporary is
+   attempted once per drain, in entry/time-bounded slices, so busy publications cannot hide
+   later abandoned records or keep Retry spinning through its entire time budget. Inventories
+   include the identities still awaiting owned cleanup, so results can settle individually without waiting
    for every other deletion in the root. An unavailable inventory cannot clear known cleanup
    status.
 
@@ -107,6 +112,12 @@ Timestamp and size are not identity: a capture can be replaced at the same path 
    may use the safe viewport height and more landscape width; compact actions share the full
    wrapping width and are remeasured when their labels or visibility change. Duplicate
    selection instructions yield before results, cleanup actions or the capture list do.
+   Each in-page sheet has an accessibility boundary: only the top sheet exposes its subtree,
+   including when confirmation covers Recent captures. Closing it restores the parent's
+   selection and accessibility; removing covered sheets during teardown cannot strand a seal.
+   Holding a row defers selection layout until release: moving the row beneath a held pointer
+   made Android cancel its own gesture. Completed holds select once; cancelled holds preserve
+   the previous mode, checks and instructions, and neither can open a capture accidentally.
 
 **Alternatives considered:** A single exclusive lease per session was simpler, and was rejected
 because it would have stopped two VisualCat instances from *reading* the same capture, which

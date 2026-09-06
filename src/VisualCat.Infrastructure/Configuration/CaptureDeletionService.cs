@@ -32,7 +32,7 @@ public sealed record CaptureInventory(
 /// <summary>
 /// Explicit deletion of local, controlled temporary storage. A flushed ownership record
 /// precedes the same-parent rename. Rename is the commit; reclaim failure never undoes it.
-/// Reparse points are rejected before descending, including all existing root ancestors.
+/// Reparse points are rejected at the storage root and before descending inside it.
 /// Cooperating processes use SessionAccess; unrelated hostile filesystem mutation is outside
 /// this protocol. No free-space or power-loss durability guarantee is inferred from rename.
 /// </summary>
@@ -706,10 +706,11 @@ public static class CaptureDeletionService
         {
             var clock = Stopwatch.StartNew();
             var backoff = 0;
+            Queue<string>? publications = null;
             while (true)
             {
                 LastPass[root] = Environment.TickCount64;
-                if (!CleanupPass(root, CancellationToken.None) || clock.Elapsed >= CleanupDrainBudget)
+                if (!CleanupPass(root, ref publications, CancellationToken.None) || clock.Elapsed >= CleanupDrainBudget)
                 {
                     return;
                 }
@@ -721,7 +722,7 @@ public static class CaptureDeletionService
     }
 
     // Returns true only when an owned tree made progress and may benefit from another pass.
-    private static bool CleanupPass(string root, CancellationToken cancellationToken)
+    private static bool CleanupPass(string root, ref Queue<string>? publications, CancellationToken cancellationToken)
     {
         var progress = false;
         try
@@ -730,7 +731,7 @@ public static class CaptureDeletionService
             RequireDirectory(root);
             using var rootReservation = SessionAccess.ReserveDeletion(Path.Combine(root, ".cleanup-worker"));
             rootReservation.RequireExclusive();
-            progress = RetireAbandonedPublications(root, cancellationToken);
+            progress = RetireAbandonedPublications(root, ref publications, cancellationToken);
             var candidates = Directory.EnumerateFiles(root, "*" + RecordSuffix).Order(StringComparer.Ordinal).ToArray();
             var offset = candidates.Length == 0 ? 0 : CleanupOffsets.GetOrAdd(root, 0) % candidates.Length;
             var records = candidates.Skip(offset).Concat(candidates.Take(offset)).Take(128).ToArray();
@@ -801,20 +802,22 @@ public static class CaptureDeletionService
     /// another process is writing this instant: that publication holds it with
     /// <see cref="FileShare.None"/>, so this open is refused and the file is left to its owner.
     /// </remarks>
-    /// <returns>Whether the batch filled, so a further pass has more to retire.</returns>
-    private static bool RetireAbandonedPublications(string root, CancellationToken cancellationToken)
+    /// <returns>Whether this drain has unvisited candidates, so another slice is useful.</returns>
+    private static bool RetireAbandonedPublications(string root, ref Queue<string>? publications, CancellationToken cancellationToken)
     {
-        var batch = Directory.EnumerateFiles(root, "*" + PublishingSuffix).Take(128).ToArray();
-        foreach (var path in batch)
+        // Each candidate is attempted once per drain. Re-enumerating the first 128 names
+        // starves later abandoned records behind busy files, and spins for the whole drain
+        // budget even when all that remains belongs to a live publisher.
+        publications ??= new Queue<string>(Directory.EnumerateFiles(root, "*" + PublishingSuffix)
+            .Where(path => IsPublicationTemporary(Path.GetFileName(path))));
+        var clock = Stopwatch.StartNew();
+        var budget = ReclaimEntryBudget;
+        while (budget-- > 0 && clock.ElapsedMilliseconds < ReclaimMillisecondBudget && publications.TryDequeue(out var path))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!IsPublicationTemporary(Path.GetFileName(path)))
-            {
-                continue;
-            }
-
             try
             {
+                ValidatePublicationTemporary(path);
                 using var sole = new FileStream(
                     path, FileMode.Open, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
             }
@@ -823,7 +826,15 @@ public static class CaptureDeletionService
             }
         }
 
-        return batch.Length == 128;
+        return publications.Count > 0;
+    }
+
+    private static void ValidatePublicationTemporary(string path)
+    {
+        // A matching name is reserved metadata only when it is a regular, bounded file.
+        // Check before opening with DeleteOnClose: opening a link can reach its target.
+        if (Attributes(path).HasFlag(FileAttributes.Directory) || new FileInfo(path).Length > 4096)
+            throw new CaptureRefusedException();
     }
 
     /// <summary>Exactly the name <see cref="PublishOwnership"/> issues, and nothing else.</summary>
@@ -862,7 +873,13 @@ public static class CaptureDeletionService
             {
                 // A publication this operation abandoned is an obligation recovery can meet,
                 // so it is outstanding work rather than something refused as unidentifiable.
-                if (IsPublicationTemporary(Path.GetFileName(metadata))) pending++;
+                if (IsPublicationTemporary(Path.GetFileName(metadata)))
+                {
+                    try { ValidatePublicationTemporary(metadata); pending++; }
+                    catch (FileNotFoundException) { } // A concurrent recovery already retired it.
+                    catch (DirectoryNotFoundException) { }
+                    catch (Exception error) when (Expected(error)) { unresolved++; }
+                }
                 else unresolved++;
                 continue;
             }

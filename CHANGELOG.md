@@ -46,6 +46,14 @@ screenshot says which build it came from.
   card.
 
 ### Fixed
+- Long-press selection now waits for release before revealing checkboxes. The row stays
+  under the finger, so the sheet cannot cancel its own hold by moving; a cancelled hold
+  leaves both the selection and its instructions unchanged.
+- Confirmation and result sheets now hide the covered dialog from accessibility, restoring
+  it when the top sheet closes. TalkBack no longer reaches controls behind a nested modal.
+- Recovery of interrupted deletion metadata now refuses links, folders and oversized files
+  instead of following them or promising cleanup it cannot finish. Busy metadata files no
+  longer block later abandoned records or keep **Retry storage cleanup** busy unnecessarily.
 - Changing Android text size with **Recent captures**, its confirmation or Details already
   open now resizes the whole dialog while retaining the selection and results. Newly appearing
   cleanup actions also trigger footer wrapping immediately, keeping **Close** on the card.

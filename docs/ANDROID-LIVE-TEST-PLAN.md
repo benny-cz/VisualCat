@@ -1223,6 +1223,16 @@ ownership record is never swept and is reported as unresolved instead.
 *Fail if* A deleted capture reappears, the leftover is silently forgotten, Retry
 deletes anything it does not own, or the sweep blocks the list from appearing.
 
+*Verified (2026-09-06, final audit, Samsung SM-G990B / Android 16)* In the isolated
+test package, recovery retired an abandoned publication temporary while leaving a
+symbolic link at the same reserved name shape, its target, and a directory occupant
+untouched. Both payload hashes stayed unchanged through Retry and deletion of six
+captures. Those refused occupants were reported as unverified cleanup, not pending
+work that would eventually finish. Removing the test fixtures and refreshing cleared
+the cleanup warning and Retry while preserving **Deleted 6 captures. About 24 MiB of
+captures removed.** Filesystem regressions additionally cover oversized metadata and
+128 busy publications preceding an abandoned record.
+
 ---
 
 **A-30 · Deletion survives rotation, background and enlarged text, with TalkBack**
@@ -1273,6 +1283,21 @@ side; the fold is about the panel's height rather than the list's, so it is answ
 whether or not there is a list. Re-measured on the device: the empty sheet's four
 actions end 7 dp inside the card, and select mode holds a 73.8 dp list with an
 unreadable-capture warning on screen and 112.9 dp without one.
+
+*Verified (2026-09-06, final audit)* A nested confirmation and Details now expose only
+their own accessibility subtree. Before the fix the Android dump also contained the
+covered Recent-captures controls; afterwards none remained. Cancel restored all six
+checks. Holding a row keeps its layout stable until release: stationary DOWN / UP
+input selected exactly one row, while a cancelled gesture selected nothing and left
+the browse instructions intact. Deleting six captures produced six safe-label Details
+entries, an empty inventory, and one completion notice. Results, cleanup actions and
+Close fit at 1.8x in landscape; measured controls were at least 49.3 dp. All 885 tests
+passed (47 Domain, 128 Core, 141 Application, 569 App), with nine new regression cases.
+The device was left with empty test storage, font scale 1.0, rotation free, its 360 dpi
+override preserved, accessibility restored, the test app stopped and its screen locked.
+The normal installed app's capture storage was not used for this pass. Evidence is in
+the ignored `artifacts/recent-delete-final-20260906` directory. TalkBack's synthetic
+flick remained unverified; this pass does not claim human gesture acceptance.
 
 *TalkBack limit (2026-09-05, RFCRC0A9GND)* The screen-reader half of this scenario
 still needs a person. Samsung TalkBack runs and draws its focus over VisualCat, and a

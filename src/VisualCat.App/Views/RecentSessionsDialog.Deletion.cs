@@ -157,9 +157,8 @@ internal sealed class RecentCapturePanel : UserControl
     private RecentCaptureSnapshot _snapshot;
     private TopLevel? _keyboard;
     private CancellationTokenSource? _operation;
-    private bool _selecting, _busy, _deleting, _nested, _detached, _updating, _refreshQueued, _holdSuppressed, _holdEnteredSelect, _focused, _compact, _folded;
+    private bool _selecting, _busy, _deleting, _nested, _detached, _updating, _refreshQueued, _holdSuppressed, _focused, _compact, _folded;
     private CaptureRow? _heldRow;
-    private bool _heldWasChecked;
     private Guid _activeOperation;
     private long _lastProgressAnnouncement;
     private string _error = string.Empty;
@@ -987,30 +986,26 @@ internal sealed class RecentCapturePanel : UserControl
         if (args.HoldingState == HoldingState.Started && RowFrom(args.Source) is { } row)
         {
             _heldRow = row;
-            _heldWasChecked = row.Checked;
             _holdSuppressed = true;
-            _holdEnteredSelect = !_selecting;
+            // Revealing checks now changes the row's position beneath the held pointer.
+            // Android then cancels the very hold that caused the layout change. Keep the
+            // pressed row stable; commit selection only after a completed release.
+        }
+        else if (args.HoldingState == HoldingState.Completed && _heldRow is { } held && _rows.Contains(held))
+        {
+            _heldRow = null;
             _selecting = true;
-
             // A protected row may enter select mode and still refuse the check; the reason is
             // announced rather than left to a disabled control nobody can reach.
-            row.Checked = true;
-            _status.Text = row.Eligible ? "Selecting captures. Tap a capture to select it." : row.Note;
+            held.Checked = true;
+            _status.Text = held.Eligible ? "Selecting captures. Tap a capture to select it." : held.Note;
             Update();
         }
-        else if (args.HoldingState == HoldingState.Canceled && _heldRow is { } held)
+        else if (args.HoldingState == HoldingState.Canceled)
         {
-            // A hold that turned into a scroll must neither check nor open, and must not leave
-            // the mode it was about to enter.
-            held.Checked = _heldWasChecked;
-            if (_holdEnteredSelect)
-            {
-                _selecting = false;
-                _holdEnteredSelect = false;
-            }
-
+            // A hold that turns into scrolling changes neither selection nor its guidance.
+            _heldRow = null;
             _holdSuppressed = true;
-            Update();
         }
 
         args.Handled = true;
