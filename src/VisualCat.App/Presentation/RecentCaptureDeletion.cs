@@ -88,8 +88,21 @@ internal sealed record CaptureDeletionResult(PreparedCapture Capture, CaptureDel
 
     internal string Reason => CaptureReason.For(Protection, File.Outcome);
 
+    /// <summary>
+    /// Whether the shell settled this capture itself, before the filesystem was reached.
+    /// </summary>
+    /// <remarks>
+    /// Recording, work in flight and a failed tab close are all decided here, and none of them
+    /// reaches the rename, so the capture is known not to have been removed whatever the
+    /// exception behind it happens to classify as. Reporting one of those as an outcome that
+    /// could not be verified sends the reader to check something this workspace already knows.
+    /// </remarks>
+    internal bool SettledLocally => Protection != CaptureProtection.None;
+
     internal string Detail => Capture.Label + "\n" + Reason +
-        (TabsClosed && File.Outcome == CaptureDeleteOutcome.Unknown ? " The tab was closed; the deletion outcome is unverified."
+        (SettledLocally ? string.Empty
+            : TabsClosed && File.Outcome == CaptureDeleteOutcome.Unknown
+                ? " The tab was closed; the deletion outcome is unverified."
             : TabsClosed && !File.Removed ? " The tab was closed, but the capture was not deleted." : string.Empty);
 
     /// <summary>The in-dialog result line: every category that happened, none of them hidden.</summary>
@@ -139,7 +152,9 @@ internal sealed record CaptureDeletionResult(PreparedCapture Capture, CaptureDel
 
         if (tally.Pending > 0)
         {
-            sentences.Add($"Storage cleanup is pending for {Counted.Captures(tally.Pending)}. Some space is still in use.");
+            sentences.Add(
+                $"Storage cleanup is pending for {tally.Pending:N0} deleted " +
+                $"{(tally.Pending == 1 ? "capture" : "captures")}. Some space is still in use.");
         }
 
         if (tally.Unknown > 0)
@@ -242,7 +257,7 @@ internal sealed record CaptureDeletionResult(PreparedCapture Capture, CaptureDel
                     missing++;
                 }
 
-                if (result.File.Outcome == CaptureDeleteOutcome.Unknown)
+                if (result.File.Outcome == CaptureDeleteOutcome.Unknown && !result.SettledLocally)
                 {
                     unknown++;
                 }

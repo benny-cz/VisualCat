@@ -87,8 +87,6 @@ public sealed partial class RecentSessionsDialog
 /// </remarks>
 internal sealed class RecentCapturePanel : UserControl
 {
-    private const int PreviewNames = 5;
-
     /// <summary>Room enough for one row and a little more; below this, help yields.</summary>
     private const double ListFloor = 96;
 
@@ -692,7 +690,7 @@ internal sealed class RecentCapturePanel : UserControl
             _selection.IsVisible = !empty && _selecting;
             _summary.Text = (_compact
                 ? $"{selected.Length:N0} of {eligible:N0} selected"
-                : $"{selected.Length:N0} of {eligible:N0} available captures selected") +
+                : $"{selected.Length:N0} of {eligible:N0} available {(eligible == 1 ? "capture" : "captures")} selected") +
                 (selected.Length > 0
                     ? $" · about {RecentSessionsDialog.FormatBytes(SumSizes(selected.Select(row => row.Session.SizeBytes)))}"
                     : string.Empty);
@@ -1388,7 +1386,14 @@ internal sealed class RecentCapturePanel : UserControl
 
             if (prepared.Captures.Count == 0)
             {
-                // Never an empty confirmation.
+                // Never an empty confirmation. Preparation has normally just said why every
+                // capture left the request; when it has not, the sheet must still not be left
+                // reading "Checking selected captures…" over a selection nothing happened to.
+                if (prepared.Excluded.Count == 0)
+                {
+                    _status.Text = IdleStatus();
+                }
+
                 return;
             }
 
@@ -1405,7 +1410,10 @@ internal sealed class RecentCapturePanel : UserControl
 
             if (!confirmed || _detached)
             {
-                _status.Text = ResultSummary();
+                // Declining puts the sheet back where it was, and on the touch composition
+                // that includes the line saying what a tap does in select mode: leaving the
+                // status blank makes Cancel look as though it lost the mode as well.
+                _status.Text = IdleStatus();
                 _delete.Focus();
                 return;
             }
@@ -1582,6 +1590,13 @@ internal sealed class RecentCapturePanel : UserControl
         Dispatcher.UIThread.Post(RequestRefresh);
     }
 
+    /// <summary>What the status line says when there is no operation to report.</summary>
+    private string IdleStatus() =>
+        ResultSummary() is { Length: > 0 } summary ? summary
+        : !_mobile ? string.Empty
+        : _selecting ? "Selecting captures. Tap a capture to select it."
+        : "Tap a capture to open it. Select chooses captures to delete.";
+
     private string ResultSummary() => string.Join(' ', new[]
     {
         CaptureDeletionResult.Summary(_ledger.Values),
@@ -1757,7 +1772,8 @@ internal sealed class CaptureDeleteConfirmation : DialogBody<bool>
 
         if (count > PreviewNames)
         {
-            body.Children.Add(Copy($"And {count - PreviewNames:N0} more captures."));
+            var rest = count - PreviewNames;
+            body.Children.Add(Copy($"And {rest:N0} more {(rest == 1 ? "capture" : "captures")}."));
             var review = new Expander
             {
                 Header = $"Review all {count:N0}",

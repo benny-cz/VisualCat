@@ -427,3 +427,9 @@ samples/logcat_verylarge.txt
 
 # Local device-verification scratch (UI dumps, screenshots) — never committed.
 .codex-artifacts/
+
+# Working documents for the Recent-captures deletion feature: the plan it answers
+# to and the audits closing it. Kept on disk, out of version control — the shipped
+# behaviour is in ADR 0022, SESSION-FORMAT.md, KEYBOARD.md and the live-test plans.
+docs/RECENT-CAPTURES-DELETE-PLAN.md
+docs/RECENT-CAPTURES-DELETE-AUDIT.md

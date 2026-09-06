@@ -55,9 +55,17 @@ Timestamp and size are not identity: a capture can be replaced at the same path 
    preserved descent cursors and round-robin metadata inspection let deep trees and later
    records progress. Corrupt records, including records with no payload, remain unchanged and
    appear in the unresolved-cleanup inventory. A file occupying a staging path is also an
-   unresolved remnant, even beside a valid record. Inventories include the identities still
-   awaiting owned cleanup, so results can settle individually without waiting for every other
-   deletion in the root. An unavailable inventory cannot clear known cleanup status.
+   unresolved remnant, even beside a valid record. The one thing recovery removes without a
+   record is the half-written record itself: a publication killed before its move leaves a
+   temporary whose name this operation issued, holding metadata rather than payload, so
+   retiring it can never reach a capture. It is opened exclusively first, which leaves a
+   publication running in another process to its owner, and a publication whose temporary is
+   retired underneath it takes a fresh name rather than failing. Until then it counts as
+   pending, because it is work recovery will do, rather than as cleanup that could not be
+   verified, which is what storage this product refuses to touch means. Inventories include the
+   identities still awaiting owned cleanup, so results can settle individually without waiting
+   for every other deletion in the root. An unavailable inventory cannot clear known cleanup
+   status.
 
 3. **Identity is a marker plus, where the storage has one, a birth time.** Preparation writes a
    `.capture-identity` file holding a random GUID into the capture and records it. Publication
@@ -89,8 +97,10 @@ Timestamp and size are not identity: a capture can be replaced at the same path 
    settle cleanup results. A partial scan retains unlistable captures, but never an old identity
    at a path whose replacement it has successfully read. Lost checks are explained, preparation
    exclusions remain in Details, and cancelled, unattempted and unverified outcomes have
-   separate counters. Stopping after tabs close leaves an informational notice about that
-   side effect; a stop before any change remains quiet.
+   separate counters; a capture the shell settled itself — recording, work in flight, a tab
+   that would not close — is a known failure whatever the exception behind it classifies as,
+   because none of those reaches the rename. Stopping after tabs close leaves an informational
+   notice about that side effect; a stop before any change remains quiet.
 
 6. **An open dialog adapts without losing its state.** The in-page host owns the dialog
    directly, so platform text changes resize the body as well as the title. Deletion sheets

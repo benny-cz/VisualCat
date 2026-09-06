@@ -40,6 +40,10 @@ public static class CaptureDeletionService
 {
     private const string IdentityFile = ".capture-identity";
     private const string StageSuffix = ".vcat-deleting";
+    private const string RecordSuffix = StageSuffix + ".json";
+
+    /// <summary>The half-written record a publication moves into place. Never a payload.</summary>
+    private const string PublishingSuffix = RecordSuffix + ".tmp";
     private static readonly JsonSerializerOptions JsonOptions = new() { MaxDepth = 8 };
     private static readonly ConcurrentDictionary<string, Task> Workers = new(SessionPath.Comparer);
     private static readonly ConcurrentDictionary<string, long> LastPass = new(SessionPath.Comparer);
@@ -293,10 +297,13 @@ public static class CaptureDeletionService
     {
         for (var attempt = 1; ; attempt++)
         {
-            var stage = "." + Guid.NewGuid().ToString("N") + StageSuffix;
+            // One identifier names all three, so the record and the temporary can always be
+            // recognised as this operation's own by their suffix alone.
+            var identifier = "." + Guid.NewGuid().ToString("N");
+            var stage = identifier + StageSuffix;
             var destination = Path.Combine(root, stage);
-            var candidate = destination + ".json";
-            var temporary = candidate + ".tmp";
+            var candidate = Path.Combine(root, identifier + RecordSuffix);
+            var temporary = Path.Combine(root, identifier + PublishingSuffix);
             if (Directory.Exists(destination) || File.Exists(candidate))
             {
                 if (attempt >= StagingAttempts)
@@ -329,6 +336,13 @@ public static class CaptureDeletionService
                         File.Delete(temporary);
                     }
                 }
+            }
+            catch (FileNotFoundException) when (attempt < StagingAttempts)
+            {
+                // Recovery retired this temporary in the instant between its flush and its
+                // move. Nothing was published, so the answer is another attempt under a fresh
+                // name rather than a failed deletion.
+                continue;
             }
             catch (IOException) when (attempt < StagingAttempts && (File.Exists(candidate) || Directory.Exists(destination)))
             {
@@ -716,11 +730,12 @@ public static class CaptureDeletionService
             RequireDirectory(root);
             using var rootReservation = SessionAccess.ReserveDeletion(Path.Combine(root, ".cleanup-worker"));
             rootReservation.RequireExclusive();
-            var candidates = Directory.EnumerateFiles(root, "*" + StageSuffix + ".json").Order(StringComparer.Ordinal).ToArray();
+            progress = RetireAbandonedPublications(root, cancellationToken);
+            var candidates = Directory.EnumerateFiles(root, "*" + RecordSuffix).Order(StringComparer.Ordinal).ToArray();
             var offset = candidates.Length == 0 ? 0 : CleanupOffsets.GetOrAdd(root, 0) % candidates.Length;
             var records = candidates.Skip(offset).Concat(candidates.Take(offset)).Take(128).ToArray();
             CleanupOffsets[root] = offset + records.Length;
-            progress = candidates.Length > records.Length;
+            progress |= candidates.Length > records.Length;
             foreach (var recordPath in records)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -771,6 +786,52 @@ public static class CaptureDeletionService
         return progress;
     }
 
+    /// <summary>
+    /// Retires the half-written records a killed publication leaves behind.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="PublishOwnership"/> writes its record under a temporary name and moves it
+    /// into place, deleting the temporary in a <c>finally</c>. A process killed between those
+    /// two steps leaves the temporary, and nothing else did: the name is one this operation
+    /// issues, and the file is a record rather than a payload, so removing it can never reach
+    /// a capture. Left alone it was permanent — the record loop only reads published
+    /// <c>.json</c> names — and the inventory reported it as cleanup that could not be
+    /// verified, on every launch, with a <b>Retry storage cleanup</b> that could not clear it.
+    /// The exclusive open is what separates an abandoned temporary from one a publication in
+    /// another process is writing this instant: that publication holds it with
+    /// <see cref="FileShare.None"/>, so this open is refused and the file is left to its owner.
+    /// </remarks>
+    /// <returns>Whether the batch filled, so a further pass has more to retire.</returns>
+    private static bool RetireAbandonedPublications(string root, CancellationToken cancellationToken)
+    {
+        var batch = Directory.EnumerateFiles(root, "*" + PublishingSuffix).Take(128).ToArray();
+        foreach (var path in batch)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsPublicationTemporary(Path.GetFileName(path)))
+            {
+                continue;
+            }
+
+            try
+            {
+                using var sole = new FileStream(
+                    path, FileMode.Open, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+            }
+            catch (Exception error) when (Expected(error))
+            {
+            }
+        }
+
+        return batch.Length == 128;
+    }
+
+    /// <summary>Exactly the name <see cref="PublishOwnership"/> issues, and nothing else.</summary>
+    private static bool IsPublicationTemporary(string name) =>
+        name.Length == 1 + 32 + PublishingSuffix.Length && name[0] == '.' &&
+        name.EndsWith(PublishingSuffix, StringComparison.Ordinal) &&
+        name.AsSpan(1, 32).ToArray().All(character => char.IsAsciiHexDigit(character) && !char.IsAsciiLetterUpper(character));
+
     private static (int Pending, int Unresolved, IReadOnlySet<string> Identities) CleanupInventory(string root)
     {
         var pending = 0;
@@ -797,7 +858,15 @@ public static class CaptureDeletionService
         foreach (var metadata in Directory.EnumerateFileSystemEntries(root, "*" + StageSuffix + ".*"))
         {
             if (stages.Contains(metadata)) continue; // Windows wildcard matching may include the bare directory.
-            if (!metadata.EndsWith(".json", StringComparison.Ordinal)) { unresolved++; continue; }
+            if (!metadata.EndsWith(".json", StringComparison.Ordinal))
+            {
+                // A publication this operation abandoned is an obligation recovery can meet,
+                // so it is outstanding work rather than something refused as unidentifiable.
+                if (IsPublicationTemporary(Path.GetFileName(metadata))) pending++;
+                else unresolved++;
+                continue;
+            }
+
             if (stages.Contains(metadata[..^5])) continue;
             try { _ = ReadOwnership(metadata); }
             catch (Exception error) when (Expected(error)) { unresolved++; }

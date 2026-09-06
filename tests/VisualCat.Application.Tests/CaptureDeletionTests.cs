@@ -686,6 +686,53 @@ public sealed class CaptureDeletionTests : IDisposable
         Assert.Empty(Directory.EnumerateDirectories(_root, "*.vcat-deleting"));
     }
 
+    /// <summary>
+    /// T-I14. A publication killed before its record was in place is an obligation recovery
+    /// meets, not a permanent "cleanup could not be verified" a reader can do nothing about.
+    /// </summary>
+    /// <remarks>
+    /// The temporary carries a name this operation issues and holds a record rather than a
+    /// payload, so retiring it can never reach a capture. Left behind it was permanent: the
+    /// recovery loop reads only published <c>.json</c> names, so every launch reported it and
+    /// every <b>Retry storage cleanup</b> left it exactly where it was.
+    /// </remarks>
+    [Fact]
+    public async Task AnAbandonedPublicationIsPendingAndThenRetired()
+    {
+        var abandoned = Path.Combine(_root, "." + Guid.NewGuid().ToString("N") + ".vcat-deleting.json.tmp");
+        await File.WriteAllTextAsync(abandoned, "{\"Version\":1", TestContext.Current.CancellationToken);
+        var junk = Path.Combine(_root, "." + Guid.NewGuid().ToString("N") + ".vcat-deleting.other");
+        await File.WriteAllTextAsync(junk, "not ours", TestContext.Current.CancellationToken);
+
+        var before = await CaptureDeletionService.InventoryAsync(_root);
+        Assert.Equal(1, before.PendingCleanup);
+        Assert.Equal(1, before.UnresolvedCleanup);
+
+        await CaptureDeletionService.RetryCleanupAsync(_root);
+        var after = await CaptureDeletionService.InventoryAsync(_root);
+        Assert.False(File.Exists(abandoned));
+        Assert.Equal(0, after.PendingCleanup);
+
+        // Anything whose name this operation does not issue is still refused and still visible.
+        Assert.Equal(1, after.UnresolvedCleanup);
+        Assert.Equal("not ours", await File.ReadAllTextAsync(junk, TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>T-I14. Recovery never touches a temporary a publication is holding right now.</summary>
+    [Fact]
+    public async Task APublicationInProgressIsLeftToItsOwner()
+    {
+        var live = Path.Combine(_root, "." + Guid.NewGuid().ToString("N") + ".vcat-deleting.json.tmp");
+        using (new FileStream(live, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            await CaptureDeletionService.RetryCleanupAsync(_root);
+            Assert.True(File.Exists(live));
+        }
+
+        await CaptureDeletionService.RetryCleanupAsync(_root);
+        Assert.False(File.Exists(live));
+    }
+
     /// <summary>T-I14. An unreadable record is surfaced and left exactly as it was.</summary>
     [Fact]
     public async Task CorruptOwnershipWithoutAPayloadIsVisibleAndNeverModified()

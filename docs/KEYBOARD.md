@@ -54,9 +54,10 @@ a keyboard under **Appearance & timeline**.
 
 ## Recent captures
 
-These act inside the list of stored captures and nowhere else. A focused button, checkbox or
-text selection keeps its own keys, and nothing here is claimed while a confirmation or the
-results view owns the keyboard.
+These act inside the list of stored captures; **Escape** is the exception and works from
+anywhere in the dialog, including the decision row. A focused button, checkbox or text
+selection keeps its own keys, and nothing here is claimed while a confirmation or the results
+view owns the keyboard.
 
 | Shortcut | Action |
 |---|---|

@@ -513,26 +513,11 @@ public static class TemporarySessionRetentionService
         }
     }
 
-    private static bool ContainsReparsePoint(string root)
-    {
-        if (File.GetAttributes(root).HasFlag(FileAttributes.ReparsePoint))
-        {
-            return true;
-        }
-
-        return Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories)
-            .Any(path => File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint));
-    }
-
-    private static void ValidateDeletionTarget(string root, string path)
-    {
-        ValidateDirectChild(root, path);
-        if (ContainsReparsePoint(path))
-        {
-            throw new IOException("Refusing to delete a session containing a symbolic link or reparse point.");
-        }
-    }
-
+    // The link check deletion used to do lived here: enumerate the whole tree, then refuse if
+    // anything in it was a reparse point. It has no callers left. Deletion now validates in
+    // CaptureDeletionService, which refuses a link as it descends rather than after walking
+    // past it, and keeping a second, weaker copy of the rule beside the scanner only invites
+    // the next caller to reach for the wrong one.
     private static void ValidateDirectChild(string root, string path)
     {
         var canonicalRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);

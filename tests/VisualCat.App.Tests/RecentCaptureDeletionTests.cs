@@ -328,7 +328,8 @@ public sealed class RecentCaptureDeletionTests
         try
         {
             Toggle(SelectAll(dialog));
-            Assert.Contains("1 of 1 available captures selected", string.Join("|", Texts(dialog)), StringComparison.Ordinal);
+            // The noun agrees with the denominator: one eligible capture is one capture.
+            Assert.Contains("1 of 1 available capture selected", string.Join("|", Texts(dialog)), StringComparison.Ordinal);
             Assert.Contains(Texts(dialog), text => text.Contains("is being recorded and 1 capture is in use", StringComparison.Ordinal));
             Assert.Contains(Texts(dialog), text => text == "This capture is being recorded. Stop the capture first.");
             Assert.Contains(Texts(dialog), text => text == "VisualCat is still working on this capture. Wait for it to finish.");
@@ -1105,6 +1106,89 @@ public sealed class RecentCaptureDeletionTests
         }
     }
 
+    /// <summary>
+    /// Section 8.7. Declining a confirmation puts the sheet back the way it was, including the
+    /// line that says what a tap does.
+    /// </summary>
+    /// <remarks>
+    /// Preparation writes <em>Checking selected captures…</em> over that line, and Cancel used
+    /// to replace it with the result summary — which is empty before anything has been deleted.
+    /// The reader was returned to select mode with their checks intact and the only sentence
+    /// explaining the mode gone.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task DecliningAConfirmationRestoresTheSelectModeLine()
+    {
+        RecentSessionsDialog.MobileOverride = true;
+        try
+        {
+            var snapshot = Snapshot(count: 2);
+            var dialog = new RecentSessionsDialog(snapshot, Actions(snapshot));
+            var host = new CapturingHost();
+            dialog.Host = host;
+            var window = new Window { Content = dialog, Width = 360, Height = 720 };
+            window.Show();
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            try
+            {
+                Click(Find(dialog, "Select"));
+                Toggle(SelectAll(dialog));
+                Click(Find(dialog, "Delete 2…"));
+                await Settle();
+                var confirmation = Assert.IsType<CaptureDeleteConfirmation>(host.Body);
+                confirmation.Dismiss();
+                await Settle();
+
+                Assert.Contains(Texts(dialog), text => text == "Selecting captures. Tap a capture to select it.");
+                Assert.Equal(2, RowChecks(dialog).Count(box => box.IsChecked == true));
+            }
+            finally
+            {
+                dialog.ForceDismiss();
+                window.Close();
+            }
+        }
+        finally
+        {
+            RecentSessionsDialog.MobileOverride = null;
+        }
+    }
+
+    /// <summary>
+    /// Section 9. The overflow line counts, so exactly six captures do not read "1 more captures".
+    /// </summary>
+    [AvaloniaFact]
+    public async Task ConfirmationOverflowLineAgreesWithItsNumber()
+    {
+        var snapshot = Snapshot(count: 6);
+        var dialog = new RecentSessionsDialog(snapshot, Actions(snapshot));
+        var host = new CapturingHost();
+        dialog.Host = host;
+        var window = Show(dialog);
+        try
+        {
+            Toggle(SelectAll(dialog));
+            Click(Find(dialog, "Delete 6 captures…"));
+            await Settle();
+            var confirmation = Assert.IsType<CaptureDeleteConfirmation>(host.Body);
+            var child = Show(confirmation);
+            try
+            {
+                Assert.Contains(Texts(confirmation), text => text == "And 1 more capture.");
+            }
+            finally
+            {
+                child.Close();
+            }
+        }
+        finally
+        {
+            dialog.ForceDismiss();
+            window.Close();
+        }
+    }
+
     /// <summary>Section 7.1. Preparation drops what it cannot freeze and confirms the rest.</summary>
     [AvaloniaFact]
     public async Task PreparationDropsProtectedCapturesAndStillConfirmsTheRest()
@@ -1797,7 +1881,7 @@ public sealed class RecentCaptureDeletionTests
             await Settle();
             Assert.Equal(CaptureDeleteOutcome.Deleted, dialog.DeletionResults[0].File.Outcome);
             Assert.Equal(CaptureDeleteOutcome.DeletedPendingReclaim, dialog.DeletionResults[1].File.Outcome);
-            Assert.Contains(Texts(dialog), text => text.Contains("Storage cleanup is pending for 1 capture.", StringComparison.Ordinal));
+            Assert.Contains(Texts(dialog), text => text.Contains("Storage cleanup is pending for 1 deleted capture.", StringComparison.Ordinal));
         }
         finally { dialog.ForceDismiss(); window.Close(); }
     }
@@ -1891,6 +1975,9 @@ public sealed class RecentCaptureDeletionTests
 
         internal HashSet<string> CloseFails { get; } = new(SessionPath.Comparer);
 
+        /// <summary>What a failing close throws. Not every tab teardown fails as I/O.</summary>
+        internal Func<Exception> CloseFailure { get; set; } = () => new IOException("injected close failure");
+
         internal Dictionary<string, int> Tabs { get; } = new(SessionPath.Comparer);
 
         internal CancellationTokenSource? StopOnClose { get; set; }
@@ -1915,7 +2002,7 @@ public sealed class RecentCaptureDeletionTests
                 Closed.Add(path);
                 StopOnClose?.Cancel();
                 return CloseFails.Contains(path)
-                    ? Task.FromException(new IOException("injected close failure"))
+                    ? Task.FromException(CloseFailure())
                     : Task.CompletedTask;
             })).ToArray(),
             resolved ?? (_ => { }));
@@ -2035,6 +2122,42 @@ public sealed class RecentCaptureDeletionTests
         Assert.Single(harness.Closed, path => SessionPath.Comparer.Equals(path, stubborn.Session.Path));
         Assert.True(results[1].File.Committed);
         Assert.False(Directory.Exists(fine.Session.Path));
+    }
+
+    /// <summary>
+    /// Section 6.1. A capture the shell settled itself is a known failure, not an unknown one.
+    /// </summary>
+    /// <remarks>
+    /// The classification of whatever a tab teardown threw decides nothing here: closing runs
+    /// before the rename, so a capture whose close failed is one this workspace knows was not
+    /// removed. Reported as unverified it would send the reader to refresh and check storage
+    /// for an answer the sheet is already holding.
+    /// </remarks>
+    [Fact]
+    public async Task ACloseThatFailsUnexpectedlyIsStillAKnownFailure()
+    {
+        using var harness = new ShellHarness();
+        var capture = await harness.CaptureAsync("stubborn", tabs: 1);
+        harness.CloseFails.Add(capture.Session.Path);
+        harness.CloseFailure = () => new InvalidOperationException("the tab was already gone");
+        var coordinator = harness.Coordinator();
+        var prepared = await coordinator.PrepareAsync([capture], TestContext.Current.CancellationToken);
+        var results = await coordinator.DeleteAsync(prepared, new Progress<CaptureDeletionProgress>(), TestContext.Current.CancellationToken);
+
+        var result = Assert.Single(results);
+        Assert.Equal(CaptureProtection.CloseFailed, result.Protection);
+        Assert.Equal(CaptureDeleteOutcome.Unknown, result.File.Outcome);
+        var tally = CaptureDeletionResult.Tally.Of(results);
+        Assert.Equal(1, tally.Failed);
+        Assert.Equal(0, tally.Unknown);
+        Assert.Contains("could not be deleted", CaptureDeletionResult.Summary(results), StringComparison.Ordinal);
+        Assert.DoesNotContain("could not be verified", CaptureDeletionResult.Summary(results), StringComparison.Ordinal);
+
+        // The detail says the close failed; it must not also say the tab was closed.
+        Assert.Contains("could not finish closing", result.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("The tab was closed", result.Detail, StringComparison.Ordinal);
+        Assert.Equal(CaptureNoticeKind.Failure, CaptureDeletionResult.FinalNotice(results).Kind);
+        Assert.True(Directory.Exists(capture.Session.Path));
     }
 
     /// <summary>T-S2. A recording capture is neither closed nor deleted by any route.</summary>
