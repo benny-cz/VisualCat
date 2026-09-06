@@ -376,10 +376,13 @@ public sealed class CaptureDeletionTests : IDisposable
         var capture = await Capture();
         var target = await CaptureDeletionService.PrepareAsync(_root, capture);
         CaptureDeletionService.TestPhase = phase => { if (phase == "committed") throw new IOException("injected after rename"); };
-        using (var reservation = SessionAccess.ReserveDeletion(capture.Path))
-        {
-            Assert.Equal(CaptureDeleteOutcome.DeletedPendingReclaim, (await CaptureDeletionService.DeleteAsync(_root, target, reservation)).Outcome);
-        }
+
+        // Held for the whole test, not just the deletion. A failure after the rename schedules
+        // its own recovery pass, and recovery takes this very reservation per record — so
+        // releasing it here let the sweep reclaim the payload the assertions below are looking
+        // at, and the test failed on whichever assertion the race happened to reach first.
+        using var reservation = SessionAccess.ReserveDeletion(capture.Path);
+        Assert.Equal(CaptureDeleteOutcome.DeletedPendingReclaim, (await CaptureDeletionService.DeleteAsync(_root, target, reservation)).Outcome);
 
         CaptureDeletionService.TestPhase = null;
         var staged = Assert.Single(Directory.EnumerateDirectories(_root, "*.vcat-deleting"));
