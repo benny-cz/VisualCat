@@ -13,6 +13,7 @@ public static class SessionVerifier
         SessionSnapshot? snapshot = null;
         try
         {
+            using var usage = SessionAccess.ReadForWork(sessionPath);
             snapshot = await SessionStore.OpenAsync(sessionPath, cancellationToken).ConfigureAwait(false);
             // Template data is lazy for ordinary opens. Verification explicitly forces
             // it so a missing, truncated, or malformed committed sidecar cannot pass.

@@ -16,7 +16,7 @@ public static class SessionSaveService
         ArgumentNullException.ThrowIfNull(snapshot);
         var sourceRoot = Path.GetFullPath(snapshot.RootPath);
         var destinationRoot = Path.GetFullPath(destination);
-        using var sourceUsage = SessionAccess.Read(sourceRoot);
+        using var sourceUsage = SessionAccess.ReadForWork(sourceRoot);
         using var destinationUsage = SessionAccess.Write(destinationRoot);
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (Directory.Exists(destinationRoot) || File.Exists(destinationRoot))

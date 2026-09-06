@@ -27,7 +27,10 @@ Timestamp and size are not identity: a capture can be replaced at the same path 
    new reader or writer briefly shares an `.intent` gate; readers hold `.read` shared, and one
    writer holds `.write`. Store snapshots, recording, saving, archive extraction and both reads
    and writes of the view sidecar participate. Deletion takes intent exclusively and refuses
-   active writers or foreign readers before closing any local tabs. It holds the OS read lease
+   active writers, local read operations (export, save-source and verification), or foreign
+   readers before closing any local tabs. Local read operations hold `ReadForWork` independently
+   of their caller's snapshot; closing that snapshot cannot cancel their protection. The shell
+   coalesces work-state notifications into inventory refreshes. It holds the OS read lease
    exclusively while its own existing readers drain, and checks that every local reference is
    gone before rename. A failed close cannot bypass this check on retry. A deletion that ends
    without removing the capture — a refused close, a changed identity, Stop — hands sole use
@@ -51,13 +54,17 @@ Timestamp and size are not identity: a capture can be replaced at the same path 
    ordinary startup scans and foreground inventories without blocking them. Entry/time budgets,
    preserved descent cursors and round-robin metadata inspection let deep trees and later
    records progress. Corrupt records, including records with no payload, remain unchanged and
-   appear in the unresolved-cleanup inventory.
+   appear in the unresolved-cleanup inventory. A file occupying a staging path is also an
+   unresolved remnant, even beside a valid record. Inventories include the identities still
+   awaiting owned cleanup, so results can settle individually without waiting for every other
+   deletion in the root. An unavailable inventory cannot clear known cleanup status.
 
 3. **Identity is a marker plus, where the storage has one, a birth time.** Preparation writes a
    `.capture-identity` file holding a random GUID into the capture and records it. Publication
    writes and flushes a unique temporary file before an atomic, non-overwriting move, so another
    process cannot observe a half-written marker. Execution
-   revalidates it under the reservation. Replacement at the same path yields `Changed` rather
+   revalidates it under the reservation before closing any tab, as well as before rename.
+   Replacement at the same path yields `Changed` rather
    than substitution into the confirmed set. Whether directory creation time survives writes is
    *measured* once per storage root rather than assumed from the operating system: where it does
    not survive, the marker alone is the identity. VisualCat's save and archive-extraction routes
@@ -69,6 +76,21 @@ Timestamp and size are not identity: a capture can be replaced at the same path 
    On Android the OS-provided application files directory is the trusted anchor; the anchor and
    everything below it are checked. Stat calls against SELinux-protected system ancestors are
    neither required nor a useful test of whether this application's private storage is usable.
+   On Windows, both UNC roots and mapped network drives are refused.
+
+5. **Refresh and result lifetimes are separate from deletion.** The post-operation inventory
+   has its own cancellable lifetime. A cancelled or older inventory cannot replace the list or
+   settle cleanup results. A partial scan retains unlistable captures, but never an old identity
+   at a path whose replacement it has successfully read. Lost checks are explained, preparation
+   exclusions remain in Details, and cancelled, unattempted and unverified outcomes have
+   separate counters. Stopping after tabs close leaves an informational notice about that
+   side effect; a stop before any change remains quiet.
+
+6. **An open dialog adapts without losing its state.** The in-page host owns the dialog
+   directly, so platform text changes resize the body as well as the title. Deletion sheets
+   may use the safe viewport height and more landscape width; compact actions share the full
+   wrapping width and are remeasured when their labels or visibility change. Duplicate
+   selection instructions yield before results, cleanup actions or the capture list do.
 
 **Alternatives considered:** A single exclusive lease per session was simpler, and was rejected
 because it would have stopped two VisualCat instances from *reading* the same capture, which

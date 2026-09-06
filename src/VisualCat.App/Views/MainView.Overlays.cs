@@ -76,6 +76,13 @@ public sealed partial class MainView : IDialogHost
                 ? new Thickness(8)
                 : new Thickness(8, 0, 8, 8 + placement.BottomInset);
             Panel.MaxHeight = placement.MaximumHeight;
+            if (inputPaneTop is null && IsCaptureDeletionBody(BodyHost.Content))
+            {
+                // The framed dialog owns its scrolling content and pinned actions. Leaving
+                // 18% of a short screen to the scrim can otherwise consume its entire list.
+                Panel.MaxHeight = Math.Max(0, viewportHeight - 16);
+            }
+            Panel.MaxWidth = IsCaptureDeletionBody(BodyHost.Content) && Host.Bounds.Width > viewportHeight ? 900 : 620;
             // In the extreme fallback, the panel's automation name still supplies the title.
             // Suppressing only the repeated visual heading reclaims enough of the 76 dp strip
             // for one complete 48 dp editor; it returns with the footer when the IME closes.
@@ -94,6 +101,9 @@ public sealed partial class MainView : IDialogHost
     /// <summary>How much of the window a bottom sheet may take.</summary>
     private static double SheetHeightCap(double viewportHeight) =>
         Math.Max(240, viewportHeight * 0.82);
+
+    private static bool IsCaptureDeletionBody(object? body) =>
+        body is RecentSessionsDialog or CaptureDeleteConfirmation or CaptureResultDetails;
 
     /// <summary>
     /// Places an in-page sheet in the part of its overlay host the soft keyboard does not
@@ -440,8 +450,9 @@ public sealed partial class MainView : IDialogHost
             Padding = new Thickness(12, 12, 12, 18),
             VerticalAlignment = VerticalAlignment.Bottom,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            MaxHeight = SheetHeightCap(Bounds.Height),
-            MaxWidth = 620,
+            MaxHeight = IsCaptureDeletionBody(body) && Bounds.Height > 0
+                ? Math.Max(0, Bounds.Height - 16) : SheetHeightCap(Bounds.Height),
+            MaxWidth = IsCaptureDeletionBody(body) && Bounds.Width > Bounds.Height ? 900 : 620,
             Child = content,
         };
 
@@ -752,13 +763,11 @@ public sealed partial class MainView : IDialogHost
 
         var dark = ActualThemeVariant != ThemeVariant.Light;
 
-        // The body sits in a host of its own so that taking the card down releases it: a
-        // control keeps one parent, and a dialog presented twice would otherwise be stuck
-        // inside a card nobody can see.
-        var host = new ContentControl { Content = body };
+        // BuildSheet owns the body's content host. An extra wrapper here hides the dialog
+        // from RefreshOverlays, leaving its text at the old size after a configuration change.
         var card = BuildSheet(
             body.DialogTitle,
-            host,
+            body,
             dark,
             body.Dismiss,
             out var surface,
@@ -774,7 +783,7 @@ public sealed partial class MainView : IDialogHost
         {
             _forceDialogDismissals.Remove(body.ForceDismiss);
             body.Host = null;
-            host.Content = null;
+            surface.BodyHost.Content = null;
             RemoveOverlay(card);
         }
     }

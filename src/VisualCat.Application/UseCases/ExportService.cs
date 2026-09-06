@@ -19,6 +19,7 @@ public static class ExportService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        using var usage = SessionAccess.ReadForWork(snapshot.RootPath);
         await using var source = await VerifiedRawSource.OpenAsync(snapshot, cancellationToken).ConfigureAwait(false);
         await using var output = new AtomicDestination(destination);
         var buffer = new byte[1024 * 1024];
@@ -48,6 +49,7 @@ public static class ExportService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        using var usage = SessionAccess.ReadForWork(snapshot.RootPath);
         var records = SessionQueryEngine.GetRawContext(snapshot, sourceSequence, before, after);
         await using var source = await VerifiedRawSource.OpenAsync(snapshot, cancellationToken).ConfigureAwait(false);
         await using var output = new AtomicDestination(destination);
@@ -94,6 +96,8 @@ public static class ExportService
         bool includeUtf8Bom,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        using var usage = SessionAccess.ReadForWork(snapshot.RootPath);
         var written = 0L;
         await using var output = new AtomicDestination(destination);
         await using (var writer = new StreamWriter(output.Stream, new UTF8Encoding(includeUtf8Bom), 1024 * 1024, leaveOpen: true))

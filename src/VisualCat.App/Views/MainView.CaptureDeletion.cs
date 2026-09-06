@@ -26,7 +26,7 @@ public sealed partial class MainView
     /// Whether this workspace is doing something to a capture that must not be interrupted.
     /// </summary>
     /// <remarks>
-    /// A tab's own state answers for this process; <see cref="SessionAccess.IsWriting"/> answers
+    /// A tab's own state answers for this process; <see cref="SessionAccess.IsWorking"/> answers
     /// for a writer that has no tab — a save, an archive extraction or a view-preset write. An
     /// observation is not authority to skip the execution-time reservation, only a reason to
     /// refuse before getting there.
@@ -42,7 +42,7 @@ public sealed partial class MainView
             return CaptureProtection.Recording;
         }
 
-        if (tabs.Any(tab => tab.IsSessionWorkInFlight) || SessionAccess.IsWriting(canonical))
+        if (tabs.Any(tab => tab.IsSessionWorkInFlight) || SessionAccess.IsWorking(canonical))
         {
             return CaptureProtection.Working;
         }
@@ -89,9 +89,10 @@ public sealed partial class MainView
         return new RecentCaptureSnapshot(
             inventory,
             CapturingSessionPaths(),
-            _viewModel.Tabs
+            inventory.Sessions.Where(session => SessionAccess.IsWorking(session.Path)).Select(session => session.Path)
+                .Concat(_viewModel.Tabs
                 .Where(tab => tab.IsSessionWorkInFlight)
-                .Select(tab => SessionPath.Canonical(tab.SessionPath))
+                .Select(tab => SessionPath.Canonical(tab.SessionPath)))
                 .ToHashSet(SessionPath.Comparer),
             OpenSessionPaths(),
             generation);
@@ -137,6 +138,7 @@ public sealed partial class MainView
         try
         {
             var initial = await actions.Refresh(_recentRefreshLifetime.Token);
+            _recentRefreshLifetime.Token.ThrowIfCancellationRequested();
             dialog = _recentDialog = new RecentSessionsDialog(initial, actions);
         }
         finally
@@ -224,6 +226,7 @@ public sealed partial class MainView
         _viewModel.TabAdded += OnRecentCaptureTabAdded;
         _viewModel.TabRemoved += OnRecentCaptureTabRemoved;
         _viewModel.LiveCaptureChanged += OnRecentCaptureActivity;
+        SessionAccess.WorkChanged += OnRecentStorageWorkChanged;
         foreach (var tab in _viewModel.Tabs)
         {
             tab.PropertyChanged += OnRecentCaptureTabChanged;
@@ -235,6 +238,7 @@ public sealed partial class MainView
         _viewModel.TabAdded -= OnRecentCaptureTabAdded;
         _viewModel.TabRemoved -= OnRecentCaptureTabRemoved;
         _viewModel.LiveCaptureChanged -= OnRecentCaptureActivity;
+        SessionAccess.WorkChanged -= OnRecentStorageWorkChanged;
         foreach (var tab in _viewModel.Tabs)
         {
             tab.PropertyChanged -= OnRecentCaptureTabChanged;
@@ -263,6 +267,9 @@ public sealed partial class MainView
             OnRecentCaptureActivity(sender, EventArgs.Empty);
         }
     }
+
+    private void OnRecentStorageWorkChanged(string path) =>
+        Dispatcher.UIThread.Post(() => OnRecentCaptureActivity(null, EventArgs.Empty));
 
     private void OnRecentCaptureActivity(object? sender, EventArgs args)
     {

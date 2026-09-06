@@ -130,6 +130,7 @@ internal sealed class RecentCapturePanel : UserControl
     private readonly Func<CaptureResultDetails, Task<bool>> _details;
     private readonly ObservableCollection<CaptureRow> _rows = [];
     private readonly Dictionary<string, CaptureDeletionResult> _ledger = new(SessionPath.Comparer);
+    private readonly Dictionary<string, CaptureExclusion> _exclusions = new(SessionPath.Comparer);
     private readonly Dictionary<string, int> _ordinals = new(SessionPath.Comparer);
     private readonly ListBox _list = new();
     private readonly TextBlock _heading = Wrapped();
@@ -141,7 +142,7 @@ internal sealed class RecentCapturePanel : UserControl
     private readonly StackPanel _selection = new() { Spacing = 2 };
     private readonly Grid _footer;
     private readonly WrapPanel _destructive = new();
-    private readonly WrapPanel _decisions = new();
+    private readonly WrapPanel _decisions = new() { HorizontalAlignment = HorizontalAlignment.Right };
 
     /// <summary>
     /// Details, Refresh and Retry storage cleanup, which live beside the status line until the
@@ -164,6 +165,7 @@ internal sealed class RecentCapturePanel : UserControl
     private Guid _activeOperation;
     private long _lastProgressAnnouncement;
     private string _error = string.Empty;
+    private string _selectionNotice = string.Empty;
 
     internal RecentCapturePanel(RecentCaptureSnapshot snapshot, RecentCaptureActions actions, bool mobile,
         Action<string?> complete, Func<CaptureDeleteConfirmation, Task<bool>> confirm,
@@ -252,11 +254,13 @@ internal sealed class RecentCapturePanel : UserControl
         // A destructive action is not a peer of the decision that ends the dialog, so it sits
         // at the far side of the row where convention puts it. Both halves wrap, and the whole
         // row stacks when the viewport is too narrow for enlarged labels to fit side by side.
-        _footer = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), RowDefinitions = new RowDefinitions("Auto,Auto") };
+        _footer = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), RowDefinitions = new RowDefinitions("Auto,Auto") };
         _footer.Children.Add(_destructive);
-        Grid.SetColumn(_decisions, 2);
+        Grid.SetColumn(_decisions, 1);
         _footer.Children.Add(_decisions);
-        _footer.SizeChanged += (_, _) => ApplyFooterOrientation();
+        // A newly visible cleanup action or changed label can alter the required width
+        // without changing the footer's current bounds. Recheck after children are measured.
+        _footer.LayoutUpdated += (_, _) => ApplyFooterOrientation();
 
         _root = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto,Auto"), Margin = new Thickness(12), RowSpacing = 4 };
         _list.LayoutUpdated += (_, _) => ApplyCompactHeight();
@@ -446,9 +450,18 @@ internal sealed class RecentCapturePanel : UserControl
             return;
         }
 
+        var previousInventory = _snapshot.Inventory;
         _snapshot = snapshot;
         if (!snapshot.Inventory.Available)
         {
+            _snapshot = snapshot with
+            {
+                Inventory = snapshot.Inventory with
+                {
+                    PendingCleanup = Math.Max(previousInventory.PendingCleanup, snapshot.Inventory.PendingCleanup),
+                    UnresolvedCleanup = Math.Max(previousInventory.UnresolvedCleanup, snapshot.Inventory.UnresolvedCleanup),
+                }
+            };
             // An unreadable root is not an empty one, and it is not proof that anything was
             // deleted: the rows that were listed stay listed and Refresh stays available.
             _error = "Temporary storage is unavailable. Try Refresh.";
@@ -523,12 +536,16 @@ internal sealed class RecentCapturePanel : UserControl
         }
 
         var nextSet = next.ToHashSet();
+        var presentPaths = next.Select(row => row.Session.Path).ToHashSet(SessionPath.Comparer);
         if (snapshot.Inventory.InspectionIssues > 0)
         {
             // A capture the scan could not read is not a capture that went away. Its row stays,
             // says so, and cannot be selected until a refresh can see it again.
             foreach (var row in previous.Values.Where(row => !nextSet.Contains(row)))
             {
+                // An unreadable sibling is not a reason to retain an obsolete identity at a
+                // path whose replacement was successfully listed in this very snapshot.
+                if (presentPaths.Contains(row.Session.Path)) continue;
                 if (_ledger.TryGetValue(row.Key, out var removed) && removed.File.Removed)
                 {
                     continue;
@@ -584,16 +601,18 @@ internal sealed class RecentCapturePanel : UserControl
     /// <summary>Says why checks disappeared, rather than letting them vanish silently.</summary>
     private void AnnounceLostSelection(HashSet<string> wasChecked)
     {
-        if (wasChecked.Count == 0 || _busy)
+        if (wasChecked.Count == 0 || _deleting || _nested)
         {
             return;
         }
 
         var eligible = _rows.Where(row => row.Eligible).Select(row => row.Key).ToHashSet(SessionPath.Comparer);
-        var lost = wasChecked.Count(key => !eligible.Contains(key));
+        var lost = wasChecked.Count(key => !eligible.Contains(key) &&
+            (!_ledger.TryGetValue(key, out var result) || !result.File.Removed));
         if (lost > 0)
         {
-            _status.Text = $"{Counted.Captures(lost)} you had selected {(lost == 1 ? "is" : "are")} no longer available to delete.";
+            _selectionNotice = $"{Counted.Captures(lost)} you had selected {(lost == 1 ? "is" : "are")} no longer available to delete.";
+            _status.Text = string.Join(' ', new[] { ResultSummary(), _selectionNotice }.Where(part => part.Length > 0));
         }
     }
 
@@ -715,7 +734,7 @@ internal sealed class RecentCapturePanel : UserControl
 
             _cleanup.IsVisible = _snapshot.Inventory.PendingCleanup + _snapshot.Inventory.UnresolvedCleanup > 0 ||
                 _ledger.Values.Any(result => result.File.Outcome == CaptureDeleteOutcome.DeletedPendingReclaim);
-            _showDetails.IsVisible = _ledger.Count > 0 || _snapshot.Inventory.UnresolvedCleanup > 0;
+            _showDetails.IsVisible = _ledger.Count > 0 || _exclusions.Count > 0 || _snapshot.Inventory.UnresolvedCleanup > 0;
             _showDetails.IsEnabled = !_busy;
             _health.Text = _error.Length > 0 ? _error
                 : _snapshot.Inventory.InspectionIssues > 0 ? "Some captures could not be listed. Try Refresh."
@@ -724,7 +743,11 @@ internal sealed class RecentCapturePanel : UserControl
                 : string.Empty;
             _health.IsVisible = _health.Text.Length > 0;
             _healthScroller.IsVisible = _health.IsVisible;
-            _statusScroller.IsVisible = !string.IsNullOrEmpty(_status.Text);
+            // Selection controls already describe these instructions. On a short screen
+            // preserve result/error text and spend this duplicate help line on the list.
+            _statusScroller.IsVisible = !string.IsNullOrEmpty(_status.Text) && !(_compact && _status.Text is
+                "Selecting captures. Tap a capture to select it." or
+                "Tap a capture to open it. Select chooses captures to delete." or "Finished selecting.");
             _progress.IsVisible = _busy;
 
             var destructive = new List<Control>();
@@ -781,6 +804,14 @@ internal sealed class RecentCapturePanel : UserControl
                 }
             }
 
+            if (_folded)
+            {
+                // One wrapping run can use the whole next line. Two separate groups leave
+                // the space beneath Delete unused while the other actions add more rows.
+                decisions.InsertRange(0, destructive);
+                destructive.Clear();
+            }
+            _decisions.HorizontalAlignment = _folded ? HorizontalAlignment.Left : HorizontalAlignment.Right;
             Fill(_destructive, destructive);
             Fill(_decisions, decisions);
             ApplyFooterOrientation();
@@ -822,7 +853,12 @@ internal sealed class RecentCapturePanel : UserControl
     /// </remarks>
     private void ApplyFooterOrientation()
     {
-        var stacked = _footer.Bounds.Width > 0 && Wanted(_destructive) + Wanted(_decisions) > _footer.Bounds.Width;
+        // Decisions may wrap beside Delete. Stack the groups only when even the widest
+        // individual decision cannot fit there; stacking for their combined width wastes
+        // another complete action row on an enlarged landscape phone.
+        var stacked = _footer.Bounds.Width > 0 && Wanted(_destructive) +
+            _decisions.Children.Where(child => child.IsVisible).Select(child => child.DesiredSize.Width).DefaultIfEmpty().Max()
+            > _footer.Bounds.Width;
         if (stacked == (Grid.GetRow(_decisions) == 1))
         {
             return;
@@ -835,12 +871,12 @@ internal sealed class RecentCapturePanel : UserControl
             .Sum(child => child.DesiredSize.Width);
 
         Grid.SetRow(_decisions, stacked ? 1 : 0);
-        Grid.SetColumn(_decisions, stacked ? 0 : 2);
+        Grid.SetColumn(_decisions, stacked ? 0 : 1);
 
         // A stacked half still has to wrap inside the row rather than inside one Auto column,
         // which measures it unconstrained and lets its last button run off the side.
-        Grid.SetColumnSpan(_decisions, stacked ? 3 : 1);
-        Grid.SetColumnSpan(_destructive, stacked ? 3 : 1);
+        Grid.SetColumnSpan(_decisions, stacked ? 2 : 1);
+        Grid.SetColumnSpan(_destructive, stacked ? 2 : 1);
     }
 
     internal static long SumSizes(IEnumerable<long> sizes)
@@ -1204,6 +1240,7 @@ internal sealed class RecentCapturePanel : UserControl
         _busy = true;
         using var operation = new CancellationTokenSource();
         _operation = operation;
+        _selectionNotice = string.Empty;
         _progress.IsIndeterminate = true;
         if (retryCleanup)
         {
@@ -1219,32 +1256,36 @@ internal sealed class RecentCapturePanel : UserControl
             }
 
             var snapshot = await _actions.Refresh(operation.Token);
+            operation.Token.ThrowIfCancellationRequested();
+            if (_detached || snapshot.Generation < _snapshot.Generation) return;
             _error = string.Empty;
             Apply(snapshot);
             var settled = snapshot.Inventory.Available &&
                 snapshot.Inventory.PendingCleanup == 0 &&
                 snapshot.Inventory.UnresolvedCleanup == 0;
-            if (settled)
+            if (snapshot.Inventory.Available)
             {
                 // Cleanup finished after the fact. A capture that was reported as pending is
                 // now simply deleted; it is never counted as a second deletion.
                 foreach (var (key, result) in _ledger.ToArray())
                 {
-                    if (result.File.Outcome == CaptureDeleteOutcome.DeletedPendingReclaim)
+                    if (result.File.Outcome == CaptureDeleteOutcome.DeletedPendingReclaim &&
+                        (settled || snapshot.Inventory.UnresolvedCleanup == 0 && snapshot.Inventory.PendingIdentities is { } pending &&
+                            !pending.Contains(result.Capture.Target.Identity)))
                     {
                         _ledger[key] = result with { File = result.File with { Outcome = CaptureDeleteOutcome.Deleted } };
                     }
                 }
             }
 
-            if (retryCleanup || settled)
+            if (retryCleanup || snapshot.Inventory.Available)
             {
                 // "Cleaning up storage…" must not survive the work it described, whether or
                 // not the work finished.
                 var parts = new List<string>();
-                if (_ledger.Count > 0)
+                if (_ledger.Count > 0 || _exclusions.Count > 0)
                 {
-                    parts.Add(CaptureDeletionResult.Summary(_ledger.Values));
+                    parts.Add(ResultSummary());
                 }
 
                 if (retryCleanup)
@@ -1252,11 +1293,14 @@ internal sealed class RecentCapturePanel : UserControl
                     parts.Add(settled ? "Storage cleanup finished." : "Some storage cleanup is still outstanding.");
                 }
 
+                if (_selectionNotice.Length > 0) parts.Add(_selectionNotice);
+
                 _status.Text = string.Join(' ', parts.Where(part => part.Length > 0));
             }
         }
         catch (OperationCanceledException)
         {
+            if (retryCleanup) _status.Text = "Storage cleanup may still be running. Refresh to check its progress.";
         }
         catch (Exception error)
         {
@@ -1313,6 +1357,8 @@ internal sealed class RecentCapturePanel : UserControl
                 return;
             }
 
+            foreach (var item in selected) _exclusions.Remove(IdentityKey(item.Session));
+
             if (prepared.Excluded.Count > 0)
             {
                 // The reader asked for a set; the honest answer is the part of it that can
@@ -1322,6 +1368,7 @@ internal sealed class RecentCapturePanel : UserControl
                     prepared.Excluded[0].Reason;
                 foreach (var excluded in prepared.Excluded)
                 {
+                    _exclusions[IdentityKey(excluded.Selection.Session)] = excluded;
                     var row = _rows.FirstOrDefault(row => SessionPath.Comparer.Equals(row.Session.Path, excluded.Selection.Session.Path));
                     if (row is not null)
                     {
@@ -1350,7 +1397,7 @@ internal sealed class RecentCapturePanel : UserControl
 
             if (!confirmed || _detached)
             {
-                _status.Text = _ledger.Count > 0 ? CaptureDeletionResult.Summary(_ledger.Values) : string.Empty;
+                _status.Text = ResultSummary();
                 _delete.Focus();
                 return;
             }
@@ -1373,14 +1420,14 @@ internal sealed class RecentCapturePanel : UserControl
             }
 
             RemoveDeletedRows();
-            _status.Text = CaptureDeletionResult.Summary(_ledger.Values);
+            _status.Text = ResultSummary();
         }
         catch (OperationCanceledException)
         {
             if (started && prepared is not null)
             {
                 RecoverKnownResults(prepared);
-                _status.Text = CaptureDeletionResult.Summary(_ledger.Values);
+                _status.Text = ResultSummary();
             }
             else _status.Text = "Stopped before deletion.";
         }
@@ -1391,7 +1438,7 @@ internal sealed class RecentCapturePanel : UserControl
                 // Something unexpected happened after work began. Known commits are preserved
                 // and everything unresolved says so; the report is never replaced with nothing.
                 RecoverKnownResults(prepared);
-                _status.Text = CaptureDeletionResult.Summary(_ledger.Values);
+                _status.Text = ResultSummary();
             }
 
             _error = started
@@ -1406,9 +1453,17 @@ internal sealed class RecentCapturePanel : UserControl
             _progress.IsIndeterminate = true;
             if (!_detached)
             {
+                using var read = new CancellationTokenSource();
+                _operation = read;
                 try
                 {
-                    Apply(await _actions.Refresh(CancellationToken.None));
+                    var snapshot = await _actions.Refresh(read.Token);
+                    read.Token.ThrowIfCancellationRequested();
+                    Apply(snapshot);
+                }
+                catch (OperationCanceledException)
+                {
+                    _error = "The list refresh was stopped. Try Refresh.";
                 }
                 catch (Exception error)
                 {
@@ -1519,6 +1574,12 @@ internal sealed class RecentCapturePanel : UserControl
         Dispatcher.UIThread.Post(RequestRefresh);
     }
 
+    private string ResultSummary() => string.Join(' ', new[]
+    {
+        CaptureDeletionResult.Summary(_ledger.Values),
+        _exclusions.Count > 0 ? $"{Counted.Captures(_exclusions.Count)} could not be included in deletion. Open Details for the reasons." : string.Empty,
+    }.Where(part => part.Length > 0));
+
     private async Task ShowDetailsAsync()
     {
         if (_busy || _nested)
@@ -1530,6 +1591,8 @@ internal sealed class RecentCapturePanel : UserControl
         try
         {
             var details = _ledger.Values.Select(result => result.Detail).ToList();
+            details.AddRange(_exclusions.Values.Select(excluded =>
+                excluded.Selection.Label + "\nNot included in deletion. " + excluded.Reason));
             if (_snapshot.Inventory.UnresolvedCleanup > 0)
             {
                 details.Add("Unverified storage cleanup\nVisualCat cannot safely remove some leftover storage, so it " +

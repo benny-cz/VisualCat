@@ -1131,6 +1131,40 @@ public sealed class RecentCaptureDeletionTests
         }
     }
 
+    [AvaloniaFact]
+    public async Task EveryPreparationExclusionRemainsInDetailsAfterRefresh()
+    {
+        var snapshot = Snapshot(7);
+        var excluded = snapshot.Inventory.Sessions.Select((session, index) =>
+            new CaptureExclusion(new CaptureSelection(session, "Capture " + index),
+                index % 2 == 0 ? CaptureProtection.Working : CaptureProtection.Recording,
+                CaptureDeleteOutcome.Protected)).ToArray();
+        var dialog = new RecentSessionsDialog(snapshot, Actions(snapshot, excluded: excluded));
+        var host = new CapturingHost(); dialog.Host = host;
+        var window = Show(dialog);
+        try
+        {
+            Toggle(SelectAll(dialog));
+            Click(Find(dialog, "Delete 7 captures…"));
+            await Settle();
+            dialog.RequestRefresh();
+            await Settle();
+            Assert.True(Has(dialog, "Details"));
+            Click(Find(dialog, "Details"));
+            await Settle();
+            var details = Assert.IsType<CaptureResultDetails>(host.Body);
+            var child = Show(details);
+            try
+            {
+                var list = Assert.Single(details.GetVisualDescendants().OfType<ListBox>());
+                Assert.Equal(excluded.Select(item => item.Selection.Label + "\nNot included in deletion. " + item.Reason),
+                    list.ItemsSource!.Cast<string>());
+            }
+            finally { child.Close(); }
+        }
+        finally { dialog.ForceDismiss(); window.Close(); }
+    }
+
     // ---- results -----------------------------------------------------------------------
 
     /// <summary>T-U7, T-U11. The last deletion keeps its result and its cleanup status.</summary>
@@ -1260,7 +1294,7 @@ public sealed class RecentCaptureDeletionTests
             Assert.Equal(2, dialog.DeletionResults.Count);
             Assert.All(dialog.DeletionResults, result => Assert.Equal(CaptureDeleteOutcome.Unknown, result.File.Outcome));
             var status = string.Join("|", Texts(dialog));
-            Assert.Contains("Some results could not be verified.", status, StringComparison.Ordinal);
+            Assert.Contains("The deletion results for 2 captures could not be verified.", status, StringComparison.Ordinal);
             Assert.Contains("Something went wrong.", status, StringComparison.Ordinal);
 
             // Controls come back rather than leaving the dialog stuck busy.
@@ -1543,6 +1577,196 @@ public sealed class RecentCaptureDeletionTests
         }
     }
 
+    [AvaloniaTheory]
+    [InlineData(1.0, 480, 520)]
+    [InlineData(1.8, 930, 420)]
+    public async Task NewlyVisibleCleanupActionsWrapBeforeCloseCanLeaveTheCard(double scale, double width, double height)
+    {
+        var platform = TextScale.Platform;
+        var user = TextScale.User;
+        RecentSessionsDialog.MobileOverride = true;
+        TextScale.Platform = scale; TextScale.User = 1;
+        var snapshot = Snapshot(2);
+        var dialog = new RecentSessionsDialog(snapshot, Actions(snapshot,
+            refresh: () => Snapshot(snapshot.Inventory.Sessions, generation: 2, unresolvedCleanup: 1)));
+        var window = new Window { Content = dialog, Width = width, Height = height };
+        window.Show(); window.UpdateLayout();
+        try
+        {
+            Click(Find(dialog, "Select"));
+            Toggle(SelectAll(dialog));
+            await Settle();
+            dialog.RequestRefresh();
+            await Settle();
+            window.UpdateLayout();
+            Assert.True(Has(dialog, "Retry storage cleanup"));
+            foreach (var button in dialog.GetVisualDescendants().OfType<Button>().Where(button => button.IsEffectivelyVisible))
+            {
+                var origin = button.TranslatePoint(default, dialog)!.Value;
+                Assert.True(origin.X >= 0 && origin.X + button.Bounds.Width <= dialog.Bounds.Width,
+                    $"{button.Content} must fit horizontally after cleanup appears");
+                Assert.True(origin.Y >= 0 && origin.Y + button.Bounds.Height <= dialog.Bounds.Height,
+                    $"{button.Content} must fit vertically after cleanup appears");
+            }
+        }
+        finally
+        {
+            window.Close(); RecentSessionsDialog.MobileOverride = null;
+            TextScale.Platform = platform; TextScale.User = user;
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task APartialInventoryReplacesAnOldIdentityWithoutKeepingAGhostRow()
+    {
+        var original = Session("original");
+        var snapshot = Snapshot([original]);
+        var replacement = original with { Identity = "replacement" };
+        var dialog = new RecentSessionsDialog(snapshot, Actions(snapshot,
+            refresh: () => Snapshot([replacement], generation: 2, issues: 1)));
+        var window = Show(dialog);
+        try
+        {
+            Toggle(SelectAll(dialog));
+            dialog.RequestRefresh();
+            await Settle();
+            var check = Assert.Single(RowChecks(dialog));
+            Assert.False(check.IsChecked);
+            Assert.Contains(Texts(dialog), text => text.Contains("no longer available to delete", StringComparison.Ordinal));
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task RefreshExplainsASelectionThatBecameBusy()
+    {
+        var snapshot = Snapshot(2);
+        var dialog = new RecentSessionsDialog(snapshot, Actions(snapshot,
+            refresh: () => Snapshot(snapshot.Inventory.Sessions, generation: 2, busy: [snapshot.Inventory.Sessions[0]])));
+        var window = Show(dialog);
+        try
+        {
+            Toggle(SelectAll(dialog));
+            dialog.RequestRefresh();
+            await Settle();
+            Assert.Single(RowChecks(dialog), check => check.IsChecked == true);
+            Assert.Contains("1 capture you had selected is no longer available to delete.", Texts(dialog));
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task UnavailableStorageRetainsKnownCleanupAndItsRetry()
+    {
+        var snapshot = Snapshot([], pendingCleanup: 1);
+        var dialog = new RecentSessionsDialog(snapshot, Actions(snapshot,
+            refresh: () => Snapshot([], generation: 2, available: false)));
+        var window = Show(dialog);
+        try
+        {
+            dialog.RequestRefresh();
+            await Settle();
+            Assert.True(Has(dialog, "Retry storage cleanup"));
+            Assert.Contains("Temporary storage is unavailable. Try Refresh.", Texts(dialog));
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task CancelledRefreshCannotPublishEvenIfTheReaderIgnoresCancellation()
+    {
+        var snapshot = Snapshot(2);
+        var finished = new TaskCompletionSource<RecentCaptureSnapshot>();
+        CancellationToken observed = default;
+        var actions = Actions(snapshot) with { Refresh = token => { observed = token; return finished.Task; } };
+        var dialog = new RecentSessionsDialog(snapshot, actions);
+        var window = Show(dialog);
+        try
+        {
+            Toggle(SelectAll(dialog));
+            dialog.RequestRefresh();
+            await Settle();
+            dialog.Dismiss();
+            Assert.True(observed.IsCancellationRequested);
+            finished.SetResult(Snapshot([], generation: 2));
+            await Settle();
+            Assert.Equal(2, RowChecks(dialog).Count(check => check.IsChecked == true));
+            Assert.True(Find(dialog, "Refresh").IsEnabled);
+            Assert.False(dialog.Completion.IsCompleted);
+        }
+        finally { dialog.ForceDismiss(); window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task PostDeleteRefreshCanBeStoppedWithoutLosingTheDeletionResult()
+    {
+        var snapshot = Snapshot(1);
+        var finished = new TaskCompletionSource<RecentCaptureSnapshot>();
+        CancellationToken observed = default;
+        var actions = Actions(snapshot) with { Refresh = token => { observed = token; return finished.Task; } };
+        var dialog = new RecentSessionsDialog(snapshot, actions);
+        var host = new CapturingHost(); dialog.Host = host;
+        var window = Show(dialog);
+        try
+        {
+            Toggle(SelectAll(dialog));
+            Click(Find(dialog, "Delete 1 capture…"));
+            await Settle();
+            var confirmation = Assert.IsType<CaptureDeleteConfirmation>(host.Body);
+            var child = Show(confirmation);
+            Click(Find(confirmation, "Delete permanently"));
+            child.Close();
+            await Settle();
+            dialog.Dismiss();
+            Assert.True(observed.IsCancellationRequested);
+            finished.SetResult(snapshot);
+            await Settle();
+            Assert.True(Assert.Single(dialog.DeletionResults).File.Committed);
+            Assert.Empty(RowChecks(dialog));
+            Assert.Contains("The list refresh was stopped. Try Refresh.", Texts(dialog));
+            Assert.True(Find(dialog, "Refresh").IsEnabled);
+        }
+        finally { dialog.ForceDismiss(); window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task CleanupResultsReconcileIndividuallyWhenOnlyOneCaptureStillNeedsCleanup()
+    {
+        var snapshot = Snapshot(2);
+        var next = Snapshot([], generation: 2, pendingCleanup: 2);
+        var actions = Actions(snapshot,
+            results: captures => captures.Select(capture => new CaptureDeletionResult(capture,
+                new(capture.Target, CaptureDeleteOutcome.DeletedPendingReclaim))).ToArray(), refresh: () => next);
+        var dialog = new RecentSessionsDialog(snapshot, actions);
+        var host = new CapturingHost(); dialog.Host = host;
+        var window = Show(dialog);
+        try
+        {
+            Toggle(SelectAll(dialog));
+            Click(Find(dialog, "Delete 2 captures…"));
+            await Settle();
+            var confirmation = Assert.IsType<CaptureDeleteConfirmation>(host.Body);
+            var child = Show(confirmation);
+            Click(Find(confirmation, "Delete permanently"));
+            child.Close();
+            await Settle();
+            next = Snapshot([], generation: 3, pendingCleanup: 1);
+            next = next with
+            {
+                Inventory = next.Inventory with
+                {
+                    PendingIdentities = new HashSet<string>(StringComparer.Ordinal) { snapshot.Inventory.Sessions[1].Identity! },
+                }
+            };
+            dialog.RequestRefresh();
+            await Settle();
+            Assert.Equal(CaptureDeleteOutcome.Deleted, dialog.DeletionResults[0].File.Outcome);
+            Assert.Equal(CaptureDeleteOutcome.DeletedPendingReclaim, dialog.DeletionResults[1].File.Outcome);
+            Assert.Contains(Texts(dialog), text => text.Contains("Storage cleanup is pending for 1 capture.", StringComparison.Ordinal));
+        }
+        finally { dialog.ForceDismiss(); window.Close(); }
+    }
+
     // ---- labels, speech and privacy -----------------------------------------------------
 
     /// <summary>T-U22, section 5.7. Names collide, so the date and size disambiguate first.</summary>
@@ -1670,6 +1894,50 @@ public sealed class RecentCaptureDeletionTests
         }
     }
 
+    [Fact]
+    public async Task ActiveReadWorkProtectsTabsUntilItFinishes()
+    {
+        using var harness = new ShellHarness();
+        var capture = await harness.CaptureAsync("exporting", tabs: 1);
+        var coordinator = harness.Coordinator();
+        var prepared = await coordinator.PrepareAsync([capture], TestContext.Current.CancellationToken);
+        using (SessionAccess.ReadForWork(capture.Session.Path))
+        {
+            Assert.True(SessionAccess.IsWorking(capture.Session.Path));
+            var refused = Assert.Single(await coordinator.DeleteAsync(prepared, new Progress<CaptureDeletionProgress>(), TestContext.Current.CancellationToken));
+            Assert.Equal(CaptureDeleteOutcome.Protected, refused.File.Outcome);
+            Assert.Empty(harness.Closed);
+            Assert.True(Directory.Exists(capture.Session.Path));
+        }
+        Assert.False(SessionAccess.IsWorking(capture.Session.Path));
+        Assert.True(Assert.Single(await coordinator.DeleteAsync(prepared, new Progress<CaptureDeletionProgress>(), TestContext.Current.CancellationToken)).File.Committed);
+        Assert.Single(harness.Closed);
+    }
+
+    [Fact]
+    public async Task ReplacementBetweenInspectionAndReservationNeverClosesTabs()
+    {
+        using var harness = new ShellHarness();
+        var capture = await harness.CaptureAsync("replacement", tabs: 1);
+        var prepared = await harness.Coordinator().PrepareAsync([capture], TestContext.Current.CancellationToken);
+        var replaced = false;
+        var coordinator = new CaptureDeletionCoordinator(harness.Root, path =>
+        {
+            if (!replaced)
+            {
+                replaced = true;
+                Directory.Delete(path, true);
+                Directory.CreateDirectory(path);
+                File.WriteAllText(Path.Combine(path, "manifest.json"), "replacement payload");
+            }
+            return CaptureProtection.None;
+        }, path => [() => { harness.Closed.Add(path); return Task.CompletedTask; }], _ => { });
+        var result = Assert.Single(await coordinator.DeleteAsync(prepared, new Progress<CaptureDeletionProgress>(), TestContext.Current.CancellationToken));
+        Assert.Equal(CaptureDeleteOutcome.Changed, result.File.Outcome);
+        Assert.Empty(harness.Closed);
+        Assert.Equal("replacement payload", await File.ReadAllTextAsync(Path.Combine(capture.Session.Path, "manifest.json"), TestContext.Current.CancellationToken));
+    }
+
     /// <summary>T-S9, T-S1. Stop leaves later captures and their tabs untouched.</summary>
     [Fact]
     public async Task StopDuringCurrentCloseNeverTouchesLaterTabs()
@@ -1788,6 +2056,31 @@ public sealed class RecentCaptureDeletionTests
         Assert.Equal(seen.Select(value => value.Completed).Order(), seen.Select(value => value.Completed));
         Assert.Contains(seen, value => value.Phase == CaptureDeletionPhase.Closing);
         Assert.Contains(seen, value => value.Phase == CaptureDeletionPhase.Deleting);
+    }
+
+    [Fact]
+    public void StoppedAndUnverifiedResultsNeverClaimMoreThanIsKnown()
+    {
+        var capture = Prepared(new CaptureSelection(Session("result"), "result"));
+        var cancelled = new CaptureDeletionResult(capture, new(capture.Target, CaptureDeleteOutcome.Cancelled), TabsClosed: true);
+        var notAttempted = cancelled with { File = cancelled.File with { Outcome = CaptureDeleteOutcome.NotAttempted }, TabsClosed = false };
+        var unknown = cancelled with { File = cancelled.File with { Outcome = CaptureDeleteOutcome.Unknown }, TabsClosed = false };
+        var tally = CaptureDeletionResult.Tally.Of([cancelled, notAttempted, unknown]);
+        Assert.Equal(1, tally.Cancelled);
+        Assert.Equal(1, tally.NotAttempted);
+        Assert.Equal(1, tally.Unknown);
+        Assert.Equal(0, tally.Failed);
+        var summary = CaptureDeletionResult.Summary([cancelled, notAttempted, unknown]);
+        Assert.Contains("Stopped before deleting 1 capture.", summary, StringComparison.Ordinal);
+        Assert.Contains("1 capture was not attempted.", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("No captures were deleted", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("could not be deleted", summary, StringComparison.Ordinal);
+        var unverifiedClose = unknown with { TabsClosed = true };
+        Assert.Contains("The tab was closed; the deletion outcome is unverified.", unverifiedClose.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("capture was not deleted", unverifiedClose.Detail, StringComparison.Ordinal);
+        var notice = CaptureDeletionResult.FinalNotice([cancelled, notAttempted]);
+        Assert.Equal(CaptureNoticeKind.Information, notice.Kind);
+        Assert.Contains("Tabs were closed", notice.Text, StringComparison.Ordinal);
     }
 
     /// <summary>T-S5. The final notice follows the ledger, and says nothing about a clean stop.</summary>
@@ -2051,6 +2344,117 @@ public sealed class RecentCaptureDeletionTests
         {
             dialog.ForceDismiss();
             window.Close();
+        }
+    }
+
+    /// <summary>Device regression: resizing the sheet's title must resize its actual body,
+    /// without replacing a selection, confirmation or results that are already on screen.</summary>
+    [AvaloniaTheory]
+    [InlineData("selection")]
+    [InlineData("confirmation")]
+    [InlineData("details")]
+    public async Task AnOpenDeletionDialogFollowsPlatformTextSizeThroughTheRealHost(string kind)
+    {
+        var platform = VisualCat.App.Platform.PlatformSourceRegistry.PlatformFontScale;
+        MainView.InPageDialogOverride = true;
+        RecentSessionsDialog.MobileOverride = true;
+        await using var host = new MainView();
+        var window = Show(host);
+        try
+        {
+            await Settle();
+            VisualCat.App.Platform.PlatformSourceRegistry.PlatformFontScale = 1;
+            VisualCat.App.Platform.PlatformSourceRegistry.PublishDisplayConfigurationChanged();
+            await Settle();
+            var snapshot = Snapshot(2);
+            DialogBody<bool>? nested = kind switch
+            {
+                "confirmation" => new CaptureDeleteConfirmation(new PreparedCaptures(Guid.NewGuid(), Path.GetTempPath(),
+                    snapshot.Inventory.Sessions.Select(session => Prepared(new CaptureSelection(session, "Frozen " + session.Identity))).ToArray(), []), true),
+                "details" => new CaptureResultDetails(["Frozen result\nDeleted from temporary storage."], true),
+                _ => null,
+            };
+            var recent = new RecentSessionsDialog(snapshot, Actions(snapshot));
+            var presented = host.ShowDialogAsync(recent);
+            await Settle();
+            Click(Find(recent, "Select"));
+            Toggle(SelectAll(recent));
+            var inner = nested is null ? null : host.ShowDialogAsync(nested);
+            await Settle();
+            var before = recent.FontSize;
+            var contentsBefore = nested is null ? [] : Texts(nested).ToArray();
+
+            VisualCat.App.Platform.PlatformSourceRegistry.PlatformFontScale = 1.8;
+            VisualCat.App.Platform.PlatformSourceRegistry.PublishDisplayConfigurationChanged();
+            await Settle();
+            window.UpdateLayout();
+
+            Assert.True(recent.FontSize > before * 1.7);
+            Assert.Equal(recent.FontSize, Find(recent, "Delete 2…").FontSize);
+            Assert.Equal(2, RowChecks(recent).Count(check => check.IsChecked == true));
+            Assert.False(presented.IsCompleted);
+            if (nested is not null)
+            {
+                Assert.Equal(recent.FontSize, nested.FontSize);
+                Assert.Equal(contentsBefore, Texts(nested));
+                Assert.False(inner!.IsCompleted);
+                nested.ForceDismiss();
+                await inner;
+            }
+            recent.ForceDismiss();
+            await presented;
+        }
+        finally
+        {
+            VisualCat.App.Platform.PlatformSourceRegistry.PlatformFontScale = platform;
+            VisualCat.App.Platform.PlatformSourceRegistry.PublishDisplayConfigurationChanged();
+            await Settle();
+            window.Close();
+            MainView.InPageDialogOverride = null;
+            RecentSessionsDialog.MobileOverride = null;
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task EnlargedLandscapeSheetKeepsItsListAndEveryCleanupAction()
+    {
+        var platform = VisualCat.App.Platform.PlatformSourceRegistry.PlatformFontScale;
+        MainView.InPageDialogOverride = true; RecentSessionsDialog.MobileOverride = true;
+        await using var host = new MainView();
+        var window = new Window { Content = host, Width = 948, Height = 450 };
+        window.Show();
+        try
+        {
+            await Settle();
+            VisualCat.App.Platform.PlatformSourceRegistry.PlatformFontScale = 1.8;
+            VisualCat.App.Platform.PlatformSourceRegistry.PublishDisplayConfigurationChanged();
+            await Settle();
+            var snapshot = Snapshot([Session("beta"), Session("gamma")], unresolvedCleanup: 1);
+            var dialog = new RecentSessionsDialog(snapshot, Actions(snapshot));
+            var presented = host.ShowDialogAsync(dialog);
+            await Settle();
+            Click(Find(dialog, "Select"));
+            Toggle(SelectAll(dialog));
+            await Settle();
+            window.UpdateLayout();
+            var list = Assert.Single(dialog.GetVisualDescendants().OfType<ListBox>());
+            Assert.True(list.Bounds.Height >= ListFloor,
+                $"the capture list needs at least {ListFloor} dp; got {list.Bounds.Height} in {dialog.Bounds}, font {dialog.FontSize}");
+            foreach (var button in dialog.GetVisualDescendants().OfType<Button>().Where(button => button.IsEffectivelyVisible))
+            {
+                var origin = button.TranslatePoint(default, dialog)!.Value;
+                Assert.True(origin.X >= 0 && origin.X + button.Bounds.Width <= dialog.Bounds.Width + 1, $"{button.Content} left the card horizontally");
+                Assert.True(origin.Y >= 0 && origin.Y + button.Bounds.Height <= dialog.Bounds.Height + 1, $"{button.Content} left the card vertically");
+            }
+            dialog.ForceDismiss();
+            await presented;
+        }
+        finally
+        {
+            VisualCat.App.Platform.PlatformSourceRegistry.PlatformFontScale = platform;
+            VisualCat.App.Platform.PlatformSourceRegistry.PublishDisplayConfigurationChanged();
+            await Settle(); window.Close();
+            MainView.InPageDialogOverride = null; RecentSessionsDialog.MobileOverride = null;
         }
     }
 

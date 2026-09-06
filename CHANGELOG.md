@@ -46,6 +46,21 @@ screenshot says which build it came from.
   card.
 
 ### Fixed
+- Changing Android text size with **Recent captures**, its confirmation or Details already
+  open now resizes the whole dialog while retaining the selection and results. Newly appearing
+  cleanup actions also trigger footer wrapping immediately, keeping **Close** on the card.
+  In landscape, the dialog uses more of the screen and groups its compact actions into a
+  single wrapping area so enlarged text and cleanup results leave room for the capture list.
+- Deletion waits for exports, saves and verification to finish before closing a capture's tab,
+  and the list updates when that work starts or ends. A replacement capture is checked again
+  after deletion takes ownership, before any tab is closed.
+- Stopping a refresh keeps the previous list and the deletion results. Incomplete refreshes
+  no longer duplicate a replacement capture or silently remove checks, and **Details** retains
+  every reason a capture could not be included in a deletion.
+- Cleanup results now settle separately for each capture. Unavailable storage keeps its known
+  cleanup status and retry action, and a file blocking cleanup is reported and left untouched.
+  Results distinguish work stopped before deletion from captures never attempted, and an
+  unverified outcome is no longer counted as a confirmed failure to delete.
 - A capture name made only of a machine-generated identifier no longer reaches the screen or a
   screen reader; it reads as **Unnamed capture**. Names are treated as text throughout, so
   control characters and path separators in a name cannot change how a row reads.

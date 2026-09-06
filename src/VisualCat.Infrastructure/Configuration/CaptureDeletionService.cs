@@ -24,6 +24,9 @@ public sealed record CaptureInventory(
     int PendingCleanup, int UnresolvedCleanup)
 {
     public Exception? Error { get; init; }
+    /// <summary>Identities whose owned payload remains. Null means this inventory cannot
+    /// reconcile individual outcomes (for example an unavailable root).</summary>
+    public IReadOnlySet<string>? PendingIdentities { get; init; }
 }
 
 /// <summary>
@@ -131,9 +134,10 @@ public static class CaptureDeletionService
                     }
                 }
 
-                var (pending, unresolved) = CleanupInventory(root);
+                var (pending, unresolved, pendingIdentities) = CleanupInventory(root);
                 _ = ScheduleCleanup(root);
-                return new CaptureInventory(sessions, true, Math.Max(0, issues), pending, unresolved);
+                return new CaptureInventory(sessions, true, Math.Max(0, issues), pending, unresolved)
+                { PendingIdentities = pendingIdentities };
             }
             catch (Exception error) when (Expected(error))
             {
@@ -394,6 +398,10 @@ public static class CaptureDeletionService
         {
             throw new CaptureRefusedException();
         }
+
+        if (OperatingSystem.IsWindows() && Path.GetPathRoot(path) is { } drive &&
+            new DriveInfo(drive).DriveType == DriveType.Network)
+            throw new CaptureRefusedException();
 
         for (string? current = path; current is not null; current = Path.GetDirectoryName(current))
         {
@@ -760,13 +768,16 @@ public static class CaptureDeletionService
         return progress;
     }
 
-    private static (int Pending, int Unresolved) CleanupInventory(string root)
+    private static (int Pending, int Unresolved, IReadOnlySet<string> Identities) CleanupInventory(string root)
     {
         var pending = 0;
         var unresolved = 0;
+        var identities = new HashSet<string>(StringComparer.Ordinal);
 
         // Materialised, so the enumeration handle is closed before any of the per-stage work.
-        var stages = Directory.EnumerateDirectories(root, "*" + StageSuffix).ToHashSet(SessionPath.Comparer);
+        // Files and linked occupants must be reported too: a valid journal next to a file
+        // at the payload path is a refused cleanup, never "storage cleanup finished".
+        var stages = Directory.EnumerateFileSystemEntries(root, "*" + StageSuffix).ToHashSet(SessionPath.Comparer);
         foreach (var stage in stages)
         {
             try
@@ -774,6 +785,7 @@ public static class CaptureDeletionService
                 var record = ReadOwnership(stage + ".json");
                 ValidateOwnedStage(stage, record);
                 pending++;
+                identities.Add(record.Identity);
             }
             catch (Exception error) when (Expected(error)) { unresolved++; }
         }
@@ -788,7 +800,7 @@ public static class CaptureDeletionService
             catch (Exception error) when (Expected(error)) { unresolved++; }
         }
 
-        return (pending, unresolved);
+        return (pending, unresolved, identities);
     }
 
     private static void ValidateOwnedStage(string stage, Ownership record)

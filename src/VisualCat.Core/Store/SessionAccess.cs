@@ -47,8 +47,25 @@ public static class SessionAccess
     private static readonly Lock Gate = new();
     private static readonly Dictionary<string, Entry> Entries = new(SessionPath.Comparer);
 
+    /// <summary>Local work began or finished. Raised outside the lease lock; observers must
+    /// marshal to their own dispatcher and coalesce updates. Idle reads do not raise it.</summary>
+    public static event Action<string>? WorkChanged;
+
     /// <summary>Shared use: opening, reading, listing. Any number, in any process.</summary>
     public static IDisposable Read(string path) => Acquire(path, writer: false);
+
+    /// <summary>A bounded operation using a capture, such as export or verification. Unlike
+    /// an idle snapshot, it must finish before deletion is allowed to close any tabs.</summary>
+    public static IDisposable ReadForWork(string path) => Acquire(path, writer: false, work: true);
+
+    public static bool IsWorking(string path)
+    {
+        lock (Gate)
+        {
+            return Entries.TryGetValue(SessionPath.Canonical(path), out var entry) &&
+                (entry.Writers > 0 || entry.WorkReaders > 0);
+        }
+    }
 
     /// <summary>Exclusive use: recording, importing, saving into, writing metadata.</summary>
     public static IDisposable Write(string path) => Acquire(path, writer: true);
@@ -74,7 +91,7 @@ public static class SessionAccess
             var entry = GetOrCreate(path);
             try
             {
-                if (entry.Deleting || entry.Writers > 0)
+                if (entry.Deleting || entry.Writers > 0 || entry.WorkReaders > 0)
                 {
                     throw new SessionInUseException();
                 }
@@ -96,9 +113,10 @@ public static class SessionAccess
         }
     }
 
-    private static Usage Acquire(string path, bool writer)
+    private static Usage Acquire(string path, bool writer, bool work = false)
     {
         path = SessionPath.Canonical(path);
+        bool changed;
         lock (Gate)
         {
             var entry = GetOrCreate(path);
@@ -113,6 +131,7 @@ public static class SessionAccess
                 // shared handle. Otherwise a foreign deletion could not block new opens.
                 using var intent = entry.EnterUse();
                 entry.TakeReadLease();
+                changed = (writer || work) && entry.Writers == 0 && entry.WorkReaders == 0;
                 if (writer)
                 {
                     entry.TakeWriteLease();
@@ -120,13 +139,26 @@ public static class SessionAccess
                 }
 
                 entry.Users++;
-                return new Usage(path, writer);
+                if (work) entry.WorkReaders++;
             }
             catch
             {
                 ReleaseUnused(path, entry);
                 throw;
             }
+        }
+
+        if (changed) NotifyWorkChanged(path);
+        return new Usage(path, writer, work);
+    }
+
+    private static void NotifyWorkChanged(string path)
+    {
+        foreach (var observer in WorkChanged?.GetInvocationList() ?? [])
+        {
+            try { ((Action<string>)observer)(path); }
+            // A display observer cannot interrupt storage work or leak its acquired lease.
+            catch (Exception) { }
         }
     }
 
@@ -199,6 +231,8 @@ public static class SessionAccess
         internal int Users { get; set; }
 
         internal int Writers { get; set; }
+
+        internal int WorkReaders { get; set; }
 
         internal bool Deleting { get; set; }
 
@@ -304,12 +338,13 @@ public static class SessionAccess
         }
     }
 
-    private sealed class Usage(string path, bool writer) : IDisposable
+    private sealed class Usage(string path, bool writer, bool work) : IDisposable
     {
         private bool _disposed;
 
         public void Dispose()
         {
+            bool changed;
             lock (Gate)
             {
                 if (_disposed)
@@ -320,13 +355,16 @@ public static class SessionAccess
                 _disposed = true;
                 var entry = Entries[path];
                 entry.Users--;
+                if (work) entry.WorkReaders--;
                 if (writer)
                 {
                     entry.Writers--;
                 }
 
+                changed = (writer || work) && entry.Writers == 0 && entry.WorkReaders == 0;
                 ReleaseUnused(path, entry);
             }
+            if (changed) NotifyWorkChanged(path);
         }
     }
 

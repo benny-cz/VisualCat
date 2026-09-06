@@ -89,7 +89,8 @@ internal sealed record CaptureDeletionResult(PreparedCapture Capture, CaptureDel
     internal string Reason => CaptureReason.For(Protection, File.Outcome);
 
     internal string Detail => Capture.Label + "\n" + Reason +
-        (TabsClosed && !File.Removed ? " The tab was closed, but the capture was not deleted." : string.Empty);
+        (TabsClosed && File.Outcome == CaptureDeleteOutcome.Unknown ? " The tab was closed; the deletion outcome is unverified."
+            : TabsClosed && !File.Removed ? " The tab was closed, but the capture was not deleted." : string.Empty);
 
     /// <summary>The in-dialog result line: every category that happened, none of them hidden.</summary>
     internal static string Summary(IEnumerable<CaptureDeletionResult> results)
@@ -111,7 +112,7 @@ internal sealed record CaptureDeletionResult(PreparedCapture Capture, CaptureDel
                     : $"At least about {RecentSessionsDialog.FormatBytes(tally.DeletedSize)} of captures removed.");
             }
         }
-        else if (tally.Failed > 0)
+        else if (tally.Failed > 0 && tally.Unknown == 0)
         {
             sentences.Add("No captures were deleted.");
         }
@@ -126,9 +127,14 @@ internal sealed record CaptureDeletionResult(PreparedCapture Capture, CaptureDel
             sentences.Add($"{Counted.Captures(tally.Missing)} {(tally.Missing == 1 ? "was" : "were")} already missing.");
         }
 
-        if (tally.Stopped > 0)
+        if (tally.Cancelled > 0)
         {
-            sentences.Add($"Stopped. {Counted.Captures(tally.Stopped)} {(tally.Stopped == 1 ? "was" : "were")} not attempted.");
+            sentences.Add($"Stopped before deleting {Counted.Captures(tally.Cancelled)}.");
+        }
+
+        if (tally.NotAttempted > 0)
+        {
+            sentences.Add($"{Counted.Captures(tally.NotAttempted)} {(tally.NotAttempted == 1 ? "was" : "were")} not attempted.");
         }
 
         if (tally.Pending > 0)
@@ -138,7 +144,7 @@ internal sealed record CaptureDeletionResult(PreparedCapture Capture, CaptureDel
 
         if (tally.Unknown > 0)
         {
-            sentences.Add("Some results could not be verified. Try Refresh.");
+            sentences.Add($"The deletion {(tally.Unknown == 1 ? "result" : "results")} for {Counted.Captures(tally.Unknown)} could not be verified. Try Refresh.");
         }
 
         return string.Join(' ', sentences);
@@ -158,6 +164,8 @@ internal sealed record CaptureDeletionResult(PreparedCapture Capture, CaptureDel
         var tally = Tally.Of(values);
         if (tally.Total == 0 || tally.Stopped == tally.Total)
         {
+            if (values.Any(result => result.TabsClosed))
+                return (CaptureNoticeKind.Information, "Deletion stopped. Tabs were closed, but no captures were deleted.");
             return (CaptureNoticeKind.None, string.Empty);
         }
 
@@ -196,12 +204,14 @@ internal sealed record CaptureDeletionResult(PreparedCapture Capture, CaptureDel
     /// nor a successful recursive delete measure storage that became free.
     /// </summary>
     internal readonly record struct Tally(
-        int Total, int Deleted, int Pending, int Missing, int Failed, int Stopped, int Unknown,
+        int Total, int Deleted, int Pending, int Missing, int Failed, int Cancelled, int NotAttempted, int Unknown,
         long DeletedSize, bool SizeComplete)
     {
+        internal int Stopped => Cancelled + NotAttempted;
+
         internal static Tally Of(IEnumerable<CaptureDeletionResult> results)
         {
-            int total = 0, deleted = 0, pending = 0, missing = 0, failed = 0, stopped = 0, unknown = 0;
+            int total = 0, deleted = 0, pending = 0, missing = 0, failed = 0, cancelled = 0, notAttempted = 0, unknown = 0;
             long size = 0;
             var complete = true;
             foreach (var result in results)
@@ -236,18 +246,18 @@ internal sealed record CaptureDeletionResult(PreparedCapture Capture, CaptureDel
                 {
                     unknown++;
                 }
-
-                if (result.Failed)
+                else if (result.Failed)
                 {
                     failed++;
                 }
                 else if (result.Stopped)
                 {
-                    stopped++;
+                    if (result.File.Outcome == CaptureDeleteOutcome.Cancelled) cancelled++;
+                    else notAttempted++;
                 }
             }
 
-            return new(total, deleted, pending, missing, failed, stopped, unknown, size, complete);
+            return new(total, deleted, pending, missing, failed, cancelled, notAttempted, unknown, size, complete);
         }
     }
 }
@@ -366,6 +376,10 @@ internal sealed class CaptureDeletionCoordinator(
                 using var reservation = await Task
                     .Run(() => SessionAccess.ReserveDeletion(capture.Target.Path), CancellationToken.None)
                     .ConfigureAwait(true);
+                // The first inspection and taking intent are separated by an await. A writer
+                // may have replaced the capture in that interval; refuse before closing tabs
+                // belonging to that replacement, not just before the later rename.
+                await CaptureDeletionService.ValidateAsync(root, capture.Target, cancellationToken).ConfigureAwait(true);
                 foreach (var close in closeTabs(capture.Target.Path))
                 {
                     cancellationToken.ThrowIfCancellationRequested();

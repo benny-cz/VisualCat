@@ -185,6 +185,28 @@ public sealed class CaptureDeletionTests : IDisposable
     }
 
     [Fact]
+    public async Task AFileOccupyingAnOwnedStageIsReportedAndNeverErased()
+    {
+        var capture = await Capture();
+        var target = await CaptureDeletionService.PrepareAsync(_root, capture);
+        using var reservation = SessionAccess.ReserveDeletion(capture.Path);
+        CaptureDeletionService.TestPhase = phase => { if (phase == "committed") throw new IOException("pause cleanup"); };
+        Assert.Equal(CaptureDeleteOutcome.DeletedPendingReclaim,
+            (await CaptureDeletionService.DeleteAsync(_root, target, reservation)).Outcome);
+        var stage = Assert.Single(Directory.EnumerateDirectories(_root, "*.vcat-deleting"));
+        Directory.Delete(stage, true);
+        await File.WriteAllTextAsync(stage, "unowned replacement", TestContext.Current.CancellationToken);
+        var inventory = await CaptureDeletionService.InventoryAsync(_root);
+        Assert.Equal(0, inventory.PendingCleanup);
+        Assert.Equal(1, inventory.UnresolvedCleanup);
+        reservation.Dispose();
+        CaptureDeletionService.TestPhase = null;
+        await CaptureDeletionService.RetryCleanupAsync(_root);
+        Assert.Equal("unowned replacement", await File.ReadAllTextAsync(stage, TestContext.Current.CancellationToken));
+        Assert.Equal(1, (await CaptureDeletionService.InventoryAsync(_root)).UnresolvedCleanup);
+    }
+
+    [Fact]
     public async Task SharingViolationsAreTypedAndDoNotRename()
     {
         if (!OperatingSystem.IsWindows()) return;

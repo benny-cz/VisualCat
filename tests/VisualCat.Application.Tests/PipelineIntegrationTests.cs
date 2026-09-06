@@ -372,6 +372,65 @@ public sealed class PipelineIntegrationTests
         Assert.Contains(statistics.Tags, static facet => facet.Value == "TagB" && facet.Count == 1);
     }
 
+    [Theory]
+    [InlineData("raw")]
+    [InlineData("context")]
+    [InlineData("csv")]
+    [InlineData("save")]
+    [InlineData("verify")]
+    public async Task ReadOperationsProtectTheirSourceBeforeAnyTabCanBeClosed(string operation)
+    {
+        await using var imported = await ImportAsync([13], workers: 2);
+        var destination = imported.Root + ".export";
+        var states = new List<bool>();
+        Exception? reservationError = null;
+        void Observe(string path)
+        {
+            if (!SessionPath.Comparer.Equals(path, imported.Root)) return;
+            var working = SessionAccess.IsWorking(path);
+            states.Add(working);
+            if (working)
+            {
+                try { using var reservation = SessionAccess.ReserveDeletion(path); }
+                catch (Exception error) { reservationError = error; }
+            }
+        }
+        SessionAccess.WorkChanged += Observe;
+        try
+        {
+            var range = imported.Snapshot.TimedRange!.Value;
+            switch (operation)
+            {
+                case "raw":
+                    await ExportService.ExportRawAsync(imported.Snapshot, destination, range, FilterSpec.All, EntryOrder.SourceSequence);
+                    break;
+                case "context":
+                    await ExportService.ExportRawContextAsync(imported.Snapshot, destination, 1, 0, 1);
+                    break;
+                case "csv":
+                    await ExportService.ExportNormalizedCsvAsync(imported.Snapshot, destination, range, FilterSpec.All, EntryOrder.SourceSequence);
+                    break;
+                case "save":
+                    await SessionSaveService.SaveAsync(imported.Snapshot, destination, portable: false);
+                    break;
+                case "verify":
+                    Assert.True((await SessionVerifier.VerifyAsync(imported.Root)).IsValid);
+                    break;
+            }
+            Assert.Equal([true, false], states);
+            Assert.IsType<SessionInUseException>(reservationError);
+            Assert.False(SessionAccess.IsWorking(imported.Root));
+            // The remaining idle tab is allowed to be reserved once the operation ends.
+            using var after = SessionAccess.ReserveDeletion(imported.Root);
+        }
+        finally
+        {
+            SessionAccess.WorkChanged -= Observe;
+            if (Directory.Exists(destination)) Directory.Delete(destination, true);
+            else if (File.Exists(destination)) File.Delete(destination);
+        }
+    }
+
     [Fact]
     public async Task RawExportIsByteFaithfulAndSearchIsCancellable()
     {
