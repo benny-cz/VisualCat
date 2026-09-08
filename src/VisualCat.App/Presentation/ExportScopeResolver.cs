@@ -1,5 +1,5 @@
-using System.Globalization;
 using System.Collections.Immutable;
+using System.Globalization;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
