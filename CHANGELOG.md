@@ -110,6 +110,11 @@ screenshot says which build it came from.
   card.
 
 ### Fixed
+- A command that cannot run no longer guesses why. *Lines not on the timeline…* used to
+  explain itself as *needs an open session* while a session was open and simply carried every
+  line onto the timeline; it now says *this session has none*, and the commands that really do
+  need a session still say so. On the desktop that command was never disabled at all — the
+  overflow menu did not read its availability, so it opened an empty pane.
 - A facet value is called the same thing wherever it is named. A screen reader used to read
   every process row as `Processe com.example` and every PID row as `Pid 1000`, because that
   word was made by dropping a letter from the group heading; both surfaces now say *process*

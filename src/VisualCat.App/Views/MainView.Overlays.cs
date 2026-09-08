@@ -177,13 +177,19 @@ public sealed partial class MainView : IDialogHost
     /// presents them as a sheet. Both are generated from this list, so a command cannot exist
     /// in one presentation and be missing from the other.
     /// </remarks>
+    /// <remarks>
+    /// <c>UnavailableReason</c> is why this command cannot run, when only the command knows.
+    /// The shell answers first for the states it owns — a file operation holding the slot, a
+    /// filter still applying — and a command that cannot say anything true says nothing.
+    /// </remarks>
     private sealed record CommandDescriptor(
         string Label,
         string? Description,
         Func<Task> Action,
         Func<bool>? CanExecute,
         bool IsSetting,
-        CommandGroup Group = CommandGroup.ThisSession);
+        CommandGroup Group = CommandGroup.ThisSession,
+        Func<string?>? UnavailableReason = null);
 
     /// <summary>
     /// Which heading a secondary command belongs under.
@@ -244,6 +250,28 @@ public sealed partial class MainView : IDialogHost
     /// it holds no state of the reader's — so rebuilding it costs nothing and is what makes the
     /// menu answer a theme or text-size change instead of sitting through it (F-40).
     /// </remarks>
+    /// <summary>The command sheet as the reader would read it, for a test that reads it too.</summary>
+    internal IReadOnlyList<(string Label, string? Description, bool Enabled)> CommandSheetForTest() =>
+        _secondaryCommands
+            .OrderBy(static command => command.Group)
+            .Select(command => BuildSheetItem(command, dark: true))
+            .Select(static button => (
+                Label: ((button.Content as StackPanel)!.Children[0] as TextBlock)!.Text ?? string.Empty,
+                Description: (button.Content as StackPanel)!.Children.Count > 1
+                    ? ((button.Content as StackPanel)!.Children[1] as TextBlock)!.Text
+                    : null,
+                button.IsEnabled))
+            .ToArray();
+
+    /// <summary>The desktop overflow items that answer for themselves.</summary>
+    internal IReadOnlyList<(string Label, bool Enabled, string? Help)> OverflowMenuForTest() =>
+        _secondaryMenuItems
+            .Select(static entry => (
+                Label: entry.Item.Header as string ?? string.Empty,
+                entry.Item.IsEnabled,
+                Help: Avalonia.Automation.AutomationProperties.GetHelpText(entry.Item)))
+            .ToArray();
+
     private Control BuildCommandList(bool dark)
     {
         var items = new StackPanel { Spacing = 2 };
@@ -288,17 +316,16 @@ public sealed partial class MainView : IDialogHost
             Foreground = new SolidColorBrush(WorkspacePalette.TextPrimary(dark)),
         };
 
-        // A command that cannot run says why, in place, instead of being tappable and silent.
-        var unavailableReason = enabled ? null : UnavailableCommandReason();
-        var description = enabled
+        // A command that cannot run says why, in place, instead of being tappable and silent —
+        // and says nothing rather than a guess. "Needs an open session" was the fallback for
+        // every reason the shell could not name, so `Lines not on the timeline…` explained
+        // itself that way while a session was open and its own count was simply zero.
+        var unavailableReason = enabled ? null : DisabledCommandReason(command.UnavailableReason);
+        var description = enabled || unavailableReason is not { Length: > 0 }
             ? command.Description
-            : unavailableReason is { Length: > 0 }
-                ? command.Description is { Length: > 0 } describedAction
-                    ? $"{describedAction} · {unavailableReason}"
-                    : unavailableReason
-                : command.Description is { Length: > 0 } sessionAction
-                    ? $"{sessionAction} · needs an open session"
-                    : "Needs an open session";
+            : command.Description is { Length: > 0 } describedAction
+                ? $"{describedAction} · {unavailableReason}"
+                : unavailableReason;
         var content = new StackPanel { Spacing = 1, Children = { label } };
         if (description is { Length: > 0 })
         {

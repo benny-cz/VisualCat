@@ -1440,11 +1440,27 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             Func<Task> action,
             string? description = null,
             Func<bool>? canExecute = null,
-            CommandGroup group = CommandGroup.ThisSession)
+            CommandGroup group = CommandGroup.ThisSession,
+            Func<string?>? unavailableReason = null)
         {
-            _toolbarSettings.Add(MenuAction(menuLabel, action));
-            _secondaryCommands.Add(
-                new CommandDescriptor(menuLabel, description, action, canExecute, IsSetting: false, group));
+            var item = MenuAction(menuLabel, action);
+            _toolbarSettings.Add(item);
+            if (canExecute is not null)
+            {
+                // The phone sheet reads CanExecute; the desktop menu did not, so the same
+                // command was inert-with-a-reason on one platform and fully enabled on the
+                // other — where it opened an empty pane rather than refusing.
+                _secondaryMenuItems.Add((item, canExecute, unavailableReason));
+            }
+
+            _secondaryCommands.Add(new CommandDescriptor(
+                menuLabel,
+                description,
+                action,
+                canExecute,
+                IsSetting: false,
+                group,
+                unavailableReason));
         }
 
         void Setting(string menuLabel, Func<Task> action, string? description = null)
@@ -1551,7 +1567,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             "Lines not on the timeline…",
             ShowUnparsedLinesAsync,
             "Stack-trace frames and records with no usable timestamp",
-            CanShowUnparsedLines);
+            CanShowUnparsedLines,
+            unavailableReason: UnparsedLinesUnavailableReason);
 
         Setting("Appearance & timeline…", ShowAppearanceAsync, "Theme, text size, and how the plot is drawn");
         Setting("Session cache…", ShowSessionCacheAsync, "What this device is storing, and for how long");
@@ -1611,6 +1628,20 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         _viewModel.Selected is { Snapshot: not null } tab && tab.OffTimelineCount > 0;
 
     /// <summary>
+    /// Why this session's off-timeline lines cannot be opened, when the session itself is why.
+    /// </summary>
+    /// <remarks>
+    /// A greyed command with no explanation is answerable here: either there is no session, or
+    /// this one carried every line onto the timeline. The count line above the entry list only
+    /// mentions unparsed lines when there are some, so with none there is nothing on screen
+    /// that would tell the reader why the command is inert.
+    /// </remarks>
+    private string? UnparsedLinesUnavailableReason() =>
+        _viewModel.Selected is { Snapshot: not null } tab
+            ? tab.OffTimelineCount > 0 ? null : "this session has none"
+            : "needs an open session";
+
+    /// <summary>
     /// Stops the restricted capture the notice is about and reopens the scope chooser.
     /// </summary>
     /// <remarks>
@@ -1642,12 +1673,6 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     }
 
     /// <summary>
-    /// Keeps a session-dependent command enabled only while there is a session for it to act
-    /// on. Each of Share, Export CSV and Save returned silently when no session was loaded,
-    /// while their controls stayed fully enabled — a command that looks available and does
-    /// nothing is indistinguishable from one that is broken (finding 19).
-    /// </summary>
-    /// <summary>
     /// Says on the command band whether this device's log is being recorded right now.
     /// </summary>
     /// <remarks>
@@ -1676,9 +1701,19 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 : $"{running.Title} is capturing. Tap to go to it; stop it there.");
     }
 
+    /// <summary>Secondary menu items that answer for themselves, and how each one answers.</summary>
+    private readonly List<(MenuItem Item, Func<bool> CanExecute, Func<string?>? Reason)> _secondaryMenuItems = [];
+
     private void UpdateSessionActionAvailability()
     {
         var reason = UnavailableCommandReason();
+        foreach (var (item, canRun, ownReason) in _secondaryMenuItems)
+        {
+            var runnable = canRun();
+            item.IsEnabled = runnable;
+            AutomationProperties.SetHelpText(item, runnable ? null : DisabledCommandReason(ownReason));
+        }
+
         if (_openLogButton is { } openLog)
         {
             var enabled = CanStartFileOperation();
@@ -1709,6 +1744,21 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             ToolTip.SetTip(command.Button, help);
         }
     }
+
+    /// <summary>
+    /// Why a disabled command cannot run, asked of everything that could answer truthfully.
+    /// </summary>
+    /// <remarks>
+    /// In order: the shell's own states, then the command itself, then the one condition the
+    /// shell can always check — whether there is a session at all. The sheet used to answer
+    /// that last one for every unexplained refusal, so a command disabled because this session
+    /// simply has nothing for it explained itself as a missing session. Nothing is said when
+    /// nothing true can be.
+    /// </remarks>
+    private string? DisabledCommandReason(Func<string?>? ownReason) =>
+        UnavailableCommandReason()
+        ?? ownReason?.Invoke()
+        ?? (_viewModel.Selected is null ? "needs an open session" : null);
 
     /// <summary>Why the session commands are unavailable, when the shell knows.</summary>
     /// <remarks>
