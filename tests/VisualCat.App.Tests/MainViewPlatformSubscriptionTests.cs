@@ -29,6 +29,7 @@ public sealed class MainViewPlatformSubscriptionTests
     private static readonly string[] PlatformEvents =
     [
         "LaunchFilesReceived",
+        "IncomingFilesRequested",
         "AppResumed",
         "AppPaused",
         "DisplayConfigurationChanged",

@@ -89,6 +89,38 @@ public interface ILogSource : IAsyncDisposable
     Task StopAsync(CancellationToken cancellationToken);
 }
 
+/// <summary>Why an advisory finite-source sample stopped before ordinary EOF.</summary>
+public enum SourceProbeLimit : byte
+{
+    None,
+    LineCount,
+    AggregateBytes,
+    ClippedLine,
+}
+
+/// <summary>
+/// A bounded source sample. Complete lines drive outcome percentages; detector lines may
+/// additionally contain one explicitly clipped prefix.
+/// </summary>
+public sealed record BoundedSourceProbe(
+    IReadOnlyList<ReadOnlyMemory<byte>> CompleteLines,
+    IReadOnlyList<ReadOnlyMemory<byte>> DetectorLines,
+    bool SourceBytesObserved,
+    bool ReachedEndOfSource,
+    SourceProbeLimit Limit,
+    int RetainedBytes,
+    bool HasClippedLine);
+
+/// <summary>Optional finite-source capability that enforces retention before allocation.</summary>
+public interface IBoundedProbeSource
+{
+    Task<BoundedSourceProbe> ProbeAsync(
+        int maximumUsefulLines,
+        int maximumRetainedBytes,
+        int maximumLineBytes,
+        CancellationToken cancellationToken);
+}
+
 /// <summary>
 /// What a source turned out to be able to see, once it started seeing it.
 /// </summary>

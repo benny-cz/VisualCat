@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
@@ -12,6 +13,7 @@ using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
 using VisualCat.Application.Ports;
 using VisualCat.Application.UseCases;
+using VisualCat.Core.Query;
 using VisualCat.Core.Store;
 using VisualCat.Domain;
 using VisualCat.Domain.Sessions;
@@ -44,6 +46,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private bool _settingsLoaded;
     private Window? _hostWindow;
     private readonly Action<IReadOnlyList<IncomingFile>> _launchFilesHandler;
+    private readonly Action<IReadOnlyList<IncomingFileRequest>> _incomingRequestsHandler;
     private readonly Action _appResumedHandler;
     private readonly Action _appPausedHandler;
     private readonly Action _displayConfigurationHandler;
@@ -67,6 +70,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         ClipToBounds = !OperatingSystem.IsAndroid(),
     };
     private readonly List<Button> _toolbarPrimary = [];
+    private Button? _openLogButton;
     private Button? _liveButton;
     private readonly List<ToolbarCommand> _toolbarFlexible = [];
     private readonly List<MenuItem> _toolbarSettings = [];
@@ -123,6 +127,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// <summary>One view's registration on the platform's static event surface.</summary>
     private sealed class PlatformEventSubscription(
         Action<IReadOnlyList<IncomingFile>> launchFiles,
+        Action<IReadOnlyList<IncomingFileRequest>> incomingRequests,
         Action appResumed,
         Action appPaused,
         Action displayConfiguration,
@@ -132,6 +137,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         public void Attach()
         {
             PlatformSourceRegistry.LaunchFilesReceived += launchFiles;
+            PlatformSourceRegistry.IncomingFilesRequested += incomingRequests;
             PlatformSourceRegistry.AppResumed += appResumed;
             PlatformSourceRegistry.AppPaused += appPaused;
             PlatformSourceRegistry.DisplayConfigurationChanged += displayConfiguration;
@@ -141,6 +147,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         public void Detach()
         {
             PlatformSourceRegistry.LaunchFilesReceived -= launchFiles;
+            PlatformSourceRegistry.IncomingFilesRequested -= incomingRequests;
             PlatformSourceRegistry.AppResumed -= appResumed;
             PlatformSourceRegistry.AppPaused -= appPaused;
             PlatformSourceRegistry.DisplayConfigurationChanged -= displayConfiguration;
@@ -214,6 +221,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         _startupPaths = startupPaths?.ToArray() ?? [];
         _settingsStore = new SettingsStore(settingsPath);
         _launchFilesHandler = files => Dispatcher.UIThread.Post(() => _ = RunAsync(() => OpenIncomingAsync(files)));
+        _incomingRequestsHandler = requests =>
+            Dispatcher.UIThread.Post(() => _ = RunAsync(() => OpenIncomingRequestsAsync(requests)));
         _appResumedHandler = () => Dispatcher.UIThread.Post(() =>
         {
             RestoreAndroidLayoutAfterResume();
@@ -255,6 +264,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         _appUpdateStatusHandler = status => Dispatcher.UIThread.Post(() => RenderUpdateStatus(status));
         _platformEvents = new PlatformEventSubscription(
             _launchFilesHandler,
+            _incomingRequestsHandler,
             _appResumedHandler,
             _appPausedHandler,
             _displayConfigurationHandler,
@@ -501,6 +511,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         ApplyCommandBarTheme(dark);
         _emptyState.Child = BuildEmptyState(dark);
         ApplyNoticeTheme();
+        ApplyFileOperationTheme();
         UpdateSessionStrip();
 
         // A sheet is a surface painted in code like any other, and it is the one the reader is
@@ -656,6 +667,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var notice = BuildNotice();
         DockPanel.SetDock(notice, Dock.Bottom);
         root.Children.Add(notice);
+        var operation = BuildFileOperationBand();
+        DockPanel.SetDock(operation, Dock.Bottom);
+        root.Children.Add(operation);
         var workspaceHost = new Grid();
         workspaceHost.Children.Add(_tabs);
         // The overlay carries the get-started links now, so it must receive clicks. It is
@@ -702,6 +716,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         var compositionChanged = _mobileCompactHeight != compactHeight;
         _mobileCompactHeight = compactHeight;
         ApplyNoticeLayout(compactHeight);
+
+        // The card sits in the same short-landscape band the notice does, so it follows the
+        // same compact rule; without this it kept full padding where the lane had shed it.
+        ApplyFileOperationLayout(compactHeight);
         // Once a session is open its tab title is the identity that matters. Removing the
         // decorative brand row recovers a full touch row in portrait without hiding any
         // command; the empty/home state still carries the complete VisualCat masthead.
@@ -1441,7 +1459,13 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 CommandGroup.Settings));
         }
 
-        Primary("＋  Open log", OpenLogAsync);
+        _openLogButton = Primary("＋  Open log", OpenLogAsync);
+        Secondary(
+            "Open log with options…",
+            OpenLogWithOptionsAsync,
+            "Review format, year, time zone, templates, and raw storage before import",
+            CanStartFileOperation,
+            group: CommandGroup.Open);
         if (OperatingSystem.IsAndroid())
         {
             if (PlatformSourceRegistry.CreateOnDeviceSource is not null)
@@ -1463,6 +1487,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 "Open portable archive…",
                 OpenArchiveAsync,
                 "Open a .vcat.zip someone shared",
+                CanStartFileOperation,
                 group: CommandGroup.Open);
             Flexible(
                 "Open session",
@@ -1470,7 +1495,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 OpenSessionAsync,
                 "Open a .vcat session folder",
                 group: CommandGroup.Open);
-            if (PlatformSourceRegistry.ShareFileAsync is not null)
+            if (PlatformSourceRegistry.ShareFileAsync is not null ||
+                PlatformSourceRegistry.ShareFileWithProgressAsync is not null)
             {
                 Flexible(
                     "Share",
@@ -1499,7 +1525,12 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             Flexible("Open session", "Open session…", OpenSessionAsync, group: CommandGroup.Open);
             Flexible("Recent", "Recent captures…", OpenRecentAsync, group: CommandGroup.Open);
             Flexible("Follow file", "Follow growing file…", FollowFileAsync, group: CommandGroup.Open);
-            Flexible("Open archive", "Open portable archive…", OpenArchiveAsync, group: CommandGroup.Open);
+            Flexible(
+                "Open archive",
+                "Open portable archive…",
+                OpenArchiveAsync,
+                canExecute: CanStartFileOperation,
+                group: CommandGroup.Open);
             Flexible(
                 "Save",
                 "Save session…",
@@ -1567,10 +1598,14 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         return _toolbar;
     }
 
-    private bool CanSaveOrShareSelectedSession() => _viewModel.Selected?.Snapshot is not null;
+    private bool CanSaveOrShareSelectedSession() =>
+        !_fileOperations.IsBusy && _viewModel.Selected?.Snapshot is not null;
+
+    private bool CanStartFileOperation() => !_fileOperations.IsBusy;
 
     private bool CanExportSelectedSession() =>
-        _viewModel.Selected?.Snapshot is not null && _viewModel.Selected.Viewport is not null;
+        !_fileOperations.IsBusy &&
+        _viewModel.Selected is { Snapshot: not null, Viewport: not null, IsQueryPending: false };
 
     private bool CanShowUnparsedLines() =>
         _viewModel.Selected is { Snapshot: not null } tab && tab.OffTimelineCount > 0;
@@ -1643,6 +1678,16 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
     private void UpdateSessionActionAvailability()
     {
+        var reason = UnavailableCommandReason();
+        if (_openLogButton is { } openLog)
+        {
+            var enabled = CanStartFileOperation();
+            var help = enabled ? null : reason;
+            openLog.IsEnabled = enabled;
+            AutomationProperties.SetHelpText(openLog, help);
+            ToolTip.SetTip(openLog, help);
+        }
+
         foreach (var command in _toolbarFlexible)
         {
             if (command.CanExecute is not { } canExecute)
@@ -1653,8 +1698,31 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             var enabled = canExecute();
             command.Button.IsEnabled = enabled;
             command.MenuItem.IsEnabled = enabled;
+
+            // A control that is simply grey is a control that has stopped answering. Where
+            // the shell knows why — a file operation is holding it, or a newer filter has
+            // not finished applying — the reason belongs on the command itself, which is
+            // where a reader who cannot see the greying will look for it.
+            var help = enabled ? null : reason;
+            AutomationProperties.SetHelpText(command.Button, help);
+            AutomationProperties.SetHelpText(command.MenuItem, help);
+            ToolTip.SetTip(command.Button, help);
         }
     }
+
+    /// <summary>Why the session commands are unavailable, when the shell knows.</summary>
+    /// <remarks>
+    /// Only the two states this plan introduced are named. Anything else — no session open,
+    /// no rows off the timeline — is already obvious from the screen, and inventing a
+    /// sentence for it would put a reason on a command that is disabled for a reason the
+    /// reader can already see.
+    /// </remarks>
+    private string? UnavailableCommandReason() =>
+        _fileOperations.Current is { Title: var title }
+            ? $"{title.TrimEnd('…')} is in progress. Try again when it finishes."
+            : _viewModel.Selected is { IsQueryPending: true }
+                ? PendingFilterRefusal
+                : null;
 
     /// <summary>
     /// Re-picks which flexible actions render as buttons and which fold into "More" for the
@@ -1821,7 +1889,21 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         return item;
     }
 
-    private async Task OpenLogAsync()
+    /// <summary>
+    /// Opens a log the ordinary way: the desktop reviews every file, the phone reviews the
+    /// ones detection is unsure about.
+    /// </summary>
+    /// <remarks>
+    /// The picker is titled after the command the reader used, not after whether a review
+    /// will follow. Deriving it instead renamed the desktop's own primary command's dialog
+    /// to "with options", which is the name of a different command in the same menu.
+    /// </remarks>
+    private Task OpenLogAsync() =>
+        OpenLogPickerAsync(alwaysReview: !OperatingSystem.IsAndroid(), withOptions: false);
+
+    private Task OpenLogWithOptionsAsync() => OpenLogPickerAsync(alwaysReview: true, withOptions: true);
+
+    private async Task OpenLogPickerAsync(bool alwaysReview, bool withOptions)
     {
         var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
         if (storage is null)
@@ -1829,59 +1911,137 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+        var invoker = FocusedFileOperationInvoker();
+        if (!_fileOperations.TryBegin(FileOperationKind.Open, "Opening log…", out var operation) || operation is null)
         {
-            Title = "Open Android logcat file",
-            AllowMultiple = true,
-            FileTypeFilter = [new FilePickerFileType("Text logs") { Patterns = ["*.txt", "*.log"] }],
-        });
-        foreach (var file in files)
+            ShowNotice(
+                "Another file operation is in progress. Open this log again when it finishes.",
+                NoticeKind.Information);
+            return;
+        }
+
+        RememberFileOperationInvoker(invoker);
+        var work = OpenLogPickerCoreAsync(storage, alwaysReview, withOptions, operation);
+        _fileOperations.Track(operation, work);
+        await work;
+    }
+
+    private async Task OpenLogPickerCoreAsync(
+        IStorageProvider storage,
+        bool alwaysReview,
+        bool withOptions,
+        FileOperationHandle operation)
+    {
+        await using (operation)
         {
-            using (file)
+            try
             {
-                var materialized = await StorageFileBridge.MaterializeForReadAsync(file);
-                var path = materialized.Path;
-                try
+                var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
                 {
-                    await using var source = new FileLogSource(path);
-                    var policy = TimestampPolicy.ForFile(source.Metadata.ReferenceInstant);
-                    var preview = await ImportPreviewService.PreviewAsync(source, policy);
-                    if (OperatingSystem.IsAndroid())
-                    {
-                        var androidSettings = new IngestSettings(
-                            preview.Detection.PrimaryFormat,
-                            "utf-8",
-                            preview.TimestampPolicy,
-                            new TemplateSettings(),
-                            PortableRaw: materialized.IsTemporary);
-                        await RunAsync(() => _viewModel.ImportFileAsync(
-                            path,
-                            androidSettings,
-                            file.Name));
-                        continue;
-                    }
-
-                    if (TopLevel.GetTopLevel(this) is not Window owner)
-                    {
-                        return;
-                    }
-
-                    var dialog = new ImportPreviewDialog(Path.GetFileName(path), preview);
-                    var accepted = await dialog.ShowDialog<bool>(owner);
-                    if (accepted && dialog.SelectedSettings is { } settings)
-                    {
-                        var effectiveSettings = materialized.IsTemporary
-                            ? settings with { PortableRaw = true }
-                            : settings;
-                        await RunAsync(() => _viewModel.ImportFileAsync(path, effectiveSettings));
-                    }
-                }
-                finally
+                    Title = withOptions ? "Open Android logcat file with options" : "Open Android logcat file",
+                    AllowMultiple = true,
+                    FileTypeFilter = [new FilePickerFileType("Text logs") { Patterns = ["*.txt", "*.log"] }],
+                });
+                foreach (var file in files)
                 {
-                    materialized.DeleteIfTemporary();
+                    operation.Token.ThrowIfCancellationRequested();
+                    using (file)
+                    {
+                        operation.Report(new FileWorkProgress(FileWorkStage.Copying));
+                        var materialized = await StorageFileBridge.MaterializeForReadAsync(
+                            file,
+                            operation.Progress,
+                            operation.Token);
+                        try
+                        {
+                            var preparation = await PrepareImportAsync(
+                                materialized.Path,
+                                file.Name,
+                                alwaysReview,
+                                materialized.IsTemporary,
+                                operation.Token);
+                            if (!preparation.Accepted)
+                            {
+                                continue;
+                            }
+
+                            // Import owns its own tab-level operation, cancellation and
+                            // progress from here. The card goes so one action is not reported
+                            // twice; the slot stays claimed so the rest of a deliberately
+                            // multi-file selection still runs one file at a time.
+                            operation.HandOff();
+                            await RunAsync(() => _viewModel.ImportFileAsync(
+                                materialized.Path,
+                                preparation.Settings,
+                                file.Name,
+                                operation.Token));
+                        }
+                        finally
+                        {
+                            materialized.DeleteIfTemporary();
+                        }
+                    }
                 }
             }
+            catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+            {
+                ShowNotice("Opening log cancelled.", NoticeKind.Information);
+            }
+            catch (Exception exception)
+            {
+                WorkspaceViewModel.RecordFailure("open.log", exception);
+                ShowNotice(
+                    $"Could not open the log · {WorkspaceViewModel.FriendlyMessage(exception)}",
+                    NoticeKind.Failure);
+            }
         }
+    }
+
+    private async Task<(bool Accepted, IngestSettings? Settings)> PrepareImportAsync(
+        string path,
+        string displayName,
+        bool alwaysReview,
+        bool portableRawRequired,
+        CancellationToken cancellationToken)
+    {
+        await using var source = new FileLogSource(path, displayName: displayName);
+        var policy = TimestampPolicy.ForFile(
+            source.Metadata.ReferenceInstant,
+            source.Metadata.ResolveLogTimeZoneId());
+        using var sample = await ImportSampleService.AcquireAsync(source, cancellationToken);
+        var preview = await Task.Run(
+            () => ImportSampleService.Evaluate(sample, policy, cancellationToken: cancellationToken),
+            cancellationToken);
+        var decision = ImportPreparationPolicy.Decide(sample, preview, alwaysReview);
+        if (decision == ImportPreparationDecision.Review)
+        {
+            using var dialog = new ImportPreviewDialog(
+                displayName,
+                sample,
+                preview,
+                portableRawRequired);
+            IngestSettings? selected;
+            try
+            {
+                selected = await ShowDialogAsync(dialog);
+            }
+            finally
+            {
+                await dialog.DrainAsync();
+            }
+
+            return selected is null ? (false, null) : (true, selected);
+        }
+
+        // Empty input deliberately continues to the coordinator so the existing failed-tab
+        // recovery surface remains authoritative. Quick import retains Auto-detect rather
+        // than forcing the advisory sample's winning format.
+        return (true, new IngestSettings(
+            null,
+            "utf-8",
+            policy,
+            new TemplateSettings(),
+            PortableRaw: portableRawRequired));
     }
 
     private async Task OpenSessionAsync()
@@ -1920,30 +2080,53 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Open portable VisualCat archive",
-            AllowMultiple = false,
-            FileTypeFilter =
-            [
-                new FilePickerFileType("VisualCat portable archives") { Patterns = ["*.vcat.zip", "*.zip"] },
-            ],
-        });
-        if (files.Count == 0)
-        {
-            return;
-        }
+        var openedName = "portable archive";
+        await RunFileOperationAsync(
+            FileOperationKind.Open,
+            "Choosing portable archive…",
+            async operation =>
+            {
+                var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Open portable VisualCat archive",
+                    AllowMultiple = false,
+                    FileTypeFilter =
+                    [
+                        new FilePickerFileType("VisualCat portable archives")
+                        {
+                            Patterns = ["*.vcat.zip", "*.zip"],
+                        },
+                    ],
+                });
+                if (files.Count == 0)
+                {
+                    return null;
+                }
 
-        using var file = files[0];
-        var materialized = await StorageFileBridge.MaterializeForReadAsync(file);
-        try
-        {
-            await RunAsync(() => _viewModel.OpenPortableArchiveAsync(materialized.Path));
-        }
-        finally
-        {
-            materialized.DeleteIfTemporary();
-        }
+                using var file = files[0];
+                openedName = file.Name;
+                operation.Report(new FileWorkProgress(FileWorkStage.Copying));
+                var materialized = await StorageFileBridge.MaterializeForReadAsync(
+                    file,
+                    operation.Progress,
+                    operation.Token);
+                try
+                {
+                    operation.Report(new FileWorkProgress(FileWorkStage.ExtractingArchive));
+                    await _viewModel.OpenPortableArchiveAsync(
+                        materialized.Path,
+                        LocalPublishingProgress(operation),
+                        operation.Token);
+                }
+                finally
+                {
+                    materialized.DeleteIfTemporary();
+                }
+
+                return FileOperationResult.Succeeded(FilePublicationStatus.LocalCommitted);
+            },
+            _ => $"Opened {openedName}",
+            "Could not open the portable archive");
     }
 
     private async Task SaveSessionAsync(bool portable)
@@ -1955,165 +2138,354 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        var folders = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = portable ? "Choose portable session destination" : "Choose saved session destination",
-            AllowMultiple = false,
-        });
-        if (folders.Count == 0 || folders[0].TryGetLocalPath() is not { } parent)
-        {
-            return;
-        }
+        var sourceTitle = tab.Title;
+        var sessionRoot = tab.SessionPath;
+        var sessionId = tab.Snapshot.SessionId;
+        string? destination = null;
+        await RunFileOperationAsync(
+            FileOperationKind.Save,
+            portable ? "Preparing portable session…" : "Preparing saved session…",
+            async operation =>
+            {
+                await tab.PersistViewAsync(operation.Token);
 
-        var suffix = portable ? "-portable" : string.Empty;
-        var destination = Path.Combine(
-            parent,
-            $"{Path.GetFileNameWithoutExtension(tab.Title)}{suffix}-{DateTime.Now:yyyyMMdd-HHmmss}.vcat");
-        await RunAsync(async () =>
-        {
-            await tab.PersistViewAsync();
-            await SessionSaveService.SaveAsync(tab.Snapshot, destination, portable);
-            ShowNotice($"Saved: {destination}", NoticeKind.Completion);
-        });
+                // The export's rule applies here too: the copy owns an independent snapshot
+                // and work lease, so closing the source tab mid-save cannot pull the mapped
+                // columns out from under a verification that is still running.
+                using var lease = SessionAccess.ReadForWork(sessionRoot);
+                using var snapshot = await SessionStore.OpenAsync(sessionRoot, operation.Token);
+                if (snapshot.SessionId != sessionId)
+                {
+                    throw new InvalidDataException("The source session changed while the save was being prepared.");
+                }
+
+                // The picker is part of the operation too: the independently owned snapshot
+                // and deletion lease are already established, and a repeated shortcut cannot
+                // create a second native picker while this one is open.
+                var folders = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions
+                {
+                    Title = portable
+                        ? "Choose portable session destination"
+                        : "Choose saved session destination",
+                    AllowMultiple = false,
+                });
+                if (folders.Count == 0)
+                {
+                    return null;
+                }
+
+                using var folder = folders[0];
+                if (folder.TryGetLocalPath() is not { } parent)
+                {
+                    throw new IOException(
+                        "The selected folder is not exposed as a writable filesystem location. " +
+                        "Choose a local folder and try again.");
+                }
+
+                var suffix = portable ? "-portable" : string.Empty;
+                destination = Path.Combine(
+                    parent,
+                    $"{Path.GetFileNameWithoutExtension(sourceTitle)}{suffix}-{DateTime.Now:yyyyMMdd-HHmmss}.vcat");
+                await SessionSaveService.SaveAsync(
+                    snapshot,
+                    destination,
+                    portable,
+                    LocalPublishingProgress(operation),
+                    operation.Token);
+                operation.SetPublication(FilePublicationStatus.LocalCommitted, finalizing: true);
+                return FileOperationResult.Succeeded(FilePublicationStatus.LocalCommitted);
+            },
+            _ => $"Saved: {destination}",
+            $"Could not save {sourceTitle}");
     }
 
     private async Task ExportAsync(TimeRange? selectedRange = null, SessionTabViewModel? sourceTab = null)
     {
         var tab = sourceTab ?? _viewModel.Selected;
         var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
-        if (tab?.Snapshot is null || tab.Viewport is null || storage is null)
+        if (tab?.Snapshot is not { } sourceSnapshot || tab.Viewport is not { } viewport || storage is null)
         {
             return;
         }
 
-        var scope = await ResolveExportScopeAsync(tab, selectedRange);
-        if (scope is null)
+        if (tab.IsQueryPending)
         {
+            ShowNotice(PendingFilterRefusal, NoticeKind.Information);
             return;
         }
 
-        // A scope that ignores the filter writes the session, not the view of it. Until this
-        // existed, every export ran through the workspace's filter unconditionally and
-        // "everything in this session" was not a thing the product could produce (V2-15).
-        var exportFilter = scope.IgnoresFilter
-            ? VisualCat.Domain.Filters.FilterSpec.All
-            : tab.Filter;
-
-        var file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
+        var invoker = FocusedFileOperationInvoker();
+        var request = new FrozenExportRequest(
+            sourceSnapshot.SessionId,
+            tab.SessionPath,
+            tab.Title,
+            tab.AppliedFilter,
+            viewport,
+            tab.DetailRange,
+            tab.DetailLevel,
+            selectedRange,
+            _settings.ExportOrder == "Chronological"
+                ? VisualCat.Domain.Queries.EntryOrder.Chronological
+                : VisualCat.Domain.Queries.EntryOrder.SourceSequence,
+            _settings.ExportEncoding != "utf-8",
+            tab.IsLiveSourceAttached);
+        if (!_fileOperations.TryBegin(
+                FileOperationKind.Export,
+                $"Preparing export · {request.SourceTitle}",
+                out var operation) || operation is null)
         {
-            Title = $"Export {scope.Label.ToLowerInvariant()}",
-
-            // Without the extension. Android's DocumentsUI appends the one implied by the
-            // MIME type on top of whatever the suggestion carries, so a name ending in ".csv"
-            // was saved as "….csv.csv"; desktop pickers append DefaultExtension themselves
-            // when the typed name has none (finding 8).
-            SuggestedFileName = Path.GetFileNameWithoutExtension(tab.Title),
-            DefaultExtension = "csv",
-        });
-        if (file is null)
-        {
+            ShowNotice(
+                "Another file operation is in progress. Finish or cancel it before starting an export.",
+                NoticeKind.Information);
             return;
         }
 
-        using (file)
+        RememberFileOperationInvoker(invoker);
+        var work = ExportCoreAsync(request, storage, operation);
+        _fileOperations.Track(operation, work);
+        await work;
+    }
+
+    private async Task ExportCoreAsync(
+        FrozenExportRequest request,
+        IStorageProvider storage,
+        FileOperationHandle operation)
+    {
+        await using (operation)
         {
-            var written = 0L;
-            var name = file.Name;
-            await RunAsync(() => StorageFileBridge.WriteAsync(
-                file,
-                async (path, cancellationToken) => written = await ExportService.ExportNormalizedCsvAsync(
-                    tab.Snapshot,
-                    path,
-                    scope.Range,
-                    exportFilter,
-                    _settings.ExportOrder == "Chronological"
-                        ? VisualCat.Domain.Queries.EntryOrder.Chronological
-                        : VisualCat.Domain.Queries.EntryOrder.SourceSequence,
-                    _settings.ExportEncoding != "utf-8",
-                    cancellationToken)));
-            if (written > 0)
+            try
             {
+                using var workLease = SessionAccess.ReadForWork(request.SessionRoot);
+                using var snapshot = await SessionStore.OpenAsync(request.SessionRoot, operation.Token);
+                if (snapshot.SessionId != request.SessionId)
+                {
+                    throw new InvalidDataException("The source session changed while the export was being prepared.");
+                }
+
+                operation.Report(new FileWorkProgress(FileWorkStage.Preparing));
+                using var review = new ExportReviewDialog(
+                    request,
+                    async token =>
+                    {
+                        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                            token,
+                            operation.Token);
+                        return await Task.Run(
+                            () => CountExportScopes(snapshot, request, linked.Token),
+                            linked.Token);
+                    },
+                    snapshot.Descriptor.TimestampPolicy.TimeZoneId,
+                    snapshot.Descriptor.Counters.UntimedEntries +
+                    snapshot.Descriptor.Counters.UnknownLines +
+                    snapshot.Descriptor.Counters.RejectedCandidates > 0);
+                ExportDecision? decision;
+                try
+                {
+                    decision = await ShowDialogAsync(review);
+                }
+                finally
+                {
+                    // The count reads the snapshot this method disposes, so cancelling it is
+                    // not enough: the review is drained before the owned snapshot goes.
+                    await review.DrainAsync();
+                }
+
+                if (decision is null)
+                {
+                    return;
+                }
+
+                operation.Token.ThrowIfCancellationRequested();
+                var file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
+                {
+                    Title = $"Export {decision.Scope.Label.ToLowerInvariant()}",
+                    SuggestedFileName = Path.GetFileNameWithoutExtension(request.SourceTitle),
+                    DefaultExtension = "csv",
+                    FileTypeChoices =
+                    [
+                        new FilePickerFileType("CSV")
+                        {
+                            Patterns = ["*.csv"],
+                            MimeTypes = ["text/csv"],
+                        },
+                    ],
+                });
+                if (file is null)
+                {
+                    return;
+                }
+
+                long written = 0;
+                var name = file.Name;
+                using (file)
+                {
+                    var outputProgress = StorageFileBridge.UsesDirectLocalPath(file)
+                        ? LocalPublishingProgress(operation)
+                        : operation.Progress;
+                    await StorageFileBridge.WriteAsync(
+                        file,
+                        async (path, cancellationToken) =>
+                        {
+                            written = await ExportService.ExportNormalizedCsvAsync(
+                                snapshot,
+                                path,
+                                decision.Scope.Range,
+                                decision.Scope.Filter,
+                                decision.Order,
+                                decision.IncludeUtf8Bom,
+                                outputProgress,
+                                cancellationToken);
+                        },
+                        operation.Progress,
+                        publication => ApplyPublication(operation, publication),
+                        operation.Token);
+                }
+
+                if (written != decision.Scope.TimedRows)
+                {
+                    throw new InvalidDataException(
+                        $"The frozen export count changed from {decision.Scope.TimedRows:N0} to {written:N0} rows.");
+                }
+
                 ShowNotice(
-                    $"Exported {written:N0} rows ({scope.Label.ToLowerInvariant()}) to {name}",
+                    $"Exported {written:N0} timed rows · {decision.Scope.Label.ToLowerInvariant()} · {name}",
                     NoticeKind.Completion);
+
+                _settings = _settings with
+                {
+                    ExportOrder = decision.Order == VisualCat.Domain.Queries.EntryOrder.Chronological
+                        ? "Chronological"
+                        : "SourceSequence",
+                    ExportEncoding = decision.IncludeUtf8Bom ? "utf-8-bom" : "utf-8",
+                };
+                try
+                {
+                    await SaveSettingsAsync(CancellationToken.None);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    WorkspaceViewModel.RecordFailure("export.defaults", exception);
+                    ShowNotice(
+                        $"Exported {written:N0} timed rows · {name}. The export defaults could not be remembered.",
+                        NoticeKind.Completion);
+                }
+            }
+            catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+            {
+                var partial = operation.Publication == FilePublicationStatus.ProviderDeliveryStarted
+                    ? " The file at the chosen location may be incomplete."
+                    : string.Empty;
+                ShowNotice($"Export cancelled.{partial}", NoticeKind.Information);
+            }
+            catch (Exception exception)
+            {
+                WorkspaceViewModel.RecordFailure("export", exception);
+                var partial = operation.Publication == FilePublicationStatus.ProviderDeliveryStarted
+                    ? " The file at the chosen location may be incomplete."
+                    : string.Empty;
+                ShowNotice(
+                    $"Could not export {request.SourceTitle} · {WorkspaceViewModel.FriendlyMessage(exception)}.{partial}",
+                    NoticeKind.Failure);
             }
         }
     }
 
     /// <summary>
-    /// Settles what an export covers: the range the reader picked from the plot, or the
-    /// answer to the question the scope dialog asks.
+    /// Why an action that promises a count is refused while a newer filter is settling.
     /// </summary>
-    private async Task<ExportScope?> ResolveExportScopeAsync(SessionTabViewModel tab, TimeRange? selectedRange)
+    /// <remarks>
+    /// The counts on screen belong to the last applied result. Acting on them while a newer
+    /// one is on its way would export or store a scope the reader can already see is about
+    /// to change, so the action waits and says so rather than acting on stale numbers.
+    /// </remarks>
+    internal const string PendingFilterRefusal = "Wait for filters to finish applying.";
+
+    private static List<ResolvedExportScope> CountExportScopes(
+        SessionSnapshot snapshot,
+        FrozenExportRequest request,
+        CancellationToken cancellationToken)
     {
-        // "Export range" is already an explicit scope — the reader drew it on the plot — so
-        // asking again would be asking a question they have just answered.
-        if (selectedRange is { } chosen)
+        var zone = ResolveDisplayZone(snapshot.Descriptor.TimestampPolicy.TimeZoneId);
+        var scopes = ExportScopeResolver.Resolve(request, snapshot.TimedRange, zone);
+        var counted = new List<ResolvedExportScope>(scopes.Count);
+        long generation = 1;
+        foreach (var scope in scopes)
         {
-            return new ExportScope(chosen, "The selected range", null);
+            cancellationToken.ThrowIfCancellationRequested();
+            var count = scope.IsProvablyEmpty
+                ? 0
+                : SessionQueryEngine.GetEntries(
+                    snapshot,
+                    scope.Range,
+                    scope.Filter,
+                    VisualCat.Domain.Queries.EntryOrder.Chronological,
+                    cursor: null,
+                    pageSize: 1,
+                    queryGeneration: generation++,
+                    cancellationToken).TotalCount ?? 0;
+            counted.Add(scope with { TimedRows = count });
         }
 
-        var filterRange = tab.Filter.TimeRange;
-        var sessionRange = filterRange ?? tab.Snapshot?.TimedRange;
-        var viewport = filterRange ?? tab.Viewport ?? sessionRange;
-        if (viewport is not { } viewportRange)
+        return counted;
+    }
+
+    /// <summary>The session's own zone, falling back to UTC when the device cannot name it.</summary>
+    private static TimeZoneInfo ResolveDisplayZone(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
         {
-            return null;
+            return TimeZoneInfo.Utc;
         }
 
-        // Three answers, in the order the reader is most likely to want them, and only the
-        // ones that are actually different from each other. The More sheet promises a
-        // question — "Choose which entries to write, then save a CSV" — and used to skip
-        // straight to the platform picker whenever the plot happened to be fitted, which is
-        // the state every import and every reopen starts in (V2-15).
-        var scopes = new List<ExportScope>(3);
-        var filtered = !tab.Filter.IsUnconstrained;
-        var matching = tab.Statistics?.TotalMatching;
-        var viewCoversAll = sessionRange is not { } covered ||
-            (covered.StartInclusive >= viewportRange.StartInclusive &&
-             covered.EndExclusive <= viewportRange.EndExclusive);
-
-        if (!viewCoversAll)
+        try
         {
-            scopes.Add(new ExportScope(
-                viewportRange,
-                "What is in view",
-                tab.MatchesInView,
-                "Only the entries the plot is currently showing."));
+            return TimeZoneInfo.FindSystemTimeZoneById(id);
         }
-
-        if (sessionRange is { } whole)
+        catch (Exception exception) when (exception is TimeZoneNotFoundException or InvalidTimeZoneException)
         {
-            scopes.Add(new ExportScope(
-                whole,
-                filtered ? "Everything matching the current filter" : "Everything in this session",
-                matching,
-                filtered
-                    ? "Every entry the current filter admits, across the whole session."
-                    : "Every entry in the session, across its whole time range."));
+            return TimeZoneInfo.Utc;
+        }
+    }
 
-            // Offered only when the filter is actually hiding something, because otherwise it
-            // is the same answer twice with two different names.
-            if (filtered && tab.Snapshot?.TimedRange is { } untouched)
+    private static void ApplyPublication(FileOperationHandle operation, StorageWritePublication publication)
+    {
+        switch (publication)
+        {
+            case StorageWritePublication.LocalCommitted:
+                operation.SetPublication(FilePublicationStatus.LocalCommitted, finalizing: true);
+                break;
+            case StorageWritePublication.ProviderDeliveryStarted:
+                operation.SetPublication(FilePublicationStatus.ProviderDeliveryStarted);
+                break;
+            case StorageWritePublication.ProviderFinalizing:
+                operation.SetPublication(FilePublicationStatus.ProviderDeliveryStarted, finalizing: true);
+                break;
+            case StorageWritePublication.ProviderDeliveryCompleted:
+                operation.SetPublication(FilePublicationStatus.ProviderDeliveryCompleted, finalizing: true);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Converts an application service's final local publish stage into the shell's
+    /// non-cancellable boundary while forwarding all ordinary byte/row progress unchanged.
+    /// </summary>
+    private static LocalPublishingProgressSink LocalPublishingProgress(FileOperationHandle operation) =>
+        new LocalPublishingProgressSink(operation);
+
+    private sealed class LocalPublishingProgressSink(FileOperationHandle operation) : IProgress<FileWorkProgress>
+    {
+        public void Report(FileWorkProgress value)
+        {
+            if (value.Stage == FileWorkStage.Publishing)
             {
-                scopes.Add(new ExportScope(
-                    untouched,
-                    "Everything in this session",
-                    tab.Snapshot.Descriptor.Counters.TimedEntries,
-                    "Every entry, ignoring the filter this workspace has on.",
-                    IgnoresFilter: true));
+                operation.BeginPublishing();
+            }
+            else
+            {
+                operation.Report(value);
             }
         }
-
-        return scopes.Count switch
-        {
-            0 => null,
-
-            // One answer is not a question. It is still disclosed, in the notice the export
-            // writes, and in the picker's own title.
-            1 => scopes[0],
-            _ => await ShowDialogAsync(new ExportScopeDialog(scopes)),
-        };
     }
 
     /// <summary>
@@ -2430,24 +2802,160 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     {
         var tab = _viewModel.Selected;
         var share = PlatformSourceRegistry.ShareFileAsync;
-        if (tab?.Snapshot is null || share is null)
+        var shareWithProgress = PlatformSourceRegistry.ShareFileWithProgressAsync;
+        if (tab?.Snapshot is null || share is null && shareWithProgress is null)
         {
             return;
         }
 
-        await RunAsync(async () =>
-        {
-            var directory = Path.Combine(Path.GetTempPath(), "VisualCat", "Share");
-            Directory.CreateDirectory(directory);
-            var path = Path.Combine(
-                directory,
-                $"{Path.GetFileNameWithoutExtension(tab.Title)}-{DateTime.UtcNow:yyyyMMdd-HHmmss}.vcat.zip");
-            await tab.PersistViewAsync();
-            await PortableSessionArchiveService.CreateAsync(tab.Snapshot, path);
-            await share(path, CancellationToken.None);
-            ShowNotice("Portable session handed to the platform share sheet.", NoticeKind.Completion);
-        });
+        var sessionRoot = tab.SessionPath;
+        var sessionId = tab.Snapshot.SessionId;
+        await RunFileOperationAsync(
+            FileOperationKind.Share,
+            "Preparing portable session…",
+            async operation =>
+            {
+                var directory = Path.Combine(Path.GetTempPath(), "VisualCat", "Share");
+                Directory.CreateDirectory(directory);
+                var path = Path.Combine(
+                    directory,
+                    $"{Path.GetFileNameWithoutExtension(tab.Title)}-{DateTime.UtcNow:yyyyMMdd-HHmmss}.vcat.zip");
+                await tab.PersistViewAsync(operation.Token);
+                using var lease = SessionAccess.ReadForWork(sessionRoot);
+                using var snapshot = await SessionStore.OpenAsync(sessionRoot, operation.Token);
+                if (snapshot.SessionId != sessionId)
+                {
+                    throw new InvalidDataException("The source session changed while the archive was being prepared.");
+                }
+
+                try
+                {
+                    await PortableSessionArchiveService.CreateAsync(
+                        snapshot,
+                        path,
+                        operation.Progress,
+                        operation.Token);
+
+                    if (shareWithProgress is not null)
+                    {
+                        await shareWithProgress(path, operation.Progress, operation.Token);
+                    }
+                    else
+                    {
+                        await share!(path, operation.Token);
+                    }
+
+                    // Returning from the platform adapter means its readable share URI has
+                    // been prepared and the chooser was launched. No application can observe
+                    // whether the receiving one later sent, saved or discarded it.
+                    operation.SetPublication(FilePublicationStatus.LocalCommitted, finalizing: true);
+                }
+                finally
+                {
+                    // Android has copied the archive into the FileProvider share cache before
+                    // returning. This first app-owned build is only staging and is never the
+                    // URI handed to another application.
+                    try
+                    {
+                        File.Delete(path);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                    {
+                    }
+                }
+
+                return FileOperationResult.Succeeded(FilePublicationStatus.LocalCommitted);
+            },
+            _ => "Archive ready to share",
+            $"Could not create a portable copy of {tab.Title}");
     }
+
+    /// <summary>
+    /// Runs one shell-owned file operation: acknowledgement, progress, cancellation and a
+    /// single terminal result.
+    /// </summary>
+    /// <remarks>
+    /// Every file command routes through here so that a second gesture cannot start a second
+    /// unnamed job, and so that a cancellation is a request the shell then waits on rather
+    /// than a result it assumes. The producer returns the typed outcome after the whole
+    /// write and delivery chain; nothing here infers success from a counter.
+    /// </remarks>
+    private async Task RunFileOperationAsync(
+        FileOperationKind kind,
+        string title,
+        Func<FileOperationHandle, Task<FileOperationResult?>> work,
+        Func<FileOperationResult, string> completion,
+        string failurePrefix,
+        bool captureInvoker = true)
+    {
+        var invoker = captureInvoker ? FocusedFileOperationInvoker() : null;
+        if (!_fileOperations.TryBegin(kind, title, out var operation) || operation is null)
+        {
+            ShowNotice(
+                "Another file operation is in progress. Try again when it finishes.",
+                NoticeKind.Information);
+            return;
+        }
+
+        RememberFileOperationInvoker(invoker);
+        var running = RunCoreAsync(operation);
+        _fileOperations.Track(operation, running);
+        await running;
+
+        async Task RunCoreAsync(FileOperationHandle handle)
+        {
+            await using (handle)
+            {
+                try
+                {
+                    var result = await work(handle);
+                    if (result is null)
+                    {
+                        return;
+                    }
+
+                    switch (result.Outcome)
+                    {
+                        case FileOperationOutcome.Succeeded:
+                            ShowNotice(completion(result), NoticeKind.Completion);
+                            break;
+                        case FileOperationOutcome.Cancelled:
+                            ShowNotice(
+                                $"{title.TrimEnd('…')} cancelled.{PartialProviderDisclosure(result.Publication)}",
+                                NoticeKind.Information);
+                            break;
+                        case FileOperationOutcome.Failed:
+                            var error = result.Error ?? new IOException("The file operation did not complete.");
+                            WorkspaceViewModel.RecordFailure($"file.{kind}", error);
+                            ShowNotice(
+                                $"{failurePrefix} · {WorkspaceViewModel.FriendlyMessage(error)}."
+                                + PartialProviderDisclosure(result.Publication),
+                                NoticeKind.Failure);
+                            break;
+                    }
+                }
+                catch (OperationCanceledException) when (handle.Token.IsCancellationRequested)
+                {
+                    ShowNotice(
+                        $"{title.TrimEnd('…')} cancelled.{PartialProviderDisclosure(handle.Publication)}",
+                        NoticeKind.Information);
+                }
+                catch (Exception exception)
+                {
+                    WorkspaceViewModel.RecordFailure($"file.{kind}", exception);
+                    ShowNotice(
+                        $"{failurePrefix} · {WorkspaceViewModel.FriendlyMessage(exception)}."
+                        + PartialProviderDisclosure(handle.Publication),
+                        NoticeKind.Failure);
+                }
+            }
+        }
+    }
+
+    private static string PartialProviderDisclosure(FilePublicationStatus publication) =>
+        publication == FilePublicationStatus.ProviderDeliveryStarted
+            ? " The file at the chosen location may be incomplete."
+            : string.Empty;
 
     private void AddTab(SessionTabViewModel viewModel)
     {
@@ -2501,8 +3009,15 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // The chip in the count row is the direct route to the same card the More menu offers.
         // Presentation is the shell's, so the workspace asks rather than presents (V2-13).
         workspace.OffTimelineRequested += () => _ = RunAsync(ShowUnparsedLinesAsync);
-        workspace.AskForNumberAsync = async (title, question, initial, maximum) =>
-            await ShowDialogAsync(new NumberPromptDialog(title, question, initial, 1, maximum));
+        workspace.AskForMatchAsync = async (model, initial) =>
+        {
+            using var prompt = new NumberPromptDialog(
+                "Go to match",
+                "Which match?",
+                initial,
+                model);
+            return await ShowDialogAsync(prompt);
+        };
         workspace.PartialRecoveryRaised += message =>
             ShowNotice(
                 message,
@@ -2515,7 +3030,21 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         workspace.SplitShareChanged += PersistMobileTimelineShare;
         workspace.SplitWidthShareChanged += PersistMobileTimelineWidthShare;
         workspace.CompactEditorChanged += _ => UpdateCompactCommandComposition();
-        workspace.ExportRequested += range => _ = RunAsync(() => ExportAsync(range));
+        workspace.ExportRequested += range => _ = RunAsync(() => ExportAsync(range, viewModel));
+        workspace.FindFacetRequested += dimension => _ = RunAsync(async () =>
+        {
+            using var browser = new FacetBrowserDialog(viewModel, dimension);
+            try
+            {
+                await ShowDialogAsync(browser);
+            }
+            finally
+            {
+                // Closing first cancels the browser; draining next guarantees its pinned
+                // snapshot and deletion work lease are gone before this command completes.
+                await browser.DrainAsync();
+            }
+        });
         workspace.StopRequested += () => _viewModel.StopAsync(viewModel);
 
         // A session that failed with no data offers the only two useful actions there are.
@@ -2586,6 +3115,14 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         if (eventArgs.PropertyName is nameof(SessionTabViewModel.Activity) or nameof(SessionTabViewModel.Title))
         {
             Dispatcher.UIThread.Post(UpdateSessionStrip);
+        }
+
+        // Export promises a row count, and while a newer filter is settling that count belongs
+        // to the previous one. The command has always refused at dispatch; without this it
+        // stayed drawn as available right up until the reader pressed it.
+        if (eventArgs.PropertyName is nameof(SessionTabViewModel.IsQueryPending))
+        {
+            Dispatcher.UIThread.Post(UpdateSessionActionAvailability);
         }
     }
 
@@ -2707,9 +3244,136 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private async Task OpenStartupPathsAsync()
     {
         await OpenPathsAsync(_startupPaths);
+
+        // Cold launch takes the same route a warm delivery does, so a file handed over
+        // before the shell existed is acknowledged, progressed and cancellable too.
+        if (PlatformSourceRegistry.ConsumeLaunchRequestsAsync is { } consumeRequests)
+        {
+            await OpenIncomingRequestsAsync(await consumeRequests(CancellationToken.None));
+        }
+
         if (PlatformSourceRegistry.ConsumeLaunchFilesAsync is { } consume)
         {
             await OpenIncomingAsync(await consume(CancellationToken.None));
+        }
+    }
+
+    /// <summary>
+    /// Prepares and imports files another application delivered, one operation at a time.
+    /// </summary>
+    /// <remarks>
+    /// Preparation is the shell's work, so it gets the shell's acknowledgement, progress and
+    /// Cancel. A request that arrives while another file operation owns the shell is refused
+    /// with a remedy rather than dropped, and its claim on the source is released so an
+    /// explicit <em>Open with</em> can deliver it again.
+    /// </remarks>
+    private async Task OpenIncomingRequestsAsync(IReadOnlyList<IncomingFileRequest> requests)
+    {
+        // No shell control initiated an operating-system delivery. Clear any weak reference
+        // left by an earlier command so cancellation cannot focus an unrelated control.
+        RememberFileOperationInvoker(null);
+        foreach (var request in requests)
+        {
+            if (_fileOperations.IsBusy)
+            {
+                request.Settle?.Invoke(false);
+                ShowNotice(
+                    "Another file operation is in progress. Open this file again when it finishes.",
+                    NoticeKind.Information);
+                continue;
+            }
+
+            var settled = false;
+            await RunFileOperationAsync(
+                FileOperationKind.Open,
+                $"Opening {request.DisplayName}…",
+                async operation =>
+                {
+                    operation.Report(new FileWorkProgress(FileWorkStage.Copying));
+                    var prepared = await request.PrepareAsync(operation.Token, operation.Progress);
+                    try
+                    {
+                        if (IsPortableArchive(prepared.Path, prepared.DisplayName))
+                        {
+                            // ACTION_VIEW requests are deliberately materialized before we
+                            // inspect them. A portable session is not a delimited log, though:
+                            // preserve the same archive verification/opening route used by the
+                            // picker instead of presenting nonsensical import-column choices.
+                            operation.Report(new FileWorkProgress(FileWorkStage.ExtractingArchive));
+                            await _viewModel.OpenPortableArchiveAsync(
+                                prepared.Path,
+                                LocalPublishingProgress(operation),
+                                operation.Token);
+                            request.Settle?.Invoke(true);
+                            settled = true;
+                            return FileOperationResult.Succeeded(FilePublicationStatus.LocalCommitted);
+                        }
+
+                        var preparation = await PrepareImportAsync(
+                            prepared.Path,
+                            prepared.DisplayName,
+                            alwaysReview: false,
+                            prepared.IsTemporary,
+                            operation.Token);
+
+                        if (!preparation.Accepted)
+                        {
+                            // Cancelling this file's review is a deliberate skip, not a
+                            // successful open and not a reason to interrupt later files.
+                            request.Settle?.Invoke(true);
+                            settled = true;
+                            return null;
+                        }
+
+                        operation.HandOff();
+                        await _viewModel.ImportFileAsync(
+                            prepared.Path,
+                            preparation.Settings,
+                            prepared.DisplayName,
+                            operation.Token);
+
+                        // A failed/cancelled import remains retryable. Only a completed import,
+                        // or the deliberate review skip above, consumes this delivery.
+                        request.Settle?.Invoke(true);
+                        settled = true;
+                    }
+                    finally
+                    {
+                        DeleteIfOwned(prepared);
+                    }
+
+                    return FileOperationResult.Succeeded(FilePublicationStatus.LocalCommitted);
+                },
+                _ => $"Opened {request.DisplayName}",
+                $"Could not open {request.DisplayName}",
+                captureInvoker: false);
+            if (!settled)
+            {
+                request.Settle?.Invoke(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes a materialized copy this application owns once preparation/import is done.
+    /// </summary>
+    /// <remarks>
+    /// The imported session has already embedded the required raw source before this runs.
+    /// A review cancel or failed import has no durable consumer, so it is removed there too.
+    /// </remarks>
+    private static void DeleteIfOwned(PreparedIncomingFile prepared)
+    {
+        if (prepared.IsTemporary)
+        {
+            try
+            {
+                File.Delete(prepared.Path);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // A copy the platform still holds open is left for the staging area's own
+                // cleanup; the failure the reader sees is the one that actually happened.
+            }
         }
     }
 
@@ -2734,23 +3398,118 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 await RunAsync(() => _viewModel.OpenSessionAsync(path));
             }
             else if (File.Exists(path) &&
-                     (path.EndsWith(".vcat.zip", StringComparison.OrdinalIgnoreCase) ||
-                      path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
+                     IsPortableArchive(path, displayName: null))
             {
-                await RunAsync(() => _viewModel.OpenPortableArchiveAsync(path));
+                var current = path;
+                await RunFileOperationAsync(
+                    FileOperationKind.Open,
+                    $"Opening {Path.GetFileName(current)}…",
+                    async operation =>
+                    {
+                        operation.Report(new FileWorkProgress(FileWorkStage.ExtractingArchive));
+                        await _viewModel.OpenPortableArchiveAsync(
+                            current,
+                            LocalPublishingProgress(operation),
+                            operation.Token);
+                        return FileOperationResult.Succeeded(FilePublicationStatus.LocalCommitted);
+                    },
+                    _ => $"Opened {Path.GetFileName(current)}",
+                    $"Could not open {Path.GetFileName(current)}",
+                    captureInvoker: false);
             }
             else if (File.Exists(path))
             {
                 // The provider's display name when there is one, so the tab is called
                 // "tiny.txt" rather than the private cache filename (finding F-27).
                 var current = path;
-                await RunAsync(() => displayNames?.TryGetValue(current, out var shown) == true
-                    ? _viewModel.ImportFileAsync(current, null, shown)
-                    : _viewModel.ImportFileAsync(current));
+                string? shown = null;
+                var hasProviderName = displayNames?.TryGetValue(current, out shown) == true;
+                await PrepareAndImportPathAsync(
+                    current,
+                    hasProviderName ? shown! : Path.GetFileName(current),
+                    portableRawRequired: hasProviderName);
             }
             else
             {
                 ShowNotice($"Startup source not found: {path}", NoticeKind.Failure);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Recognizes portable sessions by either the materialized path or the provider's name.
+    /// </summary>
+    /// <remarks>
+    /// Android content providers commonly give their staged copy a generated name, while the
+    /// original display name still carries <c>.vcat.zip</c>. Conversely, desktop startup paths
+    /// have no provider display name. Considering both keeps every ingress route consistent.
+    /// </remarks>
+    internal static bool IsPortableArchive(string path, string? displayName) =>
+        HasZipSuffix(path) || displayName is not null && HasZipSuffix(displayName);
+
+    private static bool HasZipSuffix(string value) =>
+        value.EndsWith(".vcat.zip", StringComparison.OrdinalIgnoreCase) ||
+        value.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+
+    private async Task PrepareAndImportPathAsync(
+        string path,
+        string displayName,
+        bool portableRawRequired)
+    {
+        RememberFileOperationInvoker(null);
+        if (!_fileOperations.TryBegin(
+                FileOperationKind.Open,
+                $"Opening {displayName}…",
+                out var operation) || operation is null)
+        {
+            ShowNotice(
+                "Another file operation is in progress. Open this file again when it finishes.",
+                NoticeKind.Information);
+            return;
+        }
+
+        var work = PrepareAndImportPathCoreAsync(path, displayName, portableRawRequired, operation);
+        _fileOperations.Track(operation, work);
+        await work;
+    }
+
+    private async Task PrepareAndImportPathCoreAsync(
+        string path,
+        string displayName,
+        bool portableRawRequired,
+        FileOperationHandle operation)
+    {
+        await using (operation)
+        {
+            try
+            {
+                operation.Report(new FileWorkProgress(FileWorkStage.Preparing));
+                var preparation = await PrepareImportAsync(
+                    path,
+                    displayName,
+                    alwaysReview: false,
+                    portableRawRequired,
+                    operation.Token);
+                if (preparation.Accepted)
+                {
+                    operation.HandOff();
+                    await RunAsync(() => _viewModel.ImportFileAsync(
+                        path,
+                        preparation.Settings,
+                        displayName,
+                        operation.Token));
+                }
+            }
+            catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+            {
+                ShowNotice($"Opening {displayName} cancelled.", NoticeKind.Information);
+            }
+            catch (Exception exception)
+            {
+                WorkspaceViewModel.RecordFailure("open.incoming", exception);
+                ShowNotice(
+                    $"Could not open {displayName} · {WorkspaceViewModel.FriendlyMessage(exception)}",
+                    NoticeKind.Failure);
             }
         }
     }
@@ -3048,6 +3807,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             // was sliced along its x-height (A-30). The pair moves together or not at all.
             notice.LineHeight = NoticeLineBox(noticeSize);
             ApplyNoticeLayout(_noticeCompactHeight);
+            ApplyFileOperationLayout(_noticeCompactHeight);
         }
 
         foreach (var chip in _chips.Values)
@@ -3232,6 +3992,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // removing a handler that is no longer subscribed does nothing.
         Interlocked.CompareExchange(ref s_platformEvents, null, _platformEvents);
         _platformEvents.Detach();
+        await _fileOperations.DisposeAsync();
         DisposeUpdateWork();
         StopNoticeTimer();
         StopObservingSafeArea();

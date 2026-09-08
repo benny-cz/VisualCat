@@ -40,17 +40,29 @@ public sealed class RankBitmap
     }
 
     public static RankBitmap FromPredicate(int length, Func<int, bool> predicate)
+        => FromPredicate(length, predicate, CancellationToken.None);
+
+    public static RankBitmap FromPredicate(
+        int length,
+        Func<int, bool> predicate,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(predicate);
         var words = new ulong[WordCountFor(length)];
         for (var i = 0; i < length; i++)
         {
+            if ((i & 0x3ff) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             if (predicate(i))
             {
                 words[i >> 6] |= 1UL << (i & 63);
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return new RankBitmap(length, words);
     }
 
@@ -98,6 +110,35 @@ public sealed class RankBitmap
         }
 
         return Rank(endExclusive) - Rank(startInclusive);
+    }
+
+    /// <summary>Finds the zero-based index of the requested set bit.</summary>
+    public bool TrySelect(int zeroBasedRank, out int index)
+    {
+        if (zeroBasedRank < 0 || zeroBasedRank >= Cardinality)
+        {
+            index = -1;
+            return false;
+        }
+
+        var low = 0;
+        var high = Length;
+        var target = zeroBasedRank + 1;
+        while (low < high)
+        {
+            var middle = low + ((high - low) >> 1);
+            if (Rank(middle + 1) < target)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        index = low;
+        return index < Length;
     }
 
     public RankBitmap And(RankBitmap other) => Combine(other, static (left, right) => left & right);

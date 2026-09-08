@@ -51,6 +51,48 @@ public sealed class SessionSnapshot : IDisposable
         : null;
 
     /// <summary>
+    /// Pins this exact immutable generation for work that must survive a live workspace
+    /// replacing its own snapshot.
+    /// </summary>
+    /// <remarks>
+    /// Segment files are immutable and reference counted. This creates another snapshot
+    /// owner over the same generation without rereading a manifest that a live capture may
+    /// already have replaced. The independent usage lease also keeps deletion from removing
+    /// those files until the retained owner is disposed.
+    /// </remarks>
+    public SessionSnapshot Retain()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var usage = SessionAccess.Read(RootPath);
+        var retained = new List<SegmentSnapshot>(Segments.Count);
+        try
+        {
+            foreach (var segment in Segments)
+            {
+                ObjectDisposedException.ThrowIf(!segment.TryAddReference(), this);
+
+                retained.Add(segment);
+            }
+
+            return new SessionSnapshot(RootPath, Manifest, retained, () => Templates)
+            {
+                Usage = usage,
+            };
+        }
+        catch
+        {
+            foreach (var segment in retained)
+            {
+                segment.Dispose();
+            }
+
+            usage.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Name of <paramref name="pid"/> as of <paramref name="instant"/>, or null when the
     /// session has no naming evidence for that process.
     /// </summary>

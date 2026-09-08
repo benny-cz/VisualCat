@@ -17,6 +17,50 @@ namespace VisualCat.App.Platform;
 /// <param name="DisplayName">What to call it on screen.</param>
 public sealed record IncomingFile(string Path, string DisplayName);
 
+/// <summary>What preparing an incoming file produced, and who owns the bytes.</summary>
+/// <param name="Path">The readable local path the importer will open.</param>
+/// <param name="DisplayName">What to call it on screen.</param>
+/// <param name="IsTemporary">Whether this application owns and must delete the copy.</param>
+public sealed record PreparedIncomingFile(string Path, string DisplayName, bool IsTemporary);
+
+/// <summary>
+/// A file another application has handed over, before anything has been copied.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The platform used to copy the document before the shell knew it existed, so a slow or
+/// large provider file produced no acknowledgement, no progress and nothing to cancel —
+/// and a failure reached Logcat rather than the reader. The request is published first and
+/// the copy happens inside a shell file operation, under its token and progress sink.
+/// </para>
+/// <para>
+/// <see cref="Identity"/> is opaque: it identifies a repeated delivery of the same URI
+/// within one attempt. It is never persisted, logged or shown.
+/// </para>
+/// </remarks>
+/// <param name="DisplayName">The provider’s own name for the document.</param>
+/// <param name="Identity">An opaque key for duplicate delivery of the same source.</param>
+/// <param name="PrepareAsync">Copies or resolves the bytes under the caller’s token.</param>
+/// <param name="Settle">Marks the source consumed, or releases its in-flight claim.</param>
+public sealed record IncomingFileRequest(
+    string DisplayName,
+    string Identity,
+    Func<CancellationToken, IProgress<VisualCat.Application.UseCases.FileWorkProgress>?, Task<PreparedIncomingFile>> PrepareAsync,
+    Action<bool>? Settle = null)
+{
+    /// <summary>Wraps a file that is already local, for desktop startup paths and tests.</summary>
+    public static IncomingFileRequest ForLocalFile(string path, string displayName, bool isTemporary = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
+        var prepared = new PreparedIncomingFile(path, displayName, isTemporary);
+        return new IncomingFileRequest(
+            displayName,
+            System.IO.Path.GetFullPath(path),
+            (_, _) => Task.FromResult(prepared));
+    }
+}
+
 /// <summary>
 /// The two values Android shows in its Wireless debugging pairing-code panel.
 /// </summary>
@@ -235,9 +279,23 @@ public static class PlatformSourceRegistry
     public static Func<CancellationToken, Task>? OpenWirelessDebuggingSettingsAsync { get; set; }
 
     public static Func<string, CancellationToken, Task>? ShareFileAsync { get; set; }
+
+    /// <summary>
+    /// Shares a prepared file while reporting any additional platform-owned copy. Hosts may
+    /// leave this null and keep using <see cref="ShareFileAsync"/> when no such copy exists.
+    /// </summary>
+    public static Func<string, IProgress<VisualCat.Application.UseCases.FileWorkProgress>?, CancellationToken, Task>?
+        ShareFileWithProgressAsync
+    { get; set; }
     public static Func<CancellationToken, Task<IReadOnlyList<IncomingFile>>>? ConsumeLaunchFilesAsync { get; set; }
 
+    /// <summary>Cold-launch consumption of files handed over before the shell was ready.</summary>
+    public static Func<CancellationToken, Task<IReadOnlyList<IncomingFileRequest>>>? ConsumeLaunchRequestsAsync { get; set; }
+
     public static event Action<IReadOnlyList<IncomingFile>>? LaunchFilesReceived;
+
+    /// <summary>A warm delivery: the shell prepares these itself, with progress and Cancel.</summary>
+    public static event Action<IReadOnlyList<IncomingFileRequest>>? IncomingFilesRequested;
     public static event Action? AppResumed;
 
     /// <summary>
@@ -376,6 +434,35 @@ public static class PlatformSourceRegistry
         if (files.Count > 0)
         {
             LaunchFilesReceived?.Invoke(files);
+        }
+    }
+
+    /// <summary>
+    /// Hands the shell files another application delivered, before any of them is copied.
+    /// </summary>
+    /// <remarks>
+    /// Falls back to the already-local route when nothing is listening — a desktop build,
+    /// or a test that only wants the paths — so a platform has one way to deliver.
+    /// </remarks>
+    public static void PublishIncomingRequests(IReadOnlyList<IncomingFileRequest> requests)
+    {
+        ArgumentNullException.ThrowIfNull(requests);
+        if (requests.Count == 0)
+        {
+            return;
+        }
+
+        if (IncomingFilesRequested is { } handler)
+        {
+            handler(requests);
+            return;
+        }
+
+        // Nobody is prepared to run the copy, so the claim goes back rather than being
+        // silently spent: an explicit Open with must still be able to retry the same file.
+        foreach (var request in requests)
+        {
+            request.Settle?.Invoke(false);
         }
     }
 

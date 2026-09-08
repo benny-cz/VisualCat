@@ -155,7 +155,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         UpdateMarkerNavigation();
 
         UpdateFollowButton();
-        _search.Text = _viewModel.SearchText;
+        SyncSearchText();
         _order.SelectedIndex = _viewModel.EntryOrder == EntryOrder.SourceSequence ? 1 : 0;
         UpdateTimelines();
         UpdateStatistics();
@@ -502,19 +502,21 @@ public sealed partial class SessionWorkspaceView : UserControl
         AutomationProperties.SetName(card, $"{title.Text}. {detail.Text}");
     }
 
-    /// <summary>
-    /// Shows where in the matches the view is, and offers the two steps either way.
-    /// </summary>
-    /// <remarks>
-    /// The position is derived from the viewport rather than stored, so it cannot drift out of
-    /// agreement with what is drawn: after a step the viewport is centred on that marker, so
-    /// the number is exact; after a pan it names the match nearest the middle of the view, or
-    /// says there is none in view at all. Disabled with a reason when no search is active,
-    /// which is what U-10 asks of a control that is sometimes not applicable.
-    /// </remarks>
     /// <summary>Re-resolves the marker cluster, for a test that installs a host mid-flight.</summary>
     internal void UpdateMarkerNavigationForTest() => UpdateMarkerNavigation();
 
+    /// <summary>
+    /// Shows which match is selected out of how many, and offers the four ways to change it.
+    /// </summary>
+    /// <remarks>
+    /// The position is the ordinal of an exact selected record, held by the tab and reported
+    /// by the query — not a guess derived from whichever match is nearest the middle of the
+    /// viewport, which is what it used to be and which could not describe a match beyond the
+    /// marker cap or two records sharing one timestamp. Nothing is selected until the reader
+    /// steps, so the resting state is `– / N`, and a manual pan returns to it. Every control
+    /// is disabled with a spoken reason when there is no search or no match, which is what
+    /// U-10 asks of a control that is sometimes not applicable.
+    /// </remarks>
     private void UpdateMarkerNavigation()
     {
         if (_markerNav is not { } nav ||
@@ -525,36 +527,42 @@ public sealed partial class SessionWorkspaceView : UserControl
             return;
         }
 
-        var markers = _viewModel.SearchResult?.Markers;
-        var count = markers?.Count ?? 0;
-        nav.IsVisible = count > 0;
+        var search = _viewModel.SearchResult;
+        var count = search?.Matches ?? 0;
+        nav.IsVisible = search is not null;
 
         // The stepper already ends in "/ 7,181", so a "7,181 search matches" label beside it
         // is the same number twice on a row that is one clipped line wide — and it was pushing
         // the session's own status out to "Ready · 49,…". While a search is still running the
         // percentage is the useful half and the total is not settled, so the label comes back.
         _searchStatus.IsVisible = !nav.IsVisible || _viewModel.SearchInProgress;
-        previous.IsEnabled = count > 0;
-        next.IsEnabled = count > 0;
+        var enabled = count > 0 && !_viewModel.IsQueryPending;
+        previous.IsEnabled = enabled;
+        next.IsEnabled = enabled;
         if (_markerFirst is { } first)
         {
-            first.IsEnabled = count > 0;
+            first.IsEnabled = enabled;
         }
 
         if (_markerLast is { } last)
         {
-            last.IsEnabled = count > 0;
+            last.IsEnabled = enabled;
         }
 
         if (_markerPositionButton is { } positionButton)
         {
-            positionButton.IsEnabled = count > 0 && AskForNumberAsync is not null;
+            positionButton.IsEnabled = enabled && AskForMatchAsync is not null;
         }
         if (count == 0)
         {
-            const string reason = "No search is active, so there are no matches to step through.";
+            var reason = _viewModel.IsQueryPending
+                ? "Updating results. Search navigation is available when filters finish applying."
+                : _viewModel.AppliedFilter.Search is null
+                    ? "No search is active, so there are no matches to step through."
+                    : "No matches are available to step through.";
             AutomationProperties.SetHelpText(previous, reason);
             AutomationProperties.SetHelpText(next, reason);
+            position.Text = _viewModel.AppliedFilter.Search is null ? "– / 0" : "No matches";
             return;
         }
 
@@ -563,50 +571,31 @@ public sealed partial class SessionWorkspaceView : UserControl
         position.Foreground = new SolidColorBrush(
             WorkspacePalette.TextPrimary(ActualThemeVariant != ThemeVariant.Light));
 
-        var index = MarkerIndexInView(markers!);
-        position.Text = index is { } visible
-            ? $"{visible + 1:N0} / {count:N0}"
+        var selected = _viewModel.SelectedSearchMatch;
+        position.Text = selected is { Status: SearchMatchStatus.Found }
+            ? $"{selected.Ordinal:N0} / {count:N0}"
             : $"– / {count:N0}";
-        var spoken = index is { } inView
-            ? $"Match {inView + 1:N0} of {count:N0}"
-            : $"{Counted.Of(count, "match", "matches")}, none in the range on screen";
+        var spoken = selected is { Status: SearchMatchStatus.Found }
+            ? $"Match {selected.Ordinal:N0} of {count:N0}"
+            : $"{Counted.Of(count, "match", "matches")}, no match selected";
+
+        // Announced politely on arrival, so stepping through matches reports where it landed
+        // without interrupting whatever the reader is reading (U-17) — and announced only on
+        // arrival, so a capture whose match count keeps growing does not repeat "Match k of N"
+        // at a record the reader has been sitting on for a minute. The name is still written
+        // every time, so focusing the counter reads the current position either way.
+        var arrival = selected is { Status: SearchMatchStatus.Found } &&
+                      !Nullable.Equals(selected.Key, _announcedMatchKey);
+        AutomationProperties.SetLiveSetting(
+            position,
+            arrival ? AutomationLiveSetting.Polite : AutomationLiveSetting.Off);
         AutomationProperties.SetName(position, spoken);
         ToolTip.SetTip(position, spoken);
-
-        // Announced politely, so stepping through matches reports where it arrived without
-        // interrupting whatever the reader is reading (U-17).
-        AutomationProperties.SetLiveSetting(position, AutomationLiveSetting.Polite);
+        _announcedMatchKey = selected is { Status: SearchMatchStatus.Found } ? selected.Key : null;
     }
 
-    /// <summary>The match nearest the middle of the viewport, when one is inside it.</summary>
-    private int? MarkerIndexInView(IReadOnlyList<InstantUs> markers)
-    {
-        if (_viewModel.Viewport is not { } viewport)
-        {
-            return null;
-        }
-
-        var centre = viewport.StartInclusive.Value + viewport.DurationUs / 2;
-        int? best = null;
-        var bestDistance = long.MaxValue;
-        for (var i = 0; i < markers.Count; i++)
-        {
-            var value = markers[i].Value;
-            if (value < viewport.StartInclusive.Value || value >= viewport.EndExclusive.Value)
-            {
-                continue;
-            }
-
-            var distance = Math.Abs(value - centre);
-            if (distance < bestDistance)
-            {
-                bestDistance = distance;
-                best = i;
-            }
-        }
-
-        return best;
-    }
+    /// <summary>The match whose arrival has already been announced.</summary>
+    private SearchMatchKey? _announcedMatchKey;
 
     private void UpdateSummaryText()
     {

@@ -1,4 +1,5 @@
 using VisualCat.App.Platform;
+using VisualCat.Application.UseCases;
 
 namespace VisualCat.App.Tests;
 
@@ -47,6 +48,101 @@ public sealed class StorageFileBridgeTests
         finally
         {
             File.Delete(source);
+        }
+    }
+
+    [Fact]
+    public async Task CancellationWaitsForAStubbornProviderAndNeverReportsCompletedDelivery()
+    {
+        var output = new GatedWriteStream(throwAfterRelease: false);
+        using var stop = new CancellationTokenSource();
+        string? stagingPath = null;
+        var publication = new List<StorageWritePublication>();
+
+        var writing = StorageFileBridge.WriteToProviderAsync(
+            "provider.csv",
+            async (path, token) =>
+            {
+                stagingPath = path;
+                await File.WriteAllBytesAsync(path, new byte[2 * 1024 * 1024], token);
+            },
+            () => Task.FromResult<Stream>(output),
+            progress: new Progress<FileWorkProgress>(),
+            publication.Add,
+            stop.Token);
+
+        await output.WriteStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+        Assert.Equal([StorageWritePublication.ProviderDeliveryStarted], publication);
+
+        await stop.CancelAsync();
+        Assert.False(writing.IsCompleted, "a cancellation request must wait for the native/provider call to return");
+        output.Release.TrySetResult();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => writing);
+        Assert.DoesNotContain(StorageWritePublication.ProviderDeliveryCompleted, publication);
+        Assert.NotNull(stagingPath);
+        Assert.False(File.Exists(stagingPath));
+    }
+
+    [Fact]
+    public async Task ProviderFailureAfterDeliveryStartsKeepsFailureDistinctAndCleansStaging()
+    {
+        var output = new GatedWriteStream(throwAfterRelease: true);
+        string? stagingPath = null;
+        var publication = new List<StorageWritePublication>();
+        var writing = StorageFileBridge.WriteToProviderAsync(
+            "provider.csv",
+            async (path, token) =>
+            {
+                stagingPath = path;
+                await File.WriteAllTextAsync(path, "provider payload", token);
+            },
+            () => Task.FromResult<Stream>(output),
+            progress: null,
+            publication.Add,
+            TestContext.Current.CancellationToken);
+
+        await output.WriteStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+        output.Release.TrySetResult();
+
+        await Assert.ThrowsAsync<IOException>(() => writing);
+        Assert.Equal([StorageWritePublication.ProviderDeliveryStarted], publication);
+        Assert.NotNull(stagingPath);
+        Assert.False(File.Exists(stagingPath));
+    }
+
+    private sealed class GatedWriteStream(bool throwAfterRelease) : MemoryStream
+    {
+        private int _writes;
+        public TaskCompletionSource WriteStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _writes) == 1)
+            {
+                WriteStarted.TrySetResult();
+                // Deliberately ignore the operation token until the simulated provider
+                // returns, which is the platform limitation the product must describe.
+                await Release.Task;
+                await base.WriteAsync(buffer, CancellationToken.None);
+                if (throwAfterRelease)
+                {
+                    throw new IOException("The provider disconnected after accepting bytes.");
+                }
+
+                return;
+            }
+
+            await base.WriteAsync(buffer, cancellationToken);
         }
     }
 }

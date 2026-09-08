@@ -45,3 +45,17 @@ round-trippable.
 spreadsheet is outside the contract, and the documentation says so rather than leaving it to
 be discovered. The templates and statistics CSV exports carry log-derived text as well and
 are covered by the same contract.
+
+The GUI's **Export CSV** review makes the query boundary explicit before a destination is
+chosen. It offers only distinct applicable scopes — selected cell/range, visible plot, all
+timed entries matching filters, and all timed entries in the session — and counts them with
+the same timed-entry predicate the writer uses. The range end is exclusive. Lines that have
+no usable timeline timestamp remain in the session and are not CSV data rows; the review
+says so when the frozen session contains any. A live capture may continue, but the displayed
+counts and output both use the committed immutable snapshot owned when the review opened.
+
+**Row order** (*Source order* or *Chronological*) and **Encoding** (*UTF-8* or *UTF-8 with
+byte-order mark*) are choices for each export. Successful delivery remembers those choices
+as the Settings defaults; cancelling the review or destination picker does not change them.
+Neither option changes field values, escaping, columns, UTC timestamps or the exact-data
+boundary above.

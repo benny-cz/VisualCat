@@ -118,24 +118,27 @@ inspection, query/search/statistics/templates, verification and export; stable
 JSON/NDJSON, stdout/stderr and exit-code contracts; streaming, piping, Unicode
 console paths, cancellation, and desktop/Android/session parity.
 
-**Capture and import** — finite log import; import-preview format, year, time-zone,
-template, and portable-raw choices; five supported logcat formats; host ADB
+**Capture and import** — finite log import; the import review's format, year,
+time-zone, template, and portable-raw choices, reached through *Open log* and
+through *Open log with options…*; five supported logcat formats; host ADB
 discovery, buffers, pre-roll, duration and byte caps, format negotiation,
 process-name sampling, bounded reconnect and resume; growing-file follow with
 visible truncation/rotation/removal handling.
 
 **Analysis** — six-severity density timeline, minimap, zoom/pan/fit, time-range
-selection, text and bounded-regex search, marker navigation, severity filters,
-facets, deterministic Drain templates, statistics, saved views, keyset paging,
-load-all cancellation, exact entry inspection, clipboard actions, and
-byte-faithful raw source context.
+selection, text and bounded-regex search, exact match navigation over every match
+in the session, marker presence columns, severity filters, facets including
+complete-value discovery through *Find…*, deterministic Drain templates,
+statistics, saved views, keyset paging, load-all cancellation, exact entry
+inspection, clipboard actions, and byte-faithful raw source context.
 
 **Session lifetime** — progressive snapshots, partial/recoverable sessions,
 finalize and reopen, external-source identity checks and degraded index-only
 mode, temporary-session cache and retention, recent sessions, multiple tabs,
-standard and portable saves, `.vcat.zip` import/export, CSV export scopes,
-diagnostic bundle, cancellation, crash recovery, upgrades, and concurrent
-process access.
+standard and portable saves, `.vcat.zip` import/export, the reviewed CSV export
+and its stored row-order and encoding defaults, the shell's one cancellable file
+operation, diagnostic bundle, cancellation, crash recovery, upgrades, and
+concurrent process access.
 
 **Windows presentation** — normal/maximized/minimized window state, minimum and
 large window sizes, per-monitor DPI, display hot-plug, multi-monitor coordinates,
@@ -1042,16 +1045,20 @@ silently look actionable.
 *Risk* Native picker, import preview, detection, time policy, or source identity
 is broken.
 *Pre* `small.txt` and oracle available.
-*Steps* Open log · select `small.txt` · inspect detected candidates/outcomes,
-resolved span, format, year, time zone, template and portable-raw controls ·
-accept defaults.
-*Expect* Preview appears inside budget; detected settings match oracle; import
+*Steps* Open log · select `small.txt` · read the summary before expanding
+anything · expand *Import options* and inspect the format, year, time zone,
+template and portable-raw controls · accept defaults.
+*Expect* The review appears inside budget as an ordinary dialog, not a separate
+window, with *Import options* collapsed. Its summary describes the **sample**,
+not the file: *Preview of up to the first 200 lines*, the actual complete-line
+count and retained bytes, `Sample time span` with its zone and year assumption,
+and parsed/unknown/rejected counts. Detected settings match the oracle; import
 progress is visible; final parsed/unknown/untimed totals, time range, and source
 name match; the manifest persists the chosen format/time policy/source identity;
 plot and minimap draw.
-*Fail if* desktop skips its preview, picker cancellation is reported as failure,
-counts differ, source name becomes a temporary cache name, or the preview and
-manifest disagree.
+*Fail if* the review claims to describe the whole file, picker cancellation is
+reported as failure, counts differ, source name becomes a temporary cache name,
+or the preview and manifest disagree.
 
 ### B-04 · Heat map to exact source bytes
 
@@ -1078,15 +1085,37 @@ label/state is ambiguous, or a hidden filter remains.
 
 ### B-06 · Text and regex search
 
-*Steps* Ctrl+F and search a known literal · use F3/N, Shift+F3/Shift+N, first,
-last, and position-jump controls · toggle case sensitivity/regex as offered · run
-a valid, invalid, and pathological regex.
-*Expect* Search field receives/selects focus; matching count and markers agree
-with oracle; navigation wraps and preserves zoom span; invalid syntax is
-explained; pathological matching hits its configured timeout without freezing;
-Escape clears search according to [`KEYBOARD.md`](KEYBOARD.md).
-*Fail if* typing triggers an unmodified shortcut, navigation skips/duplicates,
-zoom changes, an invalid expression crashes, or UI input stalls beyond budget.
+*Risk* Search identity, the counter's honesty, and viewport preservation.
+*Pre* A corpus whose match count exceeds 20,000, so the old marker cap would be
+visible in the total; the oracle names the k-th match for at least one k above it.
+*Steps* Ctrl+F and search a known literal · read the counter before stepping ·
+use F3/N, Shift+F3/Shift+N, first, last, and *Go to match* · reach both ends and
+step past them · press Fit, then step once more · pan by hand and read the
+counter again · repeat every step through `Ctrl+G`, `Alt+Home` and `Alt+End`,
+from the workspace and from the focused search field · toggle case
+sensitivity/regex as offered · run a valid, invalid, and pathological regex.
+*Expect* Before the first step the counter reads `– / N`, where **N is every
+match in the session**, not the number of markers drawn, and it agrees with the
+oracle above 20,000. Each step selects an exact record: the counter reads `k / N`,
+the entry list reveals and selects that row even when it is far past the loaded
+page, and the entry inspector follows. Records sharing a timestamp are separate
+places in the sequence. Stepping wraps at both ends and preserves the chosen
+zoom; from Fit it still selects a record and opens a readable window instead of
+leaving the view unchanged. An arrival window that starts mid-range says
+`N shown · B earlier · A later` and offers *Start of range*. A manual pan returns
+the counter to `– / N` without changing the search, and does not re-run the
+whole-session scan. *Go to match* states `1 to N · Search order: time` and
+refuses a blank, fractional or out-of-range number with
+`Enter a match number from 1 to N.` rather than clamping it. With no matches the
+stepper reads `No matches`, every control is disabled with its spoken reason, and
+the three shortcuts are inert. Invalid syntax is explained; pathological matching
+hits its configured timeout without freezing; Escape clears search according to
+[`KEYBOARD.md`](KEYBOARD.md).
+*Fail if* typing triggers an unmodified shortcut, navigation skips/duplicates or
+fails to wrap, the total stops at the marker cap, the view is unchanged from Fit,
+the selected row is whichever happened to be first in the viewport, zoom changes,
+panning re-runs the search, an out-of-range number is silently clamped, an
+invalid expression crashes, or UI input stalls beyond budget.
 
 ### B-07 · Timeline mouse, touchpad, wheel, and keyboard basics
 
@@ -1179,15 +1208,28 @@ extraction remains after failure, or moving the source ZIP breaks an open tab.
 ### B-14 · CSV export scopes, order, and encoding
 
 *Steps* With a filter, zoom viewport and selected range that differ, Ctrl+E ·
-exercise every offered scope including everything ignoring filter · export in
-source and chronological order, UTF-8 and UTF-8 BOM via settings · cancel once.
-*Expect* Chooser names only distinct scopes and row counts; saved file has one
-`.csv` extension, correct suggested name, exact rows/order/range/encoding and
-CSV escaping; completion notice names scope/count/file; cancellation creates
-nothing and no failure notice.
-*Fail if* menu promise and actual chooser differ, filters leak into ignore-filter
-scope, BOM/order setting is ignored, `.csv.csv` appears, or existing destination
-is damaged on cancellation/failure.
+read the row count beside every offered scope before choosing · exercise each of
+them, including the one that ignores filters · change **Row order** and
+**Encoding** in the review rather than in Settings · export · reopen
+*Appearance & timeline* afterwards · then repeat and cancel the review once and
+the destination picker once · finally, select a severity cell and export both it
+and *Visible plot range*.
+*Expect* The review names only distinct applicable scopes, each with its **exact
+timed row count**, and states the displayed time zone and the filters it applies.
+A plot narrowed inside a wider time filter exports the intersection, not the whole
+filter interval; a selected Error cell exports that cell while *Visible plot
+range* beside it exports every level the filter admits; an empty scope shows
+**0 timed rows**, is disabled, and never widens to a bigger one. The saved file
+has one `.csv` extension, the correct suggested name, and exact
+rows/order/range/encoding and CSV escaping; the completion notice states the same
+number the review promised, plus scope and file name. A successful export leaves
+Settings showing the order and encoding it used; a cancelled one leaves them
+alone and creates nothing, with no failure notice.
+*Fail if* menu promise and actual review differ, a promised count disagrees with
+the file, filters leak into the ignore-filter scope, an empty choice quietly
+broadens, BOM/order is ignored, Settings and the review disagree after an export,
+`.csv.csv` appears, or an existing destination is damaged on
+cancellation/failure.
 
 ### B-15 · Startup paths and working-directory independence
 
@@ -1297,10 +1339,19 @@ stale facet tallies.
 
 ### A-02 · High-cardinality facets and composition
 
-Use thousands of tags/PIDs/TIDs/processes. Scroll and search facets; combine one
-facet from each dimension, severity, regex and time range. AND applies across
-dimensions, intended within-dimension semantics are visible, counts name their
-population, and no unrelated filter disappears.
+Use thousands of tags/PIDs/TIDs/processes. Scroll the ranked summary, then open
+**Find…** on every browsable group and reach a value too rare to rank; page with
+*Previous 100* / *Next 100*, search the list by plain text and by number, and
+press include and exclude **in the middle of their targets**, not on their
+glyphs. Combine one facet from each dimension with severity, regex and a time
+range. AND applies across dimensions; a group ignores its own filters, which the
+pane discloses as `COUNTS · OTHER FILTERS`; counts name their population; an
+active value stays individually removable even when it is rare, excluded, or now
+matches nothing; no unrelated filter disappears. An active **template** reads as
+its canonical message shape rather than a numeric id, in the chips and in a
+Templates group that exists only while one is set. On a growing capture the
+browser holds one snapshot, says which one, and offers *Refresh counts* rather
+than moving the page.
 
 ### A-03 · Saved views round trip
 
@@ -1316,7 +1367,9 @@ Create a selected time range inside a zoomed viewport over an active filter.
 Exercise Zoom range, Filter range, Export range, Clear selection and Escape.
 Each changes only its promised dimension, and exported half-open boundaries
 match the independent microsecond oracle; after I-02 validates it on the same
-corpus, the candidate CLI result agrees too.
+corpus, the candidate CLI result agrees too. *Export range* opens the review with
+that span as a fixed summary — no scope question to answer again, and no broader
+fallback offered beside it, including when the explicit range is empty.
 
 ### A-05 · Many independently stateful tabs
 
@@ -1330,10 +1383,16 @@ availability track the visible session; every close is prompt.
 
 For each `fmt-*`, import once with detection and once with an intentional format
 override; vary assumed year, valid Windows and IANA time-zone IDs accepted by
-the runtime, template mining off, and Embed raw source on. Preview validation
-rejects blank/invalid zone and years outside 1970–9999 without closing. Manifest
-records exactly the accepted choice; misleading overrides account for unknown
-input rather than fabricating records.
+the runtime, template mining off, and Embed raw source on. Reach the review both
+ways: through *Open log*, and through **Open log with options…** in *More*, which
+opens it regardless of how confident detection was. Editing an option
+re-evaluates the sample already read — the file is not reopened or copied again —
+and *Import* stays disabled until the preview catches up, so a rapid edit cannot
+accept an old span. Review validation rejects blank/invalid zone and years
+outside 1970–9999 without closing. An explicit format override never displays a
+fabricated detection confidence. The manifest records exactly the settings that
+produced the accepted preview; misleading overrides account for unknown input
+rather than fabricating records.
 
 ### A-07 · Automatic detection and mixed content
 
@@ -1487,7 +1546,39 @@ Cancel every open/save/folder picker; select wrong type, nonexistent after
 selection, read-only destination, existing destination, very long name, root,
 UNC, removable drive ejection, and cloud placeholder not hydrated. Cancellation
 is silent success with no artifact; refusal is actionable; existing data stays
-intact; no modal is orphaned.
+intact; no modal is orphaned. Cancelling a review or a picker also disposes the
+prepared operation: the operation card goes, the work lease is released — the
+source capture becomes deletable again — and the next file command is available
+immediately.
+
+### A-35 · The one file operation acknowledges, progresses, and stops
+
+Start each of the copy-, export-, save-, archive- and share-shaped operations on
+data large enough to last, and watch the shell's operation card rather than the
+file. Acknowledgement is immediate and its numbers start only if the work lasts,
+so a copy that finishes in a moment never flashes counts on its way past. Stage
+text names the stage and counts within it — `Copying file · 18 MB of 40 MB`,
+`Writing CSV · 4,096 of 12,431 rows` — with a determinate bar only where the
+total is known, and no invented overall percentage across copy, verification and
+compression. While one runs, every other file command is disabled and **names the
+operation holding it**; reading, searching, inspecting another session and
+stopping an unrelated live capture never are. Press *Cancel*: it is a request —
+the card says `Cancelling…`, cannot be pressed twice, and stays until the writer
+actually stops, then reports exactly one terminal result. Cancel again at each
+boundary: during preparation, mid-write, and at the final publication, where
+*Cancel* is correctly disabled and a committed file wins over a late cancellation
+rather than being reported absent. A cancelled or failed operation removes its own
+staged file, leaves any previously complete destination untouched, and restores
+every command. Repeated clicks and repeated shortcuts create one operation and one
+native picker, not two. When preparation hands its file to the import that opens
+it, the card goes and the session's own progress takes over — one action, reported
+once — and the workspace returns to exactly the height it had before the card
+appeared.
+*Fail if* work runs with nothing on screen to acknowledge or stop it, a
+cancellation request is reported as a terminal result before the writer stops,
+the card and the import report the same work at the same time, a disabled command
+does not say why, a committed file is reported as absent or deleted as
+cancellation cleanup, or the workspace does not return to its prior height.
 
 ### A-26 · Names, Unicode, normalization, and reserved paths
 
@@ -1841,19 +1932,32 @@ taskbar thumbnail and Alt+Tab identify the candidate.
 ### U-05 · Keyboard contract, accelerators, and focus order
 
 Execute every row in [`KEYBOARD.md`](KEYBOARD.md), including timeline J/K/F,
-marker wrap, Alt+1..4, Ctrl shortcuts and Escape precedence. Traverse every
-dialog/control with Tab/Shift+Tab/arrows/Space/Enter. Focus order follows command
-bar → search/severity → timeline → analysis; disabled items are skipped or
-explained; no shortcut fires while ordinary text is typed.
+match wrap, Alt+1..4, Ctrl shortcuts and Escape precedence. `Ctrl+G`, `Alt+Home`
+and `Alt+End` reach *Go to match* and the first and last match from the workspace
+and from the focused search field, do not shadow the timeline's unmodified
+`Home`/`End` or `Alt+1`…`4`, and are inert with their spoken reason when there
+are no matches. Traverse every dialog/control with
+Tab/Shift+Tab/arrows/Space/Enter; in **Find…** one tab stop enters the value
+list, arrows choose a row, and Tab then continues to paging and *Done* rather
+than visiting two buttons for every row. Focus order follows command bar →
+search/severity → timeline → analysis; disabled items are skipped or explained;
+no shortcut fires while ordinary text is typed.
 
 ### U-06 · Narrator end-to-end pass
 
 With Narrator and scan mode/forms interaction as appropriate, cold-launch,
-import, use preview, search, filters, timeline, entries, inspector/source,
-templates/facets/statistics, More, settings/cache/recent/diagnostics, export and
-ADB dialog. Every command has concise name/role/state/help; rows announce level,
-tag, time, message—not record dumps, GUIDs, raw spans or private paths; counts and
-failures announce once; focus follows actions; primary journey is completable.
+import, use the import review, search and its stepper, *Go to match*, filters,
+timeline, entries, inspector/source, templates, facets and **Find…**,
+statistics, More, settings/cache/recent/diagnostics, the export review, a running
+file operation's card, and the ADB dialog. Every command has concise
+name/role/state/help; rows announce their value and count — a facet row says
+`tag ActivityManager, 172 entries`, an entry row says level, tag, time and
+message — never record dumps, GUIDs, raw spans or private paths; a user-initiated
+arrival announces `Match k of N` once while passive live growth does not; a
+progress count moving several times a second is readable on focus but is not
+announced on every tick; counts and failures announce once; focus follows actions
+and returns to the invoking command when the operation card goes; the primary
+journey is completable.
 
 ### U-07 · Automation tree and modal boundary
 
@@ -2448,6 +2552,10 @@ means it must pass before the next tag.
 | **R-55** | Export can ignore the active filter honestly | B-14/I-07 | Everything-in-session scope appears when distinct and contains the exact unfiltered row set | Unreleased |
 | **R-56** | Manual update route matches install origin | A-28/P-01 | Desktop command is present when documented, never checks silently, and opens the official page only on request | 2.0.9 |
 | **R-57** | Test-log generator honors requested format | I-14 | All five formats are deterministic and detected exactly; `long` never falls back to threadtime | Unreleased |
+| **R-58** | Search navigation reaches every match exactly | B-06 | The counter's total is every match in the session, each step selects one record, and Fit still moves | Unreleased |
+| **R-59** | Every applied filter value is individually removable | A-02 | A rare, excluded or now-empty value keeps its own undo, and **Find…** reaches values ranking cannot | Unreleased |
+| **R-60** | The export writes the scope it offered | B-14/A-04 | Intersection, cell and explicit range each export themselves from one frozen snapshot, and the count promised is the count written | Unreleased |
+| **R-61** | File work is visible and stoppable | A-35 | One named operation with progress and a Cancel that waits for the writer's actual result | Unreleased |
 
 ---
 
@@ -2492,10 +2600,10 @@ many-to-one mapping so reuse cannot turn an unexecuted matrix cell green.
 | Store/manifest/checksums/mapping | B-12/B-13/B-16, A-10/A-11/A-29/A-33, X-12–X-17/X-26, I-03/I-04 |
 | ADB | B-09/B-10, A-15–A-20, X-05/X-08–X-10, I-05/I-06, P-19, R-26–R-31 |
 | Growing file/framing | B-11, A-21/A-22, X-06/X-10/X-24, R-04/R-26/R-27/R-43 |
-| Query/filter/search/templates/paging | B-05–B-08, A-01–A-05, X-03/X-04/X-17–X-19, I-07, R-53/R-54 |
+| Query/filter/search/templates/paging | B-05–B-08, A-01–A-05, X-03/X-04/X-17–X-19, I-07, R-53/R-54/R-58/R-59 |
 | Timeline/rendering/layout/theme/tabs | B-04/B-07/B-08/B-17, A-05/A-13, X-04/X-18/X-23, all relevant U, R-13/R-18–R-20/R-36–R-42/R-51/R-52 |
 | Settings/cache/retention | A-12–A-14/A-29/A-32/A-34, X-20/X-22, P-02/P-07/P-08/P-16, R-44/R-46/R-51 |
-| Save/export/archive/diagnostics | B-12–B-14, A-25/A-27, X-12/X-14/X-15/X-25/X-26, I-03/I-04/I-07/I-08, P-03/P-04/P-10, R-55 |
+| Save/export/archive/diagnostics | B-12–B-14, A-25/A-27/A-35, X-12/X-14/X-15/X-25/X-26, I-03/I-04/I-07/I-08, P-03/P-04/P-10, R-55/R-60/R-61 |
 | CLI command/parser/console/generator | I-01–I-07/I-10–I-14, P-05/P-06/P-11/P-15, R-47/R-55/R-57 |
 | Accessibility/focus/keyboard | B-18/B-19, U-05–U-08/U-10–U-18/U-22–U-24, R-34/R-35/R-49–R-53 |
 

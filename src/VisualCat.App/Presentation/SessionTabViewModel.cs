@@ -180,6 +180,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private HeatMapResult? _overview;
     private StatisticsResult? _statistics;
     private SearchResult? _searchResult;
+    private SearchMatchResult? _selectedSearchMatch;
     private string _status = "Importing…";
     private string _searchStatus = string.Empty;
     private bool _searchInProgress;
@@ -188,6 +189,9 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private long _transientStatusGeneration = -1;
     private string _searchText = string.Empty;
     private FilterSpec _filter = FilterSpec.All;
+    private FilterSpec _appliedFilter = FilterSpec.All;
+    private QueryIdentity? _appliedQueryIdentity;
+    private bool _isQueryPending;
     private TimeRange? _viewport;
     private bool _followLatest;
     private bool _isLiveCaptureActive;
@@ -201,6 +205,9 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     private EntryCursor? _nextEntryCursor;
     private int _renderWidth = 1200;
     private long _queryGeneration;
+    private long _navigationGeneration;
+    private long _countBeforeEntryWindow;
+    private bool _entryArrivalWindow;
     private int _entryLoadInProgress;
     private bool _viewStateLoaded;
     private bool _growInitialFollowViewport;
@@ -217,6 +224,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     // scans per wheel notch. Keys are checked before querying (§12.1, §15.2).
     private string? _statisticsCacheKey;
     private string? _overviewCacheKey;
+    private string? _searchCacheKey;
+    private IReadOnlyList<InstantUs> _cachedSearchMarkers = [];
     private string? _templatesCacheKey;
     private CancellationTokenSource? _templateDebounce;
     private CancellationTokenSource? _hoverDebounce;
@@ -376,6 +385,20 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public HeatMapResult? Overview { get => _overview; private set => Set(ref _overview, value); }
     public StatisticsResult? Statistics { get => _statistics; private set => Set(ref _statistics, value); }
     public SearchResult? SearchResult { get => _searchResult; private set => Set(ref _searchResult, value); }
+    public SearchMatchResult? SelectedSearchMatch { get => _selectedSearchMatch; private set => Set(ref _selectedSearchMatch, value); }
+
+    /// <summary>
+    /// Counts arrivals the reader asked for, so a view can tell one from a refresh.
+    /// </summary>
+    /// <remarks>
+    /// A live capture republishes the same selected match every time it grows. Revealing the
+    /// row, changing the phone's visible pane or announcing the position on each of those
+    /// would take the workspace away from a reader who has been sitting on one record. Only
+    /// a step, a jump or a marker tap increments this.
+    /// </remarks>
+    public long SearchArrivalGeneration => Volatile.Read(ref _searchArrivals);
+
+    private long _searchArrivals;
     public ObservableCollection<NormalizedEntry> Entries { get; } = [];
     public ObservableCollection<TemplateSummary> Templates { get; } = [];
     public ObservableCollection<string> SavedViews { get; } = [];
@@ -667,6 +690,9 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public bool SearchInProgress { get => _searchInProgress; private set => Set(ref _searchInProgress, value); }
     public string SearchText { get => _searchText; set => Set(ref _searchText, value); }
     public FilterSpec Filter { get => _filter; private set => Set(ref _filter, value); }
+    public FilterSpec AppliedFilter { get => _appliedFilter; private set => Set(ref _appliedFilter, value); }
+    public QueryIdentity? AppliedQueryIdentity { get => _appliedQueryIdentity; private set => Set(ref _appliedQueryIdentity, value); }
+    public bool IsQueryPending { get => _isQueryPending; private set => Set(ref _isQueryPending, value); }
     public TimeRange? Viewport { get => _viewport; private set => Set(ref _viewport, value); }
     public bool FollowLatest { get => _followLatest; set => Set(ref _followLatest, value); }
     public bool IsLiveCaptureActive
@@ -708,7 +734,9 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public bool CanLoadMore => _nextEntryCursor is not null && !IsEntryRetentionLimitReached;
     public bool IsLoadingEntries => Volatile.Read(ref _entryLoadInProgress) != 0;
     public int LoadedEntryCount => Entries.Count;
-    public long RemainingEntryCount => Math.Max(0, (MatchesInView ?? Entries.Count) - Entries.Count);
+    public long EarlierEntryCount => _entryArrivalWindow ? _countBeforeEntryWindow : 0;
+    public bool IsEntryArrivalWindow => _entryArrivalWindow;
+    public long RemainingEntryCount => Math.Max(0, (MatchesInView ?? Entries.Count) - EarlierEntryCount - Entries.Count);
 
     /// <summary>
     /// Time range the entry table is listing: a selected cell or range when one is
@@ -962,7 +990,12 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
         var detailRange = _detailRange;
         var detailLevel = _detailLevel;
+        var requestedFingerprint = Filter.Fingerprint();
         var generation = Interlocked.Increment(ref _queryGeneration);
+        if (!string.Equals(AppliedFilter.Fingerprint(), requestedFingerprint, StringComparison.Ordinal))
+        {
+            BeginFilterQuery(generation);
+        }
 
         // Linked to the session lifetime as well as to the caller, so a refresh that wins
         // the race against disposal is born cancelled rather than running a query set
@@ -1027,6 +1060,11 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
         try
         {
+            // The whole request is captured here, under the load lock and before any
+            // background query starts (plan §3.3). Capturing it at method entry instead
+            // read a viewport the owning load had not published yet, and the refresh then
+            // returned with nothing on screen; capturing it inside the query task would
+            // let a rapid edit change the request halfway through.
             var snapshot = _snapshot;
             var viewport = Viewport;
             if (snapshot is null || viewport is null || viewport.Value.IsEmpty)
@@ -1035,21 +1073,20 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             }
 
             var filter = Filter;
+            var requestedOrder = EntryOrder;
+            var useArrivalWindow = _entryArrivalWindow;
             var width = Math.Clamp(_renderWidth, 64, 4096);
             var fingerprint = filter.Fingerprint();
+            var selectedMatch = SelectedSearchMatch is { } selected &&
+                                string.Equals(selected.Identity.FilterFingerprint, fingerprint, StringComparison.Ordinal)
+                ? selected
+                : null;
             var filterKey = $"{snapshot.Generation}|{fingerprint}";
             var refreshOverview = _overviewCacheKey != filterKey || Overview is null;
             var refreshStatistics = _statisticsCacheKey != filterKey || Statistics is null;
-            var progress = new Progress<SearchProgress>(value =>
-            {
-                if (value.Identity.QueryGeneration == Volatile.Read(ref _queryGeneration))
-                {
-                    SearchInProgress = !value.Completed;
-                    SearchStatus = value.Completed
-                        ? $"{value.Matches:N0} search matches"
-                        : $"Searching · {value.Progress:P0} · {value.Matches:N0} matches";
-                }
-            });
+            var refreshSearchMarkers = filter.Search is not null && _searchCacheKey != filterKey;
+            var cachedStatistics = Statistics;
+            var cachedSearchMarkers = _cachedSearchMarkers;
             var queryTask = Task.Run(() =>
             {
                 var heat = SessionQueryEngine.QueryHeatMap(snapshot, new Viewport(viewport.Value, width), filter, generation, token);
@@ -1065,30 +1102,78 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     ? SessionQueryEngine.QueryStatistics(snapshot, filter, generation, 20, token)
                     : null;
                 var detailFilter = DetailFilter(filter, detailLevel);
-                var details = SessionQueryEngine.GetEntries(
+                SearchMatchResult? revalidated = null;
+                EntryArrivalPage? arrival = null;
+                if (selectedMatch?.Key is { } selectedKey)
+                {
+                    revalidated = SessionQueryEngine.SearchMatchAsync(
+                            snapshot,
+                            filter,
+                            new SearchMatchRequest(SearchMatchRequestKind.Revalidate, selectedKey),
+                            generation,
+                            token)
+                        .GetAwaiter()
+                        .GetResult();
+                    if (useArrivalWindow &&
+                        revalidated.Status == SearchMatchStatus.Found &&
+                        revalidated.Key is { } currentKey)
+                    {
+                        arrival = SessionQueryEngine.GetEntriesFromKey(
+                            snapshot,
+                            detailRange ?? viewport.Value,
+                            detailFilter,
+                            requestedOrder,
+                            currentKey,
+                            EntryPageSize,
+                            generation,
+                            token);
+                    }
+                }
+
+                var details = arrival?.Page ?? SessionQueryEngine.GetEntries(
                     snapshot,
                     detailRange ?? viewport.Value,
                     detailFilter,
-                    EntryOrder,
+                    requestedOrder,
                     null,
-                    500,
+                    EntryPageSize,
                     generation,
                     token);
-                return (heat, overview, stats, details);
+                var total = (stats ?? cachedStatistics)?.TimedMatching ?? details.TotalCount ?? 0;
+                var scannedSearch = refreshSearchMarkers && filter.Search is { } textSearch
+                    ? SessionQueryEngine.SearchAsync(
+                            snapshot,
+                            textSearch,
+                            filter with { Search = null },
+                            generation,
+                            markerLimit: 20_000,
+                            cancellationToken: token)
+                        .GetAwaiter()
+                        .GetResult()
+                    : null;
+                var search = filter.Search is null
+                    ? null
+                    : new SearchResult(
+                        heat.Identity,
+                        total,
+                        scannedSearch?.Markers ?? cachedSearchMarkers,
+                        scannedSearch?.MarkersTruncated ?? total > cachedSearchMarkers.Count);
+                return (heat, overview, stats, details, search, scannedSearch, revalidated, arrival);
             }, token).ConfigureAwait(false);
-            // The heat-map pass materialises the active filter bitmap. Starting the search
-            // beside it made both cold consumers build that same expensive bitmap and throw
-            // one result away. Search starts only after the shared cache is warm.
             var results = await queryTask;
-            var searchResult = await Task.Run(RunSearchAsync, token).ConfigureAwait(false);
-            if (generation != Volatile.Read(ref _queryGeneration) ||
-                results.heat.Identity.SnapshotGeneration != _snapshot?.Generation)
-            {
-                return;
-            }
-
+            var accepted = false;
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                if (IsDisposed ||
+                    generation != Volatile.Read(ref _queryGeneration) ||
+                    results.heat.Identity.SessionId != _snapshot?.SessionId ||
+                    results.heat.Identity.SnapshotGeneration != _snapshot?.Generation ||
+                    !string.Equals(Filter.Fingerprint(), fingerprint, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                accepted = true;
                 // A failure reported by a query that has since been superseded is no longer
                 // true of anything on screen (finding F-05, point 3).
                 if (_transientStatusGeneration >= 0 && generation > _transientStatusGeneration)
@@ -1109,12 +1194,31 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                     _statisticsCacheKey = filterKey;
                 }
 
-                SearchResult = searchResult;
-                if (searchResult is null)
+                SearchResult = results.search;
+                if (results.scannedSearch is { } scannedSearch)
+                {
+                    _cachedSearchMarkers = scannedSearch.Markers;
+                    _searchCacheKey = filterKey;
+                }
+                else if (filter.Search is null)
+                {
+                    _cachedSearchMarkers = [];
+                    _searchCacheKey = null;
+                }
+                SelectedSearchMatch = selectedMatch is null
+                    ? null
+                    : results.revalidated?.Status == SearchMatchStatus.Found
+                        ? results.revalidated
+                        : null;
+                if (results.search is null)
                 {
                     SearchStatus = string.Empty;
-                    SearchInProgress = false;
                 }
+
+                SearchInProgress = false;
+                IsQueryPending = false;
+                AppliedFilter = filter;
+                AppliedQueryIdentity = results.heat.Identity;
 
                 EntriesReloading?.Invoke(this, EventArgs.Empty);
                 Entries.Clear();
@@ -1124,30 +1228,32 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                 }
 
                 MatchesInView = results.details.TotalCount;
+                SetEntryWindow(results.arrival?.CountBeforeWindow ?? 0, results.arrival is not null);
                 SetNextEntryCursor(results.details.NextCursor);
                 NotifyEntryLoadCounts();
                 EntriesReloaded?.Invoke(this, EventArgs.Empty);
             });
-            ScheduleTemplateRefresh(filterKey, viewport.Value, filter, generation, token);
-
-            async Task<SearchResult?> RunSearchAsync()
+            if (accepted)
             {
-                if (filter.Search is not { } search)
-                {
-                    return null;
-                }
-
-                return await SessionQueryEngine.SearchAsync(
-                    snapshot,
-                    search,
-                    filter with { Search = null },
-                    generation,
-                    progress,
-                    cancellationToken: token).ConfigureAwait(false);
+                ScheduleTemplateRefresh(filterKey, viewport.Value, filter, generation, token);
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
+        }
+        catch
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (generation == Volatile.Read(ref _queryGeneration) &&
+                    string.Equals(Filter.Fingerprint(), requestedFingerprint, StringComparison.Ordinal))
+                {
+                    Filter = AppliedFilter;
+                    IsQueryPending = false;
+                    SearchInProgress = false;
+                }
+            });
+            throw;
         }
         finally
         {
@@ -1498,6 +1604,8 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         _viewportIsAuto = false;
         if (manual)
         {
+            Interlocked.Increment(ref _navigationGeneration);
+            SelectedSearchMatch = null;
             FollowLatest = false;
             _growInitialFollowViewport = false;
 
@@ -1515,6 +1623,150 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         }
 
         return RefreshAsync();
+    }
+
+    /// <summary>Resolves and reveals one exact search match.</summary>
+    public async Task<SearchMatchResult?> NavigateSearchAsync(
+        SearchMatchRequestKind kind,
+        long? ordinal = null,
+        InstantUs? near = null,
+        SearchMatchKey? exactKey = null,
+        string? expectedFilterFingerprint = null,
+        CancellationToken cancellationToken = default)
+    {
+        var exactRevalidation = kind == SearchMatchRequestKind.Revalidate && exactKey is not null;
+        if (IsDisposed || IsQueryPending && !exactRevalidation || AppliedFilter.Search is null ||
+            expectedFilterFingerprint is not null &&
+            !string.Equals(
+                AppliedFilter.Fingerprint(),
+                expectedFilterFingerprint,
+                StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        using var linked = LinkToLifetime(cancellationToken);
+        if (linked is null)
+        {
+            return null;
+        }
+
+        var navigationGeneration = Interlocked.Increment(ref _navigationGeneration);
+        SearchMatchResult? result;
+        await _loadLock.WaitAsync(linked.Token).ConfigureAwait(false);
+        try
+        {
+            var snapshot = _snapshot;
+            var viewport = Viewport;
+            var filter = AppliedFilter;
+            if (snapshot?.TimedRange is not { } session || viewport is null || filter.Search is null)
+            {
+                return null;
+            }
+
+            if (expectedFilterFingerprint is not null &&
+                !string.Equals(filter.Fingerprint(), expectedFilterFingerprint, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            SearchMatchRequest request;
+            if (kind is SearchMatchRequestKind.Next or SearchMatchRequestKind.Previous &&
+                exactKey is null && SelectedSearchMatch?.Key is not { } selectedKey)
+            {
+                var center = new InstantUs(viewport.Value.StartInclusive.Value + viewport.Value.DurationUs / 2);
+                var boundary = new SearchMatchKey(
+                    snapshot.SessionId,
+                    center.Value,
+                    kind == SearchMatchRequestKind.Next ? long.MinValue : long.MaxValue);
+                request = new SearchMatchRequest(kind, boundary);
+            }
+            else
+            {
+                request = new SearchMatchRequest(
+                    kind,
+                    exactKey ?? SelectedSearchMatch?.Key,
+                    near,
+                    ordinal);
+            }
+
+            result = await Task.Run(
+                    () => SessionQueryEngine.SearchMatchAsync(
+                        snapshot,
+                        filter,
+                        request,
+                        navigationGeneration,
+                        linked.Token),
+                    linked.Token)
+                .ConfigureAwait(false);
+            if (result.Status != SearchMatchStatus.Found || result.Key is null)
+            {
+                return result;
+            }
+
+            var published = false;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (IsDisposed ||
+                    navigationGeneration != Volatile.Read(ref _navigationGeneration) ||
+                    _snapshot?.Generation != result.Identity.SnapshotGeneration ||
+                    !string.Equals(AppliedFilter.Fingerprint(), result.Identity.FilterFingerprint, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                ClearDetailScope();
+                FollowLatest = false;
+                _growInitialFollowViewport = false;
+                _viewportIsAuto = false;
+                SelectedSearchMatch = result;
+                Interlocked.Increment(ref _searchArrivals);
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SearchArrivalGeneration)));
+                SetEntryWindow(0, arrival: true);
+                Viewport = SearchArrivalViewport(session, viewport.Value, new InstantUs(result.Key.Value.TimestampUs));
+                published = true;
+            });
+            if (!published)
+            {
+                return null;
+            }
+        }
+        finally
+        {
+            _loadLock.Release();
+        }
+
+        if (navigationGeneration != Volatile.Read(ref _navigationGeneration))
+        {
+            return null;
+        }
+
+        await RefreshAsync(linked.Token).ConfigureAwait(false);
+        return SelectedSearchMatch;
+    }
+
+    /// <summary>Chooses a readable arrival window while preserving a deliberate zoom.</summary>
+    internal static TimeRange SearchArrivalViewport(TimeRange session, TimeRange viewport, InstantUs target)
+    {
+        if (session.DurationUs < MinimumViewportUs)
+        {
+            return FitViewport(session);
+        }
+
+        var coversSession = viewport.StartInclusive <= session.StartInclusive &&
+                            viewport.EndExclusive >= session.EndExclusive;
+        var span = coversSession
+            ? Math.Clamp(session.DurationUs / 20, MinimumViewportUs, session.DurationUs)
+            : Math.Min(viewport.DurationUs, session.DurationUs);
+        span = Math.Max(1, span);
+        var maximumStart = checked(session.EndExclusive.Value - span);
+        var centered = (Int128)target.Value - span / 2;
+        var start = centered < session.StartInclusive.Value
+            ? session.StartInclusive.Value
+            : centered > maximumStart
+                ? maximumStart
+                : (long)centered;
+        return new TimeRange(new InstantUs(start), new InstantUs(checked(start + span)));
     }
 
     public Task SetRenderWidthAsync(int devicePixelWidth)
@@ -1555,8 +1807,14 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         }
 
         var previousFilter = Filter;
+
+        // The cursor belongs to the result that is still on screen. Requesting a new search
+        // drops it, because a match number means nothing across two different searches — but
+        // a rejected pattern leaves the previous result standing, so its selected match has
+        // to come back with it or the counter falls to `– / N` beside rows that never moved.
+        var previousMatch = SelectedSearchMatch;
         var candidateFilter = previousFilter with { Search = search };
-        Filter = candidateFilter;
+        SetRequestedFilter(candidateFilter);
         try
         {
             await RefreshAsync().ConfigureAwait(false);
@@ -1567,10 +1825,13 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             // A superseded request no longer owns the field or the chip. The current one
             // rolls back atomically: RefreshAsync publishes only after every query succeeds,
             // so the prior rows, plot, count and markers are still one consistent result.
-            if (ReferenceEquals(Filter, candidateFilter))
+            if (ReferenceEquals(Filter, candidateFilter) ||
+                string.Equals(Filter.Fingerprint(), previousFilter.Fingerprint(), StringComparison.Ordinal))
             {
                 Filter = previousFilter;
+                SelectedSearchMatch = previousMatch;
                 SearchInProgress = false;
+                IsQueryPending = false;
                 return SearchPatternProblem.Timeout();
             }
 
@@ -1600,7 +1861,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             ClearDetailScope();
         }
 
-        Filter = filter;
+        SetRequestedFilter(filter);
         await RefreshAsync().ConfigureAwait(false);
     }
 
@@ -1743,7 +2004,14 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public Task SetEntryOrderAsync(EntryOrder order)
     {
         EntryOrder = order;
+        SetEntryWindow(0, arrival: false);
         return RefreshAsync();
+    }
+
+    public Task ReturnToEntryRangeStartAsync(CancellationToken cancellationToken = default)
+    {
+        SetEntryWindow(0, arrival: false);
+        return RefreshAsync(cancellationToken);
     }
 
     public async Task SaveCurrentViewAsync(string name, CancellationToken cancellationToken = default)
@@ -2102,7 +2370,7 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
     public Task ClearFiltersAsync()
     {
-        Filter = FilterSpec.All;
+        SetRequestedFilter(FilterSpec.All);
         SearchText = string.Empty;
         return RefreshAsync();
     }
@@ -2479,8 +2747,47 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
     private async Task UpdateFilterAsync(FilterSpec filter)
     {
-        Filter = filter;
+        SetRequestedFilter(filter);
         await RefreshAsync().ConfigureAwait(false);
+    }
+
+    private void SetRequestedFilter(FilterSpec filter)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        if (!string.Equals(Filter.Fingerprint(), filter.Fingerprint(), StringComparison.Ordinal))
+        {
+            Interlocked.Increment(ref _navigationGeneration);
+            SelectedSearchMatch = null;
+        }
+
+        Filter = filter;
+    }
+
+    private void BeginFilterQuery(long generation)
+    {
+        IsQueryPending = true;
+        _ = ShowPendingAsync();
+
+        async Task ShowPendingAsync()
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(150), _lifetime.Token).ConfigureAwait(false);
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (!IsDisposed &&
+                        IsQueryPending &&
+                        generation == Volatile.Read(ref _queryGeneration))
+                    {
+                        SearchInProgress = true;
+                        SearchStatus = "Updating results…";
+                    }
+                });
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
     }
 
     private async Task PersistViewCoreAsync(CancellationToken cancellationToken)
@@ -2528,13 +2835,13 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
 
     private SessionViewState CaptureViewState(string name) =>
         FollowLatest
-            ? new SessionViewState(name, null, Filter, EntryOrder, FollowLatest: false)
-            : new SessionViewState(name, Viewport, Filter, EntryOrder, FollowLatest);
+            ? new SessionViewState(name, null, AppliedFilter, EntryOrder, FollowLatest: false)
+            : new SessionViewState(name, Viewport, AppliedFilter, EntryOrder, FollowLatest);
 
     private void ApplyViewState(SessionViewState view, TimeRange? sessionRange)
     {
         ClearDetailScope();
-        Filter = view.Filter;
+        SetRequestedFilter(view.Filter);
         SearchText = view.Filter.Search?.Query ?? string.Empty;
         EntryOrder = view.EntryOrder;
         FollowLatest = view.FollowLatest;
@@ -2604,6 +2911,22 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         _nextEntryCursor = cursor;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanLoadMore)));
     }
+
+    private void SetEntryWindow(long countBefore, bool arrival)
+    {
+        var changed = _countBeforeEntryWindow != countBefore || _entryArrivalWindow != arrival;
+        _countBeforeEntryWindow = Math.Max(0, countBefore);
+        _entryArrivalWindow = arrival;
+        if (!changed)
+        {
+            return;
+        }
+
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(EarlierEntryCount)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEntryArrivalWindow)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RemainingEntryCount)));
+    }
+
 
     private void NotifyEntryLoadState()
     {

@@ -732,6 +732,16 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         form.Children.Add(Pick("Default export order", _exportOrder, ExportOrderChoices, settings.ExportOrder, out _exportOrderChoice));
         form.Children.Add(new TextBlock { Text = "Normalized CSV encoding" });
         form.Children.Add(Pick("Normalized CSV encoding", _exportEncoding, ExportEncodingChoices, settings.ExportEncoding, out _exportEncodingChoice));
+
+        // Both values are editable in the export review as well, and a successful export
+        // stores what it used. Saying so here is what keeps this screen from looking like the
+        // only place the value can change — and it is still the only place both are at rest.
+        form.Children.Add(new TextBlock
+        {
+            Text = "Each export can change this and remember your choice.",
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.72,
+        });
         form.Children.Add(_diagnostics);
         form.Children.Add(new TextBlock
         {

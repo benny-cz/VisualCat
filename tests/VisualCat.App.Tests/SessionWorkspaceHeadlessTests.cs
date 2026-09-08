@@ -200,11 +200,17 @@ public sealed class SessionWorkspaceHeadlessTests
                     accessibleNames,
                     static name => name?.StartsWith("COUNTS · THIS VIEW.", StringComparison.Ordinal) == true);
                 // The scope qualifier is in the visible label, not only in a tooltip a touch
-                // device never shows (finding 11).
+                // device never shows (finding 11). The label states the own-dimension
+                // exception too, because a group that ignores its own filters is what makes
+                // a neutral value's count differ from the rows on screen.
                 Assert.Contains(
                     accessibleNames,
                     static name =>
-                        name?.StartsWith("COUNTS · WHOLE SESSION · CURRENT FILTER.", StringComparison.Ordinal) == true);
+                        name?.StartsWith("COUNTS · OTHER FILTERS.", StringComparison.Ordinal) == true);
+                Assert.Contains(
+                    accessibleNames,
+                    static name =>
+                        name?.Contains("Each group ignores its own filters", StringComparison.Ordinal) == true);
 
                 var search = view.GetLogicalDescendants()
                     .OfType<TextBox>()

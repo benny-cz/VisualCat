@@ -60,19 +60,22 @@ is not automatically applicable to every surface.
 **Capture and import** — on-device live capture (own-app and full-device scope),
 host ADB capture with buffer/pre-roll/duration options, Android finite-file
 import with automatic format detection, portable `.vcat.zip` import, and
-incoming `content://` and `file://` `ACTION_VIEW` intents. Import-preview
-override and growing-file follow are desktop capabilities; they are not claimed
-for the Android companion.
+incoming `content://` and `file://` `ACTION_VIEW` intents. Android imports a
+confidently detected file directly and opens the import review when detection is
+uncertain; **Open log with options…** in *More* opens that review for any file,
+which is how a phone sets an assumed year or time zone before importing.
+Growing-file follow remains a desktop capability and is not claimed here.
 
 **Analysis** — severity × time heat map, minimap, zoom/pan/fit, time-range
-selection, text and regex search with marker navigation, severity filters,
-facets, mined Drain templates, statistics, keyset-paged entry details,
-byte-faithful source context.
+selection, text and regex search with exact match navigation, severity filters,
+facets including complete-value discovery through *Find…*, mined Drain templates,
+statistics, keyset-paged entry details, byte-faithful source context.
 
 **Session lifetime** — progressive snapshots during ingest, partial and
 recoverable sessions, finalize and reopen, session cache and retention, saved
-views, recent sessions, tab strip, Android CSV export and portable share,
-desktop/CLI rich exports, the share sheet, and the diagnostic bundle.
+views, recent sessions, tab strip, the reviewed Android CSV export and portable
+share, the shell's one cancellable file operation, desktop/CLI rich exports, the
+share sheet, and the diagnostic bundle.
 
 **Presentation** — Plot/Split/Details workspace modes, filter drawer, More
 actions sheet, notice lane, theme, text scale, high contrast, safe-area and
@@ -84,9 +87,11 @@ changes.
 Unit and headless UI tests; CI packaging; Play Console submission mechanics;
 iOS; desktop-only chrome, except where a round trip depends on it.
 
-Desktop import-preview override and growing-file follow remain covered by their
-desktop tests. They are mentioned here only to prevent an Android run from
-mistaking their deliberate absence for a missing control.
+Desktop growing-file follow remains covered by its desktop tests. It is
+mentioned here only to prevent an Android run from mistaking its deliberate
+absence for a missing control. The import review is **not** in that category any
+more: it is reachable on Android through *Open log with options…* and through
+low-confidence detection, and B-03/A-08/A-28 cover it.
 
 ### 1.3 Applicability and test semantics
 
@@ -693,10 +698,10 @@ byte-faithful ingest.
 *Expect* Android imports immediately with the automatically detected format and
 timestamp policy; the stored manifest records both. Ingest completes; parsed and
 unknown counts match the corpus oracle; the heat map draws; the tab is named
-after the provider display name. Android does **not** show the desktop-only
-import-preview override.
+after the provider display name. A confidently detected file is **not**
+interrupted by the review — quick import is still the phone's default path.
 *Fail if* Counts or manifest settings disagree with the oracle, the picker URI
-cannot be materialized, or a desktop-only preview is required to proceed.
+cannot be materialized, or a confidently detected ordinary file stops to ask.
 
 **B-04 · Read the heat map and reach an exact record**
 *Risk* The core value proposition, end to end.
@@ -719,13 +724,24 @@ the chip bar; *Clear all* returns to the unfiltered view exactly.
 *Fail if* A severity's count and its plotted density disagree, or a cleared
 filter leaves residue in the chip bar.
 
-**B-06 · Text search and marker navigation**
-*Risk* Search, markers, and viewport preservation.
+**B-06 · Text search and exact match navigation**
+*Risk* Search identity, the counter's honesty, and viewport preservation.
 *Steps* Search a literal known to occur (for example `AndroidRuntime` in
-`crashy.txt`) · step forward and backward through markers · reach the ends.
-*Expect* Matches are highlighted; navigation moves the viewport to each match,
-wraps at both ends, and preserves the current zoom span.
-*Fail if* Navigation changes zoom, skips matches, or fails to wrap.
+`crashy.txt`) · read the counter before stepping · step forward and backward ·
+reach both ends and step past them · tap *Fit*, then step once more · pan the
+plot by hand and read the counter again.
+*Expect* Before the first step the counter reads `– / N`, where **N is every
+match in the session**, not the number of markers drawn. Each step selects an
+exact record: the counter reads `k / N`, the entry list reveals and selects that
+row, and the *Entry* tab shows it. Stepping wraps at both ends and preserves the
+zoom the reader chose. From *Fit* — where the viewport already spans every match
+— a step still selects a record and opens a readable window around it rather than
+leaving the view unchanged. A manual pan returns the counter to `– / N` without
+changing the search.
+*Fail if* Navigation changes the zoom, skips matches, fails to wrap, leaves the
+view unchanged from *Fit*, reports a total that stops at the marker cap, or the
+selected row is whichever happens to be first in the viewport rather than the
+match that was chosen.
 
 **B-07 · Regex search**
 *Steps* Enable *Regex* · run a valid pattern · then an invalid one · then a
@@ -797,13 +813,23 @@ plot. Reopen time is recorded.
 empty list under a "Ready" status.
 
 **B-14 · Export and share a session**
-*Steps* *Export CSV…* with each scope offered · verify the CSV against the CLI
-oracle · then *Share…* the portable archive to another installed app.
-*Expect* The CSV scope is explicit; the file lands with a sensible name derived
-from the capture; the portable share sheet opens with a read-granted
-`content://` URI from the app's FileProvider; the receiving app can read it.
-Android is not expected to expose the desktop/CLI raw and report exporters.
-*Fail if* A `file://` URI is exposed, or the share fails with a permission error.
+*Steps* *Export CSV…* with each scope offered · read the row count beside each
+one before choosing · change *Row order* and *Encoding* in the review · verify
+the CSV against the CLI oracle · reopen *Appearance & timeline* afterwards · then
+*Share…* the portable archive to another installed app.
+*Expect* The review names each scope with its **exact timed row count**, the
+displayed time zone and the filters it applies. The completion notice states the
+same number it promised, the scope, and the file name. The written file has that
+many data rows plus one header. The two options the review carries are the same
+two stored in Settings, and a successful export leaves Settings showing what it
+used. The file lands with a sensible name derived from the capture and a single
+`.csv`; the portable share sheet opens with a read-granted `content://` URI from
+the app's FileProvider; the receiving app can read it. Android is not expected to
+expose the desktop/CLI raw and report exporters.
+*Fail if* A `file://` URI is exposed, the share fails with a permission error, a
+row count promised in the review disagrees with the file, the extension is
+doubled, or Settings and the review disagree about the order or encoding after an
+export.
 
 **B-15 · Back gesture and sheet dismissal**
 *Steps* Open the More sheet, a dialog, and the filter drawer in turn · dismiss
@@ -880,10 +906,13 @@ a view removes it and does not disturb the current filter.
 *Steps* Drag a range on the plot · use *Zoom range*, *Filter range*, and
 *Export range* in turn.
 *Expect* The three are distinct: zooming changes the viewport only, filtering
-changes the result set, exporting writes exactly the selected span. Escape clears
-a selected scope before it clears filters.
-*Fail if* Zoom and filter are conflated, or an export contains records outside
-the range.
+changes the result set, exporting writes exactly the selected span. *Export
+range* opens the review with that span as a **fixed summary** — no scope question
+to answer again, and no broader fallback offered beside it. Escape clears a
+selected scope before it clears filters.
+*Fail if* Zoom and filter are conflated, an export contains records outside the
+range, or an explicitly chosen range is offered alongside a wider scope the
+reader did not ask for.
 
 **A-05 · Multiple sessions open at once**
 *Steps* Open three sessions (a file import, a live capture, a portable archive) ·
@@ -898,12 +927,17 @@ stays legible with three chips.
 third-party provider), use *Open with* to view a `.txt` log in VisualCat while
 the app is (a) not running and (b) running with a session open. Redeliver the
 same URI to the same running activity.
-*Expect* Both lifecycle cases open the log. The incoming stream is materialized
-into the app cache with a safe display name. The same URI delivered twice to the
-same activity does not create duplicate tabs. This is `ACTION_VIEW`; inbound
-`ACTION_SEND` is not an implemented promise.
-*Fail if* A repeat delivery creates duplicate tabs, a running app ignores the
-new intent, or provider-specific URI syntax becomes a path traversal/name bug.
+*Expect* Both lifecycle cases open the log. Copying is **visible**: the shell's
+operation card names the file and can be cancelled while the bytes move, and it
+disappears again the moment the import takes over — the session's own progress
+reports the rest, so one action is never reported twice. The stream is
+materialized into the app cache with a safe display name. The same URI delivered
+twice to the same activity does not create duplicate tabs. This is `ACTION_VIEW`;
+inbound `ACTION_SEND` is not an implemented promise.
+*Fail if* A repeat delivery creates duplicate tabs, a running app ignores the new
+intent, the copy runs with nothing on screen to acknowledge or stop it, the card
+and the import report the same work at the same time, or provider-specific URI
+syntax becomes a path traversal/name bug.
 
 **A-07 · Import a portable `.vcat.zip` produced elsewhere**
 *Pre* An archive exported from the desktop app or CLI, pushed to the device.
@@ -915,10 +949,11 @@ Verify with the parity procedure in H-06.
 *Steps* Import `mixed-formats.txt` and each `fmt-*.txt` through Android's picker.
 *Expect* Each single-format file is detected according to the corpus oracle and
 the choice/timestamp policy is persisted in the manifest. Mixed or uncertain
-content produces honest parsed/unknown accounting; unknown lines remain
-reachable and no desktop-only override dialog is promised on Android.
-*Fail if* The manifest disagrees with the detected settings, input disappears,
-or the Android UI tells the user to operate a dialog it does not expose.
+content produces honest parsed/unknown accounting and **opens the import review**
+rather than importing on a guess; unknown lines remain reachable either way.
+*Fail if* The manifest disagrees with the detected settings, input disappears, a
+low-confidence sample is imported without asking, or a confidently detected one
+stops to ask.
 
 **A-09 · Import failure presentation**
 *Steps* Import `notalog.bin`, then `empty.txt`.
@@ -1038,14 +1073,21 @@ release sharing the candidate's application ID, or record N/A with that reason.
 
 **A-20 · Cancellation and refusal paths**
 *Steps* Cancel each system picker, export destination picker, share chooser,
-product confirmation, Wireless ADB setup/reconnect, developer-only Android log-access sheet when present, long search/load-all operation,
-and capture stop/finalize path at every offered cancellation point.
+product confirmation, import review, file-operation card, Wireless ADB
+setup/reconnect, developer-only Android log-access sheet when present, long
+search/load-all operation, and capture stop/finalize path at every offered
+cancellation point.
 *Expect* Each returns to the prior usable state, performs no unintended action,
 and leaves no duplicate tab, empty export, stuck scrim, orphan process, or
-misleading completion notice. Cancellation is distinct from failure.
+misleading completion notice. The card's *Cancel* is a **request**: it says
+`Cancelling…`, cannot be pressed twice, and the card stays until the writer
+actually stops, then reports one terminal result. Cancelling an import review
+skips that file only and continues the remaining selected files in order.
+Cancellation is distinct from failure.
 *Fail if* Any cancellation performs part of the action anyway, or leaves a
 duplicate tab, an empty export file, a stuck scrim, an orphan process, or a
-completion notice for work that did not happen.
+completion notice for work that did not happen; or the card reports the operation
+finished before the writer returned.
 
 **A-21 · Names, providers, and Unicode boundaries**
 *Steps* Import/export/share files with empty/very long provider display names,
@@ -1328,6 +1370,125 @@ Re-measured on the device: the list is **112.9 dp** with a whole capture visible
 every action is still on the card. The compact status budget is also a whole number of
 line boxes now, so *Selecting captures. Tap a capture to select it.* gives up its
 second line rather than drawing half of it.
+
+---
+
+**A-31 · Exact search navigation past the marker cap**
+*Risk* The counter used to be an estimate from a marker list that stopped at
+20,000 timestamps, so on a real capture the last matches were unreachable and the
+total was wrong.
+*Pre* A capture or import with **more than 20,000 matches** for one literal, and
+at least one further match in the last tenth of the session — the `large.txt`
+corpus with a term that appears on most lines, plus one late marker line.
+*Steps* Search the literal · read the counter before stepping · tap **⏭ Last** ·
+read the counter, the selected row and the *Entry* tab · tap the counter to open
+**Go to match** · enter a number greater than the total, then a fractional one,
+then a valid one well past 20,000 · step **⏮ First** and then **◀ Previous** to
+wrap · scroll the plot to the last tenth and look at the marker lane · tap a
+marker column.
+*Expect* The counter's total is the real number of matches. *Last* selects the
+final record and reveals it, and because that window starts past the first page
+the footer under the list reads `N shown · B earlier · A later` and *Start of
+range* is offered beside the other entry actions — the count line above the list
+says how many are in view, and the two must reconcile. **Go to match** states
+`1 to N · Search order: time`,
+keeps an out-of-range or fractional entry in the field and answers
+`Enter a match number from 1 to N.` without clamping it to something else, and a
+valid number lands on the record whose timestamp and source position match the
+CLI's own answer for that ordinal. Wrapping works at both ends. The marker lane
+marks the late match, and tapping a column goes to the nearest real match rather
+than claiming the column is one record.
+*Fail if* The total stops at 20,000, a match past the cap cannot be selected, an
+out-of-range number is silently accepted as a different match, the late match has
+no marker, the list shows one row under a count line claiming hundreds with
+nothing visible explaining the difference, or the record selected disagrees with
+the CLI for the same ordinal.
+
+**A-32 · Find a value no ranked list can show**
+*Risk* The facet pane lists the top twenty by count. A rare tag was not merely
+hard to find — once filtered on, it was impossible to remove on its own.
+*Pre* A capture with well over twenty distinct tags, one of them rare.
+*Steps* Open *Insights → Facets* · read the count heading · tap **Find…** beside
+*Tags* · type part of the rare tag · include it by pressing the **centre of the
++ target**, not its glyph · **Done** · find its row in the pane and press its
+**+** again to remove it · reopen **Find…** and type text that matches nothing ·
+use **Clear list search** · with a capture running, leave the browser open for a
+minute and watch the *As of* line and **Refresh counts**.
+*Expect* The heading reads `COUNTS · OTHER FILTERS` and explains that each group
+ignores its own filters. **Find…** searches every available value, not twenty:
+the rare tag is findable by substring, its count is the own-dimension-omitted
+count, and including it applies immediately. Back in the pane the value is
+**present with its own undo** even though ranking would have dropped it. An empty
+list search says so and offers **Clear list search**. During a live capture the
+list stays on the page it is on, states the snapshot time it is counting, and
+offers **Refresh counts** when newer records arrive rather than moving under the
+finger.
+*Fail if* A rare value cannot be found or cannot be removed without clearing the
+whole dimension, a press in the middle of **+** or **−** only selects the row,
+the counts change under the reader without an explicit refresh, the *As of* time
+is the clock rather than the snapshot's publication time, or the empty state
+offers no way back.
+
+**A-33 · A template filter is readable and removable on its own**
+*Risk* An active template rendered as `template = 3821941` — a filter nobody can
+read, find again, or undo individually.
+*Pre* A capture with enough traffic for more than twenty mined templates.
+*Steps* *Insights → Templates* · select the least frequent template · **Filter** ·
+read the chip strip · switch to *Facets* and scroll to the bottom · remove the
+filter from its row · confirm the group disappears.
+*Expect* The chip reads the template's **canonical text**, not a number. A
+*Templates* group appears in the facet pane holding that value with its own
+undo — and no *Find…*, because templates have no neutral list. Removing it there
+removes only that template and the group disappears with it. A template whose
+definition is missing from the snapshot reads `Template n` rather than vanishing.
+*Fail if* The chip shows a raw identifier, the only way to undo one template is
+to clear the dimension, or the group persists with nothing in it.
+
+**A-34 · One file operation, visible and cancellable**
+*Risk* Copying, exporting and archiving used to run with nothing on screen to
+acknowledge or stop them.
+*Pre* A large provider file (≥ 40 MB) reachable through *Open with*, and a large
+session to export and share.
+*Steps* Open the large file through *Open with* and watch the shell band ·
+repeat and press **Cancel** while the bytes are moving · try *Open log* and
+*Export CSV…* while an operation is running · export a large scope and cancel at
+the destination picker, then again during the write · share a portable archive of
+a large session.
+*Expect* The card appears immediately naming the work, shows a stage and — only
+if the work lasts — a count, and offers **Cancel**. Cancel says `Cancelling…`,
+cannot be pressed twice, and the card stays until the writer actually stops, then
+reports one terminal result. While it runs, the other file commands are disabled
+**and say which operation is holding them**; reading, searching, inspecting a
+session and stopping a live capture are never among them. A cancelled copy leaves
+no partial file in the app cache and the same file can be opened again. Once the
+import takes over, the card goes and the session's own progress reports the rest.
+Sharing reports `Archive ready to share` and claims nothing about what the
+receiving app did with it.
+*Fail if* Any file work runs with no acknowledgement, Cancel is inert or can be
+pressed twice, a disabled command gives no reason, a cancelled copy leaves a
+partial file or blocks a retry, the card and the import report the same work at
+once, or a completion is shown before the writer returned.
+
+**A-35 · Import options before a costly import**
+*Risk* A phone could not correct a year or a time zone before importing, and a
+wrong assumption survives a long import.
+*Pre* `dst.txt` and a file whose format detection is deliberately uncertain.
+*Steps* *More → Open log with options…* · pick the file · read the summary ·
+expand **Import options** · change the assumed year, then the time zone, then the
+format · watch the summary after each change · **Import** · read the manifest.
+For the uncertain file, use plain *Open log* instead.
+*Expect* The review describes the **sample** — `Preview of up to the first 200
+lines`, `Detected sample format`, `Sample time span` — never the whole file. Each
+option change re-evaluates the same sample and updates the span and the outcome
+counts; *Import* is disabled until it settles. **No second read of the file
+occurs** for any option change. The imported manifest records exactly the
+settings that produced the accepted preview. The uncertain file opens the review
+by itself; a confidently detected one does not. A temporary provider copy has raw
+embedding checked, disabled, and explained.
+*Fail if* The summary describes the file rather than the sample, an option change
+re-reads or re-copies the source, *Import* can be pressed against a stale
+preview, the manifest disagrees with the accepted settings, or raw embedding can
+be unticked for a temporary copy.
 
 ---
 
@@ -1728,14 +1889,28 @@ from where it appears.
 at coordinates other than where it is drawn.
 
 **U-08 · Touch targets and one-handed reach**
+Include the surfaces this release added: the facet **Find…** buttons in every
+group, the browser's value rows and their two actions, its paging and *Done* row,
+the export review's scope options and its two option pickers, the import review's
+option fields, and the operation card's *Cancel*. At the narrowest width the
+browser's rows must stack the value and its count above the two actions rather
+than squeezing them into a truncated value column.
 Measure the primary controls (mode selector, *Fit*, *Filters*, *Live*, *Stop
 capture*, tab chips, analysis tabs) against a 48 dp minimum, and check that the
 most frequent actions are reachable with one thumb in portrait.
 Convert screenshot pixels using the recorded effective density; do not compare
 pixels directly to dp. Check spacing between adjacent targets and repeat with
 TalkBack enabled, which can change gesture behaviour.
-*Fail if* Any primary control is under 48 dp in either dimension or adjacent
-targets cannot be selected reliably without zooming.
+**Measuring a target is not pressing it.** A control can report 48 × 48 dp and
+still be inert over most of that area: an Avalonia `Button` given an explicit
+null `Background` is not hit-tested over its fill, so only its glyph responds and
+a press anywhere else falls through to whatever is behind it — on this release,
+to the list row, which selected itself and looked like a working tap. Press the
+**geometric centre** of every action added above, not its glyph, and confirm the
+action actually happened rather than that something visibly changed.
+*Fail if* Any primary control is under 48 dp in either dimension, a control that
+measures 48 dp does not act when its centre is pressed, or adjacent targets
+cannot be selected reliably without zooming.
 
 **U-09 · TalkBack (screen reader) pass**
 Enable TalkBack. Navigate the whole product by swipe only: empty state → open a
@@ -1773,14 +1948,24 @@ the capture running through the change.
 number or date conventions inside its own interface, or ends the capture on the
 locale change.
 
-**U-12 · Notice lane**
+**U-12 · Notice lane and the operation card**
 Trigger notices from several sources: a copy action, a template mute, a scope
-resolution, a failed export, a storage warning.
-*Expect* Every one lands in the notice lane, is dismissible, does not stack into
-an unreadable pile, and never steals the entries list's floor.
+resolution, a failed export, a storage warning. Then raise a notice **while a
+file operation is running**, in portrait and in short landscape, and once with a
+capture running as well.
+*Expect* Every notice lands in the notice lane, is dismissible, does not stack
+into an unreadable pile, and never steals the entries list's floor. The operation
+card is a band of its own beside the lane: a dismissible notice can never erase
+running work, and the card can never hide the capture's health line or *Stop*.
+The card costs the workspace one band while it exists and gives that band back
+exactly when it goes — measure the entries list before, during and after. In
+short landscape the card compacts the way the lane does, keeping *Cancel* outside
+the scrolling status text.
 *Fail if* A notice is lost, cannot be dismissed, stacks into an unreadable pile,
-pushes the entries list below its floor, or a confirmation of something durable
-disappears on a timer before it has been read.
+pushes the entries list below its floor, a confirmation of something durable
+disappears on a timer before it has been read, the card and a notice together
+take more than their two bands, the workspace does not return to its previous
+height, or *Stop* becomes unreachable while both are present.
 
 **U-13 · Empty, loading, partial, and failed states**
 Visit deliberately: a session with zero entries after filtering; a bar with no
@@ -1829,13 +2014,23 @@ magnification, or a state change is lost when animations are off.
 
 **U-17 · Dynamic accessibility announcements**
 With TalkBack active, start/stop capture, trigger an error and a completion
-notice, change filters, load another page, and finish a long import.
+notice, change filters, load another page, finish a long import, step through
+search matches, and run a long file operation to completion. Then sit still on
+one selected match while a capture keeps growing, and sit still while a file
+operation counts bytes.
 *Expect* Important state changes are announced once, in useful order, without a
-per-message announcement storm. Focus remains on the initiating control or moves
-to the resulting dialog/error intentionally; background count refreshes do not
-continually interrupt reading.
+per-message announcement storm. Arriving at a match says `Match k of N` **once**,
+when the reader stepped there — a capture that keeps republishing the same
+selection must not repeat it. A file operation announces its **stages**, not its
+counter: the byte or row count updates for anyone who focuses the card, and never
+as a five-times-a-second live announcement. Focus remains on the initiating
+control or moves to the resulting dialog/error intentionally; when the card
+disappears from under the reader's focus, focus returns to the command that
+started it rather than to nothing.
 *Fail if* An important state change is never announced, is announced repeatedly
-enough to prevent reading, or focus moves somewhere the user did not initiate.
+enough to prevent reading, a progress counter is announced tick by tick, the same
+match is announced again without the reader moving, or focus moves somewhere the
+user did not initiate — or is dropped entirely when the card goes.
 
 **U-18 · Gesture conflict and accidental repetition**
 Exercise slow/fast pinch, two-finger pan, edge-back near plot gestures,
@@ -2178,6 +2373,15 @@ regression pack that stops growing stops protecting.
 | **R-38** | The displayed version tracks the build | B-01 | The identity line's version matches the installed `versionName`, and a non-release build says so in the version itself | 2.0.4 |
 | **R-39** | A live refresh does not deselect the entry being read | A-24 | Selection and timeline caret are restored by entry id across every refresh | 2.0.3 |
 | **R-40** | Android source context survives resume and reattachment | A-24, backgrounding during a capture | Reads survive reattachment, retry when interrupted, and can read a live sidecar the capture is still writing | 2.0.2 |
+| **R-41** | Search navigation reaches every match | A-31 | The counter totals every match, not the markers drawn; the last match is selectable; an out-of-range *Go to match* number is refused rather than clamped | Unreleased |
+| **R-42** | Stepping from *Fit* actually arrives | B-06, after tapping *Fit* | A step selects a record and opens a readable window around it instead of leaving the view unchanged | Unreleased |
+| **R-43** | An active filter value is always removable on its own | A-32 and A-33 | A rare, excluded or zero-count value keeps its own undo; a template reads as its canonical text | Unreleased |
+| **R-44** | Facet counts state the rule they follow | A-32 | The heading reads `COUNTS · OTHER FILTERS` and says each group ignores its own filters | Unreleased |
+| **R-45** | The export writes the scope it disclosed | B-14 and A-04 | The promised row count is the number of data rows written; an explicit range gains no broader fallback | Unreleased |
+| **R-46** | File work is acknowledged, progressed and stoppable | A-34 | Nothing copies, writes or archives with an empty screen; *Cancel* is a request the shell then waits on | Unreleased |
+| **R-47** | A disabled command says why | A-34 and U-09 | A command held by a file operation or a settling filter names the reason in its accessibility tree | Unreleased |
+| **R-48** | The preview describes the sample, not the file | A-35 | Every claim is about the read sample; an option change re-evaluates it without re-reading the source | Unreleased |
+| **R-49** | A corrected search pattern clears its own rejection | B-07, then correcting the pattern | The field stops reading the old failure back once the pattern is valid | Unreleased |
 
 ---
 
@@ -2574,6 +2778,11 @@ should re-run at least the scenarios in its row.
 | Templates and mining | A-01, H-06 |
 | Entry details, selection, and raw source | B-04, A-10, A-24, U-13, X-13, R-31, R-39, R-40 |
 | Sessions, cache, retention, recents | B-02, B-13, A-05, A-15, A-19, A-26, A-27, A-28, A-29, X-18, X-19, X-20, X-21, X-22, R-07, R-12, R-30 |
+| Exact search navigation | B-06, A-31, R-41, R-42 |
+| Complete facet discovery and template filters | A-02, A-32, A-33, R-43, R-44 |
+| Reviewed export scope and options | B-14, A-04, A-17, R-45 |
+| Visible, cancellable file operations | A-06, A-20, A-34, U-08, U-12, U-17, R-46, R-47 |
+| Import review and sample evaluation | B-03, A-08, A-09, A-35, R-48 |
 | Deleting captures | A-26, A-27, A-28, A-29, A-30 |
 | Upgrade, signing, and distribution | A-19, A-22, H-06, H-07 |
 | Export and reports | B-14, A-04, A-20, A-21, H-08, X-19, P-10, P-12 |

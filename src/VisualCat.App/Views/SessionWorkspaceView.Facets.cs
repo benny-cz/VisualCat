@@ -70,12 +70,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         AddDimensionChip(
             "template",
             FacetDimension.Template,
-            filter.IncludedTemplates.Order().Select(static id => id.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            filter.IncludedTemplates.Order().Select(TemplateName),
             exclude: false);
         AddDimensionChip(
             "template",
             FacetDimension.Template,
-            filter.ExcludedTemplates.Order().Select(static id => id.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            filter.ExcludedTemplates.Order().Select(TemplateName),
             exclude: true);
 
         if (filter.Search is { } search)
@@ -293,6 +293,16 @@ public sealed partial class SessionWorkspaceView : UserControl
             "Buffers",
             FacetDimension.Buffer,
             statistics.Buffers.Select(facet => (FacetKey.OfText(facet.Value), facet.Value, facet.Count)));
+        // Templates have no neutral list of their own: their discovery surface is the
+        // ranked Templates pane, which is viewport-scoped by design. The group exists only
+        // while a template filter is active, so the reader can read and undo one on its
+        // own instead of clearing the whole dimension.
+        AddFacetGroup(
+            "Templates",
+            FacetDimension.Template,
+            statistics.Templates.Select(static facet => (FacetKey.OfTemplate(facet.Value), string.Empty, facet.Count)),
+            canFind: false,
+            neutralLimit: 0);
 
         if (scroll is { } offset)
         {
@@ -329,14 +339,46 @@ public sealed partial class SessionWorkspaceView : UserControl
                    out _);
     }
 
+    /// <summary>How many rows of each kind one summary group draws before deferring to Find.</summary>
+    private const int FacetSummaryRowLimit = 20;
+
     private void AddFacetGroup(
         string heading,
         FacetDimension dimension,
-        IEnumerable<(FacetKey Key, string Text, long Count)> values)
+        IEnumerable<(FacetKey Key, string Text, long Count)> values,
+        bool canFind = true,
+        int neutralLimit = FacetSummaryRowLimit)
     {
-        var rows = values
-            .Select(value => (value.Key, value.Text, value.Count, State: _viewModel.StateOf(dimension, value.Key)))
-            .OrderBy(static row => row.State == FacetState.Neutral ? 1 : 0)
+        var supplied = values.ToArray();
+        var counts = new Dictionary<FacetKey, long>();
+        foreach (var value in supplied)
+        {
+            counts[value.Key] = value.Count;
+        }
+
+        // Active values are listed from the filter itself, not from the ranked summary.
+        // Sorting active values to the top could only reorder the twenty that survived
+        // ranking: a rare tag the reader had already included was simply absent, and the
+        // only way to remove it was to clear the whole dimension (F1-B).
+        var activeRows = ActiveFacetValues(dimension)
+            .Select(value => (
+                value.Key,
+                value.Text,
+                Count: counts.GetValueOrDefault(value.Key),
+                State: _viewModel.StateOf(dimension, value.Key)))
+            .Where(static row => row.State != FacetState.Neutral)
+            .Take(FacetSummaryRowLimit)
+            .ToArray();
+        var activeKeys = activeRows.Select(static row => row.Key).ToHashSet();
+        var rows = activeRows
+            .Concat(supplied
+                .Where(value => !activeKeys.Contains(value.Key))
+                .Select(value => (
+                    value.Key,
+                    value.Text,
+                    value.Count,
+                    State: _viewModel.StateOf(dimension, value.Key)))
+                .Take(neutralLimit))
             .ToArray();
         if (rows.Length == 0)
         {
@@ -344,21 +386,51 @@ public sealed partial class SessionWorkspaceView : UserControl
             return;
         }
 
-        var active = rows.Count(static row => row.State != FacetState.Neutral);
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 9, 0, 2) };
-        header.Children.Add(new TextBlock { Text = heading, FontWeight = FontWeight.Bold });
+        var active = ActiveFacetCount(dimension);
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), Margin = new Thickness(0, 9, 0, 2) };
+        header.Children.Add(new TextBlock
+        {
+            Text = heading,
+            FontWeight = FontWeight.Bold,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        if (canFind)
+        {
+            var find = new Button
+            {
+                Content = "Find…",
+                FontSize = TextScale.Of(10),
+                Padding = new Thickness(10, 0),
+                MinHeight = TouchTarget.For(_mobile),
+                MinWidth = TouchTarget.For(_mobile),
+                VerticalAlignment = VerticalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Background = Brushes.Transparent,
+            };
+            var findTitle = FacetBrowserDialog.TitleFor(dimension);
+            ToolTip.SetTip(find, $"{findTitle} — search every available value, not only the ranked ones");
+            AutomationProperties.SetName(find, findTitle);
+            find.Click += (_, _) => FindFacetRequested?.Invoke(dimension);
+            Grid.SetColumn(find, 1);
+            header.Children.Add(find);
+        }
+
         if (active > 0)
         {
             var clear = new Button
             {
                 Content = "Clear",
                 FontSize = TextScale.Of(10),
-                Padding = new Thickness(6, 0),
+                Padding = new Thickness(10, 0),
+                MinHeight = TouchTarget.For(_mobile),
+                MinWidth = TouchTarget.For(_mobile),
+                VerticalAlignment = VerticalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
                 Background = Brushes.Transparent,
             };
             ToolTip.SetTip(clear, $"Remove every {heading.ToLowerInvariant()} filter");
             clear.Click += (_, _) => _ = RunUiActionAsync(() => _viewModel.ClearFacetDimensionAsync(dimension));
-            Grid.SetColumn(clear, 1);
+            Grid.SetColumn(clear, 2);
             header.Children.Add(clear);
         }
 
@@ -367,7 +439,110 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             _facets.Children.Add(FacetRow(heading, dimension, row.Key, row.Text, row.Count, row.State));
         }
+
+        if (canFind && active > FacetSummaryRowLimit)
+        {
+            // The pane shows the first twenty active values and says how many more there
+            // are, with the route to all of them. None becomes unreachable, and a filter
+            // with thousands of values does not turn the pane into thousands of controls.
+            var edit = new Button
+            {
+                Content = $"{active:N0} active · Edit…",
+                HorizontalAlignment = HorizontalAlignment.Left,
+                MinHeight = TouchTarget.For(_mobile),
+                Background = Brushes.Transparent,
+            };
+            AutomationProperties.SetName(
+                edit,
+                $"Edit all {active:N0} active {Singular(heading).ToLowerInvariant()} filters");
+            edit.Click += (_, _) => FindFacetRequested?.Invoke(dimension);
+            _facets.Children.Add(edit);
+        }
     }
+
+    /// <summary>Every value one dimension of the current filter names, with its display text.</summary>
+    private IEnumerable<(FacetKey Key, string Text)> ActiveFacetValues(FacetDimension dimension)
+    {
+        var filter = _viewModel.Filter;
+        return dimension switch
+        {
+            FacetDimension.Tag => filter.IncludedTags.Concat(filter.ExcludedTags)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .Select(static value => (FacetKey.OfText(value), value)),
+            FacetDimension.Process => filter.IncludedProcesses.Concat(filter.ExcludedProcesses)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .Select(static value => (FacetKey.OfText(value), value)),
+            FacetDimension.Pid => filter.IncludedPids.Concat(filter.ExcludedPids)
+                .Distinct()
+                .Order()
+                .Select(static value => (FacetKey.OfNumber(value), Number(value))),
+            FacetDimension.Tid => filter.IncludedTids.Concat(filter.ExcludedTids)
+                .Distinct()
+                .Order()
+                .Select(static value => (FacetKey.OfNumber(value), Number(value))),
+            FacetDimension.Buffer => filter.IncludedBuffers.Concat(filter.ExcludedBuffers)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .Select(static value => (FacetKey.OfText(value), value)),
+            FacetDimension.Template => filter.IncludedTemplates.Concat(filter.ExcludedTemplates)
+                .Distinct()
+                .Order()
+                .Select(id => (FacetKey.OfTemplate(id), TemplateName(id))),
+            _ => [],
+        };
+    }
+
+    private int ActiveFacetCount(FacetDimension dimension) => dimension switch
+    {
+        FacetDimension.Tag => _viewModel.Filter.IncludedTags.Count + _viewModel.Filter.ExcludedTags.Count,
+        FacetDimension.Process => _viewModel.Filter.IncludedProcesses.Count + _viewModel.Filter.ExcludedProcesses.Count,
+        FacetDimension.Pid => _viewModel.Filter.IncludedPids.Count + _viewModel.Filter.ExcludedPids.Count,
+        FacetDimension.Tid => _viewModel.Filter.IncludedTids.Count + _viewModel.Filter.ExcludedTids.Count,
+        FacetDimension.Buffer => _viewModel.Filter.IncludedBuffers.Count + _viewModel.Filter.ExcludedBuffers.Count,
+        FacetDimension.Template => _viewModel.Filter.IncludedTemplates.Count + _viewModel.Filter.ExcludedTemplates.Count,
+        _ => 0,
+    };
+
+    /// <summary>
+    /// The canonical text of one mined template, or the wording used where it has none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A filter holds a handful of template IDs, so this is a bounded lookup rather than a
+    /// tally — but the template table is loaded lazily, so it is resolved only for the IDs
+    /// the reader can actually see and undo, never for every ranked template on the pane.
+    /// </para>
+    /// <para>
+    /// A session being torn down cannot name its templates. The ID still identifies the
+    /// filter, which is what removing it needs, so the fallback wording is used rather than
+    /// letting a facet rebuild fail during teardown.
+    /// </para>
+    /// </remarks>
+    private string TemplateName(uint id)
+    {
+        if (_templateNames.TryGetValue(id, out var cached))
+        {
+            return cached;
+        }
+
+        string name;
+        try
+        {
+            name = _viewModel.Snapshot?.Templates.FirstOrDefault(template => template.TemplateId == id)?.CanonicalText
+                   ?? $"Template {id}";
+        }
+        catch (Exception exception) when (exception is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            return $"Template {id}";
+        }
+
+        _templateNames[id] = name;
+        return name;
+    }
+
+    private readonly Dictionary<uint, string> _templateNames = [];
 
     private Grid FacetRow(
         string heading,
@@ -382,9 +557,10 @@ public sealed partial class SessionWorkspaceView : UserControl
             ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
             Margin = new Thickness(0, 1),
         };
+        var label = DisplayValue(text);
         row.Children.Add(new TextBlock
         {
-            Text = text,
+            Text = label,
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
             Opacity = state == FacetState.Excluded ? 0.55 : 1,
@@ -403,7 +579,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         };
         Grid.SetColumn(countText, 1);
         row.Children.Add(countText);
-        var subject = $"{Singular(heading)} {text}, {Counted.Entries(count)}";
+        var subject = $"{Singular(heading)} {label}, {Counted.Entries(count)}";
         var include = FacetButton("+", state == FacetState.Included, IncludeActive, dimension, key, subject, exclude: false);
         Grid.SetColumn(include, 2);
         row.Children.Add(include);
@@ -502,7 +678,23 @@ public sealed partial class SessionWorkspaceView : UserControl
         AddChip(text, () => _viewModel.ClearFacetDimensionAsync(dimension, exclude));
     }
 
-    private static string Shorten(string value) => value.Length <= 28 ? value : value[..27] + "…";
+    private static string Shorten(string value)
+    {
+        var text = DisplayValue(value);
+        return text.Length <= 28 ? text : text[..27] + "…";
+    }
+
+    /// <summary>
+    /// What a facet value reads as, for a value whose real text is empty.
+    /// </summary>
+    /// <remarks>
+    /// A logcat format that carries no buffer parses to an empty buffer name, and the row for
+    /// it drew a blank label with a count and two buttons beside it — unreadable on screen and
+    /// unspeakable to a screen reader, which heard "Buffer , 1 entry". The filter still uses
+    /// the real empty key; only its label says that the value is absent.
+    /// </remarks>
+    private static string DisplayValue(string value) =>
+        string.IsNullOrEmpty(value) ? "(none)" : value;
 
     /// <summary>
     /// One active filter, as a single control the whole of which removes it.

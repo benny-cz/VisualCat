@@ -127,7 +127,7 @@ public sealed class TimelineControl : Control, VisualCat.App.Platform.IEdgeGestu
         Focusable = true;
         ClipToBounds = true;
         AutomationProperties.SetName(this, "Severity by time heat map");
-        AutomationProperties.SetHelpText(this, "Mouse wheel zooms, drag pans, right-drag selects a range, and arrow keys pan.");
+        AutomationProperties.SetHelpText(this, NavigationHelpText);
 
         // Both palettes are resolved inside Render, so a variant change is a repaint and
         // nothing more -- but nothing was asking for the repaint, so the plot kept the
@@ -203,6 +203,7 @@ public sealed class TimelineControl : Control, VisualCat.App.Platform.IEdgeGestu
         _hoverColumn = null;
         _hoverLevel = null;
         _hoverInsight = null;
+        ClearMarkerLaneReadout();
         HoverChanged?.Invoke(this, null);
         InvalidateVisual();
     }
@@ -603,23 +604,17 @@ public sealed class TimelineControl : Control, VisualCat.App.Platform.IEdgeGestu
                 foreground);
         }
 
-        if (_searchResult is { } search)
+        if (_searchResult is { Matches: > 0 } && _result.Columns.Count > 0)
         {
-            var lastPixel = int.MinValue;
-            foreach (var marker in search.Markers)
+            // Presence per column, derived from the search-filtered heat map the plot above
+            // is already drawing. A column says at least one match is in that slice of time;
+            // it is deliberately not a claim that the column is one record, and it covers the
+            // whole visible range no matter how many matches precede it.
+            for (var column = 0; column < _result.Columns.Count; column++)
             {
-                if (marker < _result.Viewport.Range.StartInclusive || marker >= _result.Viewport.Range.EndExclusive)
+                if (MarkerColumnCount(column) > 0)
                 {
-                    continue;
-                }
-
-                // Markers are sorted, so deduplicating per device pixel needs only the
-                // previously drawn position, not a per-frame hash set.
-                var x = transform.InstantToX(marker);
-                var pixel = (int)Math.Round(x);
-                if (pixel != lastPixel)
-                {
-                    lastPixel = pixel;
+                    var x = geometry.Left + (column + 0.5) * columnWidth;
                     context.DrawLine(SearchMarkerPen, new Point(x, geometry.Top + geometry.Height + 1), new Point(x, geometry.Top + geometry.Height + 6));
                 }
             }
@@ -868,7 +863,7 @@ public sealed class TimelineControl : Control, VisualCat.App.Platform.IEdgeGestu
         var point = e.GetPosition(this);
         var properties = e.GetCurrentPoint(this).Properties;
         if (properties.IsLeftButtonPressed &&
-            _searchResult is { Markers.Count: > 0 } &&
+            _searchResult is { Matches: > 0 } &&
             Geometry() is { } markerGeometry &&
             IsInMarkerLane(point, markerGeometry))
         {
@@ -950,6 +945,7 @@ public sealed class TimelineControl : Control, VisualCat.App.Platform.IEdgeGestu
 
         if (_dragOrigin is not { } origin || _dragViewport is not { } viewport || _sessionRange is not { } session)
         {
+            UpdateMarkerLaneReadout(current);
             UpdateHover(current);
             return;
         }
@@ -1230,6 +1226,112 @@ public sealed class TimelineControl : Control, VisualCat.App.Platform.IEdgeGestu
 
     /// <summary>How far below the lanes a tap still counts as aiming at a marker.</summary>
     private const double MarkerLaneTargetHeight = 22;
+
+    /// <summary>
+    /// How many marker ticks the lane is drawing, which is how many slices of the visible
+    /// range hold at least one match.
+    /// </summary>
+    /// <remarks>
+    /// Presence comes from the search-filtered heat map, not from <c>SearchResult.Markers</c>,
+    /// so it covers the whole visible range however many matches precede it. A test reads this
+    /// rather than the pixels.
+    /// </remarks>
+    internal int DrawnSearchMarkerColumns
+    {
+        get
+        {
+            if (_searchResult is not { Matches: > 0 } || _result is null)
+            {
+                return 0;
+            }
+
+            var drawn = 0;
+            for (var column = 0; column < _result.Columns.Count; column++)
+            {
+                if (MarkerColumnCount(column) > 0)
+                {
+                    drawn++;
+                }
+            }
+
+            return drawn;
+        }
+    }
+
+    /// <summary>How many matching records the heat map counted inside one marker column.</summary>
+    private long MarkerColumnCount(int column)
+    {
+        if (_result is null || column < 0 || column >= _result.Columns.Count)
+        {
+            return 0;
+        }
+
+        long count = 0;
+        foreach (var level in _displayLevels)
+        {
+            count += _result.Counts[level][column];
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Says what a marker column holds, without pretending it is a single record.
+    /// </summary>
+    /// <remarks>
+    /// One column is one slice of the visible range, so it can stand for a thousand matches
+    /// at a busy instant or for one. The readout states the count it aggregated and what a
+    /// click will actually do — resolve the nearest real match through the exact query.
+    /// </remarks>
+    private void UpdateMarkerLaneReadout(Point point)
+    {
+        if (_searchResult is not { Matches: > 0 } ||
+            _result is null ||
+            Geometry() is not { } geometry ||
+            !IsInMarkerLane(point, geometry))
+        {
+            ClearMarkerLaneReadout();
+            return;
+        }
+
+        var columnWidth = geometry.Width / Math.Max(1, _result.Columns.Count);
+        var column = Math.Clamp(
+            (int)((point.X - geometry.Left) / Math.Max(0.0001, columnWidth)),
+            0,
+            _result.Columns.Count - 1);
+        if (_markerLaneColumn == column)
+        {
+            return;
+        }
+
+        _markerLaneColumn = column;
+        var count = MarkerColumnCount(column);
+        var text = count == 0
+            ? "No matches in this part of the range. Click to go to the nearest match."
+            : count == 1
+                ? "1 match in this part of the range. Click to go to it."
+                : $"{count:N0} matches in this part of the range. Click to go to the nearest one.";
+        ToolTip.SetTip(this, text);
+        AutomationProperties.SetHelpText(this, $"{text} {NavigationHelpText}");
+    }
+
+    private void ClearMarkerLaneReadout()
+    {
+        if (_markerLaneColumn is null)
+        {
+            return;
+        }
+
+        _markerLaneColumn = null;
+        ToolTip.SetTip(this, null);
+        AutomationProperties.SetHelpText(this, NavigationHelpText);
+    }
+
+    private int? _markerLaneColumn;
+
+    /// <summary>What the plot itself does, kept beside any transient marker-lane readout.</summary>
+    private const string NavigationHelpText =
+        "Mouse wheel zooms, drag pans, right-drag selects a range, and arrow keys pan.";
 
     private long MinimumSpan(TimelineGeometry geometry) =>
         TimelineTransform.MinimumSpanUs(

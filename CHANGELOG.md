@@ -14,6 +14,40 @@ screenshot says which build it came from.
 ## [Unreleased]
 
 ### Added
+- **Search navigation reaches every match.** *Next*, *Previous*, *First*, *Last*, `F3` and
+  *Go to match* now select an exact record rather than moving the plot to a nearby time, and
+  the counter reads that record's place among **all** matches — not among the first 20,000.
+  Records that share a timestamp are separate places in the sequence, so a burst written in
+  the same microsecond can be stepped through one entry at a time. Arriving at a match reveals
+  its row in the entry list even when that row is far past the loaded page, and opens a
+  readable window around it when the whole session was on screen. A window that starts
+  part-way through a range says so on both platforms — `1 shown · 28,479 earlier · 0 later`,
+  beside **Start of range** — so the rows above it are accounted for rather than missing.
+  A search pattern the engine refuses leaves the whole previous result standing, including
+  which of its matches you were on.
+- **`Ctrl+G`, `Alt+Home` and `Alt+End`** open *Go to match* and select the first and last
+  match. They work from the workspace and from the search field, and say why they are inert
+  when a search has no matches. *Go to match* states its order — matches are ordered by time,
+  then by their order in the source — and refuses a blank, fractional or out-of-range number
+  instead of quietly clamping it to a different match.
+- **Find…** beside each facet group searches the complete set of tags, processes, PIDs,
+  threads or buffers — not only the twenty the summary can show. The list is paged, searchable
+  by plain text, and edits apply as you make them. On a growing capture it holds one snapshot,
+  says which one (*As of 14:02:11 · capture continues*), and offers **Refresh counts** when
+  newer records arrive rather than moving the page under you.
+- **Export CSV** is now a review that carries its own options: the scope, its exact timed row
+  count, the displayed time zone, the filter it applies, and **Row order** and **Encoding**
+  beside the decision. A successful export remembers those two choices as the new defaults,
+  and *Appearance & timeline* still shows both at rest.
+- **A file operation card** appears while VisualCat is copying, exporting, saving, archiving or
+  handing a file to another app. It names the stage, shows real progress where the total is
+  known, and can be cancelled. It exists only while its work does.
+- **Open log with options…** in *More* opens the picker and then the import review on either
+  platform, which is how a phone can set the assumed year or time zone before importing.
+- **Start of range** is now offered on the phone as well as the desktop, beside the other
+  contextual entry actions, whenever an arrival window has started you part-way through a range.
+- **Clear list search** appears in **Find…** when the list search is the only reason a
+  dimension looks empty, so the way back is a button rather than an instruction.
 - **Recent captures** can delete stored captures. Select any subset — or all of the ones that
   are free to delete — review exactly what will happen, and delete them. Confirmation names the
   captures, their approximate total size and the tabs that will close, defaults to **Cancel**,
@@ -32,6 +66,36 @@ screenshot says which build it came from.
   reported rather than swept.
 
 ### Changed
+- Facet counts are explained as what they are: **COUNTS · OTHER FILTERS**, expanded as
+  *Counts use the whole session and your other filters. Each group ignores its own filters so
+  you can add alternatives.* The old heading said *whole session · current filter*, which was
+  wrong in both halves once any filter was active.
+- Every filter value you have applied stays in its group and keeps its own undo, even when it
+  is too rare to rank, has been excluded, or no longer matches anything under your other
+  filters. Removing one no longer means clearing the whole dimension.
+- An active **template** filter reads as the message shape it matches instead of
+  `template = 3821941`, in the filter chips and in a Templates group that appears only while
+  one is set. A template with no definition in the session reads *Template 3821941* rather
+  than disappearing.
+- The search marker lane draws which parts of the visible range hold matches, so a match late
+  in a long session is marked even when tens of thousands precede it. Hovering a marker says
+  how many matches that part of the range holds; clicking goes to the nearest real one.
+- The **import review** is now a normal dialog rather than a desktop-only window, with an
+  initially collapsed **Import options** section for format, assumed year, time zone, template
+  mining and raw storage. Changing an option re-evaluates the sample already read — no file is
+  read or copied again — and *Import* stays disabled until the preview catches up. Its summary
+  describes the **sample**, not the file: *Sample time span*, *Preview of up to the first 200
+  lines*, and an explicit note when the preview stopped at a size limit or a very long line.
+- Only one file operation runs at a time. While one is running the other file commands say
+  which operation is holding them; reading, searching, inspecting a session and stopping a
+  live capture are never among them.
+- A command that is unavailable now says why where the shell knows: which file operation is
+  holding it, or that a newer filter has not finished applying. **Export** and **Save view**
+  are among them, so a row count is never promised from a filter that is about to change.
+- The operation card acknowledges immediately and starts counting only if the work lasts, so
+  a copy that finishes in a moment no longer flashes numbers on its way past. When preparation
+  hands a file to the import that opens it, the card goes and the session's own progress takes
+  over — one action, reported once.
 - Deleting a recovered capture from its review now reports the same per-capture outcome as
   *Recent captures*, including storage cleanup that finishes later.
 - The dialog is titled **Recent captures** and says *captures* throughout. The command that
@@ -46,6 +110,32 @@ screenshot says which build it came from.
   card.
 
 ### Fixed
+- Exporting now writes exactly the scope it offered. A plot narrowed inside a wider time
+  filter exports the intersection rather than the whole filter interval; a selected severity
+  cell exports that cell, and *Visible plot range* beside it exports every level the filter
+  admits. The export reads a session snapshot of its own, so filtering, switching tabs,
+  closing the source tab or continuing a capture while the file picker is open cannot change
+  what the file contains. Completion states the exact number of timed rows written.
+- An export offered an empty scope no longer quietly broadens to a bigger one. The empty
+  choice is shown with **0 timed rows** and disabled, and *Choose a file…* waits until you
+  pick something that has rows.
+- Copying a file another application handed to VisualCat is now visible, and can be cancelled.
+  A failed or cancelled copy removes its own incomplete copy and lets you open the same file
+  again, instead of reporting nothing and refusing the retry.
+- Stepping through search matches no longer leaves the view unchanged when the whole session
+  is already on screen, and no longer stops at the twenty-thousandth match.
+- Panning or zooming a searched session no longer re-runs the search over the whole session.
+  The matches and their markers are kept until the search, the filters or the capture change.
+- The search field no longer re-applies a query it was only asked to display. Restoring a saved
+  view whose search is a regular expression keeps it a regular expression.
+- A facet value that is genuinely empty — the buffer name of a format that carries none — now
+  reads as **(none)** instead of drawing a blank row with a count and two buttons beside it.
+  The filter still uses the real empty value; only its label says the value is absent.
+- Correcting a rejected search pattern now clears the rejection from the field itself, not
+  only from the message beside it. A screen reader no longer reads the old failure back every
+  time the corrected field takes focus.
+- **Go to match** says why it closed when the search changed underneath it, instead of simply
+  disappearing with a number typed into it.
 - Long-press selection now waits for release before revealing checkboxes. The row stays
   under the finger, so the sheet cannot cancel its own hold by moving; a cancelled hold
   leaves both the selection and its instructions unchanged.

@@ -289,11 +289,16 @@ public sealed partial class MainView : IDialogHost
         };
 
         // A command that cannot run says why, in place, instead of being tappable and silent.
+        var unavailableReason = enabled ? null : UnavailableCommandReason();
         var description = enabled
             ? command.Description
-            : command.Description is { Length: > 0 } text
-                ? $"{text} · needs an open session"
-                : "Needs an open session";
+            : unavailableReason is { Length: > 0 }
+                ? command.Description is { Length: > 0 } describedAction
+                    ? $"{describedAction} · {unavailableReason}"
+                    : unavailableReason
+                : command.Description is { Length: > 0 } sessionAction
+                    ? $"{sessionAction} · needs an open session"
+                    : "Needs an open session";
         var content = new StackPanel { Spacing = 1, Children = { label } };
         if (description is { Length: > 0 })
         {

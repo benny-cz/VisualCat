@@ -240,6 +240,23 @@ public sealed partial class SessionWorkspaceView : UserControl
         VerticalAlignment = VerticalAlignment.Center,
         TextTrimming = TextTrimming.CharacterEllipsis,
     };
+
+    /// <summary>
+    /// The phone's copy of `N shown · B earlier · A later`.
+    /// </summary>
+    /// <remarks>
+    /// The desktop says this in its entry toolbar, which the phone does not have. Without it
+    /// an arrival window reads as a contradiction: the count line says `1,424 in view` over a
+    /// list holding one row, and the only thing that mentions the 1,423 rows above it is a
+    /// tooltip no finger can reach. It is drawn only while the window actually starts
+    /// mid-range, so it costs the workspace nothing at rest.
+    /// </remarks>
+    private readonly TextBlock _entryArrivalStatus = new()
+    {
+        TextWrapping = TextWrapping.Wrap,
+        Margin = new Thickness(0, 6, 0, 0),
+        IsVisible = false,
+    };
     private readonly Button _insightsToggle = new() { Content = "Hide insights", Margin = new Thickness(0, 0, 6, 0) };
     private readonly TextBlock _zoomReadout = new() { VerticalAlignment = VerticalAlignment.Center };
     private readonly Dictionary<LogLevel, ToggleButton> _levelChecks = [];
@@ -272,6 +289,8 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Menu? _desktopEntryMoreMenu;
     private MenuItem? _desktopLoadMoreItem;
     private MenuItem? _desktopLoadAllItem;
+    private MenuItem? _desktopStartOfRangeItem;
+    private Button? _startOfRange;
     private MenuItem? _desktopCopyRawItem;
     private MenuItem? _desktopFitMatchesItem;
     private MenuItem? _desktopClearScopeItem;
@@ -327,6 +346,18 @@ public sealed partial class SessionWorkspaceView : UserControl
     private bool _insightsVisible = true;
     private CancellationTokenSource? _loadAllEntriesCancellation;
     private CancellationTokenSource? _searchDebounce;
+
+    /// <summary>
+    /// Set while the field is being written from the view model rather than typed.
+    /// </summary>
+    /// <remarks>
+    /// The field echoes <see cref="SessionTabViewModel.SearchText"/> so a saved view, a
+    /// cleared filter or a restored session shows the query it applied. Without this guard
+    /// that echo queued a debounced re-application carrying the field's own Regex and Match
+    /// case toggles, which could re-run a stored regular expression as literal text — and
+    /// could replace a rejected pattern's rollback a moment after it happened.
+    /// </remarks>
+    private bool _syncingSearchText;
     private FilterSpec? _renderedChipFilter;
     private StatisticsResult? _renderedFacets;
     private TimeRange? _selectedRange;
@@ -513,6 +544,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         if (_entryFooter is { } entryFooter)
         {
             entryFooter.BorderBrush = new SolidColorBrush(WorkspacePalette.BorderLine(dark));
+            _entryArrivalStatus.Foreground = muted;
         }
 
         // Both plots resolve their palette inside Render, so they need telling that the
@@ -621,6 +653,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     }
 
     public event Action<TimeRange?>? ExportRequested;
+    internal event Action<FacetDimension>? FindFacetRequested;
     public event Func<Task>? StopRequested;
 
     /// <summary>Raised when the reader picks a different phone workspace mode.</summary>
@@ -820,6 +853,18 @@ public sealed partial class SessionWorkspaceView : UserControl
             return true;
         }
 
+        if (control && eventArgs.Key == Key.G)
+        {
+            _ = RunUiActionAsync(AskForMatchIndexAsync);
+            return true;
+        }
+
+        if (alt && !control && eventArgs.Key is Key.Home or Key.End)
+        {
+            _ = RunUiActionAsync(() => NavigateToSearchEdgeAsync(eventArgs.Key == Key.End));
+            return true;
+        }
+
         if (eventArgs.Key == Key.Escape)
         {
             // Only claim the key when there is something to dismiss. Claiming it
@@ -876,30 +921,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// </remarks>
     private async Task GoToNearestMatchAsync(InstantUs instant)
     {
-        if (_viewModel.SearchResult?.Markers is not { Count: > 0 } markers ||
-            _viewModel.Viewport is not { } viewport ||
-            _viewModel.Snapshot?.TimedRange is not { } session)
-        {
-            return;
-        }
-
-        var nearest = markers[0];
-        var bestDistance = long.MaxValue;
-        foreach (var marker in markers)
-        {
-            var distance = Math.Abs(marker.Value - instant.Value);
-            if (distance < bestDistance)
-            {
-                bestDistance = distance;
-                nearest = marker;
-            }
-        }
-
-        var span = Math.Min(viewport.DurationUs, session.DurationUs);
-        var maximumStart = session.EndExclusive.Value - span;
-        var start = Math.Clamp(nearest.Value - span / 2, session.StartInclusive.Value, maximumStart);
-        await _viewModel.SetViewportAsync(
-            new TimeRange(new InstantUs(start), new InstantUs(start + span))).ConfigureAwait(false);
+        await _viewModel.NavigateSearchAsync(SearchMatchRequestKind.Nearest, near: instant).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -923,96 +945,166 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// </remarks>
     private async Task AskForMatchIndexAsync()
     {
-        if (_viewModel.SearchResult?.Markers is not { Count: > 0 } markers ||
-            AskForNumberAsync is not { } ask)
+        if (_viewModel.SearchResult is not { Matches: > 0 } searchResult ||
+            _viewModel.AppliedQueryIdentity is not { } identity ||
+            _viewModel.IsQueryPending ||
+            AskForMatchAsync is not { } ask ||
+            _matchPrompt is not null)
         {
             return;
         }
 
-        var chosen = await ask(
-            "Go to match",
-            $"Which of the {markers.Count:N0} matches?",
-            MarkerIndexInView(markers) is { } current ? current + 1 : 1,
-            markers.Count);
-        if (chosen is not { } index)
-        {
-            return;
-        }
+        // One prompt at a time, and it observes the workspace rather than holding a copy of
+        // a total that a growing capture keeps changing.
+        var prompt = _matchPrompt = new SearchMatchPromptModel(
+            identity,
+            searchResult.Matches,
+            ResolveDisplayedMatchAsync);
 
-        await CentreOnMarkerAsync(markers[(int)Math.Clamp(index - 1, 0, markers.Count - 1)]);
+        // A prompt taken down because the question changed under it has to say so: the reader
+        // typed a number into a dialog that vanished, and silence reads as the app losing it.
+        string? closedBecause = null;
+        void OnPromptClosed(string reason) => closedBecause = reason;
+        prompt.CloseRequested += OnPromptClosed;
+        try
+        {
+            var chosen = await ask(prompt, _viewModel.SelectedSearchMatch?.Ordinal ?? 1);
+            if (closedBecause is { } reason)
+            {
+                _viewModel.ReportTransientStatus(reason);
+                return;
+            }
+
+            if (chosen is null || prompt.Selection is not { } selection)
+            {
+                return;
+            }
+
+            await NavigateToChosenMatchAsync(selection).ConfigureAwait(false);
+        }
+        finally
+        {
+            prompt.CloseRequested -= OnPromptClosed;
+            if (ReferenceEquals(_matchPrompt, prompt))
+            {
+                _matchPrompt = null;
+            }
+        }
     }
-
-    /// <summary>Asks the host for a number in a range, or null when the reader declines.</summary>
-    internal Func<string, string, long, long, Task<long?>>? AskForNumberAsync { get; set; }
-
-    internal Task NavigateToSearchEdgeAsync(bool last) =>
-        _viewModel.SearchResult?.Markers is { Count: > 0 } markers
-            ? CentreOnMarkerAsync(last ? markers[^1] : markers[0])
-            : Task.CompletedTask;
 
     /// <summary>
-    /// The window a jump-to-edge opens when the whole session is already on screen.
+    /// Resolves the confirmed ordinal once, against the applied result the reader saw.
     /// </summary>
     /// <remarks>
-    /// A twentieth of the session, which on the 75 s corpus the report used is about 3.8 s —
-    /// wide enough to read, narrow enough that arriving somewhere is visible. Without it the
-    /// jump is a no-op at Fit: the viewport already spans every match, so centring on one
-    /// clamps straight back to where it was and the counter goes on reporting whichever match
-    /// happens to be nearest the middle of the session.
+    /// A capture that publishes between confirmation and arrival renumbers its matches. The
+    /// ordinal is therefore interpreted against the identity it was displayed with, and a
+    /// newer snapshot revalidates the record already chosen rather than reading the same
+    /// number again and landing on a different one.
     /// </remarks>
-    private const int SearchEdgeSessionDivisor = 20;
-
-    private async Task CentreOnMarkerAsync(InstantUs marker)
+    private async Task NavigateToChosenMatchAsync(SearchMatchPromptSelection selection)
     {
-        if (_viewModel.Viewport is not { } viewport ||
-            _viewModel.Snapshot?.TimedRange is not { } session)
+        var result = selection.Key is { } key
+            ? await _viewModel.NavigateSearchAsync(
+                    SearchMatchRequestKind.Revalidate,
+                    exactKey: key,
+                    expectedFilterFingerprint: selection.Identity.FilterFingerprint)
+                .ConfigureAwait(false)
+            : await _viewModel
+                .NavigateSearchAsync(SearchMatchRequestKind.Ordinal, ordinal: selection.Ordinal)
+                .ConfigureAwait(false);
+        if (result is null || result.Status == SearchMatchStatus.Found)
+        {
+            if (result is null &&
+                !string.Equals(
+                    _viewModel.AppliedFilter.Fingerprint(),
+                    selection.Identity.FilterFingerprint,
+                    StringComparison.Ordinal))
+            {
+                _viewModel.ReportTransientStatus("Search changed. Open Go to match again.");
+            }
+
+            return;
+        }
+
+        _viewModel.ReportTransientStatus(result.Status switch
+        {
+            SearchMatchStatus.NoLongerMatches => "That match is no longer in the current capture.",
+            SearchMatchStatus.NoMatches => "No matches in the current capture.",
+            _ => $"Enter a match number from 1 to {result.TotalMatches:N0}.",
+        });
+    }
+
+    /// <summary>
+    /// Resolves an ordinal against the exact snapshot the prompt displayed, then releases
+    /// that generation once it has produced a stable record key.
+    /// </summary>
+    /// <remarks>
+    /// This method deliberately is not <c>async</c>: the UI-thread portion retains the
+    /// current immutable snapshot before the first await can let a live publication replace
+    /// it. Only the rank query runs in the background.
+    /// </remarks>
+    private Task<SearchMatchKey?> ResolveDisplayedMatchAsync(
+        SearchMatchPromptSelection selection,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = _viewModel.Snapshot;
+        var filter = _viewModel.AppliedFilter;
+        var current = _viewModel.AppliedQueryIdentity;
+        if (snapshot is null || current != selection.Identity ||
+            !string.Equals(filter.Fingerprint(), selection.Identity.FilterFingerprint, StringComparison.Ordinal))
+        {
+            return Task.FromResult<SearchMatchKey?>(null);
+        }
+
+        var retained = snapshot.Retain();
+        return Task.Run(async () =>
+        {
+            using (retained)
+            {
+                var result = await VisualCat.Core.Query.SessionQueryEngine.SearchMatchAsync(
+                        retained,
+                        filter,
+                        new SearchMatchRequest(SearchMatchRequestKind.Ordinal, Ordinal: selection.Ordinal),
+                        selection.Identity.QueryGeneration,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                return result.Status == SearchMatchStatus.Found ? result.Key : null;
+            }
+        }, CancellationToken.None);
+    }
+
+    /// <summary>Keeps an open prompt agreeing with the result the workspace is showing.</summary>
+    private void RefreshMatchPrompt()
+    {
+        if (_matchPrompt is not { } prompt)
         {
             return;
         }
 
-        var span = Math.Min(viewport.DurationUs, session.DurationUs);
-
-        // Going to the first match has to arrive somewhere. At Fit every match is already in
-        // view, so a centred window of the same span clamps back to the session bounds and
-        // nothing moves — which is what the reader would experience as the button doing
-        // nothing (V2-07). A narrower window is what "go there" means from a fitted plot; a
-        // reader who has already chosen a zoom keeps it.
-        if (span >= session.DurationUs)
-        {
-            span = Math.Max(
-                SessionTabViewModel.MinimumViewportUs,
-                session.DurationUs / SearchEdgeSessionDivisor);
-        }
-
-        var maximumStart = session.EndExclusive.Value - span;
-        var start = Math.Clamp(marker.Value - span / 2, session.StartInclusive.Value, maximumStart);
-        await _viewModel.SetViewportAsync(
-            new TimeRange(new InstantUs(start), new InstantUs(start + span))).ConfigureAwait(false);
+        prompt.Apply(
+            _viewModel.AppliedQueryIdentity,
+            _viewModel.SearchResult?.Matches ?? 0,
+            _viewModel.IsQueryPending);
     }
+
+    private SearchMatchPromptModel? _matchPrompt;
+
+    /// <summary>Asks the host to run <em>Go to match</em> against the live applied search.</summary>
+    internal Func<SearchMatchPromptModel, long, Task<long?>>? AskForMatchAsync { get; set; }
+
+    internal Task NavigateToSearchEdgeAsync(bool last) =>
+        _viewModel.NavigateSearchAsync(last ? SearchMatchRequestKind.Last : SearchMatchRequestKind.First);
 
     internal async Task NavigateSearchMatchAsync(int direction)
     {
-        if (_viewModel.SearchResult?.Markers is not { Count: > 0 } markers ||
-            _viewModel.Viewport is not { } viewport ||
-            _viewModel.Snapshot?.TimedRange is not { } session)
+        if (_viewModel.SearchResult is not { Matches: > 0 } || _viewModel.IsQueryPending)
         {
             _search.Focus();
             return;
         }
 
-        var center = viewport.StartInclusive.Value + viewport.DurationUs / 2;
-        var marker = direction >= 0
-            ? markers.Where(candidate => candidate.Value > center)
-                .Select(static candidate => (InstantUs?)candidate)
-                .FirstOrDefault() ?? markers[0]
-            : markers.Where(candidate => candidate.Value < center)
-                .Select(static candidate => (InstantUs?)candidate)
-                .LastOrDefault() ?? markers[^1];
-        var span = Math.Min(viewport.DurationUs, session.DurationUs);
-        var maximumStart = session.EndExclusive.Value - span;
-        var start = Math.Clamp(marker.Value - span / 2, session.StartInclusive.Value, maximumStart);
-        await _viewModel.SetViewportAsync(
-            new TimeRange(new InstantUs(start), new InstantUs(start + span))).ConfigureAwait(false);
+        await _viewModel.NavigateSearchAsync(
+            direction >= 0 ? SearchMatchRequestKind.Next : SearchMatchRequestKind.Previous).ConfigureAwait(false);
     }
 
     private bool FocusFirstFacet() =>
@@ -1377,7 +1469,10 @@ public sealed partial class SessionWorkspaceView : UserControl
                 placeholder.IsVisible = string.IsNullOrEmpty(_search.Text);
             }
 
-            QueueDebouncedSearch();
+            if (!_syncingSearchText)
+            {
+                QueueDebouncedSearch();
+            }
         };
         _search.GotFocus += (_, _) =>
         {
@@ -2145,6 +2240,17 @@ public sealed partial class SessionWorkspaceView : UserControl
             // means "extend the list you have reached the end of", and it sat above the
             // list, in the band that was already costing the list every row it had
             // (audit 2, A2). It is a footer now; see BuildMobileEntryFooter.
+            // An arrival window starts mid-range, so the way back to the ordinary first page
+            // is a contextual action like the other two: present only while it means
+            // something, and beside the actions that share its shape.
+            var startOfRange = _startOfRange = new Button
+            {
+                Content = "Start of range",
+                MinHeight = TouchTarget.For(_mobile),
+                IsVisible = false,
+            };
+            startOfRange.Click += (_, _) => _ = RunUiActionAsync(() => _viewModel.ReturnToEntryRangeStartAsync());
+
             var contextActions = _entryContextActions = new WrapPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -2152,7 +2258,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 LineSpacing = 6,
                 Margin = new Thickness(0, 6, 0, 0),
                 IsVisible = false,
-                Children = { _fitMatches, _clearScope },
+                Children = { _fitMatches, _clearScope, startOfRange },
             };
             AutomationProperties.SetName(contextActions, "Actions for the current view");
 
@@ -2202,6 +2308,10 @@ public sealed partial class SessionWorkspaceView : UserControl
             var loadMoreItem = _desktopLoadMoreItem = Action(
                 $"Load next {SessionTabViewModel.EntryPageSize:N0} matching rows",
                 () => _viewModel.LoadNextEntryPageAsync());
+            var startOfRangeItem = _desktopStartOfRangeItem = Action(
+                "Start of range",
+                () => _viewModel.ReturnToEntryRangeStartAsync());
+            startOfRangeItem.IsVisible = false;
             var copyItem = _desktopCopyRawItem = Action("Copy raw", CopySelectedRawAsync);
             copyItem.IsEnabled = false;
             var fitItem = _desktopFitMatchesItem = Action(
@@ -2226,6 +2336,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                     new Separator(),
                     loadMoreItem,
                     loadAllItem,
+                    startOfRangeItem,
                     new Separator(),
                     copyItem,
                     fitItem,
@@ -2501,10 +2612,21 @@ public sealed partial class SessionWorkspaceView : UserControl
         // measured. Height alone is not the floor: both edges are.
         _loadAll.MinWidth = TouchTarget.SelfSized(_mobile);
         _loadAll.Click += async (_, _) => await ToggleLoadAllEntriesAsync();
-        var row = _mobileFooterRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        var row = _mobileFooterRow = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            RowDefinitions = new RowDefinitions("Auto,Auto"),
+        };
         row.Children.Add(_loadMore);
         Grid.SetColumn(_loadAll, 1);
         row.Children.Add(_loadAll);
+
+        // In the same grid rather than a wrapper around it, because MoveLoadMore reseats
+        // `footer.Child = row` when the band comes back and would drop anything outside it.
+        _entryArrivalStatus.FontSize = TextScale.Of(11);
+        Grid.SetRow(_entryArrivalStatus, 1);
+        Grid.SetColumnSpan(_entryArrivalStatus, 2);
+        row.Children.Add(_entryArrivalStatus);
 
         var footer = _entryFooter = new Border
         {

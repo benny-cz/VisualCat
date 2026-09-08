@@ -1102,10 +1102,12 @@ public sealed class LiveTestV2RemediationTests
         Assert.False(counter.IsEnabled);
 
         long? asked = null;
-        fixture.View.AskForNumberAsync = (_, _, _, maximum) =>
+        fixture.View.AskForMatchAsync = (model, _) =>
         {
-            asked = maximum;
-            return Task.FromResult<long?>(3);
+            asked = model.Maximum;
+            // The prompt answers with the reader's typed text, validated against the applied
+            // result — never with a value the control has already clamped for it.
+            return Task.FromResult(model.TryConfirm("3", out var ordinal) ? ordinal : (long?)null);
         };
         fixture.View.UpdateMarkerNavigationForTest();
         Assert.True(counter.IsEnabled);
@@ -1113,11 +1115,11 @@ public sealed class LiveTestV2RemediationTests
         RaiseClick(counter);
         PixelGestureAndTextScaleTests.PumpUntil(
             fixture.Window,
-            () => asked is not null && fixture.Tab.Viewport is { } current &&
-                  current.StartInclusive.Value <= markers[2].Value &&
-                  markers[2].Value <= current.EndExclusive.Value);
+            () => asked is not null && fixture.Tab.SelectedSearchMatch is { Ordinal: 3 });
 
-        Assert.Equal(markers.Count, asked);
+        // The counter now offers every match, not only the ones the marker lane could hold.
+        Assert.Equal(fixture.Tab.SearchResult!.Matches, asked);
+        Assert.Equal(markers[2].Value, fixture.Tab.SelectedSearchMatch!.Key!.Value.TimestampUs);
         var viewport = fixture.Tab.Viewport!.Value;
         Assert.True(
             viewport.StartInclusive.Value <= markers[2].Value &&

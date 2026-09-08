@@ -78,6 +78,7 @@ public static class ExportService
             filter,
             order,
             includeUtf8Bom: true,
+            progress: null,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -87,6 +88,25 @@ public static class ExportService
     /// scoped to a time range, and a reader who has zoomed in has no way to tell a complete
     /// file from a truncated one by looking at it (finding 10).
     /// </remarks>
+    public static Task<long> ExportNormalizedCsvAsync(
+        SessionSnapshot snapshot,
+        string destination,
+        TimeRange range,
+        FilterSpec filter,
+        EntryOrder order,
+        bool includeUtf8Bom,
+        CancellationToken cancellationToken = default) =>
+        ExportNormalizedCsvAsync(
+            snapshot,
+            destination,
+            range,
+            filter,
+            order,
+            includeUtf8Bom,
+            progress: null,
+            cancellationToken);
+
+    /// <summary>Exports CSV while reporting exact progress inside each file stage.</summary>
     public static async Task<long> ExportNormalizedCsvAsync(
         SessionSnapshot snapshot,
         string destination,
@@ -94,12 +114,14 @@ public static class ExportService
         FilterSpec filter,
         EntryOrder order,
         bool includeUtf8Bom,
+        IProgress<FileWorkProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         using var usage = SessionAccess.ReadForWork(snapshot.RootPath);
         var written = 0L;
         await using var output = new AtomicDestination(destination);
+        progress?.Report(new FileWorkProgress(FileWorkStage.WritingRows, 0, null, "rows"));
         await using (var writer = new StreamWriter(output.Stream, new UTF8Encoding(includeUtf8Bom), 1024 * 1024, leaveOpen: true))
         {
             await writer.WriteLineAsync("timestamp_utc,level,pid,tid,buffer,tag,template_id,message").ConfigureAwait(false);
@@ -129,6 +151,7 @@ public static class ExportService
                     await writer.WriteLineAsync(row.ToString()).ConfigureAwait(false);
                 }
 
+                progress?.Report(new FileWorkProgress(FileWorkStage.WritingRows, written, page.TotalCount, "rows"));
                 cursor = page.NextCursor;
             }
             while (cursor is not null);
@@ -136,6 +159,7 @@ public static class ExportService
             await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        progress?.Report(new FileWorkProgress(FileWorkStage.Publishing));
         await output.CommitAsync(cancellationToken).ConfigureAwait(false);
         return written;
     }

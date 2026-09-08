@@ -2,6 +2,14 @@ using Avalonia.Platform.Storage;
 
 namespace VisualCat.App.Platform;
 
+internal enum StorageWritePublication : byte
+{
+    LocalCommitted,
+    ProviderDeliveryStarted,
+    ProviderFinalizing,
+    ProviderDeliveryCompleted,
+}
+
 /// <summary>
 /// Bridges provider-backed files (for example Android SAF <c>content://</c> documents)
 /// to the path-based application services without assuming that a picker result is a
@@ -11,8 +19,23 @@ internal static class StorageFileBridge
 {
     private const int CopyBufferBytes = 1024 * 1024;
 
+    /// <summary>Whether writing this picker result publishes directly to a local path.</summary>
+    internal static bool UsesDirectLocalPath(IStorageFile file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        return file.TryGetLocalPath() is { Length: > 0 } localPath &&
+               !localPath.StartsWith("content:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static Task<MaterializedStorageFile> MaterializeForReadAsync(
+        IStorageFile file,
+        CancellationToken cancellationToken = default) =>
+        MaterializeForReadAsync(file, progress: null, cancellationToken);
+
+    /// <summary>Materializes a picker result, reporting copied bytes for a provider file.</summary>
     public static async Task<MaterializedStorageFile> MaterializeForReadAsync(
         IStorageFile file,
+        IProgress<VisualCat.Application.UseCases.FileWorkProgress>? progress,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(file);
@@ -21,30 +44,88 @@ internal static class StorageFileBridge
             return new MaterializedStorageFile(Path.GetFullPath(localPath), IsTemporary: false);
         }
 
+        // The provider's stated size when it states one: a document that will not say how
+        // large it is is reported as indeterminate rather than as a guess.
+        long? declared = null;
+        try
+        {
+            declared = (await file.GetBasicPropertiesAsync().ConfigureAwait(false)).Size is { } size and > 0
+                ? (long)size
+                : null;
+        }
+        catch (Exception exception) when (exception is IOException or NotSupportedException or UnauthorizedAccessException)
+        {
+        }
+
         await using var input = await file.OpenReadAsync().ConfigureAwait(false);
-        return await CopyToTemporaryAsync(input, file.Name, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await CopyToTemporaryAsync(
+            input,
+            file.Name,
+            root: null,
+            progress,
+            declared,
+            cancellationToken).ConfigureAwait(false);
     }
+
+    public static Task WriteAsync(
+        IStorageFile file,
+        Func<string, CancellationToken, Task> producer,
+        CancellationToken cancellationToken = default) =>
+        WriteAsync(file, producer, progress: null, publication: null, cancellationToken);
 
     public static async Task WriteAsync(
         IStorageFile file,
         Func<string, CancellationToken, Task> producer,
+        IProgress<VisualCat.Application.UseCases.FileWorkProgress>? progress,
+        Action<StorageWritePublication>? publication,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(producer);
-        if (file.TryGetLocalPath() is { Length: > 0 } localPath &&
-            !localPath.StartsWith("content:", StringComparison.OrdinalIgnoreCase))
+        if (UsesDirectLocalPath(file) && file.TryGetLocalPath() is { Length: > 0 } localPath)
         {
             await producer(Path.GetFullPath(localPath), cancellationToken).ConfigureAwait(false);
+            publication?.Invoke(StorageWritePublication.LocalCommitted);
             return;
         }
 
-        var temporary = CreateTemporaryPath(file.Name, "Outgoing");
+        await WriteToProviderAsync(
+            file.Name,
+            producer,
+            file.OpenWriteAsync,
+            progress,
+            publication,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Produces into an owned local stage, then delivers it to a provider stream whose
+    /// cancellation behavior is controlled by the platform rather than by this application.
+    /// </summary>
+    internal static async Task WriteToProviderAsync(
+        string? proposedName,
+        Func<string, CancellationToken, Task> producer,
+        Func<Task<Stream>> openWriteAsync,
+        IProgress<VisualCat.Application.UseCases.FileWorkProgress>? progress,
+        Action<StorageWritePublication>? publication,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(producer);
+        ArgumentNullException.ThrowIfNull(openWriteAsync);
+        var temporary = CreateTemporaryPath(proposedName, "Outgoing");
         try
         {
             await producer(temporary, cancellationToken).ConfigureAwait(false);
-            await using var output = await file.OpenWriteAsync().ConfigureAwait(false);
-            await CopyFileToStreamAsync(temporary, output, cancellationToken).ConfigureAwait(false);
+            publication?.Invoke(StorageWritePublication.ProviderDeliveryStarted);
+            await using (var output = await openWriteAsync().ConfigureAwait(false))
+            {
+                var total = new FileInfo(temporary).Length;
+                await CopyFileToStreamAsync(temporary, output, progress, total, cancellationToken)
+                    .ConfigureAwait(false);
+                publication?.Invoke(StorageWritePublication.ProviderFinalizing);
+            }
+
+            publication?.Invoke(StorageWritePublication.ProviderDeliveryCompleted);
         }
         finally
         {
@@ -56,6 +137,8 @@ internal static class StorageFileBridge
         Stream input,
         string? proposedName,
         string? root = null,
+        IProgress<VisualCat.Application.UseCases.FileWorkProgress>? progress = null,
+        long? knownLength = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(input);
@@ -73,7 +156,38 @@ internal static class StorageFileBridge
                 FileShare.None,
                 CopyBufferBytes,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
-            await input.CopyToAsync(output, CopyBufferBytes, cancellationToken).ConfigureAwait(false);
+            if (progress is null)
+            {
+                await input.CopyToAsync(output, CopyBufferBytes, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                var buffer = new byte[CopyBufferBytes];
+                long copied = 0;
+                progress.Report(new VisualCat.Application.UseCases.FileWorkProgress(
+                    VisualCat.Application.UseCases.FileWorkStage.Copying,
+                    0,
+                    knownLength,
+                    "bytes"));
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var read = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                    copied += read;
+                    progress.Report(new VisualCat.Application.UseCases.FileWorkProgress(
+                        VisualCat.Application.UseCases.FileWorkStage.Copying,
+                        copied,
+                        knownLength,
+                        "bytes"));
+                }
+            }
+
             await output.FlushAsync(cancellationToken).ConfigureAwait(false);
             return new MaterializedStorageFile(destination, IsTemporary: true);
         }
@@ -84,9 +198,17 @@ internal static class StorageFileBridge
         }
     }
 
+    internal static Task CopyFileToStreamAsync(
+        string sourcePath,
+        Stream output,
+        CancellationToken cancellationToken = default) =>
+        CopyFileToStreamAsync(sourcePath, output, progress: null, knownLength: null, cancellationToken);
+
     internal static async Task CopyFileToStreamAsync(
         string sourcePath,
         Stream output,
+        IProgress<VisualCat.Application.UseCases.FileWorkProgress>? progress,
+        long? knownLength,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
@@ -104,7 +226,27 @@ internal static class StorageFileBridge
             FileShare.Read,
             CopyBufferBytes,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
-        await input.CopyToAsync(output, CopyBufferBytes, cancellationToken).ConfigureAwait(false);
+        var total = knownLength ?? input.Length;
+        var buffer = new byte[CopyBufferBytes];
+        long copied = 0;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                break;
+            }
+
+            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+            copied += read;
+            progress?.Report(new VisualCat.Application.UseCases.FileWorkProgress(
+                VisualCat.Application.UseCases.FileWorkStage.SavingToProvider,
+                copied,
+                total,
+                "bytes"));
+        }
+
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 

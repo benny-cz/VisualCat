@@ -60,6 +60,9 @@ public sealed record EntryPage(
     EntryCursor? NextCursor,
     long? TotalCount);
 
+/// <summary>A bounded entry page beginning at an exact key, with rows before it disclosed.</summary>
+public sealed record EntryArrivalPage(EntryPage Page, long CountBeforeWindow);
+
 /// <summary>Summarizes one mined message template within a query.</summary>
 public sealed record TemplateSummary(
     uint TemplateId,
@@ -83,3 +86,88 @@ public sealed record SearchResult(
     long Matches,
     IReadOnlyList<InstantUs> Markers,
     bool MarkersTruncated);
+
+/// <summary>Identifies one exact timed search match across snapshot generations.</summary>
+public readonly record struct SearchMatchKey(Guid SessionId, long TimestampUs, long SourceSequence);
+
+/// <summary>Chooses how an exact search match is resolved.</summary>
+public enum SearchMatchRequestKind : byte
+{
+    First,
+    Last,
+    Next,
+    Previous,
+    Nearest,
+    Ordinal,
+    Revalidate,
+}
+
+/// <summary>Describes one exact, full-session search-navigation lookup.</summary>
+public sealed record SearchMatchRequest(
+    SearchMatchRequestKind Kind,
+    SearchMatchKey? From = null,
+    InstantUs? Near = null,
+    long? Ordinal = null);
+
+/// <summary>Describes whether an exact search-navigation request found a record.</summary>
+public enum SearchMatchStatus : byte
+{
+    Found,
+    NoMatches,
+    OutOfRange,
+    NoLongerMatches,
+}
+
+/// <summary>Contains an exact search record and its one-based rank among all matches.</summary>
+public sealed record SearchMatchResult(
+    QueryIdentity Identity,
+    SearchMatchStatus Status,
+    SearchMatchKey? Key,
+    NormalizedEntry? Entry,
+    long Ordinal,
+    long TotalMatches);
+
+/// <summary>Facet dimensions that support complete-value discovery.</summary>
+public enum FacetQueryDimension : byte
+{
+    Tag,
+    Process,
+    Pid,
+    Tid,
+    Buffer,
+}
+
+/// <summary>A stable text or numeric facet key.</summary>
+public readonly record struct FacetQueryKey(string? Text, int? Number)
+{
+    /// <summary>Creates a text facet key.</summary>
+    public static FacetQueryKey OfText(string value) => new(value, null);
+    /// <summary>Creates a numeric facet key.</summary>
+    public static FacetQueryKey OfNumber(int value) => new(null, value);
+    /// <summary>Gets invariant display text used by literal discovery search.</summary>
+    public string DisplayText => Text ?? Number?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+}
+
+/// <summary>One facet value and its own-dimension-omitted count.</summary>
+public sealed record FacetQueryValue(FacetQueryKey Key, long Count, bool Included, bool Excluded);
+
+/// <summary>Stable keyset cursor for a complete facet-value page.</summary>
+public sealed record FacetPageCursor(
+    Guid SessionId,
+    long SnapshotGeneration,
+    string FilterFingerprint,
+    FacetQueryDimension Dimension,
+    string SearchText,
+    bool ExactMatch,
+    long Count,
+    FacetQueryKey Key);
+
+/// <summary>One bounded page of complete facet-value discovery results.</summary>
+public sealed record FacetValuesResult(
+    QueryIdentity Identity,
+    FacetQueryDimension Dimension,
+    string SearchText,
+    long NeutralMatchCount,
+    IReadOnlyList<FacetQueryValue> ActiveValues,
+    IReadOnlyList<FacetQueryValue> NeutralValues,
+    FacetPageCursor? NextCursor);

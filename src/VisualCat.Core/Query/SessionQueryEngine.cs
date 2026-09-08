@@ -41,7 +41,7 @@ public static class SessionQueryEngine
                 continue;
             }
 
-            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint);
+            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint, cancellationToken);
 
             // Adjacent columns share a boundary, so N+1 bounds describe N cells and the
             // 2N searches the pair-at-a-time form performed are halved. Clamping each
@@ -142,7 +142,7 @@ public static class SessionQueryEngine
                         ? severity
                         : segment.GetOrCreateBitmap(
                             LevelBitmapKey(identity.FilterFingerprint, level),
-                            () => ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint).And(severity));
+                            () => ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint, cancellationToken).And(severity));
                     count += composed.CountInRange(
                         segment.LowerBound(effective.Value.StartInclusive.Value),
                         segment.LowerBound(effective.Value.EndExclusive.Value));
@@ -268,12 +268,12 @@ public static class SessionQueryEngine
             first,
             last,
             levels,
-            Top(tags, facetLimit),
-            Top(pids, facetLimit),
-            Top(tids, facetLimit),
-            Top(buffers, facetLimit),
-            Top(templates, facetLimit),
-            Top(processes, facetLimit));
+            TopWithActive(tags, filter.IncludedTags.Concat(filter.ExcludedTags), facetLimit),
+            TopWithActive(pids, filter.IncludedPids.Concat(filter.ExcludedPids), facetLimit),
+            TopWithActive(tids, filter.IncludedTids.Concat(filter.ExcludedTids), facetLimit),
+            TopWithActive(buffers, filter.IncludedBuffers.Concat(filter.ExcludedBuffers), facetLimit),
+            TopWithActive(templates, filter.IncludedTemplates.Concat(filter.ExcludedTemplates), facetLimit),
+            TopWithActive(processes, filter.IncludedProcesses.Concat(filter.ExcludedProcesses), facetLimit));
     }
 
     public static EntryPage GetEntries(
@@ -310,7 +310,7 @@ public static class SessionQueryEngine
         foreach (var segment in snapshot.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint);
+            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint, cancellationToken);
             var effectiveRange = ApplyTimeFilter(range, filter.TimeRange);
             if (effectiveRange is null)
             {
@@ -351,6 +351,149 @@ public static class SessionQueryEngine
         return new EntryPage(identity, entries, queues.Count > 0 ? nextCursor : null, total);
     }
 
+    /// <summary>Returns an entry window whose first row is an exact inclusive search key.</summary>
+    public static EntryArrivalPage GetEntriesFromKey(
+        SessionSnapshot snapshot,
+        TimeRange range,
+        FilterSpec filter,
+        EntryOrder order,
+        SearchMatchKey key,
+        int pageSize,
+        long queryGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(filter);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
+        if (pageSize > 10_000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageSize), "Page size is capped at 10,000.");
+        }
+
+        var identity = Identity(snapshot, filter, queryGeneration);
+        if (key.SessionId != snapshot.SessionId || ApplyTimeFilter(range, filter.TimeRange) is not { } effectiveRange)
+        {
+            return new EntryArrivalPage(new EntryPage(identity, [], null, 0), 0);
+        }
+
+        long total = 0;
+        long before = 0;
+        var entries = new List<NormalizedEntry>(pageSize);
+        EntryCursor? next = null;
+        if (order == EntryOrder.Chronological)
+        {
+            var queues = new PriorityQueue<SegmentPosition, EntryKey>();
+            foreach (var segment in snapshot.Segments)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint, cancellationToken);
+                var start = segment.LowerBound(effectiveRange.StartInclusive.Value);
+                var end = segment.LowerBound(effectiveRange.EndExclusive.Value);
+                total += active.CountInRange(start, end);
+                var inclusive = segment.LowerBound(key.TimestampUs, key.SourceSequence, start, end);
+                before += active.CountInRange(start, inclusive);
+                var first = NextMatching(segment, active, inclusive, end, null, order);
+                if (first < end)
+                {
+                    queues.Enqueue(new SegmentPosition(segment, active, first, end), Key(segment, first, order));
+                }
+            }
+
+            while (queues.Count > 0 && entries.Count < pageSize)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var position = queues.Dequeue();
+                var entry = position.Segment.ReadEntry(
+                    position.Index,
+                    snapshot.SessionId,
+                    snapshot.Tags,
+                    snapshot.Buffers,
+                    snapshot.Manifest.ParserVersion);
+                entries.Add(entry);
+                next = new EntryCursor(order, entry.Timestamp?.Value ?? long.MinValue, entry.SourceSequence);
+                var following = NextMatching(position.Segment, position.Active, position.Index + 1, position.End, null, order);
+                if (following < position.End)
+                {
+                    queues.Enqueue(position with { Index = following }, Key(position.Segment, following, order));
+                }
+            }
+
+            if (queues.Count == 0)
+            {
+                next = null;
+            }
+        }
+        else
+        {
+            var queues = new PriorityQueue<SourcePosition, long>();
+            foreach (var segment in snapshot.Segments)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint, cancellationToken);
+                var start = segment.LowerBound(effectiveRange.StartInclusive.Value);
+                var end = segment.LowerBound(effectiveRange.EndExclusive.Value);
+                total += active.CountInRange(start, end);
+                var indices = segment.SourceOrderIndices;
+                var position = segment.SourceOrderLowerBound(key.SourceSequence);
+                for (var preceding = 0; preceding < position; preceding++)
+                {
+                    if ((preceding & 0x3ff) == 0)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+
+                    var index = indices[preceding];
+                    if (index >= start && index < end && active[index])
+                    {
+                        before++;
+                    }
+                }
+
+                position = NextSourceMatching(indices, active, position, start, end);
+                if (position < indices.Count)
+                {
+                    queues.Enqueue(
+                        new SourcePosition(segment, active, indices, position, start, end),
+                        segment.SequenceAt(indices[position]));
+                }
+            }
+
+            while (queues.Count > 0 && entries.Count < pageSize)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var candidate = queues.Dequeue();
+                var index = candidate.Indices[candidate.Position];
+                var entry = candidate.Segment.ReadEntry(
+                    index,
+                    snapshot.SessionId,
+                    snapshot.Tags,
+                    snapshot.Buffers,
+                    snapshot.Manifest.ParserVersion);
+                entries.Add(entry);
+                next = new EntryCursor(order, entry.Timestamp?.Value ?? long.MinValue, entry.SourceSequence);
+                var following = NextSourceMatching(
+                    candidate.Indices,
+                    candidate.Active,
+                    candidate.Position + 1,
+                    candidate.Start,
+                    candidate.End);
+                if (following < candidate.Indices.Count)
+                {
+                    queues.Enqueue(
+                        candidate with { Position = following },
+                        candidate.Segment.SequenceAt(candidate.Indices[following]));
+                }
+            }
+
+            if (queues.Count == 0)
+            {
+                next = null;
+            }
+        }
+
+        return new EntryArrivalPage(new EntryPage(identity, entries, next, total), before);
+    }
+
     /// <summary>Returns the most frequent templates in a range and optional severity row.</summary>
     /// <param name="snapshot">The immutable session snapshot to query.</param>
     /// <param name="range">The half-open time range to rank.</param>
@@ -380,7 +523,7 @@ public static class SessionQueryEngine
         foreach (var segment in snapshot.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint);
+            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint, cancellationToken);
             if (level is { } severityLevel)
             {
                 var severity = segment.SeverityBitmaps[severityLevel];
@@ -465,7 +608,7 @@ public static class SessionQueryEngine
         foreach (var segment in snapshot.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var bitmap = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint);
+            var bitmap = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint, cancellationToken);
             for (var i = 0; i < segment.Count; i++)
             {
                 if (bitmap[i])
@@ -489,6 +632,178 @@ public static class SessionQueryEngine
         progress?.Report(new SearchProgress(identity, scanned, matches, true, 1));
         markers.Sort();
         return Task.FromResult(new SearchResult(identity, matches, markers, matches > markers.Count));
+    }
+
+    /// <summary>Resolves one exact record in the complete timed search population.</summary>
+    public static Task<SearchMatchResult> SearchMatchAsync(
+        SessionSnapshot snapshot,
+        FilterSpec filter,
+        SearchMatchRequest request,
+        long queryGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(filter);
+        ArgumentNullException.ThrowIfNull(request);
+        var identity = Identity(snapshot, filter, queryGeneration);
+        if (filter.Search is null)
+        {
+            return Task.FromResult(new SearchMatchResult(identity, SearchMatchStatus.NoMatches, null, null, 0, 0));
+        }
+
+        var segments = SearchSegments(snapshot, filter, identity.FilterFingerprint, cancellationToken);
+        var total = segments.Sum(static segment => (long)segment.Count);
+        if (total == 0)
+        {
+            return Task.FromResult(new SearchMatchResult(identity, SearchMatchStatus.NoMatches, null, null, 0, 0));
+        }
+
+        // A timestamp/source pair is only stable inside its session. Reusing a key from a
+        // different tab must not accidentally select a coincidentally identical record in
+        // this one; the session component is part of the public identity contract, not merely
+        // diagnostic metadata.
+        if (request.From is { } from && from.SessionId != snapshot.SessionId)
+        {
+            return Task.FromResult(new SearchMatchResult(
+                identity,
+                SearchMatchStatus.NoLongerMatches,
+                null,
+                null,
+                0,
+                total));
+        }
+
+        SearchCandidate? candidate = request.Kind switch
+        {
+            SearchMatchRequestKind.First => FirstCandidate(segments, cancellationToken),
+            SearchMatchRequestKind.Last => LastCandidate(segments, cancellationToken),
+            SearchMatchRequestKind.Next => AdjacentCandidate(segments, request.From, forward: true, cancellationToken),
+            SearchMatchRequestKind.Previous => AdjacentCandidate(segments, request.From, forward: false, cancellationToken),
+            SearchMatchRequestKind.Nearest => NearestCandidate(
+                segments,
+                request.Near ?? throw new ArgumentException("Nearest search requests require an instant.", nameof(request)),
+                cancellationToken),
+            SearchMatchRequestKind.Ordinal => OrdinalCandidate(
+                segments,
+                request.Ordinal ?? throw new ArgumentException("Ordinal search requests require an ordinal.", nameof(request)),
+                total,
+                cancellationToken),
+            SearchMatchRequestKind.Revalidate => ExactCandidate(segments, request.From, cancellationToken),
+            _ => null,
+        };
+
+        if (candidate is null)
+        {
+            var status = request.Kind == SearchMatchRequestKind.Ordinal
+                ? SearchMatchStatus.OutOfRange
+                : SearchMatchStatus.NoLongerMatches;
+            return Task.FromResult(new SearchMatchResult(identity, status, null, null, 0, total));
+        }
+
+        var key = CandidateKey(snapshot.SessionId, candidate.Value);
+        var ordinal = CountBefore(segments, key, cancellationToken) + 1;
+        var entry = candidate.Value.Segment.ReadEntry(
+            candidate.Value.Index,
+            snapshot.SessionId,
+            snapshot.Tags,
+            snapshot.Buffers,
+            snapshot.Manifest.ParserVersion);
+        return Task.FromResult(new SearchMatchResult(identity, SearchMatchStatus.Found, key, entry, ordinal, total));
+    }
+
+    /// <summary>Returns one bounded, stable page from the complete available facet values.</summary>
+    public static FacetValuesResult QueryFacetValues(
+        SessionSnapshot snapshot,
+        FilterSpec filter,
+        FacetQueryDimension dimension,
+        string? searchText,
+        FacetPageCursor? cursor,
+        int limit,
+        long queryGeneration,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(filter);
+        if (limit is <= 0 or > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit), "Facet pages contain from 1 to 100 values.");
+        }
+
+        var search = searchText ?? string.Empty;
+        var identity = Identity(snapshot, filter, queryGeneration);
+        if (cursor is not null &&
+            (cursor.SessionId != snapshot.SessionId ||
+             cursor.SnapshotGeneration != snapshot.Generation ||
+             !string.Equals(cursor.FilterFingerprint, identity.FilterFingerprint, StringComparison.Ordinal) ||
+             cursor.Dimension != dimension ||
+             !string.Equals(cursor.SearchText, search, StringComparison.Ordinal)))
+        {
+            throw new ArgumentException("The facet page cursor belongs to a different query.", nameof(cursor));
+        }
+
+        var tally = FacetTally(snapshot, filter, dimension, cancellationToken);
+        var (included, excluded) = ActiveFacetKeys(filter, dimension);
+        var activeKeys = included.Concat(excluded).Distinct().ToArray();
+        var active = activeKeys
+            .OrderBy(static key => key, Comparer<FacetQueryKey>.Create(CompareFacetKeys))
+            .Select(key => new FacetQueryValue(
+                key,
+                tally.GetValueOrDefault(key),
+                included.Contains(key),
+                excluded.Contains(key)))
+            .ToArray();
+        var activeSet = activeKeys.ToHashSet();
+
+        long neutralMatchCount = 0;
+        var page = new List<FacetQueryValue>(limit + 1);
+        foreach (var (key, count) in tally)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (activeSet.Contains(key) ||
+                !key.DisplayText.Contains(search, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = new FacetQueryValue(key, count, false, false);
+            neutralMatchCount++;
+            if (cursor is not null && CompareFacetPage(value, search, cursor) <= 0)
+            {
+                continue;
+            }
+
+            var position = page.BinarySearch(
+                value,
+                Comparer<FacetQueryValue>.Create((left, right) => CompareFacetPage(left, right, search)));
+            page.Insert(position < 0 ? ~position : position, value);
+            if (page.Count > limit + 1)
+            {
+                page.RemoveAt(page.Count - 1);
+            }
+        }
+
+        var hasMore = page.Count > limit;
+        if (hasMore)
+        {
+            page.RemoveAt(page.Count - 1);
+        }
+
+        FacetPageCursor? next = null;
+        if (hasMore && page.Count > 0)
+        {
+            var last = page[^1];
+            next = new FacetPageCursor(
+                snapshot.SessionId,
+                snapshot.Generation,
+                identity.FilterFingerprint,
+                dimension,
+                search,
+                IsExactFacetMatch(last.Key, search),
+                last.Count,
+                last.Key);
+        }
+
+        return new FacetValuesResult(identity, dimension, search, neutralMatchCount, active, page, next);
     }
 
     public static IReadOnlyList<SourceRecord> GetRawContext(
@@ -714,11 +1029,12 @@ public static class SessionQueryEngine
         SessionSnapshot snapshot,
         SegmentSnapshot segment,
         FilterSpec filter,
-        string filterFingerprint)
+        string filterFingerprint,
+        CancellationToken cancellationToken = default)
     {
         if (ReferenceEquals(filter, FilterSpec.All) || filter.IsUnconstrained)
         {
-            return segment.GetOrCreateFilter("all", static _ => true);
+            return segment.GetOrCreateFilter("all", static _ => true, cancellationToken);
         }
 
         StringComparison comparison = filter.Search is { CaseSensitive: false }
@@ -733,6 +1049,11 @@ public static class SessionQueryEngine
         {
             return segment.GetOrCreateFilter(filterFingerprint, index =>
             {
+                if (filter.Search is { IsRegex: true })
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
                 var level = segment.LevelAt(index);
                 if (filter.IncludedLevels.Count > 0 && !filter.IncludedLevels.Contains(level))
                 {
@@ -787,12 +1108,496 @@ public static class SessionQueryEngine
                 return textSearch.IsRegex
                     ? regex!.IsMatch(message)
                     : message.Contains(textSearch.Query, comparison);
-            });
+            }, cancellationToken);
         }
         catch (RegexMatchTimeoutException timeout)
         {
             throw new SearchTimeoutException(timeout);
         }
+    }
+
+    private static SearchSegment[] SearchSegments(
+        SessionSnapshot snapshot,
+        FilterSpec filter,
+        string fingerprint,
+        CancellationToken cancellationToken)
+    {
+        var result = new List<SearchSegment>(snapshot.Segments.Count);
+        foreach (var segment in snapshot.Segments)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var active = ActiveBitmap(snapshot, segment, filter, fingerprint, cancellationToken);
+            var (start, end) = RangeIndices(segment, filter.TimeRange);
+            var count = active.CountInRange(start, end);
+            if (count > 0)
+            {
+                result.Add(new SearchSegment(segment, active, start, end, count));
+            }
+        }
+
+        return result.ToArray();
+    }
+
+    private static SearchCandidate? FirstCandidate(
+        IReadOnlyList<SearchSegment> segments,
+        CancellationToken cancellationToken)
+    {
+        SearchCandidate? best = null;
+        foreach (var segment in segments)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (FirstSet(segment, segment.Start) is { } candidate &&
+                (best is null || CompareCandidates(candidate, best.Value) < 0))
+            {
+                best = candidate;
+            }
+        }
+
+        return best;
+    }
+
+    private static SearchCandidate? LastCandidate(
+        IReadOnlyList<SearchSegment> segments,
+        CancellationToken cancellationToken)
+    {
+        SearchCandidate? best = null;
+        foreach (var segment in segments)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (LastSet(segment, segment.End) is { } candidate &&
+                (best is null || CompareCandidates(candidate, best.Value) > 0))
+            {
+                best = candidate;
+            }
+        }
+
+        return best;
+    }
+
+    private static SearchCandidate? AdjacentCandidate(
+        IReadOnlyList<SearchSegment> segments,
+        SearchMatchKey? from,
+        bool forward,
+        CancellationToken cancellationToken)
+    {
+        if (from is null)
+        {
+            return forward
+                ? FirstCandidate(segments, cancellationToken)
+                : LastCandidate(segments, cancellationToken);
+        }
+
+        SearchCandidate? best = null;
+        foreach (var segment in segments)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SearchCandidate? candidate;
+            if (forward)
+            {
+                var start = Math.Max(
+                    segment.Start,
+                    segment.Segment.UpperBound(from.Value.TimestampUs, from.Value.SourceSequence, segment.Start, segment.End));
+                candidate = FirstSet(segment, start);
+            }
+            else
+            {
+                var end = Math.Min(
+                    segment.End,
+                    segment.Segment.LowerBound(from.Value.TimestampUs, from.Value.SourceSequence, segment.Start, segment.End));
+                candidate = LastSet(segment, end);
+            }
+
+            if (candidate is not { } value)
+            {
+                continue;
+            }
+
+            if (best is null || (forward
+                    ? CompareCandidates(value, best.Value) < 0
+                    : CompareCandidates(value, best.Value) > 0))
+            {
+                best = value;
+            }
+        }
+
+        return best ?? (forward
+            ? FirstCandidate(segments, cancellationToken)
+            : LastCandidate(segments, cancellationToken));
+    }
+
+    private static SearchCandidate? NearestCandidate(
+        IReadOnlyList<SearchSegment> segments,
+        InstantUs instant,
+        CancellationToken cancellationToken)
+    {
+        SearchCandidate? best = null;
+        UInt128 bestDistance = UInt128.MaxValue;
+        foreach (var segment in segments)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var atOrAfter = segment.Segment.LowerBound(instant.Value, long.MinValue, segment.Start, segment.End);
+            Consider(FirstSet(segment, atOrAfter));
+            var afterAtOrBefore = segment.Segment.UpperBound(instant.Value, long.MaxValue, segment.Start, segment.End);
+            Consider(LastSet(segment, afterAtOrBefore));
+        }
+
+        return best;
+
+        void Consider(SearchCandidate? candidate)
+        {
+            if (candidate is not { } value)
+            {
+                return;
+            }
+
+            var timestamp = value.Segment.TimestampAt(value.Index);
+            var distance = timestamp >= instant.Value
+                ? (UInt128)((Int128)timestamp - instant.Value)
+                : (UInt128)((Int128)instant.Value - timestamp);
+            if (distance < bestDistance ||
+                distance == bestDistance && (best is null || CompareCandidates(value, best.Value) < 0))
+            {
+                bestDistance = distance;
+                best = value;
+            }
+        }
+    }
+
+    private static SearchCandidate? OrdinalCandidate(
+        IReadOnlyList<SearchSegment> segments,
+        long ordinal,
+        long total,
+        CancellationToken cancellationToken)
+    {
+        if (ordinal <= 0 || ordinal > total)
+        {
+            return null;
+        }
+
+        var low = segments.Min(static value => value.Segment.TimestampAt(value.Start));
+        var high = segments.Max(static value => value.Segment.TimestampAt(value.End - 1));
+        while (low < high)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var middle = SafeMidpoint(low, high);
+            if (CountThroughTimestamp(segments, middle) >= ordinal)
+            {
+                high = middle;
+            }
+            else
+            {
+                low = checked(middle + 1);
+            }
+        }
+
+        var timestamp = low;
+        var before = CountBeforeTimestamp(segments, timestamp);
+        var rankAtTimestamp = ordinal - before;
+        long? minimumSequence = null;
+        long? maximumSequence = null;
+        foreach (var segment in segments)
+        {
+            var start = Math.Max(segment.Start, segment.Segment.LowerBound(timestamp));
+            var end = Math.Min(segment.End, segment.Segment.UpperTimestampBound(timestamp, start, segment.End));
+            if (start >= end || segment.Active.CountInRange(start, end) == 0)
+            {
+                continue;
+            }
+
+            minimumSequence = minimumSequence is null
+                ? segment.Segment.SequenceAt(start)
+                : Math.Min(minimumSequence.Value, segment.Segment.SequenceAt(start));
+            maximumSequence = maximumSequence is null
+                ? segment.Segment.SequenceAt(end - 1)
+                : Math.Max(maximumSequence.Value, segment.Segment.SequenceAt(end - 1));
+        }
+
+        if (minimumSequence is null || maximumSequence is null)
+        {
+            return null;
+        }
+
+        low = minimumSequence.Value;
+        high = maximumSequence.Value;
+        while (low < high)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var middle = SafeMidpoint(low, high);
+            if (CountAtTimestampThroughSequence(segments, timestamp, middle) >= rankAtTimestamp)
+            {
+                high = middle;
+            }
+            else
+            {
+                low = checked(middle + 1);
+            }
+        }
+
+        return ExactCandidate(
+            segments,
+            new SearchMatchKey(Guid.Empty, timestamp, low),
+            cancellationToken);
+    }
+
+    private static SearchCandidate? ExactCandidate(
+        IReadOnlyList<SearchSegment> segments,
+        SearchMatchKey? key,
+        CancellationToken cancellationToken)
+    {
+        if (key is null)
+        {
+            return null;
+        }
+
+        foreach (var segment in segments)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var index = segment.Segment.LowerBound(
+                key.Value.TimestampUs,
+                key.Value.SourceSequence,
+                segment.Start,
+                segment.End);
+            if (index < segment.End &&
+                segment.Active[index] &&
+                segment.Segment.TimestampAt(index) == key.Value.TimestampUs &&
+                segment.Segment.SequenceAt(index) == key.Value.SourceSequence)
+            {
+                return new SearchCandidate(segment.Segment, segment.Active, index);
+            }
+        }
+
+        return null;
+    }
+
+    private static SearchCandidate? FirstSet(SearchSegment segment, int start)
+    {
+        start = Math.Clamp(start, segment.Start, segment.End);
+        var rank = segment.Active.Rank(start);
+        return segment.Active.TrySelect(rank, out var index) && index < segment.End
+            ? new SearchCandidate(segment.Segment, segment.Active, index)
+            : null;
+    }
+
+    private static SearchCandidate? LastSet(SearchSegment segment, int end)
+    {
+        end = Math.Clamp(end, segment.Start, segment.End);
+        var rank = segment.Active.Rank(end);
+        return rank > segment.Active.Rank(segment.Start) && segment.Active.TrySelect(rank - 1, out var index)
+            ? new SearchCandidate(segment.Segment, segment.Active, index)
+            : null;
+    }
+
+    private static int CompareCandidates(SearchCandidate left, SearchCandidate right)
+    {
+        var timestamp = left.Segment.TimestampAt(left.Index).CompareTo(right.Segment.TimestampAt(right.Index));
+        return timestamp != 0
+            ? timestamp
+            : left.Segment.SequenceAt(left.Index).CompareTo(right.Segment.SequenceAt(right.Index));
+    }
+
+    private static SearchMatchKey CandidateKey(Guid sessionId, SearchCandidate candidate) =>
+        new(sessionId, candidate.Segment.TimestampAt(candidate.Index), candidate.Segment.SequenceAt(candidate.Index));
+
+    private static long CountBefore(
+        IReadOnlyList<SearchSegment> segments,
+        SearchMatchKey key,
+        CancellationToken cancellationToken)
+    {
+        long count = 0;
+        foreach (var segment in segments)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var end = segment.Segment.LowerBound(key.TimestampUs, key.SourceSequence, segment.Start, segment.End);
+            count += segment.Active.CountInRange(segment.Start, end);
+        }
+
+        return count;
+    }
+
+    private static long CountThroughTimestamp(IReadOnlyList<SearchSegment> segments, long timestamp)
+    {
+        long count = 0;
+        foreach (var segment in segments)
+        {
+            var end = segment.Segment.UpperTimestampBound(timestamp, segment.Start, segment.End);
+            count += segment.Active.CountInRange(segment.Start, end);
+        }
+
+        return count;
+    }
+
+    private static long CountBeforeTimestamp(IReadOnlyList<SearchSegment> segments, long timestamp)
+    {
+        long count = 0;
+        foreach (var segment in segments)
+        {
+            var end = segment.Segment.LowerBound(timestamp);
+            end = Math.Clamp(end, segment.Start, segment.End);
+            count += segment.Active.CountInRange(segment.Start, end);
+        }
+
+        return count;
+    }
+
+    private static long CountAtTimestampThroughSequence(
+        IReadOnlyList<SearchSegment> segments,
+        long timestamp,
+        long sequence)
+    {
+        long count = 0;
+        foreach (var segment in segments)
+        {
+            var start = Math.Max(segment.Start, segment.Segment.LowerBound(timestamp));
+            var end = Math.Min(
+                segment.End,
+                segment.Segment.UpperBound(timestamp, sequence, start, segment.End));
+            count += segment.Active.CountInRange(start, end);
+        }
+
+        return count;
+    }
+
+    private static long SafeMidpoint(long low, long high) =>
+        checked(low + (long)((UInt128)((Int128)high - low) / 2));
+
+    private static Dictionary<FacetQueryKey, long> FacetTally(
+        SessionSnapshot snapshot,
+        FilterSpec filter,
+        FacetQueryDimension dimension,
+        CancellationToken cancellationToken)
+    {
+        switch (dimension)
+        {
+            case FacetQueryDimension.Tag:
+                return CountFacet(
+                        snapshot,
+                        filter with
+                        {
+                            IncludedTags = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
+                            ExcludedTags = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
+                        },
+                        "tags",
+                        (segment, index) => snapshot.Tags[(int)segment.TagIdAt(index)],
+                        StringComparer.Ordinal,
+                        cancellationToken)
+                    .ToDictionary(static pair => FacetQueryKey.OfText(pair.Key), static pair => pair.Value);
+            case FacetQueryDimension.Process:
+                return CountFacet(
+                        snapshot,
+                        filter with
+                        {
+                            IncludedProcesses = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
+                            ExcludedProcesses = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
+                        },
+                        "processes",
+                        (segment, index) =>
+                        {
+                            var pid = segment.PidAt(index);
+                            return snapshot.ResolveProcessName(pid, new InstantUs(segment.TimestampAt(index))) ?? $"PID {pid}";
+                        },
+                        StringComparer.Ordinal,
+                        cancellationToken,
+                        volatileAcrossGenerations: true)
+                    .Where(static pair => !IsPidPlaceholder(pair.Key))
+                    .ToDictionary(static pair => FacetQueryKey.OfText(pair.Key), static pair => pair.Value);
+            case FacetQueryDimension.Pid:
+                return CountFacet(
+                        snapshot,
+                        filter with { IncludedPids = ImmutableHashSet<int>.Empty, ExcludedPids = ImmutableHashSet<int>.Empty },
+                        "pids",
+                        static (segment, index) => segment.PidAt(index),
+                        null,
+                        cancellationToken)
+                    .ToDictionary(static pair => FacetQueryKey.OfNumber(pair.Key), static pair => pair.Value);
+            case FacetQueryDimension.Tid:
+                return CountFacet(
+                        snapshot,
+                        filter with { IncludedTids = ImmutableHashSet<int>.Empty, ExcludedTids = ImmutableHashSet<int>.Empty },
+                        "tids",
+                        static (segment, index) => segment.TidAt(index),
+                        null,
+                        cancellationToken)
+                    .ToDictionary(static pair => FacetQueryKey.OfNumber(pair.Key), static pair => pair.Value);
+            case FacetQueryDimension.Buffer:
+                return CountFacet(
+                        snapshot,
+                        filter with
+                        {
+                            IncludedBuffers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
+                            ExcludedBuffers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
+                        },
+                        "buffers",
+                        (segment, index) => snapshot.Buffers[(int)segment.BufferIdAt(index)],
+                        StringComparer.Ordinal,
+                        cancellationToken)
+                    .ToDictionary(static pair => FacetQueryKey.OfText(pair.Key), static pair => pair.Value);
+            default:
+                throw new ArgumentOutOfRangeException(nameof(dimension));
+        }
+    }
+
+    private static (HashSet<FacetQueryKey> Included, HashSet<FacetQueryKey> Excluded) ActiveFacetKeys(
+        FilterSpec filter,
+        FacetQueryDimension dimension) =>
+        dimension switch
+        {
+            FacetQueryDimension.Tag => (
+                filter.IncludedTags.Select(FacetQueryKey.OfText).ToHashSet(),
+                filter.ExcludedTags.Select(FacetQueryKey.OfText).ToHashSet()),
+            FacetQueryDimension.Process => (
+                filter.IncludedProcesses.Select(FacetQueryKey.OfText).ToHashSet(),
+                filter.ExcludedProcesses.Select(FacetQueryKey.OfText).ToHashSet()),
+            FacetQueryDimension.Pid => (
+                filter.IncludedPids.Select(FacetQueryKey.OfNumber).ToHashSet(),
+                filter.ExcludedPids.Select(FacetQueryKey.OfNumber).ToHashSet()),
+            FacetQueryDimension.Tid => (
+                filter.IncludedTids.Select(FacetQueryKey.OfNumber).ToHashSet(),
+                filter.ExcludedTids.Select(FacetQueryKey.OfNumber).ToHashSet()),
+            FacetQueryDimension.Buffer => (
+                filter.IncludedBuffers.Select(FacetQueryKey.OfText).ToHashSet(),
+                filter.ExcludedBuffers.Select(FacetQueryKey.OfText).ToHashSet()),
+            _ => throw new ArgumentOutOfRangeException(nameof(dimension)),
+        };
+
+    private static int CompareFacetPage(FacetQueryValue left, FacetQueryValue right, string search)
+    {
+        var leftExact = IsExactFacetMatch(left.Key, search);
+        var rightExact = IsExactFacetMatch(right.Key, search);
+        var exact = rightExact.CompareTo(leftExact);
+        if (exact != 0)
+        {
+            return exact;
+        }
+
+        var count = right.Count.CompareTo(left.Count);
+        return count != 0 ? count : CompareFacetKeys(left.Key, right.Key);
+    }
+
+    private static int CompareFacetPage(FacetQueryValue value, string search, FacetPageCursor cursor)
+    {
+        var exact = cursor.ExactMatch.CompareTo(IsExactFacetMatch(value.Key, search));
+        if (exact != 0)
+        {
+            return exact;
+        }
+
+        var count = cursor.Count.CompareTo(value.Count);
+        return count != 0 ? count : CompareFacetKeys(value.Key, cursor.Key);
+    }
+
+    private static bool IsExactFacetMatch(FacetQueryKey key, string search) =>
+        search.Length > 0 && string.Equals(key.DisplayText, search, StringComparison.OrdinalIgnoreCase);
+
+    private static int CompareFacetKeys(FacetQueryKey left, FacetQueryKey right) =>
+        left.Number is { } leftNumber && right.Number is { } rightNumber
+            ? leftNumber.CompareTo(rightNumber)
+            : string.Compare(left.DisplayText, right.DisplayText, StringComparison.Ordinal);
+
+    private static bool IsPidPlaceholder(string value)
+    {
+        const string prefix = "PID ";
+        return value.StartsWith(prefix, StringComparison.Ordinal) &&
+               int.TryParse(value.AsSpan(prefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out _);
     }
 
     private static bool IsAll(FilterSpec filter) => filter.IsUnconstrained;
@@ -877,6 +1682,26 @@ public static class SessionQueryEngine
             .Select(static pair => new FacetValue<T>(pair.Key, pair.Value))
             .ToArray();
 
+    private static FacetValue<T>[] TopWithActive<T>(
+        Dictionary<T, long> values,
+        IEnumerable<T> activeValues,
+        int neutralLimit)
+        where T : notnull
+    {
+        var active = activeValues.Distinct(values.Comparer).ToHashSet(values.Comparer);
+        var pinned = active
+            .OrderBy(static value => value)
+            .Take(20)
+            .Select(value => new FacetValue<T>(value, values.GetValueOrDefault(value)));
+        var neutral = values
+            .Where(pair => !active.Contains(pair.Key))
+            .OrderByDescending(static pair => pair.Value)
+            .ThenBy(static pair => pair.Key)
+            .Take(neutralLimit)
+            .Select(static pair => new FacetValue<T>(pair.Key, pair.Value));
+        return pinned.Concat(neutral).ToArray();
+    }
+
     /// <summary>
     /// How many distinct values a per-segment tally may hold and still be worth keeping.
     /// </summary>
@@ -914,7 +1739,7 @@ public static class SessionQueryEngine
             {
                 var storageOrder = LogLevels.StorageOrder;
                 var counts = new long[storageOrder.Length];
-                var active = ActiveBitmap(snapshot, segment, filter, fingerprint);
+                var active = ActiveBitmap(snapshot, segment, filter, fingerprint, cancellationToken);
                 var (start, end) = RangeIndices(segment, filter.TimeRange);
                 long timed = 0;
                 long first = 0;
@@ -1001,7 +1826,7 @@ public static class SessionQueryEngine
                 () =>
                 {
                     var counts = new Dictionary<T, long>(comparer);
-                    var active = ActiveBitmap(snapshot, segment, filter, fingerprint);
+                    var active = ActiveBitmap(snapshot, segment, filter, fingerprint, cancellationToken);
                     var (start, end) = RangeIndices(segment, filter.TimeRange);
                     for (var index = start; index < end; index++)
                     {
@@ -1043,7 +1868,7 @@ public static class SessionQueryEngine
         foreach (var segment in snapshot.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint);
+            var active = ActiveBitmap(snapshot, segment, filter, identity.FilterFingerprint, cancellationToken);
             var effectiveRange = ApplyTimeFilter(range, filter.TimeRange);
             if (effectiveRange is null)
             {
@@ -1131,6 +1956,15 @@ public static class SessionQueryEngine
     }
 
     private readonly record struct SegmentPosition(SegmentSnapshot Segment, RankBitmap Active, int Index, int End);
+
+    private readonly record struct SearchSegment(
+        SegmentSnapshot Segment,
+        RankBitmap Active,
+        int Start,
+        int End,
+        int Count);
+
+    private readonly record struct SearchCandidate(SegmentSnapshot Segment, RankBitmap Active, int Index);
 
     private readonly record struct SourcePosition(
         SegmentSnapshot Segment,

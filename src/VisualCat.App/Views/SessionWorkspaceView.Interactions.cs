@@ -1159,6 +1159,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     {
         _reloadingEntries = false;
         ObserveTimestampPrecision();
+        SelectSearchArrival();
         RestoreEntrySelection();
 
         // The rows the current filter returned are the evidence for whether the open entry is
@@ -1166,6 +1167,57 @@ public sealed partial class SessionWorkspaceView : UserControl
         UpdateInspectedEntryFilterScope();
         SyncEntryActionAvailability();
     }
+
+    /// <summary>
+    /// Reveals the record search navigation just chose, in the pane the reader can see it in.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Selecting the row is what drives the entry inspector and the source reader, so the
+    /// arrival reaches every surface through the one selection the reader would have made.
+    /// </para>
+    /// <para>
+    /// A live capture republishes the same selection every time it grows, and pulling the
+    /// phone back to Entries on each of those would take the workspace away from a reader
+    /// who is mid-read. The visible pane therefore moves only for an arrival the reader
+    /// asked for, and never away from an already-open Entry reader — which is showing the
+    /// arriving record anyway.
+    /// </para>
+    /// </remarks>
+    private void SelectSearchArrival()
+    {
+        if (_viewModel.SelectedSearchMatch?.Entry is not { } target)
+        {
+            return;
+        }
+
+        var arrival = _viewModel.SearchArrivalGeneration;
+        var requested = arrival != _revealedSearchArrival;
+        _revealedSearchArrival = arrival;
+
+        var candidate = _viewModel.Entries.FirstOrDefault(entry => entry.SourceSequence == target.SourceSequence);
+        if (candidate is null)
+        {
+            return;
+        }
+
+        _selectedEntryId = candidate.EntryId;
+        _selectionFilterFingerprint = _viewModel.AppliedFilter.Fingerprint();
+        _entries.SelectedItem = candidate;
+        _entries.ScrollIntoView(candidate);
+        SetSelectedEntryOffPage(false);
+
+        if (requested && _mobileAnalysisTabs is { SelectedIndex: MobileInsightsTab } tabs)
+        {
+            tabs.SelectedIndex = MobileEntriesTab;
+        }
+    }
+
+    /// <summary>The phone's Entries and Insights panes, in the order the strip draws them.</summary>
+    private const int MobileEntriesTab = 0;
+    private const int MobileInsightsTab = 1;
+
+    private long _revealedSearchArrival;
 
     // Both view-model notifications are answered through the dispatcher, so a change raised
     // while the tab was alive can arrive after it has been closed — and a redraw then reads a
@@ -1266,13 +1318,21 @@ public sealed partial class SessionWorkspaceView : UserControl
             case nameof(SessionTabViewModel.Viewport):
                 return WorkspaceRefresh.Timelines | WorkspaceRefresh.MarkerNavigation;
             case nameof(SessionTabViewModel.SearchText):
-                _search.Text = _viewModel.SearchText;
+                SyncSearchText();
                 return WorkspaceRefresh.None;
             case nameof(SessionTabViewModel.EntryOrder):
                 _order.SelectedIndex = _viewModel.EntryOrder == EntryOrder.SourceSequence ? 1 : 0;
                 return WorkspaceRefresh.None;
             case nameof(SessionTabViewModel.SearchResult):
                 _timeline.SetSearchResult(_viewModel.SearchResult);
+                RefreshMatchPrompt();
+                return WorkspaceRefresh.MarkerNavigation;
+            case nameof(SessionTabViewModel.AppliedQueryIdentity):
+            case nameof(SessionTabViewModel.IsQueryPending):
+                RefreshMatchPrompt();
+                UpdateSaveViewAvailability();
+                return WorkspaceRefresh.MarkerNavigation;
+            case nameof(SessionTabViewModel.SelectedSearchMatch):
                 return WorkspaceRefresh.MarkerNavigation;
             case nameof(SessionTabViewModel.Status):
                 ApplyStatusText();
@@ -1346,6 +1406,8 @@ public sealed partial class SessionWorkspaceView : UserControl
             case nameof(SessionTabViewModel.IsLoadingEntries):
             case nameof(SessionTabViewModel.LoadedEntryCount):
             case nameof(SessionTabViewModel.RemainingEntryCount):
+            case nameof(SessionTabViewModel.EarlierEntryCount):
+            case nameof(SessionTabViewModel.IsEntryArrivalWindow):
             case nameof(SessionTabViewModel.IsEntryRetentionLimitReached):
                 return WorkspaceRefresh.EntryLoadControls;
             case nameof(SessionTabViewModel.FollowLatest):
@@ -1513,6 +1575,11 @@ public sealed partial class SessionWorkspaceView : UserControl
             AutomationProperties.SetHelpText(_searchProblem, null);
             _search.Classes.Remove("invalid");
             _search.BorderBrush = null;
+
+            // The field's own help override is the half a sighted reader cannot see gone.
+            // Leaving it behind meant a corrected query still read "…could not be applied"
+            // to a screen reader every time the field took focus.
+            AutomationProperties.SetHelpText(_search, null);
             return;
         }
 
@@ -1525,6 +1592,26 @@ public sealed partial class SessionWorkspaceView : UserControl
         _search.Classes.Add("invalid");
         _search.BorderBrush = _searchProblem.Foreground;
         AutomationProperties.SetHelpText(_search, sentence);
+    }
+
+    /// <summary>Echoes the applied query into the field without re-applying it.</summary>
+    private void SyncSearchText()
+    {
+        var text = _viewModel.SearchText;
+        if (string.Equals(_search.Text ?? string.Empty, text, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _syncingSearchText = true;
+        try
+        {
+            _search.Text = text;
+        }
+        finally
+        {
+            _syncingSearchText = false;
+        }
     }
 
     private void QueueDebouncedSearch()
@@ -1542,7 +1629,21 @@ public sealed partial class SessionWorkspaceView : UserControl
                 await Task.Delay(320, source.Token).ConfigureAwait(false);
                 if (!source.IsCancellationRequested)
                 {
-                    Dispatcher.UIThread.Post(() => _ = RunUiActionAsync(ApplySearchAsync));
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        // Nothing to apply when the field already shows the query the view
+                        // model holds: that text arrived from the model — a saved view, a
+                        // cleared filter, a rejected pattern that was rolled back — and
+                        // re-applying it here would carry the field's own Regex and Match
+                        // case toggles instead of the ones it was stored with.
+                        if (source.IsCancellationRequested ||
+                            string.Equals(_search.Text ?? string.Empty, _viewModel.SearchText, StringComparison.Ordinal))
+                        {
+                            return;
+                        }
+
+                        _ = RunUiActionAsync(ApplySearchAsync);
+                    });
                 }
             }
             catch (OperationCanceledException) when (source.IsCancellationRequested)
@@ -1799,6 +1900,7 @@ public sealed partial class SessionWorkspaceView : UserControl
     {
         var loaded = _viewModel.LoadedEntryCount;
         var total = _viewModel.MatchesInView;
+        var earlier = _viewModel.EarlierEntryCount;
         var remaining = _viewModel.RemainingEntryCount;
         var loading = _viewModel.IsLoadingEntries;
         var loadingAll = _loadAllEntriesCancellation is { IsCancellationRequested: false };
@@ -1810,6 +1912,23 @@ public sealed partial class SessionWorkspaceView : UserControl
         _loadMore.IsVisible = _mobile
             ? _viewModel.CanLoadMore
             : !_desktopEntryToolbarCompact;
+
+        // An arrival window starts at the selected match rather than at the start of the
+        // range, so the rows above it are real, matching and not loaded. Both platforms say
+        // so — the desktop in its toolbar below, the phone in the footer band, which is the
+        // only place on that screen where the sentence has room and where a reader who has
+        // run out of rows is already looking.
+        var arrivalWindow = _viewModel.IsEntryArrivalWindow && earlier > 0;
+        var arrivalStatus = $"{loaded:N0} shown · {earlier:N0} earlier · {remaining:N0} later";
+        _entryArrivalStatus.IsVisible = _mobile && arrivalWindow;
+        if (_mobile && arrivalWindow)
+        {
+            _entryArrivalStatus.Text = arrivalStatus;
+            AutomationProperties.SetName(
+                _entryArrivalStatus,
+                $"{loaded:N0} shown; {earlier:N0} earlier; {remaining:N0} later");
+        }
+
         if (_entryFooter is { } footer)
         {
             // The footer's frame is only worth a band while it is holding a control; in the
@@ -1821,7 +1940,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             // with it — taking the only thing on a phone that says the list stops short of
             // the session (IA-07). The band is earned by either control: at the limit it is
             // holding the sentence that explains why there is nothing more to tap.
-            var footerHasControl = _loadMore.IsVisible || limitReached;
+            var footerHasControl = _loadMore.IsVisible || limitReached || _entryArrivalStatus.IsVisible;
             footer.IsVisible = footerHasControl &&
                                footer.Child is not null &&
                                (footer.IsVisible || _entryFooterBand <= 0 || !_mobile ||
@@ -1860,6 +1979,29 @@ public sealed partial class SessionWorkspaceView : UserControl
             }
         }
 
+        var canReturnToStart = arrivalWindow;
+
+        // The label is the action; the description is why it is being offered. Both routes
+        // say the same thing, so a reader who reaches it through the phone's action row and
+        // one who reaches it through the desktop overflow are told the same number.
+        var startOfRangeDescription = canReturnToStart
+            ? $"Reload the first rows of this range; {earlier:N0} earlier rows are not shown"
+            : "Reload the first rows of this range";
+        if (_desktopStartOfRangeItem is { } startOfRange)
+        {
+            startOfRange.IsVisible = canReturnToStart;
+            startOfRange.IsEnabled = !loading;
+            AutomationProperties.SetHelpText(startOfRange, startOfRangeDescription);
+        }
+
+        if (_startOfRange is { } mobileStartOfRange)
+        {
+            mobileStartOfRange.IsVisible = canReturnToStart;
+            mobileStartOfRange.IsEnabled = !loading;
+            ToolTip.SetTip(mobileStartOfRange, startOfRangeDescription);
+            AutomationProperties.SetHelpText(mobileStartOfRange, startOfRangeDescription);
+        }
+
         UpdateEntryActionRows();
 
         // The bulk load is a phone control too. Its label is the state it is in — the
@@ -1875,7 +2017,11 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ? "Cancel"
                 : limitReached
                     ? _mobile ? "Full" : $"{retentionLimit:N0}-row limit"
-                    : _mobile ? CompactRowCount(retentionLimit) : $"Load up to {retentionLimit:N0}";
+                    : _mobile
+                        ? CompactRowCount(retentionLimit)
+                        : _viewModel.IsEntryArrivalWindow
+                            ? $"Load up to {retentionLimit:N0} from here"
+                            : $"Load up to {retentionLimit:N0}";
         // Enabled at the limit as well: there is nothing further to load, and tapping it is
         // how a reader who missed the transient status asks for the sentence again.
         _loadAll.IsEnabled = !stopping && (loadingAll || limitReached || (_viewModel.CanLoadMore && !loading));
@@ -1889,7 +2035,9 @@ public sealed partial class SessionWorkspaceView : UserControl
                 : limitReached
                     ? $"{retentionLimit:N0}-row safety limit reached; {remaining:N0} matching rows are not loaded; refine filters to inspect them"
                     : remaining > 0
-                        ? $"Load up to {retentionLimit:N0} matching rows in batches; {remaining:N0} remain"
+                        ? _viewModel.IsEntryArrivalWindow
+                            ? $"Load up to {retentionLimit:N0} matching rows from here in batches; {remaining:N0} later rows remain"
+                            : $"Load up to {retentionLimit:N0} matching rows in batches; {remaining:N0} remain"
                         : "All matching rows are loaded";
         ToolTip.SetTip(_loadAll, loadAllName);
         AutomationProperties.SetName(_loadAll, loadAllName);
@@ -1903,6 +2051,8 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             _entryLoadStatus.Text = limitReached
                 ? $"{loaded:N0} / {(total ?? loaded):N0} rows · safety limit; refine filters"
+                : _viewModel.IsEntryArrivalWindow
+                    ? arrivalStatus
                 : total is { } count
                 ? loading
                     ? $"{loaded:N0} / {count:N0} rows · loading…"
@@ -1911,7 +2061,9 @@ public sealed partial class SessionWorkspaceView : UserControl
                         : $"{loaded:N0} / {count:N0} rows loaded"
                 : $"{loaded:N0} rows loaded";
             var loadDescription = total is { } knownTotal
-                ? $"{loaded:N0} of {knownTotal:N0} matching rows loaded; {remaining:N0} remaining"
+                ? _viewModel.IsEntryArrivalWindow
+                    ? $"{loaded:N0} shown; {earlier:N0} earlier; {remaining:N0} later; {knownTotal:N0} matching rows total"
+                    : $"{loaded:N0} of {knownTotal:N0} matching rows loaded; {remaining:N0} remaining"
                 : $"{loaded:N0} matching rows loaded";
             ToolTip.SetTip(_entryLoadStatus, loadDescription);
             AutomationProperties.SetName(_entryLoadStatus, loadDescription);

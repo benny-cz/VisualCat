@@ -377,12 +377,44 @@ public sealed partial class SessionWorkspaceView : UserControl
         _viewName.Width = double.NaN;
         _viewName.HorizontalAlignment = HorizontalAlignment.Stretch;
         views.Children.Add(_viewName);
-        var save = new Button { Content = "Save", HorizontalAlignment = HorizontalAlignment.Left };
-        save.Click += async (_, _) => await RunUiActionAsync(
-            () => _viewModel.SaveCurrentViewAsync(_viewName.Text ?? string.Empty));
+        var save = _saveViewButton = new Button
+        {
+            Content = "Save",
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        save.Click += async (_, _) =>
+        {
+            // A saved view stores the filter that is in force, so storing one mid-transition
+            // would name a state the workspace is already leaving.
+            if (_viewModel.IsQueryPending)
+            {
+                NoticeRaised?.Invoke(MainView.PendingFilterRefusal, false);
+                return;
+            }
+
+            await RunUiActionAsync(() => _viewModel.SaveCurrentViewAsync(_viewName.Text ?? string.Empty));
+        };
         views.Children.Add(save);
+        UpdateSaveViewAvailability();
         EnsureMobileTouch(_savedViews, apply, delete, _viewName, save);
         return views;
+    }
+
+    private Button? _saveViewButton;
+
+    /// <summary>Keeps Save view refusable-with-a-reason rather than silently wrong.</summary>
+    private void UpdateSaveViewAvailability()
+    {
+        if (_saveViewButton is not { } save)
+        {
+            return;
+        }
+
+        var pending = _viewModel.IsQueryPending;
+        save.IsEnabled = !pending;
+        Avalonia.Automation.AutomationProperties.SetHelpText(
+            save,
+            pending ? MainView.PendingFilterRefusal : null);
     }
 
     private Grid BuildSessionPane()
@@ -451,9 +483,9 @@ public sealed partial class SessionWorkspaceView : UserControl
                 // active, "WHOLE SESSION" sat above counts that were already filtered
                 // (finding 11).
                 CountScopeLabel(
-                    "COUNTS · WHOLE SESSION · CURRENT FILTER",
-                    "Facet counts cover the whole session, not just the visible time range, " +
-                    "and they count only entries that match the current filter."),
+                    "COUNTS · OTHER FILTERS",
+                    "Counts use the whole session and your other filters. Each group ignores " +
+                    "its own filters so you can add alternatives. An active time filter still applies; the viewport does not."),
                 // Kept to one line on a phone: in a landscape workspace the pane's own header
                 // was consuming the height the rows needed, and Details mode showed a heading
                 // and not one data row (finding 3d).

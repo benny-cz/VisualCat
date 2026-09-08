@@ -8,6 +8,7 @@ using AndroidX.Core.Content;
 using Avalonia.Android;
 using VisualCat.App.Platform;
 using VisualCat.Application.Ports;
+using VisualCat.Application.UseCases;
 
 namespace VisualCat.Android;
 
@@ -99,7 +100,8 @@ public sealed class MainActivity : AvaloniaMainActivity
             "Registered guided Wireless debugging full-device transport. ADB remains disconnected until the user explicitly starts setup.");
 
         PlatformSourceRegistry.ShareFileAsync = ShareCurrentAsync;
-        PlatformSourceRegistry.ConsumeLaunchFilesAsync = ConsumeCurrentLaunchFilesAsync;
+        PlatformSourceRegistry.ShareFileWithProgressAsync = ShareCurrentWithProgressAsync;
+        PlatformSourceRegistry.ConsumeLaunchRequestsAsync = ConsumeCurrentLaunchRequestsAsync;
         PlatformSourceRegistry.SetGestureExclusions = ApplyGestureExclusions;
 
         // AndroidX requires the launcher to be registered before the activity is STARTED, so
@@ -329,7 +331,7 @@ public sealed class MainActivity : AvaloniaMainActivity
     {
         base.OnNewIntent(intent);
         Intent = intent;
-        _ = PublishIncomingAsync(intent);
+        PublishIncoming(intent);
     }
 
     protected override void OnDestroy()
@@ -338,6 +340,7 @@ public sealed class MainActivity : AvaloniaMainActivity
         {
             s_current = null;
             PlatformSourceRegistry.ShareFileAsync = null;
+            PlatformSourceRegistry.ShareFileWithProgressAsync = null;
             PlatformSourceRegistry.CreateOnDeviceSource = null;
             PlatformSourceRegistry.HasFullDeviceLogPermission = null;
             PlatformSourceRegistry.FullDeviceLogGrantCommand = null;
@@ -347,7 +350,7 @@ public sealed class MainActivity : AvaloniaMainActivity
             PlatformSourceRegistry.CreateWirelessAdbSource = null;
             PlatformSourceRegistry.BeginLiveCaptureBackgroundExecution = null;
             PlatformSourceRegistry.OpenWirelessDebuggingSettingsAsync = null;
-            PlatformSourceRegistry.ConsumeLaunchFilesAsync = null;
+            PlatformSourceRegistry.ConsumeLaunchRequestsAsync = null;
             PlatformSourceRegistry.SetGestureExclusions = null;
             PlatformSourceRegistry.GetInstallOrigin = null;
             PlatformSourceRegistry.CheckForAppUpdateAsync = null;
@@ -681,35 +684,55 @@ public sealed class MainActivity : AvaloniaMainActivity
             throw new InvalidOperationException("The Android activity is not available for sharing.");
         }
 
-        return activity.ShareAsync(path, cancellationToken);
+        return activity.ShareAsync(path, progress: null, cancellationToken);
     }
 
-    private static Task<IReadOnlyList<IncomingFile>> ConsumeCurrentLaunchFilesAsync(CancellationToken cancellationToken)
+    private static Task ShareCurrentWithProgressAsync(
+        string path,
+        IProgress<FileWorkProgress>? progress,
+        CancellationToken cancellationToken)
     {
         if (s_current?.TryGetTarget(out var activity) != true || activity is null)
         {
-            return Task.FromResult<IReadOnlyList<IncomingFile>>([]);
+            throw new InvalidOperationException("The Android activity is not available for sharing.");
         }
 
-        return activity.MaterializeIncomingAsync(activity.Intent, cancellationToken);
+        return activity.ShareAsync(path, progress, cancellationToken);
     }
 
-    private async Task PublishIncomingAsync(Intent? intent)
-    {
-        try
-        {
-            var paths = await MaterializeIncomingAsync(intent, CancellationToken.None);
-            PlatformSourceRegistry.PublishLaunchFiles(paths);
-        }
-        catch (Exception exception)
-        {
-            global::Android.Util.Log.Error("VisualCat", $"Incoming file could not be opened: {exception.Message}");
-        }
-    }
-
-    private async Task<IReadOnlyList<IncomingFile>> MaterializeIncomingAsync(
-        Intent? intent,
+    private static Task<IReadOnlyList<IncomingFileRequest>> ConsumeCurrentLaunchRequestsAsync(
         CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        if (s_current?.TryGetTarget(out var activity) != true || activity is null)
+        {
+            return Task.FromResult<IReadOnlyList<IncomingFileRequest>>([]);
+        }
+
+        return Task.FromResult(activity.DescribeIncoming(activity.Intent));
+    }
+
+    private void PublishIncoming(Intent? intent) =>
+        PlatformSourceRegistry.PublishIncomingRequests(DescribeIncoming(intent));
+
+    /// <summary>
+    /// Describes what an ACTION_VIEW intent is offering, without reading a byte of it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The copy used to happen here, before the shell knew a file had arrived: a large or slow
+    /// provider document produced a silent pause with nothing to cancel, and a failure went to
+    /// Logcat rather than to the reader. Only the display name and an opaque identity are
+    /// resolved now; the bytes are copied inside the shell's own file operation, under its
+    /// token and progress sink.
+    /// </para>
+    /// <para>
+    /// The URI is claimed as in flight rather than consumed. It becomes consumed only when the
+    /// reader accepts or deliberately skips the import, and the claim is released on failure
+    /// or cancellation so an explicit <em>Open with</em> can deliver the same file again.
+    /// </para>
+    /// </remarks>
+    private IReadOnlyList<IncomingFileRequest> DescribeIncoming(Intent? intent)
     {
         var uri = intent?.Data;
         if (intent?.Action != global::Android.Content.Intent.ActionView || uri is null)
@@ -726,22 +749,40 @@ public sealed class MainActivity : AvaloniaMainActivity
             }
         }
 
+        void Settle(bool consumed)
+        {
+            if (consumed)
+            {
+                return;
+            }
+
+            lock (_consumedUris)
+            {
+                _consumedUris.Remove(identity);
+            }
+        }
+
         if (string.Equals(uri.Scheme, "file", StringComparison.OrdinalIgnoreCase) &&
             uri.Path is { } localPath &&
             File.Exists(localPath))
         {
-            return [new IncomingFile(localPath, Path.GetFileName(localPath))];
+            var name = Path.GetFileName(localPath);
+            return
+            [
+                new IncomingFileRequest(
+                    name,
+                    identity,
+                    (_, _) => Task.FromResult(new PreparedIncomingFile(localPath, name, IsTemporary: false)),
+                    Settle),
+            ];
         }
 
         if (!string.Equals(uri.Scheme, "content", StringComparison.OrdinalIgnoreCase))
         {
+            Settle(false);
             return [];
         }
 
-        var cache = CacheDir?.AbsolutePath
-            ?? throw new InvalidOperationException("Android cache storage is unavailable.");
-        var incomingDirectory = Path.Combine(cache, "incoming");
-        Directory.CreateDirectory(incomingDirectory);
         // The provider's own name for the document, not the URI's last segment. The last
         // segment is a document id — "raw:_storage_emulated_0_Download_tiny.txt" for one
         // Downloads form of the same file, "msf:1000000323" for another — and it was becoming
@@ -754,21 +795,101 @@ public sealed class MainActivity : AvaloniaMainActivity
             safeName += ".txt";
         }
 
+        return
+        [
+            new IncomingFileRequest(
+                safeName,
+                identity,
+                (token, progress) => CopyIncomingAsync(uri, safeName, token, progress),
+                Settle),
+        ];
+    }
+
+    private async Task<PreparedIncomingFile> CopyIncomingAsync(
+        global::Android.Net.Uri uri,
+        string safeName,
+        CancellationToken cancellationToken,
+        IProgress<FileWorkProgress>? progress)
+    {
+        var cache = CacheDir?.AbsolutePath
+            ?? throw new InvalidOperationException("Android cache storage is unavailable.");
+        var incomingDirectory = Path.Combine(cache, "incoming");
+        Directory.CreateDirectory(incomingDirectory);
         var destination = Path.Combine(
             incomingDirectory,
             $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}-{safeName}");
-        await using var input = ContentResolver?.OpenInputStream(uri)
-            ?? throw new IOException("Android did not provide a readable stream for the shared log.");
-        await using var output = new FileStream(
-            destination,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            256 * 1024,
-            FileOptions.Asynchronous);
-        await input.CopyToAsync(output, cancellationToken);
-        await output.FlushAsync(cancellationToken);
-        return [new IncomingFile(destination, safeName)];
+        var total = QueryLength(uri);
+        try
+        {
+            await using var input = ContentResolver?.OpenInputStream(uri)
+                ?? throw new IOException("Android did not provide a readable stream for the shared log.");
+            await using var output = new FileStream(
+                destination,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                256 * 1024,
+                FileOptions.Asynchronous);
+            var buffer = new byte[256 * 1024];
+            long copied = 0;
+            progress?.Report(new FileWorkProgress(FileWorkStage.Copying, 0, total, "bytes"));
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var read = await input.ReadAsync(buffer, cancellationToken);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                copied += read;
+                progress?.Report(new FileWorkProgress(FileWorkStage.Copying, copied, total, "bytes"));
+            }
+
+            await output.FlushAsync(cancellationToken);
+        }
+        catch
+        {
+            // This application owns the incomplete copy, so it removes it rather than leaving
+            // a partial log in private storage for a later attempt to trip over.
+            try
+            {
+                File.Delete(destination);
+            }
+            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+            {
+            }
+
+            throw;
+        }
+
+        return new PreparedIncomingFile(destination, safeName, IsTemporary: true);
+    }
+
+    /// <summary>The provider's stated size, when it states one, for determinate progress.</summary>
+    private long? QueryLength(global::Android.Net.Uri uri)
+    {
+        try
+        {
+            using var cursor = ContentResolver?.Query(
+                uri,
+                [global::Android.Provider.IOpenableColumns.Size],
+                null,
+                null,
+                null);
+            if (cursor?.MoveToFirst() == true && !cursor.IsNull(0))
+            {
+                var length = cursor.GetLong(0);
+                return length > 0 ? length : null;
+            }
+        }
+        catch (Exception exception) when (exception is global::Java.Lang.Exception or InvalidOperationException)
+        {
+            // A provider that will not answer is reported as indeterminate, which is honest.
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -803,19 +924,19 @@ public sealed class MainActivity : AvaloniaMainActivity
                 return null;
             }
 
+            // A name, not a location: anything carrying a separator or a relative segment is
+            // another app's idea of a path and is not shown or written. Validate the complete
+            // provider value before applying the display cap; otherwise a separator after the
+            // 96th character would be hidden by truncation and incorrectly accepted.
             value = value.Trim();
-            if (value.Length > 96)
+            if (value.Contains('/', StringComparison.Ordinal) ||
+                value.Contains('\\', StringComparison.Ordinal) ||
+                value is "." or "..")
             {
-                value = value[..96];
+                return null;
             }
 
-            // A name, not a location: anything carrying a separator or a relative segment is
-            // another app's idea of a path and is not shown or written.
-            return value.Contains('/', StringComparison.Ordinal) ||
-                   value.Contains('\\', StringComparison.Ordinal) ||
-                   value is "." or ".."
-                ? null
-                : value;
+            return LimitDisplayName(value, 96);
         }
         catch (Exception exception) when (
             exception is global::Android.Database.SQLException or
@@ -827,35 +948,145 @@ public sealed class MainActivity : AvaloniaMainActivity
         }
     }
 
-    private async Task ShareAsync(string path, CancellationToken cancellationToken)
+    private async Task ShareAsync(
+        string path,
+        IProgress<FileWorkProgress>? progress,
+        CancellationToken cancellationToken)
     {
         var cache = CacheDir?.AbsolutePath
             ?? throw new InvalidOperationException("Android cache storage is unavailable.");
         var shareDirectory = Path.Combine(cache, "share");
         Directory.CreateDirectory(shareDirectory);
-        foreach (var stale in Directory.EnumerateFiles(shareDirectory, "*.zip", SearchOption.TopDirectoryOnly))
+        TryCleanupStaleShares(shareDirectory);
+
+        var sharedPath = UniqueSharePath(shareDirectory, Path.GetFileName(path));
+        try
         {
-            if (File.GetLastWriteTimeUtc(stale) < DateTime.UtcNow.AddDays(-1))
+            await using (var source = new FileStream(
+                             path,
+                             FileMode.Open,
+                             FileAccess.Read,
+                             FileShare.Read,
+                             1024 * 1024,
+                             true))
+            await using (var target = new FileStream(
+                             sharedPath,
+                             FileMode.CreateNew,
+                             FileAccess.Write,
+                             FileShare.None,
+                             1024 * 1024,
+                             true))
             {
-                File.Delete(stale);
+                var buffer = new byte[1024 * 1024];
+                long copied = 0;
+                progress?.Report(new FileWorkProgress(FileWorkStage.Copying, 0, source.Length, "bytes"));
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var read = await source.ReadAsync(buffer, cancellationToken);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                    copied += read;
+                    progress?.Report(new FileWorkProgress(FileWorkStage.Copying, copied, source.Length, "bytes"));
+                }
+
+                await target.FlushAsync(cancellationToken);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var authority = $"{PackageName}.files";
+            var uri = FileProvider.GetUriForFile(this, authority, new Java.IO.File(sharedPath));
+            var intent = new Intent(Intent.ActionSend);
+            intent.SetType("application/zip");
+            intent.PutExtra(Intent.ExtraStream, uri);
+            intent.AddFlags(ActivityFlags.GrantReadUriPermission);
+            StartActivity(Intent.CreateChooser(intent, "Share VisualCat session"));
+        }
+        catch
+        {
+            try
+            {
+                File.Delete(sharedPath);
+            }
+            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+            {
+            }
+
+            throw;
+        }
+    }
+
+    /// <summary>Caps an untrusted provider name without hiding its useful file type.</summary>
+    private static string LimitDisplayName(string value, int maximumLength)
+    {
+        if (value.Length <= maximumLength)
+        {
+            return value;
+        }
+
+        const string portableExtension = ".vcat.zip";
+        var extension = value.EndsWith(portableExtension, StringComparison.OrdinalIgnoreCase)
+            ? value[^portableExtension.Length..]
+            : Path.GetExtension(value);
+        if (extension.Length >= maximumLength || extension.Length > 24)
+        {
+            return value[..maximumLength];
+        }
+
+        return value[..(maximumLength - extension.Length)] + extension;
+    }
+
+    /// <summary>An older share is housekeeping, never a prerequisite for the current one.</summary>
+    private static void TryCleanupStaleShares(string shareDirectory)
+    {
+        try
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-1);
+            foreach (var stale in Directory.EnumerateFiles(shareDirectory, "*.zip", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(stale) < cutoff)
+                    {
+                        File.Delete(stale);
+                    }
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    // Cleanup of one older share must never prevent the share requested now.
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // The active share still gets its own exact error if the directory itself fails.
+        }
+    }
+
+    private static string UniqueSharePath(string directory, string fileName)
+    {
+        var candidate = Path.Combine(directory, fileName);
+        if (!File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        for (var suffix = 2; suffix < 10_000; suffix++)
+        {
+            candidate = Path.Combine(directory, $"{stem}-{suffix}{extension}");
+            if (!File.Exists(candidate))
+            {
+                return candidate;
             }
         }
 
-        var sharedPath = Path.Combine(shareDirectory, Path.GetFileName(path));
-        await using (var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, true))
-        await using (var target = new FileStream(sharedPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true))
-        {
-            await source.CopyToAsync(target, cancellationToken);
-            await target.FlushAsync(cancellationToken);
-        }
-
-        var authority = $"{PackageName}.files";
-        var uri = FileProvider.GetUriForFile(this, authority, new Java.IO.File(sharedPath));
-        var intent = new Intent(Intent.ActionSend);
-        intent.SetType("application/zip");
-        intent.PutExtra(Intent.ExtraStream, uri);
-        intent.AddFlags(ActivityFlags.GrantReadUriPermission);
-        StartActivity(Intent.CreateChooser(intent, "Share VisualCat session"));
+        throw new IOException("Could not reserve a unique shared archive name.");
     }
 
     /// <summary>

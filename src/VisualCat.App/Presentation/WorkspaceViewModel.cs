@@ -304,12 +304,18 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         return tab;
     }
 
+    public Task<SessionTabViewModel> OpenPortableArchiveAsync(
+        string path,
+        CancellationToken cancellationToken = default) =>
+        OpenPortableArchiveAsync(path, progress: null, cancellationToken);
+
     public async Task<SessionTabViewModel> OpenPortableArchiveAsync(
         string path,
+        IProgress<FileWorkProgress>? progress,
         CancellationToken cancellationToken = default)
     {
         var sessionRoot = CreateTemporarySessionPath(Path.GetFileNameWithoutExtension(path), create: false);
-        await PortableSessionArchiveService.ExtractAsync(path, sessionRoot, cancellationToken).ConfigureAwait(false);
+        await PortableSessionArchiveService.ExtractAsync(path, sessionRoot, progress, cancellationToken).ConfigureAwait(false);
         return await OpenSessionAsync(sessionRoot, cancellationToken).ConfigureAwait(false);
     }
 

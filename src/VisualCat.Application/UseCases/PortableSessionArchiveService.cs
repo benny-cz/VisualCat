@@ -8,9 +8,17 @@ public static class PortableSessionArchiveService
     private const int MaximumEntries = 100_000;
     private const long MaximumExpandedBytes = 1L * 1024 * 1024 * 1024 * 1024;
 
+    public static Task CreateAsync(
+        SessionSnapshot snapshot,
+        string destination,
+        CancellationToken cancellationToken = default) =>
+        CreateAsync(snapshot, destination, progress: null, cancellationToken);
+
+    /// <summary>Creates a portable archive while reporting exact progress per stage.</summary>
     public static async Task CreateAsync(
         SessionSnapshot snapshot,
         string destination,
+        IProgress<FileWorkProgress>? progress,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -21,7 +29,7 @@ public static class PortableSessionArchiveService
         var temporaryArchive = output + $".tmp-{Guid.NewGuid():N}";
         try
         {
-            await SessionSaveService.SaveAsync(snapshot, buildDirectory, portable: true, cancellationToken)
+            await SessionSaveService.SaveAsync(snapshot, buildDirectory, portable: true, progress, cancellationToken)
                 .ConfigureAwait(false);
             await using (var stream = new FileStream(
                              temporaryArchive,
@@ -38,6 +46,8 @@ public static class PortableSessionArchiveService
                     throw new InvalidDataException($"Portable session contains more than {MaximumEntries:N0} files.");
                 }
 
+                progress?.Report(new FileWorkProgress(FileWorkStage.CreatingArchive, 0, files.Length, "files"));
+                var packed = 0L;
                 foreach (var path in files.Order(StringComparer.Ordinal))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -57,9 +67,15 @@ public static class PortableSessionArchiveService
                         1024 * 1024,
                         FileOptions.Asynchronous | FileOptions.SequentialScan);
                     await input.CopyToAsync(outputStream, cancellationToken).ConfigureAwait(false);
+                    progress?.Report(new FileWorkProgress(
+                        FileWorkStage.CreatingArchive,
+                        ++packed,
+                        files.Length,
+                        "files"));
                 }
             }
 
+            progress?.Report(new FileWorkProgress(FileWorkStage.Publishing));
             await FileSystemPublish.MoveFileAsync(temporaryArchive, output, overwrite: true, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -74,9 +90,17 @@ public static class PortableSessionArchiveService
         }
     }
 
+    public static Task ExtractAsync(
+        string archivePath,
+        string destinationDirectory,
+        CancellationToken cancellationToken = default) =>
+        ExtractAsync(archivePath, destinationDirectory, progress: null, cancellationToken);
+
+    /// <summary>Extracts a portable archive while reporting exact progress per entry.</summary>
     public static async Task ExtractAsync(
         string archivePath,
         string destinationDirectory,
+        IProgress<FileWorkProgress>? progress,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(archivePath);
@@ -107,12 +131,25 @@ public static class PortableSessionArchiveService
             }
 
             long expandedBytes = 0;
+            long extracted = 0;
+            progress?.Report(new FileWorkProgress(
+                FileWorkStage.ExtractingArchive,
+                0,
+                archive.Entries.Count,
+                "entries"));
             var rootPrefix = temporary.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            void ReportExtractedEntry() => progress?.Report(new FileWorkProgress(
+                FileWorkStage.ExtractingArchive,
+                ++extracted,
+                archive.Entries.Count,
+                "entries"));
+
             foreach (var entry in archive.Entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (string.IsNullOrEmpty(entry.Name))
                 {
+                    ReportExtractedEntry();
                     continue;
                 }
 
@@ -129,7 +166,12 @@ public static class PortableSessionArchiveService
                 }
 
                 var relative = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
-                if (relative == ".capture-identity" || relative.StartsWith(".capture-identity.", StringComparison.Ordinal)) continue;
+                if (relative == ".capture-identity" || relative.StartsWith(".capture-identity.", StringComparison.Ordinal))
+                {
+                    ReportExtractedEntry();
+                    continue;
+                }
+
                 var path = Path.GetFullPath(Path.Combine(temporary, relative));
                 if (!path.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
                 {
@@ -146,8 +188,10 @@ public static class PortableSessionArchiveService
                     1024 * 1024,
                     FileOptions.Asynchronous | FileOptions.SequentialScan);
                 await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+                ReportExtractedEntry();
             }
 
+            progress?.Report(new FileWorkProgress(FileWorkStage.Verifying));
             var report = await SessionVerifier.VerifyAsync(temporary, verifyRawHash: true, cancellationToken)
                 .ConfigureAwait(false);
             if (!report.IsValid)
@@ -157,6 +201,7 @@ public static class PortableSessionArchiveService
                     string.Join("; ", report.Issues.Where(static issue => issue.IsError).Select(static issue => issue.Message)));
             }
 
+            progress?.Report(new FileWorkProgress(FileWorkStage.Publishing));
             await FileSystemPublish.MoveDirectoryAsync(temporary, destination, cancellationToken)
                 .ConfigureAwait(false);
         }

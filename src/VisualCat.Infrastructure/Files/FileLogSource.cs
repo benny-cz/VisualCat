@@ -4,7 +4,7 @@ using VisualCat.Domain.Sessions;
 
 namespace VisualCat.Infrastructure.Files;
 
-public sealed class FileLogSource : ILogSource, ISourceDefectSource
+public sealed class FileLogSource : ILogSource, ISourceDefectSource, IBoundedProbeSource
 {
     private const int MaximumProbeLineBytes = 1024 * 1024;
     private readonly string _path;
@@ -97,6 +97,108 @@ public sealed class FileLogSource : ILogSource, ISourceDefectSource
         }
 
         return lines;
+    }
+
+    public async Task<BoundedSourceProbe> ProbeAsync(
+        int maximumUsefulLines,
+        int maximumRetainedBytes,
+        int maximumLineBytes,
+        CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumUsefulLines);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumRetainedBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumLineBytes);
+        var complete = new List<ReadOnlyMemory<byte>>(maximumUsefulLines);
+        var detector = new List<ReadOnlyMemory<byte>>(maximumUsefulLines);
+        await using var stream = Open();
+        var buffer = new byte[Math.Min(_chunkBytes, 64 * 1024)];
+        var pending = new List<byte>(Math.Min(4096, maximumLineBytes));
+        var retained = 0;
+        var sawBytes = false;
+        while (complete.Count < maximumUsefulLines)
+        {
+            var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                if (pending.Count > 0)
+                {
+                    var final = pending.ToArray();
+                    complete.Add(final);
+                    detector.Add(final);
+                    retained += final.Length;
+                }
+
+                return new BoundedSourceProbe(
+                    complete,
+                    detector,
+                    sawBytes,
+                    ReachedEndOfSource: true,
+                    SourceProbeLimit.None,
+                    retained,
+                    HasClippedLine: false);
+            }
+
+            sawBytes = true;
+            for (var index = 0; index < read; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (retained + pending.Count >= maximumRetainedBytes)
+                {
+                    if (pending.Count > 0)
+                    {
+                        var prefix = pending.ToArray();
+                        detector.Add(prefix);
+                        retained += prefix.Length;
+                    }
+
+                    return new BoundedSourceProbe(
+                        complete,
+                        detector,
+                        SourceBytesObserved: true,
+                        ReachedEndOfSource: false,
+                        SourceProbeLimit.AggregateBytes,
+                        retained,
+                        HasClippedLine: pending.Count > 0);
+                }
+
+                pending.Add(buffer[index]);
+                if (buffer[index] == (byte)'\n')
+                {
+                    var line = pending.ToArray();
+                    complete.Add(line);
+                    detector.Add(line);
+                    retained += line.Length;
+                    pending.Clear();
+                    if (complete.Count == maximumUsefulLines)
+                    {
+                        return new BoundedSourceProbe(
+                            complete,
+                            detector,
+                            SourceBytesObserved: true,
+                            ReachedEndOfSource: false,
+                            SourceProbeLimit.LineCount,
+                            retained,
+                            HasClippedLine: false);
+                    }
+                }
+                else if (pending.Count >= maximumLineBytes)
+                {
+                    var prefix = pending.ToArray();
+                    detector.Add(prefix);
+                    retained += prefix.Length;
+                    return new BoundedSourceProbe(
+                        complete,
+                        detector,
+                        SourceBytesObserved: true,
+                        ReachedEndOfSource: false,
+                        SourceProbeLimit.ClippedLine,
+                        retained,
+                        HasClippedLine: true);
+                }
+            }
+        }
+
+        throw new InvalidOperationException("The bounded probe ended without a terminal result.");
     }
 
     public async IAsyncEnumerable<SourceChunk> ReadAsync(

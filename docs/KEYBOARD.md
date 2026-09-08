@@ -11,16 +11,31 @@ ignored while typing unless they use Ctrl, Alt, Escape, or a function key.
 | Ctrl+Shift+O | Open a `.vcat` session |
 | Ctrl+E | Export the selected session |
 | Ctrl+F | Focus and select the search field |
-| F3 or N | Move the viewport to the next search marker |
-| Shift+F3 or Shift+N | Move to the previous search marker |
+| F3 or N | Select the next search match |
+| Shift+F3 or Shift+N | Select the previous search match |
+| Ctrl+G | Open **Go to match** and select a match by number |
+| Alt+Home | Select the first search match |
+| Alt+End | Select the last search match |
 | Escape | Close mobile filters, clear focused search, clear a selected timeline scope, or clear filters (in that order); ignored when there is nothing to dismiss |
 | Alt+1 | Focus the timeline |
 | Alt+2 | Focus the entry list |
 | Alt+3 | Focus the template list |
 | Alt+4 | Focus the first facet control |
 
-Search-marker navigation wraps at the first and last match and preserves the
-current zoom span.
+Search navigation selects an exact record, not a position on the plot. The
+counter reads `k / N` over **every** match in the session, and `– / N` when no
+match is selected — after a pan or zoom, or before the first step.
+
+Matches are ordered by time, then by their order in the source, so records that
+share a timestamp still have separate places in the sequence; **Go to match**
+says `Search order: time` beside its field. Stepping wraps at the first and last
+match in both directions, and preserves the zoom you chose. When the whole
+session is already on screen, arriving at a match opens a readable window around
+it instead of leaving the view unchanged.
+
+`Ctrl+G`, `Alt+Home` and `Alt+End` work from the workspace and from the search
+field, and are the keyboard route to the **first**, **last** and counter buttons
+already in the search stepper. With no matches they are inert and say why.
 
 ## Timeline shortcuts
 

@@ -214,6 +214,49 @@ public sealed class SegmentSnapshot : IDisposable
         return low;
     }
 
+    /// <summary>First entry whose stable chronological key is not less than the supplied key.</summary>
+    public int LowerBound(long timestampUs, long sequence, int start, int end)
+    {
+        var low = Math.Clamp(start, 0, Count);
+        var high = Math.Clamp(end, low, Count);
+        while (low < high)
+        {
+            var middle = low + ((high - low) >> 1);
+            var timestamp = TimestampAt(middle);
+            if (timestamp < timestampUs || timestamp == timestampUs && SequenceAt(middle) < sequence)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        return low;
+    }
+
+    /// <summary>First entry whose timestamp is greater than the supplied timestamp.</summary>
+    public int UpperTimestampBound(long timestampUs, int start = 0, int? end = null)
+    {
+        var low = Math.Clamp(start, 0, Count);
+        var high = Math.Clamp(end ?? Count, low, Count);
+        while (low < high)
+        {
+            var middle = low + ((high - low) >> 1);
+            if (TimestampAt(middle) <= timestampUs)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        return low;
+    }
+
     /// <summary>
     /// Indices sorted by source sequence, built only for source-order paging and retained
     /// with this immutable segment so later pages seek instead of sorting or rescanning.
@@ -250,6 +293,28 @@ public sealed class SegmentSnapshot : IDisposable
         {
             var middle = low + ((high - low) >> 1);
             if (SequenceAt(indices[middle]) <= sequence)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        return low;
+    }
+
+    /// <summary>First source-order position whose sequence is not less than the supplied value.</summary>
+    public int SourceOrderLowerBound(long sequence)
+    {
+        var indices = SourceOrderIndices;
+        var low = 0;
+        var high = indices.Count;
+        while (low < high)
+        {
+            var middle = low + ((high - low) >> 1);
+            if (SequenceAt(indices[middle]) < sequence)
             {
                 low = middle + 1;
             }
@@ -317,9 +382,15 @@ public sealed class SegmentSnapshot : IDisposable
     }
 
     public RankBitmap GetOrCreateFilter(string key, Func<int, bool> predicate)
+        => GetOrCreateFilter(key, predicate, CancellationToken.None);
+
+    public RankBitmap GetOrCreateFilter(
+        string key,
+        Func<int, bool> predicate,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(predicate);
-        return GetOrCreateBitmap(key, () => RankBitmap.FromPredicate(Count, predicate));
+        return GetOrCreateBitmap(key, () => RankBitmap.FromPredicate(Count, predicate, cancellationToken));
     }
 
     /// <summary>

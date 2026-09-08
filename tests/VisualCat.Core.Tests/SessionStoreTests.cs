@@ -203,6 +203,25 @@ public sealed class SessionStoreTests
     }
 
     [Fact]
+    public async Task RetainingASnapshotPinsThatExactGenerationAfterTheWorkspaceOwnerLetsGo()
+    {
+        using var session = new TemporarySession();
+        await WriteSessionAsync(session.Root, segments: 3, perSegment: 2);
+
+        var workspace = await SessionStore.OpenAsync(session.Root);
+        var generation = workspace.Generation;
+        var expected = workspace.Segments[0].TimestampAt(0);
+        using var retained = workspace.Retain();
+
+        Assert.Equal(generation, retained.Generation);
+        Assert.Same(workspace.Segments[0], retained.Segments[0]);
+        workspace.Dispose();
+
+        Assert.Equal(generation, retained.Generation);
+        Assert.Equal(expected, retained.Segments[0].TimestampAt(0));
+    }
+
+    [Fact]
     public async Task OpeningWithoutReuseProducesIndependentSegments()
     {
         using var session = new TemporarySession();
