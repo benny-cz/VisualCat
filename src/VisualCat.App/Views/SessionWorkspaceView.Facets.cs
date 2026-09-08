@@ -428,7 +428,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 VerticalContentAlignment = VerticalAlignment.Center,
                 Background = Brushes.Transparent,
             };
-            ToolTip.SetTip(clear, $"Remove every {heading.ToLowerInvariant()} filter");
+            ToolTip.SetTip(clear, $"Remove every {FacetBrowserDialog.SingularFor(dimension)} filter");
             clear.Click += (_, _) => _ = RunUiActionAsync(() => _viewModel.ClearFacetDimensionAsync(dimension));
             Grid.SetColumn(clear, 2);
             header.Children.Add(clear);
@@ -454,7 +454,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             };
             AutomationProperties.SetName(
                 edit,
-                $"Edit all {active:N0} active {Singular(heading).ToLowerInvariant()} filters");
+                $"Edit all {active:N0} active {FacetBrowserDialog.SingularFor(dimension)} filters");
             edit.Click += (_, _) => FindFacetRequested?.Invoke(dimension);
             _facets.Children.Add(edit);
         }
@@ -579,7 +579,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         };
         Grid.SetColumn(countText, 1);
         row.Children.Add(countText);
-        var subject = $"{Singular(heading)} {label}, {Counted.Entries(count)}";
+        var subject = $"{Singular(dimension)} {label}, {Counted.Entries(count)}";
         var include = FacetButton("+", state == FacetState.Included, IncludeActive, dimension, key, subject, exclude: false);
         Grid.SetColumn(include, 2);
         row.Children.Add(include);
@@ -593,18 +593,19 @@ public sealed partial class SessionWorkspaceView : UserControl
         return row;
     }
 
-    /// <summary>The group heading as it reads inside one row's name: TAGS becomes "Tag".</summary>
-    private static string Singular(string heading)
+    /// <summary>
+    /// What one value of this group is called, at the start of a row's own name.
+    /// </summary>
+    /// <remarks>
+    /// This used to be derived from the heading by dropping a trailing "s" and lower-casing
+    /// the rest, which made every process row read <c>Processe com.example</c> and every PID
+    /// row <c>Pid 1000</c> beside a browser saying <c>PID 1000</c> for the same value. The
+    /// dimension knows its own word; the heading only knew how to be depluralized wrongly.
+    /// </remarks>
+    private static string Singular(FacetDimension dimension)
     {
-        var trimmed = heading.Trim();
-        if (trimmed.EndsWith('s') && trimmed.Length > 1)
-        {
-            trimmed = trimmed[..^1];
-        }
-
-        return trimmed.Length == 0
-            ? trimmed
-            : string.Concat(char.ToUpperInvariant(trimmed[0]), trimmed[1..].ToLowerInvariant());
+        var word = FacetBrowserDialog.SingularFor(dimension);
+        return char.IsUpper(word[0]) ? word : string.Concat(char.ToUpperInvariant(word[0]), word[1..]);
     }
 
     /// <summary>

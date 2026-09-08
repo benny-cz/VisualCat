@@ -252,6 +252,52 @@ public sealed class FacetDiscoveryTests
     }
 
     /// <summary>
+    /// A value is called the same thing in the summary as in the browser.
+    /// </summary>
+    /// <remarks>
+    /// The pane used to make this word by dropping a trailing "s" from its group heading and
+    /// lower-casing the rest, which spelled every process row <c>Processe com.example</c> and
+    /// every PID row <c>Pid 1000</c> — beside a browser that said <c>PID 1000</c> for the same
+    /// value. Both surfaces now read one map, so the two cannot drift apart again.
+    /// </remarks>
+    [Fact]
+    public void EveryDimensionHasOneWordForOneOfItsValues()
+    {
+        Assert.Equal("tag", VisualCat.App.Views.FacetBrowserDialog.SingularFor(FacetDimension.Tag));
+        Assert.Equal("process", VisualCat.App.Views.FacetBrowserDialog.SingularFor(FacetDimension.Process));
+        Assert.Equal("PID", VisualCat.App.Views.FacetBrowserDialog.SingularFor(FacetDimension.Pid));
+        Assert.Equal("thread", VisualCat.App.Views.FacetBrowserDialog.SingularFor(FacetDimension.Tid));
+        Assert.Equal("buffer", VisualCat.App.Views.FacetBrowserDialog.SingularFor(FacetDimension.Buffer));
+        Assert.Equal("template", VisualCat.App.Views.FacetBrowserDialog.SingularFor(FacetDimension.Template));
+    }
+
+    /// <summary>
+    /// The pane names a process row with that word, rather than one derived from its heading.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AProcessRowIsNamedProcessRatherThanProcesse()
+    {
+        await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(
+            "01-01 00:00:00.000000   100   201 I Alpha          : first record\n",
+            420,
+            900);
+        await fixture.Tab.ToggleFacetAsync(
+            FacetDimension.Process,
+            FacetKey.OfText("com.example.app"),
+            exclude: false);
+        await SettleAsync(
+            fixture,
+            static rows => rows.Any(static name => name.StartsWith("Process ", StringComparison.Ordinal)));
+
+        Assert.Contains(
+            FacetRowNames(fixture),
+            static name => name.StartsWith("Process com.example.app,", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            FacetRowNames(fixture),
+            static name => name.StartsWith("Processe", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// A list search that matches nothing says so, and offers the way back.
     /// </summary>
     /// <remarks>
@@ -443,14 +489,14 @@ public sealed class FacetDiscoveryTests
 
         // Omission is per dimension, not global: with Alpha included, the PID group is
         // narrowed by it and honestly shows only Alpha's PID.
-        Assert.DoesNotContain(FacetRowNames(fixture), static name => name.StartsWith("Pid 200,", StringComparison.Ordinal));
+        Assert.DoesNotContain(FacetRowNames(fixture), static name => name.StartsWith("PID 200,", StringComparison.Ordinal));
 
         // The same rule read from the other side: a PID filter leaves the other PIDs counted.
         await fixture.Tab.ClearFiltersAsync();
         await fixture.Tab.ToggleFacetAsync(FacetDimension.Pid, FacetKey.OfNumber(100), exclude: false);
         await SettleAsync(fixture, static rows =>
-            rows.Any(static name => name.StartsWith("Pid 200,", StringComparison.Ordinal)));
-        Assert.Contains(FacetRowNames(fixture), static name => name.StartsWith("Pid 200, 1 entry", StringComparison.Ordinal));
+            rows.Any(static name => name.StartsWith("PID 200,", StringComparison.Ordinal)));
+        Assert.Contains(FacetRowNames(fixture), static name => name.StartsWith("PID 200, 1 entry", StringComparison.Ordinal));
         Assert.DoesNotContain(FacetRowNames(fixture), static name => name.StartsWith("Tag Bravo,", StringComparison.Ordinal));
 
         await fixture.Tab.ClearFiltersAsync();

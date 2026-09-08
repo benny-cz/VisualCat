@@ -83,15 +83,16 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
     {
         _tab = tab ?? throw new ArgumentNullException(nameof(tab));
         _dimension = dimension;
-        (_queryDimension, _singular, _plural) = dimension switch
+        (_queryDimension, _plural) = dimension switch
         {
-            FacetDimension.Tag => (FacetQueryDimension.Tag, "tag", "tags"),
-            FacetDimension.Process => (FacetQueryDimension.Process, "process", "processes"),
-            FacetDimension.Pid => (FacetQueryDimension.Pid, "PID", "PIDs"),
-            FacetDimension.Tid => (FacetQueryDimension.Tid, "thread", "threads"),
-            FacetDimension.Buffer => (FacetQueryDimension.Buffer, "buffer", "buffers"),
+            FacetDimension.Tag => (FacetQueryDimension.Tag, "tags"),
+            FacetDimension.Process => (FacetQueryDimension.Process, "processes"),
+            FacetDimension.Pid => (FacetQueryDimension.Pid, "PIDs"),
+            FacetDimension.Tid => (FacetQueryDimension.Tid, "threads"),
+            FacetDimension.Buffer => (FacetQueryDimension.Buffer, "buffers"),
             _ => throw new ArgumentOutOfRangeException(nameof(dimension), "Templates use their active-values group rather than a browser."),
         };
+        _singular = SingularFor(dimension);
 
         var mobile = OperatingSystem.IsAndroid();
         PreferredSize = new Size(680, 680);
@@ -997,6 +998,27 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
             }
         }
     }
+
+    /// <summary>
+    /// What one value of a dimension is called, wherever a surface names one.
+    /// </summary>
+    /// <remarks>
+    /// The facet pane used to derive this from its group heading by dropping a trailing "s"
+    /// and lower-casing the rest, which produced <c>Pid</c> beside the browser's <c>PID</c>
+    /// for the same value — and <c>Processe</c>, which is not a word. Both surfaces read it
+    /// from here instead, so a value is called the same thing in the summary and in the
+    /// browser.
+    /// </remarks>
+    internal static string SingularFor(FacetDimension dimension) => dimension switch
+    {
+        FacetDimension.Tag => "tag",
+        FacetDimension.Process => "process",
+        FacetDimension.Pid => "PID",
+        FacetDimension.Tid => "thread",
+        FacetDimension.Buffer => "buffer",
+        FacetDimension.Template => "template",
+        _ => "value",
+    };
 
     /// <summary>
     /// What the browser for a dimension is called, wherever it is named.

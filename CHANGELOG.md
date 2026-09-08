@@ -110,6 +110,10 @@ screenshot says which build it came from.
   card.
 
 ### Fixed
+- A facet value is called the same thing wherever it is named. A screen reader used to read
+  every process row as `Processe com.example` and every PID row as `Pid 1000`, because that
+  word was made by dropping a letter from the group heading; both surfaces now say *process*
+  and *PID*.
 - Exporting now writes exactly the scope it offered. A plot narrowed inside a wider time
   filter exports the intersection rather than the whole filter interval; a selected severity
   cell exports that cell, and *Visible plot range* beside it exports every level the filter
