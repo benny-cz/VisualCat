@@ -154,6 +154,7 @@ Invoke-Stage 'Vulnerable' {
     # so the output has to be inspected.
     $report = & dotnet list $solution package --vulnerable --include-transitive 2>&1
     if ($LASTEXITCODE -ne 0) {
+        Write-Host ($report -join [Environment]::NewLine)
         throw "dotnet list package --vulnerable failed with exit code $LASTEXITCODE."
     }
     $text = $report -join "`n"
