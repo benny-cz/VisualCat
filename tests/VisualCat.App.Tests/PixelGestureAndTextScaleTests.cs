@@ -263,9 +263,39 @@ public sealed class PixelGestureAndTextScaleTests
             SessionWorkspaceView.PhoneCompositionOverride = null;
             TextScale.User = 1;
             WorkspaceViewModel.ConfigureTemporarySessionRoot(null);
-            if (Directory.Exists(directory))
+            await DeleteDirectoryEventuallyAsync(directory);
+        }
+    }
+
+    /// <summary>
+    /// Removes a disposed UI fixture after the host filesystem has observed its final writes.
+    /// </summary>
+    /// <remarks>
+    /// MainView disposal drains its workspace and settings work, but macOS can briefly report
+    /// a recursively enumerated directory as non-empty while the last rename/delete notification
+    /// is still being published. Retry that transient boundary; the final attempt deliberately
+    /// escapes so a real leaked writer still fails the test.
+    /// </remarks>
+    private static async Task DeleteDirectoryEventuallyAsync(string directory)
+    {
+        const int maximumAttempts = 20;
+        for (var attempt = 1; attempt <= maximumAttempts; attempt++)
+        {
+            if (!Directory.Exists(directory))
+            {
+                return;
+            }
+
+            try
             {
                 Directory.Delete(directory, recursive: true);
+                return;
+            }
+            catch (Exception exception) when (
+                attempt < maximumAttempts &&
+                exception is IOException or UnauthorizedAccessException)
+            {
+                await Task.Delay(25);
             }
         }
     }
