@@ -11,6 +11,7 @@ using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 using VisualCat.Core.Query;
 using VisualCat.Core.Store;
+using VisualCat.Domain;
 using VisualCat.Domain.Queries;
 
 namespace VisualCat.App.Views;
@@ -94,7 +95,7 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
         };
         _singular = SingularFor(dimension);
 
-        var mobile = OperatingSystem.IsAndroid();
+        var mobile = DialogComposition.Mobile;
         PreferredSize = new Size(680, 680);
         MinimumSize = mobile ? new Size(300, 320) : new Size(400, 360);
         ScrollsInternally = true;
@@ -105,6 +106,11 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
         AutomationProperties.SetHelpText(
             _search,
             "Literal, case-insensitive text. This does not change the message search or the workspace filter.");
+
+        // The full value is a read-only field so a long tag can be selected and copied, which
+        // also means a reader can focus it. Without a name it is an unlabelled edit box, and
+        // the one control that exists to say which value is selected would say nothing.
+        AutomationProperties.SetName(_selectedDetail, $"Selected {_singular} in full");
         _search.TextChanged += (_, _) => QueueLookup(resetPage: true);
         _search.KeyDown += (_, args) =>
         {
@@ -492,8 +498,8 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
         var first = neutral.Length == 0 ? 0 : _pageOffset + 1;
         var last = neutral.Length == 0 ? 0 : first + neutral.Length - 1;
         _range.Text = neutral.Length == 0
-            ? $"0 of {result.NeutralMatchCount:N0} available values"
-            : $"{first:N0}–{last:N0} of {result.NeutralMatchCount:N0} available values";
+            ? $"0 of {AvailableValues(result.NeutralMatchCount)}"
+            : $"{first:N0}–{last:N0} of {AvailableValues(result.NeutralMatchCount)}";
         _scope.Text = $"{result.NeutralMatchCount:N0} available {_plural} match this list search. " +
                       "Counts use the whole session and your other filters. This group ignores its own " +
                       "filters so you can add alternatives; an active time filter still applies.";
@@ -589,7 +595,7 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
         {
             ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
             RowDefinitions = new RowDefinitions("Auto,Auto"),
-            MinHeight = OperatingSystem.IsAndroid() ? 52 : 34,
+            MinHeight = DialogComposition.Mobile ? 52 : 34,
         };
         grid.Children.Add(valueText);
         Grid.SetColumn(count, 1);
@@ -627,7 +633,7 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
             include.HorizontalAlignment = narrow ? HorizontalAlignment.Right : HorizontalAlignment.Stretch;
             exclude.HorizontalAlignment = narrow ? HorizontalAlignment.Right : HorizontalAlignment.Stretch;
         };
-        AutomationProperties.SetName(grid, $"{_singular} {row.Label}, {row.Value.Count:N0} entries");
+        AutomationProperties.SetName(grid, $"{_singular} {row.Label}, {Counted.Entries(row.Value.Count)}");
         return grid;
     }, supportsRecycling: false);
 
@@ -638,8 +644,8 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
         {
             Content = glyph,
             IsTabStop = false,
-            MinWidth = OperatingSystem.IsAndroid() ? 48 : 34,
-            MinHeight = OperatingSystem.IsAndroid() ? 48 : 30,
+            MinWidth = DialogComposition.Mobile ? 48 : 34,
+            MinHeight = DialogComposition.Mobile ? 48 : 30,
             Margin = new Thickness(2, 0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
         };
@@ -1009,6 +1015,10 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
     /// from here instead, so a value is called the same thing in the summary and in the
     /// browser.
     /// </remarks>
+    /// <summary>How many values the other filters leave to choose from, in agreeing words.</summary>
+    private static string AvailableValues(long count) =>
+        Counted.Of(count, "available value", "available values");
+
     internal static string SingularFor(FacetDimension dimension) => dimension switch
     {
         FacetDimension.Tag => "tag",
@@ -1063,6 +1073,6 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
         /// the container first and read <c>FacetBrowserRow { Value = FacetQueryValue { Key =
         /// …</c> where the value's name belonged.
         /// </remarks>
-        public override string ToString() => $"{Singular} {Label}, {Value.Count:N0} entries";
+        public override string ToString() => $"{Singular} {Label}, {Counted.Entries(Value.Count)}";
     }
 }

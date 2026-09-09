@@ -43,6 +43,17 @@ public sealed record ResolvedExportScope(
 {
     public string Identity =>
         $"{Range.StartInclusive.Value}:{Range.EndExclusive.Value}:{(Filter with { TimeRange = null }).Fingerprint()}";
+
+    /// <summary>The label as it reads inside a sentence, with only its opening capital lowered.</summary>
+    /// <remarks>
+    /// "Exported 4,231 timed rows · selected cell · crash.csv" is one sentence, so the label's
+    /// sentence-initial capital goes with it. Only that one: lower-casing the whole label turned
+    /// the severity in "Selected cell · Error" into "error", which is not what this product calls
+    /// that level anywhere else — the same defect as a dialog titled "Find PIDs" announcing
+    /// itself as "Find pids".
+    /// </remarks>
+    public string SentenceLabel =>
+        Label.Length == 0 ? Label : char.ToLowerInvariant(Label[0]) + Label[1..];
 }
 
 public sealed record ExportDecision(

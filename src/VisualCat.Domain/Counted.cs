@@ -23,6 +23,9 @@ public static class Counted
     /// <summary>"1 line", "1,200 lines".</summary>
     public static string Lines(long count) => Of(count, "line", "lines");
 
+    /// <summary>"1 timed row", "4,231 timed rows".</summary>
+    public static string TimedRows(long count) => Of(count, "timed row", "timed rows");
+
     /// <summary>"1 session", "46 sessions".</summary>
     public static string Sessions(long count) => Of(count, "session", "sessions");
 

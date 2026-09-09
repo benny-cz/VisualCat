@@ -23,6 +23,28 @@ internal interface IDialogHost
 }
 
 /// <summary>
+/// Whether a dialog composes itself for a pointer or for a thumb.
+/// </summary>
+/// <remarks>
+/// The phone gets 48 dp decisions, one column and sheet-sized minimums; the desktop gets the
+/// theme's own sizing and two columns. A headless run is neither and answers as the desktop,
+/// which left the phone half of every dialog this plan added — its decision row above the
+/// software keyboard, its stacked options, its touch floors at enlarged text — with no test
+/// that could reach it. This is the same seam
+/// <see cref="SessionWorkspaceView.PhoneCompositionOverride"/> already is, in the one place
+/// the dialogs share, so a body asks the question once instead of asking the platform
+/// directly and becoming untestable by doing so.
+/// </remarks>
+internal static class DialogComposition
+{
+    /// <summary>Forces phone composition on or off. Null means "ask the platform".</summary>
+    internal static bool? PhoneOverride { get; set; }
+
+    /// <summary>Whether the dialog being built is composing for a thumb.</summary>
+    internal static bool Mobile => PhoneOverride ?? OperatingSystem.IsAndroid();
+}
+
+/// <summary>
 /// A dialog's content and outcome, independent of how it is presented.
 /// </summary>
 public abstract class DialogBody<TResult> : UserControl

@@ -515,9 +515,10 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// the reader can actually see and undo, never for every ranked template on the pane.
     /// </para>
     /// <para>
-    /// A session being torn down cannot name its templates. The ID still identifies the
-    /// filter, which is what removing it needs, so the fallback wording is used rather than
-    /// letting a facet rebuild fail during teardown.
+    /// The wording itself belongs to <see cref="TemplateNames"/>, which the export review
+    /// reads as well: this adds only the per-view cache, so a facet rebuild does not walk
+    /// the template table again for IDs it has already resolved. A resolved fallback is not
+    /// cached, because the definition can arrive with a later snapshot.
     /// </para>
     /// </remarks>
     private string TemplateName(uint id)
@@ -527,18 +528,12 @@ public sealed partial class SessionWorkspaceView : UserControl
             return cached;
         }
 
-        string name;
-        try
+        var name = TemplateNames.Of(_viewModel.Snapshot, id);
+        if (name != TemplateNames.Fallback(id))
         {
-            name = _viewModel.Snapshot?.Templates.FirstOrDefault(template => template.TemplateId == id)?.CanonicalText
-                   ?? $"Template {id}";
-        }
-        catch (Exception exception) when (exception is IOException or ObjectDisposedException or InvalidOperationException)
-        {
-            return $"Template {id}";
+            _templateNames[id] = name;
         }
 
-        _templateNames[id] = name;
         return name;
     }
 

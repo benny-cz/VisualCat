@@ -421,7 +421,7 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         _desktopEntryToolbarCompact = compact;
         _order.IsVisible = !compact;
-        _entryLoadStatus.IsVisible = !compact;
+        ApplyEntryLoadStatusVisibility();
         if (_copyRaw is { } copyRaw)
         {
             copyRaw.IsVisible = !compact;
@@ -435,6 +435,32 @@ public sealed partial class SessionWorkspaceView : UserControl
         {
             more.IsVisible = compact;
         }
+    }
+
+    /// <summary>Whether an arrival window is currently holding rows back from the reader.</summary>
+    private bool _entryArrivalHidesRows;
+
+    /// <summary>
+    /// Keeps the desktop's one account of the hidden rows on screen at every width.
+    /// </summary>
+    /// <remarks>
+    /// The entry toolbar folds below 1,100 logical pixels of pane width, which two of the
+    /// three desktop sizes this work is checked at are under. Everything else in that row has
+    /// somewhere else to go — the More menu carries the orders, the loads and Start of range —
+    /// but the sentence accounting for the rows above an arrival window has no second home on
+    /// the desktop, so folding it away left <em>Start of range</em> offered with nothing on
+    /// screen saying what it would return from. It is the one member of the flexible row that
+    /// survives compaction, and only while there is something for it to account for; it
+    /// ellipsizes, and its full text stays on the tooltip and the automation name.
+    /// </remarks>
+    private void ApplyEntryLoadStatusVisibility()
+    {
+        if (_mobile)
+        {
+            return;
+        }
+
+        _entryLoadStatus.IsVisible = !_desktopEntryToolbarCompact || _entryArrivalHidesRows;
     }
 
     private FuncDataTemplate<NormalizedEntry> BuildDesktopEntryTemplate()
@@ -1918,7 +1944,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         // so — the desktop in its toolbar below, the phone in the footer band, which is the
         // only place on that screen where the sentence has room and where a reader who has
         // run out of rows is already looking.
+        //
+        // Both gate on the same count. A window that begins at the start of the range hides
+        // nothing, and `0 earlier` in place of the ordinary loaded-row progress states a zero
+        // the reader has no use for; the desktop used to say it while the phone stayed quiet.
         var arrivalWindow = _viewModel.IsEntryArrivalWindow && earlier > 0;
+        _entryArrivalHidesRows = arrivalWindow;
         var arrivalStatus = $"{loaded:N0} shown · {earlier:N0} earlier · {remaining:N0} later";
         _entryArrivalStatus.IsVisible = _mobile && arrivalWindow;
         if (_mobile && arrivalWindow)
@@ -2049,9 +2080,10 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         if (!_mobile)
         {
+            ApplyEntryLoadStatusVisibility();
             _entryLoadStatus.Text = limitReached
                 ? $"{loaded:N0} / {(total ?? loaded):N0} rows · safety limit; refine filters"
-                : _viewModel.IsEntryArrivalWindow
+                : arrivalWindow
                     ? arrivalStatus
                 : total is { } count
                 ? loading
@@ -2061,7 +2093,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                         : $"{loaded:N0} / {count:N0} rows loaded"
                 : $"{loaded:N0} rows loaded";
             var loadDescription = total is { } knownTotal
-                ? _viewModel.IsEntryArrivalWindow
+                ? arrivalWindow
                     ? $"{loaded:N0} shown; {earlier:N0} earlier; {remaining:N0} later; {knownTotal:N0} matching rows total"
                     : $"{loaded:N0} of {knownTotal:N0} matching rows loaded; {remaining:N0} remaining"
                 : $"{loaded:N0} matching rows loaded";

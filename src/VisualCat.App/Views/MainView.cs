@@ -280,6 +280,15 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             {
                 _viewModel.SuspendLiveViews();
                 CancelUpdateWork();
+
+                // This view has permanently lost its host. A file review can be waiting on
+                // one of our in-page dialogs, so cancelling the operation alone is not
+                // enough: the task cannot observe that token until the modal completes.
+                // Cancel first, then settle every app-owned dialog. The operation's own
+                // await/finally path drains and releases its snapshot, lease and staging
+                // resources; native pickers remain governed by the platform contract.
+                _fileOperations.Cancel();
+                ForceDismissDialogs();
             });
         AttachToPlatform(_platformEvents);
         Content = Build();
@@ -2291,14 +2300,49 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         RememberFileOperationInvoker(invoker);
-        var work = ExportCoreAsync(request, storage, operation);
+        var work = ExportCoreAsync(request, ChooseAsync, operation);
         _fileOperations.Track(operation, work);
         await work;
+
+        async Task<FileDestination?> ChooseAsync(ExportDecision decision)
+        {
+            var file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = $"Export {decision.Scope.SentenceLabel}",
+                SuggestedFileName = Path.GetFileNameWithoutExtension(request.SourceTitle),
+                DefaultExtension = "csv",
+                FileTypeChoices =
+                [
+                    new FilePickerFileType("CSV")
+                    {
+                        Patterns = ["*.csv"],
+                        MimeTypes = ["text/csv"],
+                    },
+                ],
+            });
+            return file is null ? null : FileDestination.Of(file);
+        }
     }
+
+    /// <summary>
+    /// Runs one frozen export against a supplied destination, for the tests that have to
+    /// reach its five exits without a native picker.
+    /// </summary>
+    /// <remarks>
+    /// The owned snapshot and the deletion work lease are released by one <c>using</c> pair
+    /// inside this method, so review cancellation, picker cancellation, preparation failure
+    /// and both terminal results share a single disposal path. That is only a structure until
+    /// something drives all five of them; this is the seam that lets a test do it.
+    /// </remarks>
+    internal Task RunExportForTestAsync(
+        FrozenExportRequest request,
+        Func<ExportDecision, Task<FileDestination?>> chooseAsync,
+        FileOperationHandle operation) =>
+        ExportCoreAsync(request, chooseAsync, operation);
 
     private async Task ExportCoreAsync(
         FrozenExportRequest request,
-        IStorageProvider storage,
+        Func<ExportDecision, Task<FileDestination?>> chooseAsync,
         FileOperationHandle operation)
     {
         await using (operation)
@@ -2327,7 +2371,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     snapshot.Descriptor.TimestampPolicy.TimeZoneId,
                     snapshot.Descriptor.Counters.UntimedEntries +
                     snapshot.Descriptor.Counters.UnknownLines +
-                    snapshot.Descriptor.Counters.RejectedCandidates > 0);
+                    snapshot.Descriptor.Counters.RejectedCandidates > 0,
+                    // The export owns this snapshot for its whole lifetime, so its template
+                    // table is the right one to read the frozen filter's template IDs against.
+                    id => TemplateNames.Of(snapshot, id));
                 ExportDecision? decision;
                 try
                 {
@@ -2346,34 +2393,20 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 }
 
                 operation.Token.ThrowIfCancellationRequested();
-                var file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
-                {
-                    Title = $"Export {decision.Scope.Label.ToLowerInvariant()}",
-                    SuggestedFileName = Path.GetFileNameWithoutExtension(request.SourceTitle),
-                    DefaultExtension = "csv",
-                    FileTypeChoices =
-                    [
-                        new FilePickerFileType("CSV")
-                        {
-                            Patterns = ["*.csv"],
-                            MimeTypes = ["text/csv"],
-                        },
-                    ],
-                });
-                if (file is null)
+                var destination = await chooseAsync(decision);
+                if (destination is null)
                 {
                     return;
                 }
 
                 long written = 0;
-                var name = file.Name;
-                using (file)
+                var name = destination.Name;
+                using (destination)
                 {
-                    var outputProgress = StorageFileBridge.UsesDirectLocalPath(file)
+                    var outputProgress = destination.UsesDirectLocalPath
                         ? LocalPublishingProgress(operation)
                         : operation.Progress;
-                    await StorageFileBridge.WriteAsync(
-                        file,
+                    await destination.WriteAsync(
                         async (path, cancellationToken) =>
                         {
                             written = await ExportService.ExportNormalizedCsvAsync(
@@ -2398,7 +2431,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 }
 
                 ShowNotice(
-                    $"Exported {written:N0} timed rows · {decision.Scope.Label.ToLowerInvariant()} · {name}",
+                    $"Exported {Counted.TimedRows(written)} · {decision.Scope.SentenceLabel} · {name}",
                     NoticeKind.Completion);
 
                 _settings = _settings with
@@ -2416,7 +2449,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 {
                     WorkspaceViewModel.RecordFailure("export.defaults", exception);
                     ShowNotice(
-                        $"Exported {written:N0} timed rows · {name}. The export defaults could not be remembered.",
+                        $"Exported {Counted.TimedRows(written)} · {name}. The export defaults could not be remembered.",
                         NoticeKind.Completion);
                 }
             }
@@ -4042,6 +4075,16 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // removing a handler that is no longer subscribed does nothing.
         Interlocked.CompareExchange(ref s_platformEvents, null, _platformEvents);
         _platformEvents.Detach();
+        _fileOperations.PropertyChanged -= OnFileOperationChanged;
+
+        // File reviews are part of their operation. Cancel before dismissal so a continuation
+        // released by ForceDismiss cannot advance into the picker/import path, then settle the
+        // app-owned modal before waiting for the operation that was awaiting it. Waiting first
+        // deadlocks teardown: the operation waits for the dialog and the dialog was previously
+        // dismissed only after the wait returned.
+        _fileOperations.Cancel();
+        _recentDialog?.ForceDismiss();
+        ForceDismissDialogs();
         await _fileOperations.DisposeAsync();
         DisposeUpdateWork();
         StopNoticeTimer();
@@ -4055,8 +4098,6 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             _recentRefreshLifetime.Cancel();
         }
 
-        _recentDialog?.ForceDismiss();
-        ForceDismissDialogs();
         if (_captureDeletionTask is { } deletion) await deletion;
         await WaitForRecentSessionsRefreshAsync();
 

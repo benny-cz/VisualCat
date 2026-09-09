@@ -122,6 +122,61 @@ public sealed class ExportFidelityTests
             static row => Assert.Matches(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}\+00:00,", row));
     }
 
+    /// <summary>
+    /// An export that fails part-way leaves the file that was already there untouched.
+    /// </summary>
+    /// <remarks>
+    /// O1-E's local half. The provider half is covered by the storage bridge's own faults;
+    /// this is the local destination, where the guarantee comes from staging beside the file
+    /// and renaming onto it only on success. Cancelling as the first rows are asked for is
+    /// the deterministic stand-in for the disk filling up mid-write: the reader is left with
+    /// yesterday's complete export rather than a truncated one, and with no stage file beside
+    /// it either.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task AnInterruptedExportLeavesThePreviousCompleteFileAndNoStageBehind()
+    {
+        await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(MixedLog);
+        var snapshot = fixture.Tab.Snapshot!;
+        var session = snapshot.TimedRange!.Value;
+        var scope = Assert.Single(
+            ExportScopeResolver.Resolve(Request(fixture, session), session),
+            static candidate => candidate.Kind == ExportScopeKind.AllTimed);
+
+        const string yesterday = "the export from yesterday\n";
+        var destination = Path.Combine(Path.GetTempPath(), $"visualcat-export-{Guid.NewGuid():N}.csv");
+        await File.WriteAllTextAsync(destination, yesterday, TestContext.Current.CancellationToken);
+        try
+        {
+            using var stop = new CancellationTokenSource();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                ExportService.ExportNormalizedCsvAsync(
+                    snapshot,
+                    destination,
+                    scope.Range,
+                    scope.Filter,
+                    EntryOrder.Chronological,
+                    includeUtf8Bom: false,
+                    new CancelOnFirstReport(stop),
+                    stop.Token));
+
+            Assert.Equal(yesterday, await File.ReadAllTextAsync(destination, TestContext.Current.CancellationToken));
+            Assert.Empty(Directory.GetFiles(
+                Path.GetDirectoryName(destination)!,
+                $"{Path.GetFileName(destination)}.tmp-*"));
+        }
+        finally
+        {
+            File.Delete(destination);
+        }
+    }
+
+    /// <summary>Stops the export the moment it starts writing, without a timing guess.</summary>
+    private sealed class CancelOnFirstReport(CancellationTokenSource stop) : IProgress<FileWorkProgress>
+    {
+        public void Report(FileWorkProgress value) => stop.Cancel();
+    }
+
     private static async Task<(string[] Rows, byte[] Bytes)> WriteAsync(
         Core.Store.SessionSnapshot snapshot,
         ResolvedExportScope scope,

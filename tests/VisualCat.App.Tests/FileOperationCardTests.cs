@@ -84,6 +84,49 @@ public sealed class FileOperationCardTests
         await operation.DisposeAsync();
     }
 
+    /// <summary>
+    /// Every stage a file service can report has its own sentence on the card.
+    /// </summary>
+    /// <remarks>
+    /// The card is kind-agnostic: it renders whatever stage the running service reports, so
+    /// saving, archiving and sharing reach the reader through stages that export never
+    /// produces. Those were watched on the phone but not on the desktop, and a stage with no
+    /// wording of its own falls back silently to the operation's opening title — which reads
+    /// as though nothing has moved since the work began.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task EveryStageASaveArchiveOrShareReportsReadsAsItsOwnStage()
+    {
+        await using var shell = await ShellFixture.CreateAsync();
+        Assert.True(shell.Operations.TryBegin(FileOperationKind.Share, "Preparing portable session…", out var operation));
+
+        var expected = new Dictionary<FileWorkStage, string>
+        {
+            // Preparing has nothing more specific to say than the command the reader used.
+            [FileWorkStage.Preparing] = "Preparing portable session…",
+            [FileWorkStage.Copying] = "Copying file…",
+            [FileWorkStage.WritingRows] = "Writing CSV…",
+            [FileWorkStage.Verifying] = "Verifying session…",
+            [FileWorkStage.CreatingArchive] = "Creating archive…",
+            [FileWorkStage.ExtractingArchive] = "Extracting archive…",
+            [FileWorkStage.SavingToProvider] = "Saving to chosen location…",
+            [FileWorkStage.Publishing] = "Finishing…",
+        };
+
+        // Every value of the enum, so a stage added later cannot arrive without wording.
+        Assert.Equal(Enum.GetValues<FileWorkStage>().Order().ToArray(), expected.Keys.Order().ToArray());
+
+        foreach (var (stage, sentence) in expected)
+        {
+            operation!.Report(new FileWorkProgress(stage));
+            shell.Settle();
+            Assert.Equal(sentence, shell.StatusText);
+            Assert.True(shell.Progress.IsIndeterminate, $"{stage} reports no total and must not invent one");
+        }
+
+        await operation!.DisposeAsync();
+    }
+
     [AvaloniaFact]
     public async Task CancelRequestsCancellationOnceAndThenSaysItIsCancelling()
     {

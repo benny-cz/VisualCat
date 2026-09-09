@@ -252,6 +252,44 @@ public sealed class SearchNavigationTests
         Assert.Equal("Enter a match number from 1 to 3.", model.ValidationMessage);
     }
 
+    [AvaloniaFact]
+    public void ThePromptKeepsFractionalTextVisibleUntilValidationReadsIt()
+    {
+        using var dialog = new NumberPromptDialog(
+            "Go to match",
+            "Which match?",
+            1,
+            new SearchMatchPromptModel(Identity("filter-a"), 3));
+        var host = new Window { Content = dialog, Width = 420, Height = 280 };
+        host.Show();
+        try
+        {
+            dialog.NotifyPresented();
+            var input = dialog.GetLogicalDescendants().OfType<NumericUpDown>().Single();
+            var go = dialog.GetLogicalDescendants().OfType<Button>().Single(static button => Equals(button.Content, "Go"));
+
+            input.Text = "1.5";
+            input.Focus();
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+            // NumericUpDown commits before a tapped button raises Click. A plain "0" format
+            // rounds 1.5 to 2 at this focus boundary, so the validator never sees the rejected
+            // input. Exercise that real boundary rather than only asserting a format string.
+            go.Focus();
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Assert.Equal("1.5", input.Text);
+
+            go.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Assert.False(dialog.Completion.IsCompleted);
+            Assert.Equal("Enter a match number from 1 to 3.", dialog.ValidationForTest);
+        }
+        finally
+        {
+            host.Close();
+        }
+    }
+
     [Fact]
     public void APromptWhoseTotalFallsToZeroStaysOpenWithoutContradictoryBounds()
     {
@@ -739,7 +777,108 @@ public sealed class SearchNavigationTests
         }
     }
 
-    /// <summary>What the phone footer says about the hidden rows, or null while it says nothing.</summary>
+    /// <summary>
+    /// An arrival window that hides nothing says nothing, on either platform.
+    /// </summary>
+    /// <remarks>
+    /// The sentence exists to account for rows above the window, and the first match has none
+    /// above it. The desktop showed it anyway — `500 shown · 0 earlier · 923 later` in place of
+    /// the ordinary loaded-row progress — while the phone, which gates on the same count,
+    /// showed nothing. Two surfaces describing one state differently is the shape §12.4 named,
+    /// and the plan is explicit: disclose when B &gt; 0.
+    /// </remarks>
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ArrivingAtTheFirstMatchAccountsForNothingBecauseNothingIsHidden(bool phone)
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = phone;
+        try
+        {
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(
+                ManyMatchLog(1_200),
+                phone ? 420 : 1280,
+                phone ? 900 : 800);
+            await ApplySearchAsync(fixture, "needle");
+
+            await fixture.Tab.NavigateSearchAsync(SearchMatchRequestKind.First);
+            PixelGestureAndTextScaleTests.PumpUntil(
+                fixture.Window,
+                () => fixture.Tab.IsEntryArrivalWindow && fixture.Tab.SelectedSearchMatch is not null);
+
+            // The window is an arrival, and it begins at the start of the range.
+            Assert.True(fixture.Tab.IsEntryArrivalWindow);
+            Assert.Equal(0, fixture.Tab.EarlierEntryCount);
+
+            Assert.Null(ArrivalAccounting(fixture));
+            Assert.Empty(StartOfRangeActions(fixture));
+
+            // And the last match, which does hide rows, still says so on this same surface.
+            await fixture.Tab.NavigateSearchAsync(SearchMatchRequestKind.Last);
+            PixelGestureAndTextScaleTests.PumpUntil(
+                fixture.Window,
+                () => fixture.Tab.EarlierEntryCount > 0 && ArrivalAccounting(fixture) is not null);
+            Assert.NotNull(ArrivalAccounting(fixture));
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    /// <summary>
+    /// The desktop keeps its account of the hidden rows when the entry toolbar folds.
+    /// </summary>
+    /// <remarks>
+    /// The toolbar compacts below 1,100 logical pixels of pane width, which a 1,280-wide
+    /// window is under once the plot and panes have taken their share — and that is one of
+    /// the three desktop sizes this work is checked at. Everything else in that row moves
+    /// into the More menu; this sentence had no second home, so the desktop offered
+    /// <em>Start of range</em> with nothing on screen saying what there was to return from.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task TheDesktopStillAccountsForHiddenRowsWhenItsEntryToolbarFolds()
+    {
+        SessionWorkspaceView.PhoneCompositionOverride = false;
+        try
+        {
+            await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(ManyMatchLog(1_200), 1280, 800);
+            await ApplySearchAsync(fixture, "needle");
+
+            var status = fixture.View.GetLogicalDescendants()
+                .OfType<TextBlock>()
+                .Single(static text => (text.Text ?? string.Empty).EndsWith("rows loaded", StringComparison.Ordinal));
+            Assert.False(status.IsVisible, "this width must fold the toolbar, or the test proves nothing");
+
+            await fixture.Tab.NavigateSearchAsync(SearchMatchRequestKind.Last);
+            PixelGestureAndTextScaleTests.PumpUntil(
+                fixture.Window,
+                () => fixture.Tab.EarlierEntryCount > 0 && ArrivalAccounting(fixture) is not null);
+
+            var loaded = fixture.Tab.LoadedEntryCount;
+            var earlier = fixture.Tab.EarlierEntryCount;
+            var later = fixture.Tab.RemainingEntryCount;
+            Assert.True(earlier > 0, "the last match's window must start past the first page");
+            Assert.Equal($"{loaded:N0} shown · {earlier:N0} earlier · {later:N0} later", ArrivalAccounting(fixture));
+
+            // Start of range is offered from the folded menu, and now says what it returns from.
+            Assert.NotEmpty(StartOfRangeActions(fixture));
+
+            // Back at the start of the range the folded toolbar is quiet again.
+            await fixture.Tab.ReturnToEntryRangeStartAsync();
+            PixelGestureAndTextScaleTests.PumpUntil(
+                fixture.Window,
+                () => !fixture.Tab.IsEntryArrivalWindow && ArrivalAccounting(fixture) is null);
+            Assert.Null(ArrivalAccounting(fixture));
+            Assert.False(status.IsVisible);
+        }
+        finally
+        {
+            SessionWorkspaceView.PhoneCompositionOverride = null;
+        }
+    }
+
+    /// <summary>What either surface says about the hidden rows, or null while it says nothing.</summary>
     private static string? ArrivalAccounting(LiveTestWorkspaceFixture fixture) =>
         fixture.View.GetLogicalDescendants()
             .OfType<TextBlock>()

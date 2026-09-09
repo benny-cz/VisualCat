@@ -66,6 +66,10 @@ screenshot says which build it came from.
   reported rather than swept.
 
 ### Changed
+- An export with only one possible scope states it instead of asking about it. *Export range*
+  resolves its own scope and a fitted, unfiltered plot comes to the same one, so the review now
+  names that scope and its row count and leaves the decision to **Row order**, **Encoding** and
+  **Choose a file…** — rather than offering a single option that cannot be answered wrongly.
 - Facet counts are explained as what they are: **COUNTS · OTHER FILTERS**, expanded as
   *Counts use the whole session and your other filters. Each group ignores its own filters so
   you can add alternatives.* The old heading said *whole session · current filter*, which was
@@ -74,9 +78,10 @@ screenshot says which build it came from.
   is too rare to rank, has been excluded, or no longer matches anything under your other
   filters. Removing one no longer means clearing the whole dimension.
 - An active **template** filter reads as the message shape it matches instead of
-  `template = 3821941`, in the filter chips and in a Templates group that appears only while
-  one is set. A template with no definition in the session reads *Template 3821941* rather
-  than disappearing.
+  `template = 3821941`, in the filter chips, in a Templates group that appears only while
+  one is set, and under **Filter values** in the export review — the place you open to check
+  exactly which filter a file is about to be written under. A template with no definition in
+  the session reads *Template 3821941* rather than disappearing.
 - The search marker lane draws which parts of the visible range hold matches, so a match late
   in a long session is marked even when tens of thousands precede it. Hovering a marker says
   how many matches that part of the range holds; clicking goes to the nearest real one.
@@ -110,6 +115,36 @@ screenshot says which build it came from.
   card.
 
 ### Fixed
+- An arrival window that hides rows says so at every desktop width. The sentence accounting
+  for them — *500 shown · 28,479 earlier · 0 later* — lived in the entry toolbar, which folds
+  below about 1,100 points of pane width, so on an ordinary window **Start of range** was
+  offered with nothing on screen saying what there was to return from. It now survives that
+  fold, and it appears on both platforms only while there really are rows above the window:
+  arriving at the first match no longer reports *0 earlier* in place of the loaded-row count.
+- Counted things agree with their numbers again. A scope with one row reads *1 timed row*, a
+  facet value matching one record reads *1 entry*, a one-line preview sample reads *1 complete
+  line*, and a dimension with one value left reads *1 available value*.
+- An export completion keeps the severity's own capital: *Exported 1 timed row · selected cell
+  · Error · crash.csv*, rather than lower-casing *Error* along with the rest of the label.
+- **Filter values** in the export review now follow the scope currently selected. Choosing
+  *All timed entries in session* removes the workspace filters it ignores instead of leaving
+  contradictory values on screen; filtered scopes also name parse outcomes and whether their
+  message search matches case.
+- **Go to match** keeps a fractional entry such as `1.5` visible when focus moves to **Go** and
+  explains that it needs a whole match number. It no longer rounds the text to `2` before
+  rejecting—or accidentally navigating to—that different match.
+- Closing or replacing the app shell while a file review is open now dismisses the review and
+  cancels its operation before waiting for file work to drain, avoiding a teardown that could
+  wait forever for an invisible dialog.
+- Every number you can type says what it is to a screen reader. *Go to match*'s field, and
+  every other numeric setting — capture pre-roll, stop-after minutes and megabytes, text
+  scale, the timeline's zoom and bar-width limits, cache retention — carried a name the
+  control that actually takes focus did not have, so the field announced nothing at all. The
+  spin buttons beside them already said *Increase* and *Decrease*; now the field does too.
+- **Find…** says which value is selected. The line holding the full text of a selected tag,
+  process, PID, thread or buffer is a field you can select and copy from, and it was an
+  unlabelled one; it is now *Selected tag in full*, in the same word the rest of the browser
+  and the facet pane use for that dimension.
 - A command that cannot run no longer guesses why. *Lines not on the timeline…* used to
   explain itself as *needs an open session* while a session was open and simply carried every
   line onto the timeline; it now says *this session has none*, and the commands that really do

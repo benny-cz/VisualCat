@@ -263,6 +263,14 @@ internal static class SheetForm
     /// ones left in the product (finding F-31). A container is not what a thumb lands on.
     /// Doing it here rather than at each field means an eighth numeric field cannot omit it.
     /// </para>
+    /// <para>
+    /// The editable part needs the same treatment for the same reason. A name set on a
+    /// <see cref="NumericUpDown"/> is not inherited, and the control a reader actually lands
+    /// on is the text box inside the spinner's template — so the field carried a name that
+    /// nothing focusable held, and <em>Go to match</em>'s only input announced nothing at
+    /// all. The field's own name is what the text box is given, falling back to the spin
+    /// buttons' shorter label when the caller set none.
+    /// </para>
     /// </remarks>
     internal static void PrepareSpinButtons(NumericUpDown field, string label)
     {
@@ -303,6 +311,21 @@ internal static class SheetForm
             prepared++;
         }
 
+        // The spinner and its text box are what focus lands on, and neither inherits the
+        // field's name. Both are given it so whichever one a screen reader reports speaks
+        // the field the reader is editing.
+        var spoken = AutomationProperties.GetName(field) is { Length: > 0 } given ? given : label;
+        foreach (var input in field.GetVisualDescendants().OfType<Control>())
+        {
+            if (input is TextBox or ButtonSpinner)
+            {
+                AutomationProperties.SetName(input, spoken);
+            }
+        }
+
+        // The spin buttons remain the signal that the template is realised: the text box
+        // arrives in the same pass, and making the retirement wait for it as well would
+        // leave this running on every layout pass under a theme that had none.
         return prepared >= 2;
     }
 }

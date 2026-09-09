@@ -57,7 +57,7 @@ internal sealed class NumberPromptDialog : DialogBody<long?>, IDisposable
         _model = model;
         PreferredSize = new Size(420, 280);
         MinimumSize = new Size(340, 240);
-        var mobile = OperatingSystem.IsAndroid();
+        var mobile = DialogComposition.Mobile;
 
         // Deliberately unbounded at the control: the bounds move while a capture grows, and
         // "minimum 1, maximum 0" is not a range a control can hold. Validation belongs to the
@@ -67,7 +67,13 @@ internal sealed class NumberPromptDialog : DialogBody<long?>, IDisposable
             Minimum = 1,
             Maximum = long.MaxValue,
             Increment = 1,
-            FormatString = "0",
+            // Keep a fractional edit visible when the field loses focus. Avalonia commits a
+            // NumericUpDown before the button Click handler runs; a whole-number-only display
+            // format therefore changed "1.5" into "2" before validation could read it. The
+            // optional fractional places preserve the reader's input while whole ordinals still
+            // render without a decimal suffix. SearchMatchPromptModel remains the authority that
+            // rejects anything other than an in-range Int64.
+            FormatString = "0.############################",
             Value = Math.Max(1, initial),
             MinHeight = TouchTarget.SelfSized(mobile),
         };

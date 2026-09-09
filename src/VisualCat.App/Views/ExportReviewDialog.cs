@@ -4,6 +4,8 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using VisualCat.App.Presentation;
+using VisualCat.Domain;
+using VisualCat.Domain.Entries;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
 
@@ -24,21 +26,32 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
     private readonly StackPanel _scopeOptions = new() { Spacing = 6 };
     private readonly List<(RadioButton Button, ResolvedExportScope Scope)> _buttons = [];
     private readonly Button _retry = new() { Content = "Retry", IsVisible = false };
-    private readonly bool _mobile = OperatingSystem.IsAndroid();
+    private readonly bool _mobile = DialogComposition.Mobile;
     private Task? _counting;
     private Task? _releaseTask;
     private int _disposeRequested;
 
+    /// <param name="request">The frozen export, whose applied filter this reviews.</param>
+    /// <param name="countAsync">Counts each offered scope against the owned snapshot.</param>
+    /// <param name="displayedTimeZone">The zone the reader's times are shown in.</param>
+    /// <param name="hasOffTimelineLines">Whether the session holds records CSV cannot carry.</param>
+    /// <param name="templateName">
+    /// Resolves an active template filter to its canonical text. Omitted only where no
+    /// snapshot is available; the review then falls back to the same <c>Template n</c>
+    /// wording the workspace uses for an ID with no definition.
+    /// </param>
     internal ExportReviewDialog(
         FrozenExportRequest request,
         Func<CancellationToken, Task<IReadOnlyList<ResolvedExportScope>>> countAsync,
         string displayedTimeZone,
-        bool hasOffTimelineLines)
+        bool hasOffTimelineLines,
+        Func<uint, string>? templateName = null)
         : base("Export CSV")
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(countAsync);
         _countAsync = countAsync;
+        var nameTemplate = templateName ?? TemplateNames.Fallback;
         PreferredSize = new Size(590, 560);
         MinimumSize = _mobile ? new Size(300, 340) : new Size(390, 390);
         ScrollsInternally = true;
@@ -46,6 +59,11 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
         var scopeOptions = _scopeOptions;
         var buttons = _buttons;
         IReadOnlyList<ResolvedExportScope> scopes = [];
+
+        // The only scope there is, once it has a row to write. One choice is not a question,
+        // so it is stated rather than offered — but an empty one leaves this null, because the
+        // empty-scope explanation below is what the reader needs then, not a summary of nothing.
+        ResolvedExportScope? only = null;
 
         var rowOrder = new ComboBox
         {
@@ -61,6 +79,7 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
             SelectedIndex = request.DefaultIncludeUtf8Bom ? 1 : 0,
         };
         AutomationProperties.SetName(encoding, "Encoding");
+        var filterDetail = new ContentControl();
 
         var cancel = new Button
         {
@@ -72,6 +91,9 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
 
         var decisionStatus = new TextBlock
         {
+            // Its accessible name is its text, because it is the line that speaks when the
+            // decision changes. A stable control name is what a test locates it by instead.
+            Name = "ExportDecisionStatus",
             TextWrapping = TextWrapping.Wrap,
             FontSize = TextScale.Of(12),
         };
@@ -84,13 +106,20 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
 
         void RefreshDecision()
         {
-            var selected = buttons.FirstOrDefault(item => item.Button.IsChecked == true).Scope;
+            var selected = only ?? buttons.FirstOrDefault(item => item.Button.IsChecked == true).Scope;
             choose.IsEnabled = selected?.TimedRows is > 0;
+            // The details belong to the scope being decided, not merely to the workspace
+            // filter captured at invocation. In particular, "All timed entries" deliberately
+            // ignores that filter; leaving its values visible here would contradict both the
+            // status line and the CSV that is about to be written.
+            filterDetail.Content = selected is null
+                ? null
+                : FilterDetail(selected.Filter, nameTemplate);
             cancel.Content = scopes.Count > 0 && scopes.All(static scope => scope.TimedRows is 0)
                 ? "Close"
                 : "Cancel";
             decisionStatus.Text = selected is not null
-                ? $"{selected.TimedRows:N0} timed rows · {displayedTimeZone} · {FilterSummary(selected.Filter)}"
+                ? $"{Counted.TimedRows(selected.TimedRows ?? 0)} · {displayedTimeZone} · {FilterSummary(selected.Filter)}"
                 : _retry.IsVisible
                     ? "Could not calculate export rows. Try again."
                     : scopes.Count == 0
@@ -110,18 +139,30 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
             scopes = counted;
             buttons.Clear();
             scopeOptions.Children.Clear();
-            foreach (var scope in counted)
+            only = counted.Count == 1 && counted[0].TimedRows is > 0 ? counted[0] : null;
+            if (counted.Count == 1)
             {
-                var option = ScopeOption(scope, mobile);
-                option.IsCheckedChanged += (_, _) => RefreshDecision();
-                buttons.Add((option, scope));
-                scopeOptions.Children.Add(option);
+                // Export range resolves its own scope, and a fitted unfiltered plot dedupes to
+                // one. Asking the reader to choose from a list of one puts a control on screen
+                // that cannot be answered wrongly and cannot be left alone; the review still
+                // earns its place through the two options beside the decision.
+                scopeOptions.Children.Add(ScopeSummary(counted[0]));
             }
-
-            var preferred = buttons.FirstOrDefault(item => item.Scope.Preferred && item.Scope.TimedRows is > 0);
-            if (preferred.Button is not null)
+            else
             {
-                preferred.Button.IsChecked = true;
+                foreach (var scope in counted)
+                {
+                    var option = ScopeOption(scope, mobile);
+                    option.IsCheckedChanged += (_, _) => RefreshDecision();
+                    buttons.Add((option, scope));
+                    scopeOptions.Children.Add(option);
+                }
+
+                var preferred = buttons.FirstOrDefault(item => item.Scope.Preferred && item.Scope.TimedRows is > 0);
+                if (preferred.Button is not null)
+                {
+                    preferred.Button.IsChecked = true;
+                }
             }
 
             RefreshDecision();
@@ -131,7 +172,7 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
         _refreshDecision = RefreshDecision;
         choose.Click += (_, _) =>
         {
-            var selected = buttons.FirstOrDefault(item => item.Button.IsChecked == true).Scope;
+            var selected = only ?? buttons.FirstOrDefault(item => item.Button.IsChecked == true).Scope;
             if (selected?.TimedRows is not > 0)
             {
                 return;
@@ -200,7 +241,7 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
                     warnings,
                     optionGrid,
                     Note("A successful export remembers these two choices as the new defaults."),
-                    FilterDetail(request.AppliedFilter),
+                    filterDetail,
                 },
             },
             actions,
@@ -309,9 +350,9 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
     /// A filter can name thousands of tags. Naming its dimensions in the decision row keeps
     /// that row readable; a reader who needs to check one exact value opens this.
     /// </remarks>
-    private static Control FilterDetail(FilterSpec filter)
+    private static Control FilterDetail(FilterSpec filter, Func<uint, string> templateName)
     {
-        var values = FilterValues(filter);
+        var values = FilterValues(filter, templateName);
         if (values.Count == 0)
         {
             return new TextBlock { IsVisible = false };
@@ -333,7 +374,7 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
         };
     }
 
-    private static List<string> FilterValues(FilterSpec filter)
+    private static List<string> FilterValues(FilterSpec filter, Func<uint, string> templateName)
     {
         var lines = new List<string>();
         void Add(string label, IEnumerable<string> included, IEnumerable<string> excluded)
@@ -353,7 +394,9 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
 
         if (filter.Search is { } search)
         {
-            lines.Add($"Message {(search.IsRegex ? "matches" : "contains")} {search.Query}");
+            lines.Add(
+                $"Message {(search.IsRegex ? "matches regular expression" : "contains")} {search.Query} · " +
+                (search.CaseSensitive ? "Match case" : "Ignore case"));
         }
 
         if (filter.IncludedLevels.Count > 0)
@@ -366,20 +409,59 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
         Add("PID", filter.IncludedPids.Select(Invariant), filter.ExcludedPids.Select(Invariant));
         Add("Thread", filter.IncludedTids.Select(Invariant), filter.ExcludedTids.Select(Invariant));
         Add("Buffer", filter.IncludedBuffers, filter.ExcludedBuffers);
-        Add(
-            "Template",
-            filter.IncludedTemplates.Select(static id => id.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-            filter.ExcludedTemplates.Select(static id => id.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        // By the message shape it matches, not by its mined ID: the same wording the chip
+        // strip and the Templates group use, so the reader is checking one filter's values
+        // rather than translating a number they were never shown the meaning of.
+        Add("Template", filter.IncludedTemplates.Select(templateName), filter.ExcludedTemplates.Select(templateName));
+        if (filter.IncludedOutcomes.Count > 0)
+        {
+            lines.Add(
+                $"Parse outcome is {string.Join(", ", filter.IncludedOutcomes.Order().Select(OutcomeName))}");
+        }
+
         return lines;
     }
 
     private static string Invariant(int value) =>
         value.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
+    private static string OutcomeName(ParseOutcomeKind outcome) => outcome switch
+    {
+        ParseOutcomeKind.ParsedEntry => "parsed entry",
+        ParseOutcomeKind.MetaRecord => "meta record",
+        ParseOutcomeKind.Continuation => "continuation line",
+        ParseOutcomeKind.UntimedEntry => "untimed entry",
+        ParseOutcomeKind.IgnoredBlank => "ignored blank line",
+        ParseOutcomeKind.UnknownLine => "unknown line",
+        ParseOutcomeKind.RejectedCandidate => "rejected candidate",
+        _ => outcome.ToString(),
+    };
+
+    /// <summary>The one scope this export has, stated rather than offered.</summary>
+    private static StackPanel ScopeSummary(ResolvedExportScope scope)
+    {
+        var heading = Heading(scope);
+        var summary = new StackPanel
+        {
+            Spacing = 1,
+            Children =
+            {
+                new TextBlock { Text = heading, TextWrapping = TextWrapping.Wrap, FontWeight = FontWeight.SemiBold },
+                Note(scope.Summary),
+            },
+        };
+        AutomationProperties.SetName(summary, heading);
+        AutomationProperties.SetHelpText(summary, scope.Summary);
+        return summary;
+    }
+
+    private static string Heading(ResolvedExportScope scope) =>
+        $"{scope.Label} — {Counted.TimedRows(scope.TimedRows ?? 0)}";
+
     private static RadioButton ScopeOption(ResolvedExportScope scope, bool mobile)
     {
         var rows = scope.TimedRows ?? 0;
-        var heading = $"{scope.Label} — {rows:N0} timed rows";
+        var heading = Heading(scope);
         var option = new RadioButton
         {
             GroupName = "ExportScope",

@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using VisualCat.Application.UseCases;
+using VisualCat.Domain;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Sessions;
 
@@ -64,7 +65,7 @@ internal sealed class ImportPreviewDialog : DialogBody<IngestSettings>, IDisposa
         _initialPolicy = initial.TimestampPolicy;
         _yearHelp = $"Leave blank to use the source reference date {_initialPolicy.ReferenceInstant:yyyy-MM-dd}, or enter 1970 through 9999.";
         _portableRawRequired = portableRawRequired;
-        var mobile = OperatingSystem.IsAndroid();
+        var mobile = DialogComposition.Mobile;
         PreferredSize = new Size(720, 660);
         MinimumSize = mobile ? new Size(300, 340) : new Size(390, 400);
         ScrollsInternally = true;
@@ -168,7 +169,9 @@ internal sealed class ImportPreviewDialog : DialogBody<IngestSettings>, IDisposa
                     },
                     new TextBlock
                     {
-                        Text = $"Preview of up to the first 200 lines · {_sample.CompleteLines.Count:N0} complete lines · {_sample.RetainedBytes / 1024d:N1} KiB retained",
+                        Text = "Preview of up to the first 200 lines · " +
+                               $"{Counted.Of(_sample.CompleteLines.Count, "complete line", "complete lines")} · " +
+                               $"{_sample.RetainedBytes / 1024d:N1} KiB retained",
                         TextWrapping = TextWrapping.Wrap,
                         Opacity = 0.74,
                     },
