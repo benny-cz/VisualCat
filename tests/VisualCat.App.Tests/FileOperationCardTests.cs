@@ -300,7 +300,7 @@ public sealed class FileOperationCardTests
         /// A shell over a settings file of its own, so a test never reads or writes the
         /// developer's real one.
         /// </summary>
-        internal static Task<ShellFixture> CreateAsync()
+        internal static async Task<ShellFixture> CreateAsync()
         {
             var settingsPath = Path.Combine(
                 Path.GetTempPath(),
@@ -311,7 +311,13 @@ public sealed class FileOperationCardTests
             window.Show();
             var fixture = new ShellFixture(view, window, settingsPath);
             fixture.Settle();
-            return Task.FromResult(fixture);
+            // The home screen populates its recent-capture actions asynchronously. Establish
+            // the command baseline only after that startup scan has settled; otherwise a slow
+            // host can replace SHOW ALL CAPTURES with a capture card while the file operation
+            // is running and make an unchanged command set look different.
+            await view.WaitForRecentSessionsRefreshAsync();
+            fixture.Settle();
+            return fixture;
         }
 
         internal MainView View { get; }

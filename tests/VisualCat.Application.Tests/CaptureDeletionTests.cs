@@ -681,7 +681,8 @@ public sealed class CaptureDeletionTests : IDisposable
         for (var depth = 0; depth < 150; depth++) { path = Path.Combine(path, "d"); Directory.CreateDirectory(path); }
         await File.WriteAllTextAsync(Path.Combine(path, "payload"), "owned", TestContext.Current.CancellationToken);
         var target = await CaptureDeletionService.PrepareAsync(_root, capture);
-        Assert.True(Assert.Single(await CaptureDeletionService.DeleteAsync(_root, [target])).Committed);
+        var result = Assert.Single(await CaptureDeletionService.DeleteAsync(_root, [target]));
+        Assert.True(result.Committed, $"{result.Outcome}: {result.Error}");
         await CaptureDeletionService.RetryCleanupAsync(_root);
         Assert.Empty(Directory.EnumerateDirectories(_root, "*.vcat-deleting"));
     }
