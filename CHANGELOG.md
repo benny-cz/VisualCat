@@ -168,6 +168,9 @@ screenshot says which build it came from.
 - Copying a file another application handed to VisualCat is now visible, and can be cancelled.
   A failed or cancelled copy removes its own incomplete copy and lets you open the same file
   again, instead of reporting nothing and refusing the retry.
+- Finishing an import or live capture now closes and drains its progressive view refresh before
+  opening the completed session. A late progress callback can no longer replace the final query
+  and leave a tab saying **Ready** with its recorded entries missing from the list.
 - Stepping through search matches no longer leaves the view unchanged when the whole session
   is already on screen, and no longer stops at the twenty-thousandth match.
 - Panning or zooming a searched session no longer re-runs the search over the whole session.

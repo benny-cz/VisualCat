@@ -49,7 +49,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     /// generation on disk, so one that is already running will pick up whatever arrived while
     /// it ran — dropping the request is not dropping the data.
     /// </remarks>
-    private readonly HashSet<SessionTabViewModel> _refreshing = [];
+    private readonly Dictionary<SessionTabViewModel, TaskCompletionSource> _progressRefreshes = [];
     private SessionTabViewModel? _selected;
     private static string? s_temporarySessionRoot;
 
@@ -228,6 +228,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         Add(tab);
         var operation = RegisterOperation(tab, cancellationToken);
         var operationToken = operation.Cancellation.Token;
+        using var progressLifetime = CancellationTokenSource.CreateLinkedTokenSource(operationToken);
         var acquired = false;
         // The title travels into the session, not only onto the tab: a session reopened from
         // the cache reads its name from the stored descriptor, and without this it read the
@@ -247,7 +248,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             // fast the rest is arriving (finding 24).
             static snapshot =>
                 $"Reading · {snapshot.LinesCommitted:N0} lines read · {snapshot.ThroughputLinesPerSecond:N0}/s",
-            operationToken);
+            progressLifetime.Token);
         try
         {
             EnterQueue(tab);
@@ -262,22 +263,26 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
                 _diagnostics,
                 cancellationToken: operationToken).ConfigureAwait(false);
             result.Snapshot.Dispose();
+            await StopProgressRefreshesAsync(progressLifetime, tab).ConfigureAwait(false);
             await tab.LoadSnapshotAsync(true, operationToken).ConfigureAwait(false);
             return tab;
         }
         catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested)
         {
+            await StopProgressRefreshesAsync(progressLifetime, tab).ConfigureAwait(false);
             tab.ReportActivity(SessionActivity.Stopped, "Stopped · what was read so far is kept");
             throw;
         }
         catch (Exception exception)
         {
+            await StopProgressRefreshesAsync(progressLifetime, tab).ConfigureAwait(false);
             var reason = FriendlyMessage(exception);
             tab.ReportFailure(reason, ImportRemedy(exception));
             throw;
         }
         finally
         {
+            progressLifetime.Cancel();
             if (acquired)
             {
                 _resourceGovernor.Release();
@@ -477,6 +482,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             PortableRaw: true);
         using var timed = duration is { } value ? new CancellationTokenSource(value) : new CancellationTokenSource();
         using var gracefulStop = CancellationTokenSource.CreateLinkedTokenSource(timed.Token, operation.GracefulStop.Token);
+        using var progressLifetime = CancellationTokenSource.CreateLinkedTokenSource(operationToken);
 
         // Every graceful ending drains the same pipeline, so every one of them gets the same
         // account of itself. Stop capture already said so from the button; this is what gives
@@ -533,13 +539,14 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
                     tab,
                     SessionActivity.Capturing,
                     snapshot => tab.DescribeCaptureProgress(scope.Value, snapshot),
-                    operationToken),
+                    progressLifetime.Token),
                 _diagnostics,
                 _presence,
                 gracefulStopToken: gracefulStop.Token,
                 cancellationToken: operationToken).ConfigureAwait(false);
             var capturedEntries = result.Snapshot.Descriptor.Counters.ParsedEntries;
             result.Snapshot.Dispose();
+            await StopProgressRefreshesAsync(progressLifetime, tab).ConfigureAwait(false);
 
             // The session is complete and reopenable from here on, so nothing may go on
             // describing a live source. Reopening it and running the first queries over it is
@@ -640,16 +647,19 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         }
         catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested)
         {
+            await StopProgressRefreshesAsync(progressLifetime, tab).ConfigureAwait(false);
             tab.ReportActivity(SessionActivity.Stopped, "Stopped · what was captured is kept");
             throw;
         }
         catch (Exception exception)
         {
+            await StopProgressRefreshesAsync(progressLifetime, tab).ConfigureAwait(false);
             tab.ReportFailure(FriendlyMessage(exception), remedy: null);
             throw;
         }
         finally
         {
+            progressLifetime.Cancel();
             tab.IsLiveCaptureActive = false;
             RaiseLiveCaptureChanged();
             if (source is ISourceScopeReporter finished)
@@ -809,36 +819,73 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         long lastUiProgress = 0;
         return new Progress<ProgressSnapshot>(snapshot =>
         {
-            var now = Stopwatch.GetTimestamp();
-            var minimumTicks = Math.Max(1, Stopwatch.Frequency / Volatile.Read(ref _uiRefreshLimit));
-            if (snapshot.TerminalState is null &&
-                now - Volatile.Read(ref lastUiProgress) < minimumTicks)
+            // Progress<T> can leave callbacks queued on the UI context after ImportAsync has
+            // returned. Share this gate with StopProgressRefreshesAsync so completion either
+            // observes this whole callback (including refresh registration), or closes the
+            // lifetime before it starts. That prevents a late "Reading" status and snapshot
+            // from superseding the authoritative final load.
+            lock (_progressRefreshes)
             {
-                return;
-            }
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
 
-            Volatile.Write(ref lastUiProgress, now);
-            if (tab.IsStopping)
-            {
-                // The reports keep coming after the stop — the pipeline still has read-ahead
-                // to commit — and each one is progress the reader is waiting on, so it is
-                // shown as what remains of the stop rather than as a capture still running.
-                tab.ReportStopProgress(snapshot);
-            }
-            else
-            {
-                tab.ReportActivity(activity, describe(snapshot));
-            }
+                var now = Stopwatch.GetTimestamp();
+                var minimumTicks = Math.Max(1, Stopwatch.Frequency / Volatile.Read(ref _uiRefreshLimit));
+                if (snapshot.TerminalState is null &&
+                    now - Volatile.Read(ref lastUiProgress) < minimumTicks)
+                {
+                    return;
+                }
 
-            // With the workspace off screen there is nothing to redraw, and re-opening
-            // the snapshot only to run four queries against it and throw the answers
-            // away is the most expensive thing a backgrounded capture can do.
-            // ResumeLiveViews brings the tab straight up to date when it returns.
-            if (snapshot.SnapshotGeneration > (tab.Snapshot?.Generation ?? 0) && _presence.IsWatching)
-            {
-                _ = RefreshProgressSnapshotAsync(tab, cancellationToken);
+                Volatile.Write(ref lastUiProgress, now);
+                if (tab.IsStopping)
+                {
+                    // The reports keep coming after the stop — the pipeline still has read-ahead
+                    // to commit — and each one is progress the reader is waiting on, so it is
+                    // shown as what remains of the stop rather than as a capture still running.
+                    tab.ReportStopProgress(snapshot);
+                }
+                else
+                {
+                    tab.ReportActivity(activity, describe(snapshot));
+                }
+
+                // With the workspace off screen there is nothing to redraw, and re-opening
+                // the snapshot only to run four queries against it and throw the answers
+                // away is the most expensive thing a backgrounded capture can do.
+                // ResumeLiveViews brings the tab straight up to date when it returns.
+                if (snapshot.SnapshotGeneration > (tab.Snapshot?.Generation ?? 0) && _presence.IsWatching)
+                {
+                    _ = RefreshProgressSnapshotAsync(tab, cancellationToken);
+                }
             }
         });
+    }
+
+    /// <summary>
+    /// Closes a progressive reporter and waits until a refresh that it already started has
+    /// finished publishing. The caller may safely run the final snapshot load afterwards.
+    /// </summary>
+    private async Task StopProgressRefreshesAsync(
+        CancellationTokenSource progressLifetime,
+        SessionTabViewModel tab)
+    {
+        progressLifetime.Cancel();
+
+        Task? activeRefresh;
+        lock (_progressRefreshes)
+        {
+            activeRefresh = _progressRefreshes.TryGetValue(tab, out var completion)
+                ? completion.Task
+                : null;
+        }
+
+        if (activeRefresh is not null)
+        {
+            await activeRefresh.ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -856,12 +903,16 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     /// <summary>Runs one progress refresh per tab at a time, dropping the overlap.</summary>
     private async Task RefreshProgressSnapshotAsync(SessionTabViewModel tab, CancellationToken cancellationToken)
     {
-        lock (_refreshing)
+        TaskCompletionSource completion;
+        lock (_progressRefreshes)
         {
-            if (!_refreshing.Add(tab))
+            if (cancellationToken.IsCancellationRequested || _progressRefreshes.ContainsKey(tab))
             {
                 return;
             }
+
+            completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _progressRefreshes.Add(tab, completion);
         }
 
         try
@@ -870,9 +921,10 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         }
         finally
         {
-            lock (_refreshing)
+            lock (_progressRefreshes)
             {
-                _refreshing.Remove(tab);
+                completion.TrySetResult();
+                _progressRefreshes.Remove(tab);
             }
         }
     }

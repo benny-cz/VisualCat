@@ -36,19 +36,19 @@ public sealed class WorkspaceReviewFixHeadlessTests
         var entries = fixture.Entries;
         for (var index = 0; index < 3; index++)
         {
-            var message = MessageBlock(entries, index);
+            var message = MessageBlock(fixture, index);
             Assert.Equal(TextWrapping.NoWrap, message.TextWrapping);
             Assert.Equal(1, message.MaxLines);
             Assert.Equal(TextTrimming.CharacterEllipsis, message.TextTrimming);
         }
 
         entries.SelectedIndex = 1;
-        var selected = MessageBlock(entries, 1);
+        var selected = MessageBlock(fixture, 1);
         Assert.Equal(TextWrapping.Wrap, selected.TextWrapping);
         Assert.True(selected.MaxLines > 1);
 
         // Every row that is not the reader's stays a single scannable line.
-        Assert.Equal(TextWrapping.NoWrap, MessageBlock(entries, 0).TextWrapping);
+        Assert.Equal(TextWrapping.NoWrap, MessageBlock(fixture, 0).TextWrapping);
     }
 
     /// <summary>
@@ -336,10 +336,29 @@ public sealed class WorkspaceReviewFixHeadlessTests
         }
     }
 
-    private static TextBlock MessageBlock(ListBox entries, int index)
+    private static TextBlock MessageBlock(WorkspaceFixture fixture, int index)
     {
-        var container = entries.ContainerFromIndex(index);
-        Assert.NotNull(container);
+        var entries = fixture.Entries;
+        var window = fixture.Window;
+        Control? container = null;
+        PixelGestureAndTextScaleTests.PumpUntil(
+            window,
+            () =>
+            {
+                entries.ScrollIntoView(index);
+                container = entries.ContainerFromIndex(index);
+                return container is not null;
+            },
+            passes: 200);
+        Assert.True(
+            container is not null,
+            $"Entry {index} was not realized after layout settled: " +
+            $"items={entries.ItemCount}, visible={entries.IsVisible}, " +
+            $"effective={entries.IsEffectivelyVisible}, bounds={entries.Bounds}, " +
+            $"window={window.ClientSize}, activity={fixture.Tab.Activity}, " +
+            $"status={fixture.Tab.Status}, pending={fixture.Tab.IsQueryPending}, " +
+            $"matches={fixture.Tab.MatchesInView}, viewport={fixture.Tab.Viewport}, " +
+            $"session={fixture.Tab.Snapshot?.TimedRange}.");
         return container.GetLogicalDescendants()
             .OfType<TextBlock>()
             .Single(static block => block.Name == "EntryMessage");
@@ -374,7 +393,10 @@ public sealed class WorkspaceReviewFixHeadlessTests
 
         public ListBox Entries => View.GetLogicalDescendants()
             .OfType<ListBox>()
-            .Single(static list => AutomationProperties.GetName(list) == "Filtered log entries");
+            .Single(static list =>
+                AutomationProperties.GetName(list)?.StartsWith(
+                    "Filtered log entries",
+                    StringComparison.Ordinal) == true);
 
         public static async Task<WorkspaceFixture> CreateAsync(string log)
         {
@@ -388,6 +410,12 @@ public sealed class WorkspaceReviewFixHeadlessTests
             var view = new SessionWorkspaceView(tab);
             var window = new Window { Content = view, Width = 1280, Height = 800 };
             window.Show();
+
+            // Show schedules the first measure, template realization and the presentation
+            // refresh that can extend the list's accessibility name with its empty-state
+            // explanation. Drain that initial UI work before a test inspects row containers;
+            // macOS does not always finish it inline with Show like the Windows headless host.
+            Dispatcher.UIThread.RunJobs();
             return new WorkspaceFixture(root, workspace, tab, view, window);
         }
 
