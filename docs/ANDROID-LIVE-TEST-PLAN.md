@@ -2807,6 +2807,9 @@ should re-run at least the scenarios in its row.
 
 ## Related documents
 
+- [`WINDOWS-LIVE-TEST-PLAN.md`](WINDOWS-LIVE-TEST-PLAN.md) and
+  [`LINUX-LIVE-TEST-PLAN.md`](LINUX-LIVE-TEST-PLAN.md) — the desktop plans the
+  host-side and parity tiers here hand off to.
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — what each layer owns, and the
   invariants these tests are ultimately protecting.
 - [`SUPPORT.md`](SUPPORT.md) — supported API levels, ABIs, and source kinds.
