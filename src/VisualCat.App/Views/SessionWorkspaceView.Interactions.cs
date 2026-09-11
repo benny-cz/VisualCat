@@ -1366,7 +1366,12 @@ public sealed partial class SessionWorkspaceView : UserControl
             case nameof(SessionTabViewModel.Activity):
             case nameof(SessionTabViewModel.FailureReason):
                 AnnouncePartialRecovery();
-                return WorkspaceRefresh.CaptureActions;
+
+                // The pane's own State row is derived from this, and the source-accounting
+                // notice may only speak once acquisition has stopped — so reaching a settled
+                // state has to rebuild the pane rather than wait for whatever refresh happens
+                // to come next, which for a finished import is none (Linux live test L-02).
+                return WorkspaceRefresh.CaptureActions | WorkspaceRefresh.SessionInfo;
             case nameof(SessionTabViewModel.Completion):
                 AnnouncePartialRecovery();
                 return WorkspaceRefresh.SessionInfo;

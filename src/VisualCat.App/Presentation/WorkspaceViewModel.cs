@@ -47,9 +47,22 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     /// start another: they then queued on the session's load lock, so the work outlived the
     /// arrivals that asked for it and the queue only ever grew. A refresh reads the newest
     /// generation on disk, so one that is already running will pick up whatever arrived while
-    /// it ran — dropping the request is not dropping the data.
+    /// it ran.
     /// </remarks>
     private readonly Dictionary<SessionTabViewModel, TaskCompletionSource> _progressRefreshes = [];
+
+    /// <summary>Tabs whose newest generation arrived while a refresh was already running.</summary>
+    /// <remarks>
+    /// "A refresh already running will pick up whatever arrived while it ran" holds only for
+    /// what arrives before that refresh reads the manifest; a generation committed after that
+    /// read is not in its answers, and simply dropping the request left nothing to go and get
+    /// it. One remembered bit per tab turns the drop into a coalesce: the running refresh
+    /// finishes, sees that the session moved again, and runs once more. That collapses any
+    /// number of reports into one extra pass rather than the unbounded queue this replaced,
+    /// and it is what keeps a long import's plot following the log instead of stopping at
+    /// whichever generation happened to win the last race (Linux live test L-01).
+    /// </remarks>
+    private readonly HashSet<SessionTabViewModel> _pendingProgressRefreshes = [];
     private SessionTabViewModel? _selected;
     private static string? s_temporarySessionRoot;
 
@@ -900,14 +913,23 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     /// capture genuinely is unaffected, so this is reported as a view-freshness problem
     /// and clears itself as soon as a refresh succeeds.
     /// </remarks>
-    /// <summary>Runs one progress refresh per tab at a time, dropping the overlap.</summary>
+    /// <summary>
+    /// Runs one progress refresh per tab at a time, coalescing the overlap into a single
+    /// further pass so the newest generation is never the one nobody went back for.
+    /// </summary>
     private async Task RefreshProgressSnapshotAsync(SessionTabViewModel tab, CancellationToken cancellationToken)
     {
         TaskCompletionSource completion;
         lock (_progressRefreshes)
         {
-            if (cancellationToken.IsCancellationRequested || _progressRefreshes.ContainsKey(tab))
+            if (cancellationToken.IsCancellationRequested)
             {
+                return;
+            }
+
+            if (_progressRefreshes.ContainsKey(tab))
+            {
+                _pendingProgressRefreshes.Add(tab);
                 return;
             }
 
@@ -917,12 +939,26 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
 
         try
         {
-            await LoadProgressSnapshotAsync(tab, cancellationToken).ConfigureAwait(false);
+            while (true)
+            {
+                await LoadProgressSnapshotAsync(tab, cancellationToken).ConfigureAwait(false);
+                lock (_progressRefreshes)
+                {
+                    // Still inside the registration, so completion — which
+                    // StopProgressRefreshesAsync waits on — covers the extra pass too, and a
+                    // cancelled lifetime ends the loop rather than racing the final load.
+                    if (cancellationToken.IsCancellationRequested || !_pendingProgressRefreshes.Remove(tab))
+                    {
+                        return;
+                    }
+                }
+            }
         }
         finally
         {
             lock (_progressRefreshes)
             {
+                _pendingProgressRefreshes.Remove(tab);
                 completion.TrySetResult();
                 _progressRefreshes.Remove(tab);
             }

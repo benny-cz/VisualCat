@@ -1573,7 +1573,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         // the open session has some, so it is never a command that opens an empty pane
         // (V2-14).
         Secondary(
-            "Lines not on the timeline…",
+            $"{UnparsedLinesDialog.CommandName}…",
             ShowUnparsedLinesAsync,
             "Stack-trace frames and records with no usable timestamp",
             CanShowUnparsedLines,

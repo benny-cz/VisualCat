@@ -1,8 +1,12 @@
 using System.Globalization;
 using System.Text;
+using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using VisualCat.App.Presentation;
+using VisualCat.App.Views;
 using VisualCat.Application.Coordination;
+using VisualCat.Domain.Queries;
 using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
 using VisualCat.Infrastructure.Testing;
@@ -60,6 +64,100 @@ public sealed class SessionActivityTests
             await tab.LoadSnapshotAsync(true, TestContext.Current.CancellationToken);
             Assert.Equal(half, tab.Viewport);
 
+            await workspace.CloseAsync(tab);
+        }
+        finally
+        {
+            WorkspaceViewModel.ConfigureTemporarySessionRoot(null);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The same promise for an import large enough to be committed in more than one segment,
+    /// which is the only size at which it was ever broken (Linux live test L-01).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A session is committed in 100,000-entry segments, and the progressive reporter
+    /// republishes the tab's snapshot as each new generation appears. Below one segment an
+    /// import publishes its whole content in the generations the view consumes, so every
+    /// existing test of this promise — 20,000 lines, 4,000 lines — passes whatever the
+    /// refresh path does. Above it the finished session arrives in generations the view was
+    /// never told about, and the workspace was left rendering a prefix of the log: 100,001 of
+    /// 199,990 entries on one run, 800,001 of 999,892 on another, with the missing tail simply
+    /// absent from the plot and no indication that anything was missing.
+    /// </para>
+    /// <para>
+    /// The assertions are deliberately about the descriptor rather than the plot. Every
+    /// visible surface — heat map, severity totals, time axis, entry list, templates, and the
+    /// summary counters — is derived from the snapshot the tab holds, so the snapshot's own
+    /// counters are what makes all of them right or all of them wrong at once.
+    /// </para>
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task AMultiSegmentImportEndsShowingTheWholeSession()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisualCat.App.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        WorkspaceViewModel.ConfigureTemporarySessionRoot(root);
+        try
+        {
+            // Two and a half segments: enough that the last committed generation cannot be
+            // the one the progressive reporter last published.
+            const int Lines = 250_000;
+            var sourcePath = Path.Combine(root, "multi-segment.txt");
+            await File.WriteAllTextAsync(
+                sourcePath,
+                BuildLog(Lines, TimeSpan.FromHours(2)),
+                TestContext.Current.CancellationToken);
+
+            await using var workspace = new WorkspaceViewModel();
+
+            // The workspace is on screen while the import runs, as it is in the product: the
+            // tab's view is built the moment the tab appears and then redraws on every
+            // progress refresh. That contention on the UI thread is what lets one refresh
+            // still be in flight when the next generation lands.
+            Window? window = null;
+            workspace.TabAdded += (_, added) =>
+            {
+                window = new Window
+                {
+                    Content = new SessionWorkspaceView(added),
+                    Width = 1280,
+                    Height = 800,
+                };
+                window.Show();
+            };
+
+            var tab = await workspace.ImportFileAsync(sourcePath, TestContext.Current.CancellationToken);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(SessionActivity.Ready, tab.Activity);
+            var snapshot = Assert.IsType<VisualCat.Core.Store.SessionSnapshot>(tab.Snapshot);
+
+            // The session the reader is looking at is the session that was read.
+            Assert.Equal(Lines, snapshot.Descriptor.Counters.TimedEntries);
+
+            // And the plot is showing all of it, not the prefix that existed when the last
+            // progress refresh happened to land.
+            Assert.NotNull(snapshot.TimedRange);
+            Assert.True(tab.ViewportIsAuto);
+            Assert.Equal(snapshot.TimedRange, tab.Viewport);
+
+            // The invariant underneath all of that, and the one the defect actually broke:
+            // what is on screen was computed from the snapshot the tab holds. Every visible
+            // number is derived from this query, so when it lags the store the tab reports
+            // Ready over a session it is not showing — and nothing on screen says so.
+            var applied = Assert.IsType<QueryIdentity>(tab.AppliedQueryIdentity);
+            Assert.Equal(snapshot.Generation, applied.SnapshotGeneration);
+            Assert.Equal(Lines, tab.Statistics?.TimedMatching);
+            Assert.Equal(Lines, tab.MatchesInView);
+
+            window?.Close();
             await workspace.CloseAsync(tab);
         }
         finally

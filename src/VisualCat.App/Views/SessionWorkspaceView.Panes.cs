@@ -803,7 +803,20 @@ public sealed partial class SessionWorkspaceView : UserControl
         UpdateOffTimelineChip();
     }
 
-    private bool _sourceAccountingAnnounced;
+    /// <summary>The (unparsed, untimed) pair this workspace has already announced.</summary>
+    private (long Unparsed, long Untimed)? _sourceAccountingAnnounced;
+
+    /// <summary>
+    /// Whether the session is still taking data in, so its counters can still move.
+    /// </summary>
+    private static bool IsAcquiring(SessionActivity activity) =>
+        activity is SessionActivity.Queued
+            or SessionActivity.Opening
+            or SessionActivity.Importing
+            or SessionActivity.Connecting
+            or SessionActivity.Starting
+            or SessionActivity.Capturing
+            or SessionActivity.Stopping;
 
     /// <summary>
     /// Says once, when it applies, that part of this file is not on the timeline.
@@ -823,10 +836,22 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// about the file they just opened. The threshold is deliberately low for unknown lines:
     /// one stack trace in a log is exactly the case the reader needs to know is kept.
     /// </para>
+    /// <para>
+    /// "Settle" has to mean the source is finished, not that a snapshot arrived. This runs on
+    /// every published snapshot, so while a file is still being read it used to fire on the
+    /// first one carrying any unparsed line at all and then never speak again: the same
+    /// 200,001-line file announced <c>2 lines</c>, <c>5 lines</c> and <c>6 lines</c> on three
+    /// runs and a 1,000,001-line file announced <c>11</c>, where the answers were 10 and 108.
+    /// Worse, the wrong number then sat beside the right one — the chip and the summary line
+    /// both read the finished count — and outlived every other surface correcting itself
+    /// (Linux live test L-02). Acquisition states are therefore skipped entirely, and the
+    /// announced pair is remembered rather than a bare flag, so a capture that is stopped and
+    /// resumed states its new totals instead of standing by the old ones.
+    /// </para>
     /// </remarks>
     private void AnnounceSourceAccountingOnce(SessionCounters counters)
     {
-        if (_sourceAccountingAnnounced || counters.SourceLines <= 0)
+        if (counters.SourceLines <= 0 || IsAcquiring(_viewModel.Activity))
         {
             return;
         }
@@ -838,7 +863,12 @@ public sealed partial class SessionWorkspaceView : UserControl
             return;
         }
 
-        _sourceAccountingAnnounced = true;
+        if (_sourceAccountingAnnounced == (unparsed, untimed))
+        {
+            return;
+        }
+
+        _sourceAccountingAnnounced = (unparsed, untimed);
         var parts = new List<string>(2);
         if (unparsed > 0)
         {
@@ -851,7 +881,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                     ? $"{unparsed:N0} of {counters.SourceLines:N0} lines are not logcat records — usually " +
                       "stack-trace frames. "
                     : $"{Counted.Lines(unparsed)} could not be read as a logcat record. ") +
-                "They are kept byte for byte; open them from More → Unparsed lines…");
+                $"They are kept byte for byte; open them from More → {UnparsedLinesDialog.CommandName}…");
         }
 
         if (untimed > 0)

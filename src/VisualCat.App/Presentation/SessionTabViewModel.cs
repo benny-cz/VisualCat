@@ -786,9 +786,19 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
                  replacement.Descriptor == _snapshot.Descriptor))
             {
                 replacement.Dispose();
+                // "Unchanged" is a statement about the store, not about the screen. The
+                // screen is up to date only when the answers on it were computed from the
+                // generation the tab now holds, which is what AppliedQueryIdentity records;
+                // testing HeatMap for null only caught a tab that had never drawn anything,
+                // and let a tab that had drawn an earlier generation finish an import
+                // showing it (Linux live test L-01).
                 refreshUnchangedSnapshot = final &&
                     _snapshot.TimedRange is not null &&
-                    (HeatMap is null || Overview is null || Statistics is null);
+                    (HeatMap is null ||
+                     Overview is null ||
+                     Statistics is null ||
+                     AppliedQueryIdentity is not { } applied ||
+                     applied.SnapshotGeneration != _snapshot.Generation);
                 if (final && _snapshot is { } current)
                 {
                     // Two different endings on this path, and the loading tense belongs to
@@ -979,7 +989,19 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     /// or level change refines what a selected cell shows rather than discarding the
     /// selection the timeline is still outlining.
     /// </summary>
-    public async Task RefreshAsync(CancellationToken cancellationToken = default)
+    public Task RefreshAsync(CancellationToken cancellationToken = default) =>
+        RefreshAsync(attempt: 0, cancellationToken);
+
+    /// <summary>
+    /// How many times a refresh may re-run itself after finding the session replaced under
+    /// it. Each re-run queries a newer snapshot than the last, so an import — which
+    /// publishes a bounded number of generations and then stops — always settles well
+    /// inside this; the ceiling only exists so a capture committing continuously cannot
+    /// turn self-healing into a spin.
+    /// </summary>
+    private const int MaximumRefreshRetries = 4;
+
+    private async Task RefreshAsync(int attempt, CancellationToken cancellationToken)
     {
         // See LoadEntryPagesAsync: a queued refresh can land after the tab has closed, and
         // disposal has already taken the query cancellation apart by then.
@@ -987,6 +1009,10 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         {
             return;
         }
+
+        // Set when this refresh's answers were thrown away because the snapshot changed
+        // while its queries ran, and no newer refresh exists to replace them.
+        var answersLostToANewerSnapshot = false;
 
         var detailRange = _detailRange;
         var detailLevel = _detailLevel;
@@ -1237,6 +1263,19 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
             {
                 ScheduleTemplateRefresh(filterKey, viewport.Value, filter, generation, token);
             }
+            else
+            {
+                // Answers are only safe to drop when something newer is already on its way to
+                // replace them. A refresh that is still the newest one and was rejected anyway
+                // was rejected by the gate above — the snapshot it queried had been replaced
+                // while the queries ran, which is exactly what the final load of a large
+                // import does. Dropping it there left the heat map, the overview, the
+                // statistics and every counter derived from them showing a prefix of the log
+                // while the tab said Ready over the whole of it, permanently and with nothing
+                // on screen admitting it (Linux live test L-01). Nothing else was coming, so
+                // this refresh runs again against the snapshot that replaced its own.
+                answersLostToANewerSnapshot = generation == Volatile.Read(ref _queryGeneration);
+            }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -1258,6 +1297,14 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
         finally
         {
             _loadLock.Release();
+        }
+
+        if (answersLostToANewerSnapshot &&
+            attempt < MaximumRefreshRetries &&
+            !IsDisposed &&
+            !cancellationToken.IsCancellationRequested)
+        {
+            await RefreshAsync(attempt + 1, cancellationToken).ConfigureAwait(false);
         }
     }
 

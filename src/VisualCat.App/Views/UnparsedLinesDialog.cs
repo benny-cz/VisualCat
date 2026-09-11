@@ -45,8 +45,33 @@ internal sealed class UnparsedLinesDialog : DialogBody<bool>
     private int _shown;
     private bool _busy;
 
+    /// <summary>
+    /// How many lines this session records as being off the timeline, from its own counters.
+    /// </summary>
+    /// <remarks>
+    /// The scan is bounded so one tap cannot walk a million-line file, and reaching that bound
+    /// is reported as "more of the file remains to be scanned" — true of the scan, and
+    /// misleading about the answer: a 200,001-line file stopped one record short of the end
+    /// with all ten of its lines already listed, so a complete answer arrived wearing a
+    /// warning and a button that added nothing (Linux live test L-05). The descriptor already
+    /// knows the total, so a page that has reached it is finished whatever the scan bound did.
+    /// </remarks>
+    private readonly long _expected;
+
+    /// <summary>
+    /// The one name this command has, shared by the More menu, this dialog's title, and any
+    /// notice that sends a reader here.
+    /// </summary>
+    /// <remarks>
+    /// The source-accounting notice spelled it "Unparsed lines…", which is not an item the
+    /// More menu has ever contained: the reader was told to look for something that was not
+    /// there, beside a menu that did have it under another name (Linux live test L-03). One
+    /// constant is what stops the instruction and the item it names drifting apart again.
+    /// </remarks>
+    internal const string CommandName = "Lines not on the timeline";
+
     internal UnparsedLinesDialog(SessionTabViewModel tab)
-        : base("Lines not on the timeline")
+        : base(CommandName)
     {
         _tab = tab ?? throw new ArgumentNullException(nameof(tab));
         _mobile = OperatingSystem.IsAndroid();
@@ -59,6 +84,7 @@ internal sealed class UnparsedLinesDialog : DialogBody<bool>
         var rejected = counters?.RejectedCandidates ?? 0;
         var untimed = counters?.UntimedEntries ?? 0;
         var continuations = tab.Snapshot?.Descriptor.Defects.Continuations ?? 0;
+        _expected = unknown + rejected + untimed;
 
         var explanation = new TextBlock
         {
@@ -100,7 +126,7 @@ internal sealed class UnparsedLinesDialog : DialogBody<bool>
             FontSize = TextScale.Of(_mobile ? 11 : 12),
             TextWrapping = TextWrapping.NoWrap,
         };
-        AutomationProperties.SetName(_lines, "Lines not on the timeline");
+        AutomationProperties.SetName(_lines, CommandName);
 
         _status = new TextBlock
         {
@@ -193,12 +219,17 @@ internal sealed class UnparsedLinesDialog : DialogBody<bool>
 
             // A page that stops on the scan bound has found nothing yet and is not finished;
             // saying "none" there would be a lie, and saying nothing would look like a hang.
+            // Having found every line the session counted is the other way to be finished,
+            // and it is the common one: the lines are usually nowhere near the last record.
+            var foundThemAll = _expected > 0 && _shown >= _expected;
             _status.Text = page.Completed
                 ? _shown == 0
                     ? "Every line in this file is a timed logcat record."
                     : $"{_shown:N0} shown · end of file."
-                : $"{_shown:N0} shown · more of the file remains to be scanned.";
-            _more.IsVisible = !page.Completed;
+                : foundThemAll
+                    ? $"All {_shown:N0} shown."
+                    : $"{_shown:N0} shown · more of the file remains to be scanned.";
+            _more.IsVisible = !page.Completed && !foundThemAll;
         }
         catch (OperationCanceledException)
         {

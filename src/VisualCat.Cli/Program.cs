@@ -32,6 +32,29 @@ internal static class VisualCatCli
         },
     };
 
+    /// <summary>
+    /// The same shape on one line each, for the streaming command.
+    /// </summary>
+    /// <remarks>
+    /// <c>query</c> is documented as NDJSON — "one NormalizedEntry JSON object per line,
+    /// suitable for streaming into tools such as jq" — and is the reference's own answer for
+    /// reading a session larger than one result. Serialized with the indented options it
+    /// spread each entry over 24 lines, so the file the documented example redirects to
+    /// (<c>errors.ndjson</c>) could not be read by jq, by a line reader, or by anything else
+    /// that trusts the name: 100 entries arrived as 2,400 lines, none of which parsed on its
+    /// own (Linux live test L-04). Every other command prints one whole document a person
+    /// reads, and those stay indented.
+    /// </remarks>
+    private static readonly JsonSerializerOptions NdjsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = false,
+        Converters =
+        {
+            new System.Text.Json.Serialization.JsonStringEnumConverter(),
+            new InstantUsJsonConverter(),
+        },
+    };
+
     public static async Task<int> RunAsync(string[] args)
     {
         if (args.Length == 1 && args[0] is "-v" or "--version" or "version")
@@ -232,7 +255,7 @@ internal static class VisualCatCli
         var page = SessionQueryEngine.GetEntries(snapshot, range, filter, order, null, limit, 1, cancellationToken);
         foreach (var entry in page.Entries)
         {
-            Console.WriteLine(JsonSerializer.Serialize(entry, JsonOptions));
+            Console.WriteLine(JsonSerializer.Serialize(entry, NdjsonOptions));
         }
 
         return 0;

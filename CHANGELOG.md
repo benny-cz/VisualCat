@@ -13,6 +13,34 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Fixed
+- **A large import now finishes showing the whole log.** A log committed in more than one
+  segment could finish with the plot, the severity totals, the time axis, the entry list, the
+  templates and every counter derived from them drawing a *prefix* of the session — 100,001 of
+  199,990 entries on one run, 800,001 of 999,892 on another — while the status bar underneath
+  read **Ready** over the true total. Nothing on screen said the view was partial, the span
+  beside the zoom controls disagreed with the span the plot drew, and only pressing **Fit**
+  put it right. A view query whose answers were rejected because the session had grown under
+  it now runs again instead of being dropped, and a completed import redraws whenever what is
+  on screen was computed from an older generation than the one the tab holds. The data on disk
+  was always complete; only the picture of it was behind.
+- **A long import keeps up with itself.** A progress refresh that arrived while another was
+  running was dropped outright; it is now coalesced into one further pass, so the plot follows
+  the log instead of stopping at whichever generation won the last race.
+- **The "lines that are not logcat records" notice states the finished count.** It was
+  announced from whatever the counters held at the moment the first snapshot carrying one
+  arrived, so the same file reported **2**, **5** or **6** lines on different runs where the
+  answer was 10 — beside a chip and a summary line that both read the right number — and it
+  never corrected itself. It now waits until the source has stopped arriving.
+- **That notice also names a menu item that exists.** It said *More → Unparsed lines…*; the
+  command is *More → Lines not on the timeline…*, and both now come from one name.
+- **Lines not on the timeline** no longer reports that more of the file remains to be scanned
+  when it has already listed every line the session counted.
+- **`vcat query` emits NDJSON, as documented** — one entry per line, readable by `jq` and by
+  any line-oriented reader. It was pretty-printing each entry across 24 lines, so the
+  `errors.ndjson` the reference's own example writes could not be parsed a line at a time.
+  Every other command still prints one indented document.
+
 ## [2.0.13] - 2026-09-09
 
 ### Added
