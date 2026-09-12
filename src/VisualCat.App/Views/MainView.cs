@@ -1587,9 +1587,11 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             Setting(
                 "Check for updates…",
                 CheckForUpdatesManuallyAsync,
-                installOrigin() == AppInstallOrigin.PlayStore
-                    ? "Ask Google Play whether a newer VisualCat is out"
-                    : "Open the GitHub releases page — this build cannot update itself");
+                installOrigin() switch
+                {
+                    AppInstallOrigin.PlayStore => "Ask Google Play whether a newer VisualCat is out",
+                    _ => "Open the GitHub releases page — this build cannot update itself",
+                });
         }
 
         if (OperatingSystem.IsAndroid())
@@ -1951,8 +1953,18 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     /// will follow. Deriving it instead renamed the desktop's own primary command's dialog
     /// to "with options", which is the name of a different command in the same menu.
     /// </remarks>
-    private Task OpenLogAsync() =>
-        OpenLogPickerAsync(alwaysReview: !OperatingSystem.IsAndroid(), withOptions: false);
+    /// <summary>
+    /// Opens a log, reviewing it only when the file gives a reason to.
+    /// </summary>
+    /// <remarks>
+    /// Both commands forced the review on every desktop, so <em>Open log</em> and
+    /// <em>Open log with options…</em> differed only in the picker's title — a second door into
+    /// the same room (finding F-05). Letting the plain command quick-import a confidently
+    /// detected file is what <see cref="ImportPreparationPolicy.Decide"/> is written to do, and
+    /// it removes a click from the common path while giving the second command a reason to
+    /// exist. A file the detector is unsure about still opens the review, from either command.
+    /// </remarks>
+    private Task OpenLogAsync() => OpenLogPickerAsync(alwaysReview: false, withOptions: false);
 
     private Task OpenLogWithOptionsAsync() => OpenLogPickerAsync(alwaysReview: true, withOptions: true);
 
@@ -1989,12 +2001,16 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         {
             try
             {
-                var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
-                {
-                    Title = withOptions ? "Open Android logcat file with options" : "Open Android logcat file",
-                    AllowMultiple = true,
-                    FileTypeFilter = [new FilePickerFileType("Text logs") { Patterns = ["*.txt", "*.log"] }],
-                });
+                var files = await RunChooserAsync(
+                    () => storage.OpenFilePickerAsync(new FilePickerOpenOptions
+                    {
+                        Title = withOptions ? "Open Android logcat file with options" : "Open Android logcat file",
+                        AllowMultiple = true,
+                        FileTypeFilter = [new FilePickerFileType("Text logs") { Patterns = ["*.txt", "*.log"] }],
+                    }),
+                    operation,
+                    static chosen => chosen.Count > 0,
+                    "opening a log");
                 foreach (var file in files)
                 {
                     operation.Token.ThrowIfCancellationRequested();
@@ -2007,6 +2023,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                             operation.Token);
                         try
                         {
+                            // The copy is done; from here the product is waiting for a person,
+                            // and the card must say that rather than go on claiming to copy
+                            // for as long as the review stays open (finding F-04).
+                            operation.Report(new FileWorkProgress(FileWorkStage.AwaitingReview));
                             var preparation = await PrepareImportAsync(
                                 materialized.Path,
                                 file.Name,
@@ -2105,7 +2125,15 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        var folders = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Open .vcat session", AllowMultiple = false });
+        var folders = await RunChooserAsync(
+            () => storage.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Open .vcat session",
+                AllowMultiple = false,
+            }),
+            null,
+            static chosen => chosen.Count > 0,
+            "opening a session");
         if (folders.Count == 0)
         {
             return;
@@ -2139,18 +2167,22 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             "Choosing portable archive…",
             async operation =>
             {
-                var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
-                {
-                    Title = "Open portable VisualCat archive",
-                    AllowMultiple = false,
-                    FileTypeFilter =
-                    [
-                        new FilePickerFileType("VisualCat portable archives")
-                        {
-                            Patterns = ["*.vcat.zip", "*.zip"],
-                        },
-                    ],
-                });
+                var files = await RunChooserAsync(
+                    () => storage.OpenFilePickerAsync(new FilePickerOpenOptions
+                    {
+                        Title = "Open portable VisualCat archive",
+                        AllowMultiple = false,
+                        FileTypeFilter =
+                        [
+                            new FilePickerFileType("VisualCat portable archives")
+                            {
+                                Patterns = ["*.vcat.zip", "*.zip"],
+                            },
+                        ],
+                    }),
+                    operation,
+                    static chosen => chosen.Count > 0,
+                    "opening an archive");
                 if (files.Count == 0)
                 {
                     return null;
@@ -2215,13 +2247,17 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 // The picker is part of the operation too: the independently owned snapshot
                 // and deletion lease are already established, and a repeated shortcut cannot
                 // create a second native picker while this one is open.
-                var folders = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions
-                {
-                    Title = portable
-                        ? "Choose portable session destination"
-                        : "Choose saved session destination",
-                    AllowMultiple = false,
-                });
+                var folders = await RunChooserAsync(
+                    () => storage.OpenFolderPickerAsync(new FolderPickerOpenOptions
+                    {
+                        Title = portable
+                            ? "Choose portable session destination"
+                            : "Choose saved session destination",
+                        AllowMultiple = false,
+                    }),
+                    operation,
+                    static chosen => chosen.Count > 0,
+                    "saving the session");
                 if (folders.Count == 0)
                 {
                     return null;
@@ -2301,20 +2337,24 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
         async Task<FileDestination?> ChooseAsync(ExportDecision decision)
         {
-            var file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
-            {
-                Title = $"Export {decision.Scope.SentenceLabel}",
-                SuggestedFileName = Path.GetFileNameWithoutExtension(request.SourceTitle),
-                DefaultExtension = "csv",
-                FileTypeChoices =
-                [
-                    new FilePickerFileType("CSV")
-                    {
-                        Patterns = ["*.csv"],
-                        MimeTypes = ["text/csv"],
-                    },
-                ],
-            });
+            var file = await RunChooserAsync(
+                () => storage.SaveFilePickerAsync(new FilePickerSaveOptions
+                {
+                    Title = $"Export {decision.Scope.SentenceLabel}",
+                    SuggestedFileName = Path.GetFileNameWithoutExtension(request.SourceTitle),
+                    DefaultExtension = "csv",
+                    FileTypeChoices =
+                    [
+                        new FilePickerFileType("CSV")
+                        {
+                            Patterns = ["*.csv"],
+                            MimeTypes = ["text/csv"],
+                        },
+                    ],
+                }),
+                operation,
+                static chosen => chosen is not null,
+                "exporting");
             return file is null ? null : FileDestination.Of(file);
         }
     }
@@ -2363,7 +2403,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                             () => CountExportScopes(snapshot, request, linked.Token),
                             linked.Token);
                     },
-                    snapshot.Descriptor.TimestampPolicy.TimeZoneId,
+                    // The zone the workspace is presenting in, so the review's range and the
+                    // plot header it was opened from read as the same instants (F-16).
+                    DisplayZone.IdFor(snapshot.Descriptor),
                     snapshot.Descriptor.Counters.UntimedEntries +
                     snapshot.Descriptor.Counters.UnknownLines +
                     snapshot.Descriptor.Counters.RejectedCandidates > 0,
@@ -2485,7 +2527,11 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         FrozenExportRequest request,
         CancellationToken cancellationToken)
     {
-        var zone = ResolveDisplayZone(snapshot.Descriptor.TimestampPolicy.TimeZoneId);
+        // The same zone the workspace is presenting in, not the session's stored policy zone.
+        // The two differ for every ADB capture — the capture negotiates UTC while the plot reads
+        // in the host zone — so the review stated the same instants two hours from the plot the
+        // reader opened it from (finding F-16).
+        var zone = DisplayZone.For(snapshot.Descriptor);
         var scopes = ExportScopeResolver.Resolve(request, snapshot.TimedRange, zone);
         var counted = new List<ResolvedExportScope>(scopes.Count);
         long generation = 1;
@@ -2507,24 +2553,6 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         return counted;
-    }
-
-    /// <summary>The session's own zone, falling back to UTC when the device cannot name it.</summary>
-    private static TimeZoneInfo ResolveDisplayZone(string? id)
-    {
-        if (string.IsNullOrWhiteSpace(id))
-        {
-            return TimeZoneInfo.Utc;
-        }
-
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(id);
-        }
-        catch (Exception exception) when (exception is TimeZoneNotFoundException or InvalidTimeZoneException)
-        {
-            return TimeZoneInfo.Utc;
-        }
     }
 
     private static void ApplyPublication(FileOperationHandle operation, StorageWritePublication publication)
@@ -3248,12 +3276,16 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Follow a growing logcat file",
-            AllowMultiple = false,
-            FileTypeFilter = [new FilePickerFileType("Text logs") { Patterns = ["*.txt", "*.log"] }],
-        });
+        var files = await RunChooserAsync(
+            () => storage.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Follow a growing logcat file",
+                AllowMultiple = false,
+                FileTypeFilter = [new FilePickerFileType("Text logs") { Patterns = ["*.txt", "*.log"] }],
+            }),
+            null,
+            static chosen => chosen.Count > 0,
+            "following a file");
         if (files.Count == 0 || files[0].TryGetLocalPath() is not { } path)
         {
             return;
@@ -3748,14 +3780,18 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        var file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title = "Save VisualCat diagnostic bundle",
+        var file = await RunChooserAsync(
+            () => storage.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Save VisualCat diagnostic bundle",
 
-            // Extension in DefaultExtension only: see the note in ExportAsync (finding 8).
-            SuggestedFileName = $"visualcat-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}",
-            DefaultExtension = "zip",
-        });
+                // Extension in DefaultExtension only: see the note in ExportAsync (finding 8).
+                SuggestedFileName = $"visualcat-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}",
+                DefaultExtension = "zip",
+            }),
+            null,
+            static chosen => chosen is not null,
+            "saving the bundle");
         if (file is null)
         {
             return;

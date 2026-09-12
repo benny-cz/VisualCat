@@ -227,6 +227,24 @@ public sealed class MobilePaneSplitTests
     [AvaloniaFact]
     public void AppearanceOffersAVisibleResetRouteOnlyWhenAnOverrideExists()
     {
+        // The control is phone-only: it, and the portrait/landscape/Split-mode vocabulary
+        // under it, appeared inert in a desktop reader's settings dialog (finding F-14).
+        Assert.Null(
+            NamedOrDefault<Button>(new AppearanceDialog(new ApplicationSettings()), "Reset plot and details split"));
+
+        DialogComposition.PhoneOverride = true;
+        try
+        {
+            AssertPhoneResetRoute();
+        }
+        finally
+        {
+            DialogComposition.PhoneOverride = null;
+        }
+    }
+
+    private static void AssertPhoneResetRoute()
+    {
         var automatic = new AppearanceDialog(new ApplicationSettings());
         var overridden = new AppearanceDialog(new ApplicationSettings(
             MobileTimelineShare: 0.6,
@@ -991,4 +1009,10 @@ public sealed class MobilePaneSplitTests
         root.GetLogicalDescendants()
             .OfType<T>()
             .First(control => AutomationProperties.GetName(control) == name);
+
+    private static T? NamedOrDefault<T>(Visual root, string name)
+        where T : Visual =>
+        root.GetLogicalDescendants()
+            .OfType<T>()
+            .FirstOrDefault(control => AutomationProperties.GetName(control) == name);
 }

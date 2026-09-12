@@ -58,6 +58,9 @@ internal sealed class UnparsedLinesDialog : DialogBody<bool>
     /// </remarks>
     private readonly long _expected;
 
+    /// <summary>How many lines the whole file holds, so "scanned to" has something to be of.</summary>
+    private readonly long _sourceLines;
+
     /// <summary>
     /// The one name this command has, shared by the More menu, this dialog's title, and any
     /// notice that sends a reader here.
@@ -85,6 +88,7 @@ internal sealed class UnparsedLinesDialog : DialogBody<bool>
         var untimed = counters?.UntimedEntries ?? 0;
         var continuations = tab.Snapshot?.Descriptor.Defects.Continuations ?? 0;
         _expected = unknown + rejected + untimed;
+        _sourceLines = counters?.SourceLines ?? 0;
 
         var explanation = new TextBlock
         {
@@ -139,6 +143,11 @@ internal sealed class UnparsedLinesDialog : DialogBody<bool>
 
         _more = new Button
         {
+            // Named for what it does. It used to say "Load 500 more" and scan a further slice
+            // of the source file, which on a 1,000,010-line file added 26 rows, then 0 — so the
+            // label was wrong about the unit and the reader had no way to know when they had
+            // seen everything (finding F-15). It now keeps scanning until it has actually added
+            // a page of rows, or run out of file.
             Content = $"Load {PageSize:N0} more",
             MinHeight = TouchTarget.SelfSized(_mobile),
             HorizontalAlignment = HorizontalAlignment.Left,
@@ -195,8 +204,54 @@ internal sealed class UnparsedLinesDialog : DialogBody<bool>
             new Thickness(16));
     }
 
+    /// <summary>
+    /// What the footer says: how much of the population is on screen, and how far the scan has
+    /// reached.
+    /// </summary>
+    /// <remarks>
+    /// It used to say only "45 shown · more of the file remains to be scanned", never relating
+    /// that number to the 121 the header above it already stated, so a reader could not tell
+    /// whether they had seen everything (finding F-15). Both numbers come from counters the
+    /// dialog already holds.
+    /// </remarks>
+    private string Describe(bool completed, bool foundThemAll)
+    {
+        if (_shown == 0)
+        {
+            return completed
+                ? "Every line in this file is a timed logcat record."
+                : $"None found yet · scanned {Scanned()}.";
+        }
+
+        var of = _expected > 0 ? $"{_shown:N0} of {_expected:N0} shown" : $"{_shown:N0} shown";
+        if (foundThemAll)
+        {
+            return $"{of} · every line off the timeline has been listed.";
+        }
+
+        return completed
+            ? $"{of} · end of file."
+            : $"{of} · scanned {Scanned()}.";
+    }
+
+    /// <summary>How far through the file the scan has read.</summary>
+    private string Scanned() => _sourceLines > 0
+        ? $"to line {_next:N0} of {_sourceLines:N0}"
+        : $"to line {_next:N0}";
+
     /// <inheritdoc />
     protected override void OnPresented() => Dispatcher.UIThread.Post(() => _ = LoadAsync());
+
+    /// <summary>
+    /// How many scan passes one press may make before it stops and lets the reader look.
+    /// </summary>
+    /// <remarks>
+    /// The button's unit is rows, and a slice of the source file may hold none of them, so
+    /// "add a page of rows" can need many slices. Bounded so one press cannot walk an arbitrarily
+    /// large file without redrawing; when the bound is reached the footer says where the scan
+    /// got to and the button stays, which is a truthful "there is more" rather than a hang.
+    /// </remarks>
+    private const int MaximumScansPerPress = 24;
 
     private async Task LoadAsync()
     {
@@ -209,27 +264,34 @@ internal sealed class UnparsedLinesDialog : DialogBody<bool>
         _more.IsEnabled = false;
         try
         {
-            var page = await _tab.LoadUnparsedLinesAsync(_next, PageSize);
-            _next = page.NextSequence;
-            _shown += page.Count;
-            if (page.Text.Length > 0)
+            var before = _shown;
+            var completed = false;
+            var foundThemAll = false;
+            for (var pass = 0; pass < MaximumScansPerPress; pass++)
             {
-                _lines.Text += page.Text;
+                var page = await _tab.LoadUnparsedLinesAsync(_next, PageSize);
+                _next = page.NextSequence;
+                _shown += page.Count;
+                if (page.Text.Length > 0)
+                {
+                    _lines.Text += page.Text;
+                }
+
+                completed = page.Completed;
+
+                // A page that stops on the scan bound has found nothing yet and is not finished;
+                // saying "none" there would be a lie, and saying nothing would look like a hang.
+                // Having found every line the session counted is the other way to be finished,
+                // and it is the common one: the lines are usually nowhere near the last record.
+                foundThemAll = _expected > 0 && _shown >= _expected;
+                if (completed || foundThemAll || _shown - before >= PageSize)
+                {
+                    break;
+                }
             }
 
-            // A page that stops on the scan bound has found nothing yet and is not finished;
-            // saying "none" there would be a lie, and saying nothing would look like a hang.
-            // Having found every line the session counted is the other way to be finished,
-            // and it is the common one: the lines are usually nowhere near the last record.
-            var foundThemAll = _expected > 0 && _shown >= _expected;
-            _status.Text = page.Completed
-                ? _shown == 0
-                    ? "Every line in this file is a timed logcat record."
-                    : $"{_shown:N0} shown · end of file."
-                : foundThemAll
-                    ? $"All {_shown:N0} shown."
-                    : $"{_shown:N0} shown · more of the file remains to be scanned.";
-            _more.IsVisible = !page.Completed && !foundThemAll;
+            _status.Text = Describe(completed, foundThemAll);
+            _more.IsVisible = !completed && !foundThemAll;
         }
         catch (OperationCanceledException)
         {

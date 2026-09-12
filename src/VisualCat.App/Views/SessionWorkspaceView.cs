@@ -63,7 +63,23 @@ public sealed partial class SessionWorkspaceView : UserControl
     private Button? _markerLast;
     private Button? _markerPrevious;
     private Button? _markerNext;
-    private readonly TextBox _search = new() { PlaceholderText = "Search message text or regex…" };
+    private readonly TextBox _search = CreateSearchBox();
+
+    /// <summary>
+    /// The search field, named for what it searches.
+    /// </summary>
+    /// <remarks>
+    /// It is the first control in the documented focus order and it announced itself as
+    /// "TextBox" — the control's type, which is implementation detail read aloud, and exactly
+    /// what R-40 exists to prevent (finding F-13). A placeholder is not an accessible name:
+    /// assistive technology reads the name, and this control had none.
+    /// </remarks>
+    private static TextBox CreateSearchBox()
+    {
+        var search = new TextBox { PlaceholderText = "Search message text or regex…" };
+        AutomationProperties.SetName(search, "Search message text or regex");
+        return search;
+    }
     private TextBlock? _mobileSearchPlaceholder;
     private readonly CheckBox _regex = new() { Content = "Regex" };
     private readonly CheckBox _caseSensitive = new() { Content = "Case-sensitive" };
@@ -2093,6 +2109,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Margin = new Thickness(10, 0),
             };
             _rowSplitter = rowSplitter;
+            AutomationProperties.SetName(rowSplitter, "Resize the plot and the entry list");
             Grid.SetRow(rowSplitter, 4);
             root.Children.Add(rowSplitter);
         }
@@ -2476,6 +2493,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 ResizeDirection = GridResizeDirection.Columns,
                 Background = new SolidColorBrush(Color.Parse("#304F7199")),
             };
+            AutomationProperties.SetName(splitter, "Resize the entry list and the insights pane");
             Grid.SetColumn(splitter, 1);
             analysis.Children.Add(splitter);
             _insightsPane = templatePane;

@@ -286,9 +286,19 @@ public static class AppUpdatePolicy
                 // looking for a file they never had.
                 return manual
                     ? new AppUpdatePrompt(
-                        origin == AppInstallOrigin.OtherStore
-                            ? "This build was installed by another store, so Google Play cannot update it. Releases are also published on GitHub."
-                            : "This build was installed from a file, so Google Play cannot update it. Releases are published on GitHub.",
+                        origin switch
+                        {
+                            AppInstallOrigin.OtherStore =>
+                                "This build was installed by another store, so Google Play cannot update it. Releases are also published on GitHub.",
+
+                            // A desktop build is an archive somebody unpacked. Saying it "was
+                            // installed from a file, so Google Play cannot update it" names a
+                            // store that has nothing to do with this platform (F-03, F-14).
+                            AppInstallOrigin.PortableArchive =>
+                                "VisualCat for the desktop updates by downloading a new archive; it cannot update itself. Releases are published on GitHub.",
+                            _ =>
+                                "This build was installed from a file, so Google Play cannot update it. Releases are published on GitHub.",
+                        },
                         "Open releases",
                         AppUpdatePromptAction.OpenReleases,
                         Persistent: true)

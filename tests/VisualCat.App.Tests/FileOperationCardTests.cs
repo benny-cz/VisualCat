@@ -105,6 +105,10 @@ public sealed class FileOperationCardTests
             // Preparing has nothing more specific to say than the command the reader used.
             [FileWorkStage.Preparing] = "Preparing portable session…",
             [FileWorkStage.Copying] = "Copying file…",
+
+            // Not a claim that anything is moving: a modal review owns the interaction and the
+            // product is waiting for a person (finding F-04).
+            [FileWorkStage.AwaitingReview] = "Waiting for import options…",
             [FileWorkStage.WritingRows] = "Writing CSV…",
             [FileWorkStage.Verifying] = "Verifying session…",
             [FileWorkStage.CreatingArchive] = "Creating archive…",
@@ -121,7 +125,17 @@ public sealed class FileOperationCardTests
             operation!.Report(new FileWorkProgress(stage));
             shell.Settle();
             Assert.Equal(sentence, shell.StatusText);
-            Assert.True(shell.Progress.IsIndeterminate, $"{stage} reports no total and must not invent one");
+            if (stage == FileWorkStage.AwaitingReview)
+            {
+                Assert.False(
+                    shell.Progress.IsIndeterminate,
+                    "waiting for the reader is not work in progress and must not animate");
+                Assert.Equal(0, shell.Progress.Value);
+            }
+            else
+            {
+                Assert.True(shell.Progress.IsIndeterminate, $"{stage} reports no total and must not invent one");
+            }
         }
 
         await operation!.DisposeAsync();

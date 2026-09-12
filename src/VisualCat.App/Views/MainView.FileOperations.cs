@@ -227,7 +227,19 @@ public sealed partial class MainView
 
         var progress = operation.Progress;
         var counted = _fileOperationShowsCounts && progress?.Total is > 0;
-        _fileOperationProgress.IsIndeterminate = !counted;
+
+        // A marquee is a claim that work is happening. While a modal review or a chooser owns
+        // the interaction nothing is happening, so the bar stops and sits at zero rather than
+        // animating for as long as the reader takes to decide (finding F-04).
+        var waiting = progress?.Stage == FileWorkStage.AwaitingReview;
+        _fileOperationProgress.IsIndeterminate = !counted && !waiting;
+        if (waiting)
+        {
+            _fileOperationProgress.Minimum = 0;
+            _fileOperationProgress.Maximum = 1;
+            _fileOperationProgress.Value = 0;
+        }
+
         if (counted && progress!.Value.Total is { } total)
         {
             _fileOperationProgress.Minimum = 0;
@@ -294,6 +306,7 @@ public sealed partial class MainView
         var stage = progress.Stage switch
         {
             FileWorkStage.Copying => "Copying file",
+            FileWorkStage.AwaitingReview => "Waiting for import options",
             FileWorkStage.WritingRows => "Writing CSV",
             FileWorkStage.Verifying => "Verifying session",
             FileWorkStage.CreatingArchive => "Creating archive",
@@ -327,4 +340,113 @@ public sealed partial class MainView
         _fileOperationBand.BorderBrush = new SolidColorBrush(Timeline.WorkspacePalette.BorderLine(dark));
         _fileOperationText.Foreground = new SolidColorBrush(Timeline.WorkspacePalette.TextPrimary(dark));
     }
+
+    /// <summary>
+    /// How quickly a chooser can return "nothing chosen" before that answer cannot have come
+    /// from a person.
+    /// </summary>
+    /// <remarks>
+    /// Closing a portal chooser with the window manager crashes
+    /// <c>xdg-desktop-portal-gnome</c> (finding F-30, a host bug, not this product's). Once the
+    /// unit has failed, every later chooser request in that session is served by the fallback
+    /// backend or by nothing at all — and "by nothing at all" reaches the product as an
+    /// immediate empty result, so the command looks like it did nothing. Nobody dismisses a
+    /// dialog in a third of a second, so an empty answer that fast is a chooser that never
+    /// appeared.
+    /// </remarks>
+    private static readonly TimeSpan ImpossiblyFastChooser = TimeSpan.FromMilliseconds(350);
+
+    /// <summary>
+    /// Runs a native file chooser under an operation's cancellation, and says something true
+    /// when the chooser does not appear.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>IStorageProvider</c> takes no cancellation token, so the operation's <em>Cancel</em>
+    /// could not dismiss the chooser and the operation sat on the call that would not return:
+    /// the shell showed <c>Cancelling…</c> indefinitely, the chooser stayed open, and the single
+    /// file-operation slot stayed claimed, disabling every file command (finding F-22).
+    /// <c>Task.WaitAsync(CancellationToken)</c> is the practical route —
+    /// the abandoned chooser closes on its own when the reader dismisses it, and the slot is
+    /// already free by then.
+    /// </para>
+    /// <para>
+    /// Whatever the abandoned call eventually produces is disposed, so a chooser that returns
+    /// after the wait was given up does not leak the handles it opened.
+    /// </para>
+    /// </remarks>
+    /// <param name="chooser">Starts the native chooser.</param>
+    /// <param name="operation">The operation whose Cancel must be able to release the slot.</param>
+    /// <param name="chose">Whether the result represents an actual choice.</param>
+    /// <param name="what">What was being chosen, for the notice when nothing appeared.</param>
+    private async Task<T> RunChooserAsync<T>(
+        Func<Task<T>> chooser,
+        FileOperationHandle? operation,
+        Func<T, bool> chose,
+        string what)
+    {
+        ArgumentNullException.ThrowIfNull(chooser);
+        ArgumentNullException.ThrowIfNull(chose);
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var pending = chooser();
+        T result;
+        try
+        {
+            result = operation is null
+                ? await pending
+                : await pending.WaitAsync(operation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            DisposeAbandoned(pending);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            WorkspaceViewModel.RecordFailure("chooser.failed", exception);
+            ShowNotice(
+                $"The file chooser could not be opened, so {what} was not possible · " +
+                $"{WorkspaceViewModel.FriendlyMessage(exception)}",
+                NoticeKind.Failure);
+            throw;
+        }
+
+        if (!chose(result) && System.Diagnostics.Stopwatch.GetElapsedTime(started) < ImpossiblyFastChooser)
+        {
+            ShowNotice(
+                $"The file chooser did not open, so {what} was not possible. " +
+                "On Linux this usually means the desktop's file-chooser service has stopped; " +
+                "signing out and back in restores it.",
+                NoticeKind.Failure);
+        }
+
+        return result;
+    }
+
+    /// <summary>Releases whatever a chooser produced after its caller stopped waiting.</summary>
+    private static void DisposeAbandoned<T>(Task<T> pending) => _ = pending.ContinueWith(
+        static completed =>
+        {
+            if (!completed.IsCompletedSuccessfully)
+            {
+                return;
+            }
+
+            switch (completed.Result)
+            {
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+                case System.Collections.IEnumerable many:
+                    foreach (var item in many)
+                    {
+                        (item as IDisposable)?.Dispose();
+                    }
+
+                    break;
+            }
+        },
+        CancellationToken.None,
+        TaskContinuationOptions.ExecuteSynchronously,
+        TaskScheduler.Default);
 }

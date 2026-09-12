@@ -109,12 +109,12 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
             TextWrapping = TextWrapping.Wrap,
             FontSize = TextScale.Of(12),
         };
-        var choose = new Button
+        var choose = SheetForm.PrimaryAction(new Button
         {
             Content = "Choose a file…",
             IsDefault = true,
             MinHeight = mobile ? 48 : 0,
-        };
+        });
 
         void RefreshDecision()
         {

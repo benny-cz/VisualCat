@@ -12,6 +12,12 @@ public sealed class App : Avalonia.Application
 
     public override void Initialize()
     {
+        // What the accessibility bus and the window manager call this application. The default
+        // is "Avalonia Application", which is what a screen-reader user saw in their
+        // application list — the first thing the product ever said about itself, and it did not
+        // say VisualCat (finding F-13).
+        Name = "VisualCat";
+
         // Before any view exists, because a view formats its first numbers while it is being
         // built (audit 2, E1).
         DisplayCulture.Install();
@@ -95,6 +101,7 @@ public sealed class MainWindow : Window
         }
         Content = view;
         view.AttachHostWindow(this);
+        Platform.FullRepaintOnResize.Attach(this);
 
         // A minimized window is the desktop's version of a screen that has turned off:
         // the capture must keep running, but re-running the heat map, overview,

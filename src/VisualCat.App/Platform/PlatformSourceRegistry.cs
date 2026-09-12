@@ -108,6 +108,21 @@ public enum AppInstallOrigin
 
     /// <summary>Installed from a file — the GitHub release APK, or a developer deploy.</summary>
     SideLoaded,
+
+    /// <summary>
+    /// Extracted from the portable desktop archive, which is the only way a desktop build is
+    /// installed.
+    /// </summary>
+    /// <remarks>
+    /// There is nothing to probe: a tarball or zip a person unpacked themselves is by definition
+    /// not store-installed. Stating it is what lets the desktop answer "where did this come
+    /// from?" at all — without it the update command was gated off on every desktop, so it
+    /// existed nowhere outside Android while SUPPORT.md described it to desktop readers
+    /// (finding F-03). It is a separate value from <see cref="SideLoaded"/> because
+    /// "side-loaded" is Android vocabulary and means nothing to someone who unpacked a
+    /// tar.gz (finding F-14).
+    /// </remarks>
+    PortableArchive,
 }
 
 /// <summary>Which of the store's two update experiences to start.</summary>

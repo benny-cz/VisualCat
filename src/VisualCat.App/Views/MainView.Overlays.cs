@@ -762,6 +762,56 @@ public sealed partial class MainView : IDialogHost
         foreach (var dismiss in _forceDialogDismissals.ToArray().Reverse()) dismiss();
     }
 
+    /// <summary>
+    /// Takes the workspace out of the accessibility tree for as long as a modal dialog is up.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A dialog that is modal to the pointer was not modal to assistive technology: both
+    /// top-levels were exposed as <c>ACTIVE</c> siblings, and all 434 nodes of the workspace
+    /// behind the scrim stayed reachable, so a screen-reader user could drive controls the
+    /// pointer could not reach (finding F-11). Marking the owner's subtree <c>Raw</c> is the
+    /// half of that this product owns, and it is the half that matters: the nodes stop being
+    /// offered.
+    /// </para>
+    /// <para>
+    /// The other half — the dialog's own role and its <c>MODAL</c> state — is decided by the
+    /// toolkit's AT-SPI backend, which has no dialog control type to map to in Avalonia 12.1.1.
+    /// That part belongs upstream.
+    /// </para>
+    /// </remarks>
+    private ModalAccessibilityScope HideFromAssistiveTechnologyWhileModal()
+    {
+        // Nested dialogs: only the outermost one restores, and it restores to Default.
+        if (_modalDepth++ == 0)
+        {
+            AutomationProperties.SetAccessibilityView(this, AccessibilityView.Raw);
+        }
+
+        return new ModalAccessibilityScope(this);
+    }
+
+    private int _modalDepth;
+
+    private sealed class ModalAccessibilityScope(MainView owner) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            if (--owner._modalDepth == 0)
+            {
+                AutomationProperties.SetAccessibilityView(owner, AccessibilityView.Default);
+            }
+        }
+    }
+
     public async Task<TResult?> ShowDialogAsync<TResult>(DialogBody<TResult> body)
     {
         ArgumentNullException.ThrowIfNull(body);
@@ -782,6 +832,10 @@ public sealed partial class MainView : IDialogHost
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
             };
 
+            // Dialogs size themselves to their content, which is exactly the layout pass the
+            // XWayland backend presents with a stale damage region (finding F-10).
+            Platform.FullRepaintOnResize.Attach(window);
+
             // Closing the window is a dismissal, and a decided dialog closes its window.
             window.Closing += (_, args) =>
             {
@@ -791,7 +845,26 @@ public sealed partial class MainView : IDialogHost
             };
             window.Closed += (_, _) => body.ForceDismiss();
             window.Opened += (_, _) => body.NotifyPresented();
+
+            // Escape cancels the open dialog. The window manager's close affordance was the only
+            // route out of a sheet with no IsCancel button, and a keyboard-only reader reaches
+            // for Escape first (finding F-12). Bubbling rather than tunnelling, so a control
+            // that has its own use for Escape — a text field clearing itself — still wins.
+            window.KeyDown += (_, args) =>
+            {
+                if (args.Key != Key.Escape || args.Handled || body.Completion.IsCompleted)
+                {
+                    return;
+                }
+
+                // Dismiss, never apply: a dialog with a running preview treats this as its
+                // Cancel, which is what the reader is asking for.
+                body.Dismiss();
+                args.Handled = true;
+            };
+
             _desktopDialogs.Add(window);
+            using var hidden = HideFromAssistiveTechnologyWhileModal();
             try
             {
                 _ = window.ShowDialog(owner);

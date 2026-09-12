@@ -3457,8 +3457,8 @@ an interrupted run resumes from the last line here without re-deriving anything.
 | Repo | `E:\VisualCat` on the Windows host |
 | Guest | `benny@172.24.178.166` (VMware, key auth; `. ~/vcat-run/env.sh`) |
 | Phone | Samsung SM-G990B `RFCRC0A9GND`, PIN `1111`, **lock the screen when finished** |
-| Last completed | Batch C (F-09, F-21, F-24, F-27, F-31) implemented; 1,065 tests green |
-| Next step | Batch D — desktop shell and dialogs |
+| Last completed | Batch D (desktop shell, 14 findings) implemented; 1,071 tests green |
+| Next step | Batch E — documentation and runtime residue, then the live run on the guest |
 
 ### 20.2 Plan — batches, and why in this order
 
@@ -3480,27 +3480,27 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 | Finding | Severity | Implemented | Unit test | Live-verified on the guest |
 |---|---|---|---|---|
 | F-01 | Major | yes | yes — 1,033 pass | pending |
-| F-02 | Minor | — | — | — |
-| F-03 | Minor | — | — | — |
-| F-04 | Minor | — | — | — |
-| F-05 | Polish | — | — | — |
+| F-02 | Minor | yes | yes | pending |
+| F-03 | Minor | yes | yes | pending |
+| F-04 | Minor | yes | yes | pending |
+| F-05 | Polish | yes | yes | pending |
 | F-06 | Minor | yes | yes | pending |
 | F-07 | Minor | yes | yes | pending |
-| F-08 | Polish | — | — | — |
+| F-08 | Polish | yes | yes | pending |
 | F-09 | Major | yes | yes | pending |
-| F-10 | Major | — | — | — |
-| F-11 | Major | — | — | — |
-| F-12 | Minor | — | — | — |
-| F-13 | Polish | — | — | — |
-| F-14 | Polish | — | — | — |
-| F-15 | Minor | — | — | — |
-| F-16 | Polish | — | — | — |
+| F-10 | Major | mitigation | n/a — needs a display server | pending |
+| F-11 | Major | yes | yes | pending |
+| F-12 | Minor | yes | yes | pending |
+| F-13 | Polish | yes | yes | pending |
+| F-14 | Polish | yes | yes | pending |
+| F-15 | Minor | yes | yes | pending |
+| F-16 | Polish | yes | yes | pending |
 | F-17 | Polish | — | — | — |
 | F-18 | Major | yes | yes | pending |
 | F-19 | Major | yes | yes | pending |
 | F-20 | Major | yes | yes | pending |
 | F-21 | Minor | yes | yes | pending |
-| F-22 | Minor | — | — | — |
+| F-22 | Minor | yes | yes | pending |
 | F-23 | Polish | — | — | — |
 | F-24 | Polish | yes | yes | pending |
 | F-25 | Polish | yes | yes | pending |
@@ -3508,5 +3508,5 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 | F-27 | Minor | yes | yes | pending |
 | F-28 | Polish | yes | yes | pending |
 | F-29 | Minor | yes | yes | pending |
-| F-30 | Minor | — | — | — |
+| F-30 | Minor | yes | yes | pending |
 | F-31 | Major | yes | yes | pending |

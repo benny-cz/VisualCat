@@ -7,6 +7,8 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.VisualTree;
+using Avalonia.Styling;
+using VisualCat.App.Timeline;
 using VisualCat.App.Presentation;
 using VisualCat.Domain;
 using VisualCat.Infrastructure.Configuration;
@@ -39,6 +41,42 @@ internal sealed record SettingChoice(string Value, string Label)
 /// </summary>
 internal static class SheetForm
 {
+    /// <summary>
+    /// Gives a dialog's confirming action the product's primary-action treatment, and keeps it
+    /// through a theme change.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A dialog's default button was drawn in the toolkit's plain style, noticeably lighter than
+    /// the Cancel beside it, so a live and clickable <em>Import</em> read as disabled — in the
+    /// live run it cost real time, because the review was treated as blocked (finding F-08).
+    /// The shell's own buttons have used the primary-action palette all along; the dialogs
+    /// simply never asked for it.
+    /// </para>
+    /// <para>
+    /// It also puts the enabled and disabled states visibly apart, which is the other half of
+    /// the defect: the enabled state looked like most products' disabled one.
+    /// </para>
+    /// </remarks>
+    internal static Button PrimaryAction(Button button)
+    {
+        ArgumentNullException.ThrowIfNull(button);
+        button.CornerRadius = new CornerRadius(6);
+        button.BorderThickness = new Thickness(1);
+        button.Padding = new Thickness(16, 7);
+        Apply();
+        button.ActualThemeVariantChanged += (_, _) => Apply();
+        return button;
+
+        void Apply()
+        {
+            var dark = button.ActualThemeVariant != ThemeVariant.Light;
+            button.Background = new SolidColorBrush(WorkspacePalette.PrimaryActionFill(dark));
+            button.BorderBrush = new SolidColorBrush(WorkspacePalette.PrimaryActionEdge(dark));
+            button.Foreground = new SolidColorBrush(WorkspacePalette.PrimaryActionText(dark));
+        }
+    }
+
     /// <summary>
     /// What the three words a stored session can be described with mean.
     /// </summary>
@@ -575,11 +613,28 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         ("utf-8-bom", "UTF-8 with byte-order mark"),
         ("utf-8", "UTF-8"));
 
-    private static readonly bool Mobile = OperatingSystem.IsAndroid();
+    /// <summary>
+    /// LF first, and the default, so the same session exports the same bytes on every platform
+    /// (finding F-29).
+    /// </summary>
+    private static readonly SettingChoice[] ExportNewlineChoices = SettingChoice.Of(
+        ("lf", "LF (Unix, portable)"),
+        ("crlf", "CRLF (Windows)"));
+
+    /// <summary>
+    /// Whether this dialog is composing for a thumb.
+    /// </summary>
+    /// <remarks>
+    /// Read through <see cref="DialogComposition"/> rather than straight from the platform, so
+    /// the phone-only controls this gates — and the phone wording beside them — can be asserted
+    /// from both sides without a device (F-14).
+    /// </remarks>
+    private static bool Mobile => DialogComposition.Mobile;
 
     private readonly ChoiceSelector? _themeChoice;
     private readonly ChoiceSelector? _intensityChoice;
     private readonly ChoiceSelector? _normalizationChoice;
+    private readonly ChoiceSelector? _exportNewlineChoice;
     private readonly ChoiceSelector? _exportOrderChoice;
     private readonly ChoiceSelector? _exportEncodingChoice;
     private readonly ComboBox _theme = Choices(ThemeChoices);
@@ -623,7 +678,14 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
     };
     private readonly ComboBox _exportOrder = Choices(ExportOrderChoices);
     private readonly ComboBox _exportEncoding = Choices(ExportEncodingChoices);
-    private readonly CheckBox _pixelSnap = new() { Content = "Snap timeline cells to device pixels" };
+    private readonly ComboBox _exportNewline = Choices(ExportNewlineChoices);
+    // "Device" is the phone's word, and on a desktop the referent is this computer's own
+    // display scaling. Platform vocabulary borrowed from the other platform reads as a setting
+    // that belongs to something else (finding F-14).
+    private readonly CheckBox _pixelSnap = new()
+    {
+        Content = Mobile ? "Snap timeline cells to device pixels" : "Snap timeline cells to screen pixels",
+    };
     private readonly CheckBox _diagnostics = new() { Content = "Write redacted structured diagnostics" };
     private readonly ApplicationSettings _settings;
     private bool _resetMobileTimelineShare;
@@ -671,7 +733,9 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         {
             // The one control the OS setting does not already cover, now that it is
             // honoured: this multiplies it rather than replacing it (audit 2, B5).
-            Text = "Multiplies the device's own text size setting.",
+            Text = Mobile
+                ? "Multiplies the device's own text size setting."
+                : "Multiplies this computer's own text size setting.",
             TextWrapping = TextWrapping.Wrap,
             Opacity = 0.72,
         });
@@ -717,7 +781,12 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
             TextWrapping = TextWrapping.Wrap,
             Opacity = 0.72,
         });
-        form.Children.Add(new TextBlock { Text = "Phone plot and details split" });
+        // Present and permanently inert on a desktop: a phone-only control, with portrait,
+        // landscape and Split-mode vocabulary under it, in a dialog a desktop reader opened
+        // (finding F-14). Gated the same way "Check for updates…" is.
+        if (Mobile)
+        {
+        form.Children.Add(new TextBlock { Text = "Plot and details split" });
         var resetMobileSplit = new Button
         {
             Content = HasSplitOverride(settings)
@@ -751,10 +820,14 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
             TextWrapping = TextWrapping.Wrap,
             Opacity = 0.72,
         });
+        }
+
         form.Children.Add(new TextBlock { Text = "Default export order" });
         form.Children.Add(Pick("Default export order", _exportOrder, ExportOrderChoices, settings.ExportOrder, out _exportOrderChoice));
-        form.Children.Add(new TextBlock { Text = "Normalized CSV encoding" });
-        form.Children.Add(Pick("Normalized CSV encoding", _exportEncoding, ExportEncodingChoices, settings.ExportEncoding, out _exportEncodingChoice));
+        form.Children.Add(new TextBlock { Text = "CSV encoding" });
+        form.Children.Add(Pick("CSV encoding", _exportEncoding, ExportEncodingChoices, settings.ExportEncoding, out _exportEncodingChoice));
+        form.Children.Add(new TextBlock { Text = "CSV line endings" });
+        form.Children.Add(Pick("CSV line endings", _exportNewline, ExportNewlineChoices, settings.ExportNewline, out _exportNewlineChoice));
 
         // Both values are editable in the export review as well, and a successful export
         // stores what it used. Saying so here is what keeps this screen from looking like the
@@ -815,6 +888,7 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
             TimelineMinimumBarWidth = (double)(_minimumBarWidth.Value ?? 3m),
             ExportOrder = _exportOrderChoice?.Value ?? Value(_exportOrder, ExportOrderChoices),
             ExportEncoding = _exportEncodingChoice?.Value ?? Value(_exportEncoding, ExportEncodingChoices),
+            ExportNewline = _exportNewlineChoice?.Value ?? Value(_exportNewline, ExportNewlineChoices),
             DiagnosticsEnabled = _diagnostics.IsChecked == true,
             MobileTimelineShare = _resetMobileTimelineShare ? null : _settings.MobileTimelineShare,
             MobileTimelineWidthShare =

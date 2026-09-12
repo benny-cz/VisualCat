@@ -864,9 +864,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             return TimeZoneInfo.Utc.Id;
         }
 
-        return descriptor.SourceKind is SourceKind.Adb or SourceKind.Android
-            ? TimeZoneInfo.Local.Id
-            : descriptor.TimestampPolicy.TimeZoneId;
+        return DisplayZone.IdFor(descriptor);
     }
 
     private TimeZoneInfo ResolveSessionZone()
@@ -877,15 +875,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             return cached;
         }
 
-        try
-        {
-            _sessionZone = TimeZoneInfo.FindSystemTimeZoneById(zoneId);
-        }
-        catch (Exception exception) when (exception is TimeZoneNotFoundException or InvalidTimeZoneException)
-        {
-            _sessionZone = TimeZoneInfo.Utc;
-        }
-
+        _sessionZone = DisplayZone.Resolve(zoneId);
         _sessionZoneId = zoneId;
         return _sessionZone;
     }

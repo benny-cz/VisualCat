@@ -126,13 +126,13 @@ internal sealed class ImportPreviewDialog : DialogBody<IngestSettings>, IDisposa
 
         var cancel = new Button { Content = "Cancel", IsCancel = true, MinHeight = mobile ? 48 : 0 };
         cancel.Click += (_, _) => Complete(null);
-        _import = new Button
+        _import = SheetForm.PrimaryAction(new Button
         {
             Content = "Import",
             IsDefault = true,
             IsEnabled = false,
             MinHeight = mobile ? 48 : 0,
-        };
+        });
         _import.Click += (_, _) =>
         {
             if (_evaluatedSettings is { } settings)
