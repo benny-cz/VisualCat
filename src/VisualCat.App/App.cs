@@ -1,6 +1,9 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Avalonia.Platform;
 using VisualCat.App.Views;
 
@@ -102,6 +105,29 @@ public sealed class MainWindow : Window
         Content = view;
         view.AttachHostWindow(this);
         Platform.FullRepaintOnResize.Attach(this);
+
+        // A window with no focused control is one a screen reader reads out whole: Orca
+        // announced the frame and then the entire workspace — the notice, the strapline, every
+        // count, the template list and the entry list — as a single utterance, because there
+        // was nothing inside holding focus for it to announce instead (U-07). It is the same
+        // shape as a dialog opening without focus, and the same answer: put focus on the first
+        // thing a reader would reach with Tab anyway.
+        Opened += (_, _) => Dispatcher.UIThread.Post(
+            () =>
+            {
+                if (FocusManager?.GetFocusedElement() is Visual focused &&
+                    focused.FindAncestorOfType<Window>(includeSelf: true) == this)
+                {
+                    return;
+                }
+
+                this.GetVisualDescendants()
+                    .OfType<InputElement>()
+                    .FirstOrDefault(static element =>
+                        element.Focusable && element.IsEffectivelyEnabled && element.IsEffectivelyVisible)
+                    ?.Focus();
+            },
+            DispatcherPriority.Loaded);
 
         // A minimized window is the desktop's version of a screen that has turned off:
         // the capture must keep running, but re-running the heat map, overview,

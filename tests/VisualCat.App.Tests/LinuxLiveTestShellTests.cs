@@ -1,8 +1,11 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Headless.XUnit;
 using Avalonia.LogicalTree;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Avalonia.Media;
 using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
@@ -140,4 +143,37 @@ public sealed class LinuxLiveTestShellTests
         null,
         true,
         false);
+
+    // ---------------------------------------------------------------- U-07
+
+    [AvaloniaFact]
+    public void TheMainWindowStartsWithFocusOnItsFirstCommand()
+    {
+        // A window with no focused control is one a screen reader reads out whole: Orca
+        // announced the frame and then the entire workspace — notice, strapline, counts,
+        // template list and entry list — as a single utterance, because there was nothing
+        // inside holding focus to announce instead (U-07).
+        var window = new MainWindow(new MainView());
+        try
+        {
+            window.Show();
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs(DispatcherPriority.Loaded);
+
+            var focused = window.FocusManager?.GetFocusedElement() as Visual;
+            Assert.NotNull(focused);
+            Assert.Same(window, focused!.FindAncestorOfType<Window>(includeSelf: true));
+
+        // And it must not look different to someone who uses a pointer: the focus adorner is
+        // driven by :focus-visible, which keyboard navigation raises and a programmatic focus
+        // does not.
+            Assert.False(
+                ((IPseudoClasses)((StyledElement)focused).Classes).Contains(":focus-visible"),
+                "starting focus must not draw a focus ring for a reader who never touched the keyboard");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }

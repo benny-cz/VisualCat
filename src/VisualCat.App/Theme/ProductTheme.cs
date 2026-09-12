@@ -174,6 +174,15 @@ internal static class ProductTheme
     /// </remarks>
     internal static IEnumerable<Style> BuildStyles()
     {
+        // A note on what is not here. Avalonia's AT-SPI backend names a control that has no
+        // automation name after its own type, so 168 layout containers introduce themselves to a
+        // screen reader as "ContentPresenter panel", "Grid panel", "VisualLayerManager panel" —
+        // implementation detail read aloud, which is what R-40 exists to prevent, and which
+        // running Orca proved is announced rather than skipped (U-07). Styling those types with
+        // AutomationProperties.AccessibilityView = Raw, with Name = "", and with both together
+        // was measured against a live AT-SPI tree and changed the count by nothing: the backend
+        // consults neither for an unnamed control. It is the same dead end as F-11 and belongs
+        // upstream; the styles that did nothing are not kept.
         yield return CenterContentVertically<Button>();
         yield return CenterContentVertically<ToggleButton>();
         yield return CenterContentVertically<TabItem>();

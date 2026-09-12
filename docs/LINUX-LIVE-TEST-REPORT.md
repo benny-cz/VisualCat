@@ -3459,13 +3459,13 @@ an interrupted run resumes from the last line here without re-deriving anything.
 | Field | Value |
 |---|---|
 | Run ID | `20260912-linux-remediation` |
-| Status | **COMPLETE** — 30 of 31 findings closed and live-verified, 1 closed with a stated limit, 1 open upstream; §21 adds a sixth pass that also closed four standing §15 rows |
+| Status | **COMPLETE** — 30 of 31 findings closed and live-verified, 1 closed with a stated limit, 1 open upstream; §21 adds a sixth pass that closed six and a half standing §15 rows and found [F-32](#f-32) |
 | Branch | `main` (working tree; commits are made per batch) |
 | Repo | `E:\VisualCat` on the Windows host |
 | Guest | `benny@172.24.178.166` (VMware, key auth; `. ~/vcat-run/env.sh`) |
 | Phone | Samsung SM-G990B `RFCRC0A9GND`, PIN `1111`, **lock the screen when finished** |
-| Last completed | §21 complete — six passes; 30 of 31 findings closed, 5½ §15 rows closed, one new defect found and fixed; guest handed back and the phone locked |
-| Next step | None on this host. [F-11](#f-11) needs an Avalonia change; §21.9 lists the §15 rows that need hardware or a human |
+| Last completed | §21.13 — Orca run end to end for the first time; F-32 recorded (upstream), the window-focus half fixed and pinned |
+| Next step | None reachable on this host. [F-11](#f-11) and [F-32](#f-32) need an Avalonia change; §21.9 lists the §15 rows that need hardware |
 
 ### 20.2 Plan — batches, and why in this order
 
@@ -3498,7 +3498,7 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 | F-10 | Major | mitigation | n/a — needs a display server | **yes** — 5/5 clean, 0.114% against 15–31% |
 | F-11 | Major | no — upstream | n/a | **no** — 434 nodes still reachable; no Avalonia lever exists |
 | F-12 | Minor | yes | yes | **yes** — closes 3 of 3 dialogs |
-| F-13 | Polish | yes | yes | **partly** — app name and controls yes; structural `panel` names upstream |
+| F-13 | Polish | yes | yes | **partly** — app name and controls yes; the structural names are upstream and now tracked as [F-32](#f-32) |
 | F-14 | Polish | yes | yes | **yes** — no phone words, no phone control, *CSV encoding* |
 | F-15 | Minor | yes | yes | **yes** — `222 of 222 shown`, button gone |
 | F-16 | Polish | yes | yes | **yes** — `Europe/Prague`, matching the plot |
@@ -3517,6 +3517,7 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 | F-29 | Minor | yes | yes | **yes** — 0 CR by default, identical after stripping |
 | F-30 | Minor | host bug + defences | yes | **yes** — every shape, including masked (§21.2) |
 | F-31 | Major | yes | yes | **yes** — cases 1, 4, 6 and 7 all detected and worded apart |
+| F-32 | **Major** | no — upstream | n/a | **measured** (§21.13) — 168 nodes, unchanged by both levers; the window-focus half is closed |
 
 ### 20.4 Live verification on the guest
 
@@ -4341,9 +4342,10 @@ not needed** — which is what makes it safe to ship enabled on every Linux host
 | Closed and live-verified | **30** |
 | Closed with a stated limit | **1** — [F-13](#f-13): the application and its controls yes, the structural `panel` names upstream |
 | Not closed | **1** — [F-11](#f-11), upstream in Avalonia |
-| §15 rows closed by this pass | **5½** — `umask 077` under the desktop, low disk, quota/read-only/failing storage (L3, X-15), a second distribution for both artifacts, an enforced ACL denial (P-09), and the forward half of the Android leg of I-08 |
-| §15 rows still open | metal and the §4.2 performance budgets, ADB `no permissions`/`udev`/group membership, Orca end-to-end, the G4 desktop matrix beyond "no window manager", multi-monitor, the soak, and the reverse half of I-08 (no scriptable file-saving share target on this device) |
-| Defects found *by* this pass | **1** — a session an ACL denies was reported as a missing manifest (§21.12), the same wrong-diagnosis family as F-06 and F-19; fixed and pinned by a test |
+| §15 rows closed by this pass | **6½** — `umask 077` under the desktop, low disk, quota/read-only/failing storage (L3, X-15), a second distribution for both artifacts, an enforced ACL denial (P-09), **Orca end-to-end (U-07)**, and the forward half of the Android leg of I-08 |
+| §15 rows still open | metal and the §4.2 performance budgets, ADB `no permissions`/`udev`/group membership, the G4 desktop matrix beyond "no window manager", multi-monitor, the soak, and the reverse half of I-08 (no scriptable file-saving share target on this device) |
+| Defects found *by* this pass | **2** — a session an ACL denies was reported as a missing manifest (§21.12), the same wrong-diagnosis family as F-06 and F-19, fixed and pinned by a test; and [F-32](#f-32), a screen reader reading the shell's implementation types aloud, which is upstream. A third — a window read out whole because nothing in it held focus — was found the same way and is closed |
+| Findings after this pass | **32** — 9 Major, 13 Minor, 10 Polish |
 | Format compatibility across the fix | **PASS both ways** (§21.10) — the shipped 2.0.13 and the fixed build read each other's sessions, and their portable archives have identical member sets |
 | Unit tests | **1,071**, 0 failures |
 | VisualCat-attributable crashes, hangs or core dumps | **0**, across five storage-failure shapes and two distributions |
@@ -4434,3 +4436,107 @@ same shape at the filesystem layer, and it skips itself as root, where the mode 
 
 The probe account `vcatacl` and every ACL this row set were removed at cleanup; the guest has one
 account again.
+
+### 21.13 §15 · Orca end-to-end (U-07) — **run for the first time, and it found a finding**
+
+§15 had this row open because "the AT-SPI tree was inspected but nobody listened". Nobody has to:
+Orca 42.0 is installed on the guest, `speech-dispatcher` has an `sd_dummy` output module so nothing
+tries to open an audio device on a VM, and `orca --debug-file=<path>` records every utterance as a
+`SPEECH OUTPUT:` line. That is what Orca *would say*, captured verbatim.
+
+**Setup.** `~/.config/speech-dispatcher/speechd.conf` with `AddModule "dummy" "sd_dummy" ""` and
+`DefaultModule dummy`; `toolkit-accessibility true`; the desktop started with a 3,000-line session
+open; then `orca --replace --debug-file=/tmp/orca4`, focus the window, and Tab through the
+documented focus order.
+
+**What it says correctly.** Every interactive control announces itself properly, including the
+names [F-13](#f-13) added:
+
+```
+'＋  Open log push button.'
+'Save portable push button.'
+'Export push button.'
+'More  ▾'
+'Show complete session orca.txt push button.'
+'Open this complete session.'
+```
+
+**What it says that it should not.** Reaching that first button takes Orca through sixteen stops
+on nodes that are not controls at all:
+
+```
+'Panel panel.'                    'Border panel.'
+'VisualLayerManager panel.'       'Grid panel.'
+'ContentPresenter panel.'         'StackPanel panel.'
+'ContentPresenter panel.'         'ItemsPresenter panel.'
+'Grid panel.'                     'FadingScrollHost panel.'
+'Border panel.'                   'ScrollContentPresenter panel.'
+'Grid panel.'                     …
+```
+
+and, after each one, the whole notice text again. **168 nodes** in an open session carry a name
+that is the name of their implementation type.
+
+---
+
+#### F-32 · Major · A screen reader reads the shell's implementation types aloud before reaching any control
+
+**Severity** Major, and it supersedes [F-13](#f-13)'s own assessment of this. F-13 called the
+structural names cosmetic *"because Orca mostly skips `panel` roles"*. It does not skip them. A
+screen-reader user starting at the top of the window hears `Panel panel`, `VisualLayerManager
+panel`, `ContentPresenter panel`, `Grid panel`, `Border panel`, `StackPanel panel`,
+`ItemsPresenter panel`, `FadingScrollHost panel`, `ScrollContentPresenter panel` — with the notice
+text repeated between them — before the first thing they can act on. **R-40** exists to stop
+implementation detail being read aloud, and this is the product doing exactly that, sixteen times
+before anything useful.
+
+**Where** Avalonia's AT-SPI backend, not this repository. It derives an unnamed control's
+accessible name from the control's **type**, and it consults `AutomationProperties` for neither
+the tree shape nor that fallback.
+
+**Measured, not assumed.** Three attempts against a live AT-SPI tree on the guest, same session
+and same window each time:
+
+| Attempt | Structural nodes carrying a type name |
+|---|---|
+| as shipped | **168** |
+| styling every container type with `AutomationProperties.AccessibilityView = Raw` | **168** |
+| the same, plus `AutomationProperties.Name = ""` | **168** |
+
+Not merely the same total — the same breakdown, type by type, including types that the style
+covers completely and exclusively (`VisualLayerManager` 1, `ItemsPresenter` 3,
+`ScrollContentPresenter` 2). The styles were removed rather than left looking like a fix, and the
+reason is recorded in `ProductTheme.BuildStyles` so the next reader does not repeat the
+experiment. This is the same dead end as [F-11](#f-11), in the same component.
+
+**Suggested fix — upstream, in `Avalonia.FreeDesktop.AtSpi`.** A control with no automation name
+should expose no accessible name rather than its type name, and a peer whose
+`AccessibilityView` is `Raw` should be skipped while its children are kept. Either one alone
+removes the noise; the second is the one that also fixes [F-11](#f-11)'s modality half, so the two
+are worth reporting together.
+
+**What was fixed here.** The other half of what Orca exposed was ours, and is closed — below.
+
+---
+
+#### The wall of text — **CLOSED**
+
+The first Orca run produced one utterance that was the *entire workspace*: the notice, the
+strapline, every count, the template list, the entry list and their timestamps, hundreds of words
+in a single breath. It is not a naming problem — it is what Orca does with a window that has no
+focused control, and the main window had none. The same shape as [F-12](#f-12)'s dialogs, found
+the same way.
+
+The window now takes focus on its first focusable control when nothing inside holds focus,
+exactly as the dialogs do. Measured after the change, with the same corpus and the same Orca
+setup:
+
+| | Before | After |
+|---|---|---|
+| longest single utterance | the whole workspace | **`'VisualCat v2 — See the shape of your log frame.'`** |
+| focused control on open | none | **`push button '＋  Open log'`** |
+| Tab from there | — | `'● ADB live'` → `'Open session'`, each announced by name |
+
+A headless test pins both halves: that the window focuses a control inside itself on open, and
+that the control is **not** `:focus-visible` — so a reader who never touches the keyboard sees no
+focus ring appear at launch, and the change costs a pointer user nothing.

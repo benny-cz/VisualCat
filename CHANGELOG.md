@@ -144,6 +144,12 @@ run, and §20 records this remediation.
   toolkit presents a stale damage region: 4 of 5 openings of the settings dialog
   came up with 15–31% of the window never painted, and one hid the export
   review's own *Row order* and *Encoding* controls entirely.
+- **A screen reader no longer hears the whole window read out at once.** Orca announces a window
+  that has no focused control by reading everything in it, and the main window had none — so the
+  notice, the strapline, every count, the template list and the entry list arrived as a single
+  utterance. The window now takes focus on its first command when nothing inside holds focus, the
+  way dialogs do, so a reader arrives on *Open log* instead. Pointer users see no change: a
+  programmatic focus draws no focus ring.
 - **A session you are not allowed to read no longer reports a missing manifest.** `FileInfo.Exists`
   answers false for "you may not look" exactly as it does for "it is not there", so a session
   whose directory an ACL or a mode denied was reported as *Session manifest was not found* — the
