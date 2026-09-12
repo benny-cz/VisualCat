@@ -4333,6 +4333,8 @@ not needed** — which is what makes it safe to ship enabled on every Linux host
 | Phone `RFCRC0A9GND` | imported tab closed, pushed archive removed, app stopped, asleep and **locked** (`deviceLocked=1`, `trustState=UNTRUSTED`) |
 | Host ADB server | loopback only; firewall rule `VCAT-ADB-5037` removed |
 | Left installed on the guest by this pass | `xvfb`, `debootstrap`, `acl` — ordinary packages, no configuration changed |
+| Orca and `speech-dispatcher` | Orca stopped; the `speechd.conf` this pass wrote to point at the dummy synthesizer removed, along with its directory. Both were already installed on the guest |
+| The guest's screen | **locked.** GNOME locked the session during the pass — Appendix B #3, and specifically the form the report warns about: restoring the idle timer at one hand-back makes the next pass hit it. It cannot be unlocked remotely: `loginctl unlock-session` reports success and does not unlock, the `org.gnome.ScreenSaver.SetActive` call times out, and a Wayland lock screen takes no input from an X client. Nothing is broken by it — ssh, the filesystem and the VM are unaffected — but the next person at the console will need the account password |
 
 ### 21.9 Revised tally after the sixth pass
 

@@ -3614,6 +3614,16 @@ report.
 
     See F-10. `VISUALCAT_FULL_REPAINT=0` turns off the product's mitigation, for
     measuring the underlying behaviour.
+56. **A locked GNOME session cannot be unlocked from ssh.** `loginctl unlock-session` reports
+    success without unlocking, `org.gnome.ScreenSaver.SetActive false` times out, and a Wayland
+    lock screen takes no synthetic input from an X client — so `xdotool` and `import` simply hang
+    against it, which looks like the product wedging the display. Check
+    `loginctl show-session <id> -p LockedHint` before diagnosing anything graphical, and disable
+    `idle-delay` and `idle-activation-enabled` **at the start of every pass**, not only the first.
+57. **`pkill -f <word>` matches your own arguments.** `pkill -f orca` killed the product as well
+    as the screen reader, because the session under test had been opened with
+    `--log .../orca.txt`. Use `pkill -x <exact name>`, and name scratch files after nothing you
+    will later pkill.
 53. **`xdotool getactivewindow` returns nothing under XWayland**, so `xdotool key <key>` with no
     target goes nowhere and a control that works looks broken. Address the window: `xdotool key
     --window <id>` for the product's own windows (Avalonia accepts `XSendEvent`), and `xdotool
