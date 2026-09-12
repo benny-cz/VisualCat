@@ -3464,8 +3464,8 @@ an interrupted run resumes from the last line here without re-deriving anything.
 | Repo | `E:\VisualCat` on the Windows host |
 | Guest | `benny@172.24.178.166` (VMware, key auth; `. ~/vcat-run/env.sh`) |
 | Phone | Samsung SM-G990B `RFCRC0A9GND`, PIN `1111`, **lock the screen when finished** |
-| Last completed | §21 sixth pass — F-03's hand-off and F-30's masked case closed; four §15 rows run (umask 077 GUI, low disk, failing storage, Debian 12 desktop and CLI) |
-| Next step | None. 30 of 31 closed, [F-13](#f-13) partly (upstream), [F-11](#f-11) open upstream |
+| Last completed | §21 complete — six passes; 30 of 31 findings closed, 5½ §15 rows closed, one new defect found and fixed; guest handed back and the phone locked |
+| Next step | None on this host. [F-11](#f-11) needs an Avalonia change; §21.9 lists the §15 rows that need hardware or a human |
 
 ### 20.2 Plan — batches, and why in this order
 
@@ -4311,6 +4311,27 @@ not needed** — which is what makes it safe to ship enabled on every Linux host
 | Product processes | `VisualCat` **0** · `vcat` **0** |
 | `/var/crash` | **0** entries across every storage-failure shape |
 | Free space | 162 GiB |
+
+### 21.8b Final hand-back
+
+| Step | Verified |
+|---|---|
+| Product processes | `VisualCat` **0** · `vcat` **0** |
+| Stray portal choosers, dismissed with Escape | **0**; `xdg-desktop-portal` and `-gnome` both **active**, neither masked nor failed |
+| `idle-delay` / `idle-activation-enabled` / `toolkit-accessibility` | `uint32 300` / `true` / `false` — all restored |
+| Probe accounts (`vcatprobe`, `vcatacl`) | removed; the guest has **one** account again |
+| Loop devices · device-mapper targets · extra mounts | **0** · **0** · `/mnt` is `hgfs` alone |
+| `/srv/deb12` | removed, and `/srv` with it |
+| Candidate, scratch, driver scripts, transferred tarballs | removed, including `env-fix.sh` |
+| Sessions this remediation created | removed; the account's own **4** from Part I untouched, **100 MB** |
+| Lease files | 14 remain, all belonging to sessions that exist |
+| `/tmp/dotnet-diagnostic-*-socket` | **0** |
+| `/var/crash` | **0** entries, across every shape in six passes |
+| Part I's harness (`candidate/rel-2.0.13`, `corpus`, `env.sh`) | **3/3 intact** — the next run can still use it |
+| Free space | 162 GiB |
+| Phone `RFCRC0A9GND` | imported tab closed, pushed archive removed, app stopped, asleep and **locked** (`deviceLocked=1`, `trustState=UNTRUSTED`) |
+| Host ADB server | loopback only; firewall rule `VCAT-ADB-5037` removed |
+| Left installed on the guest by this pass | `xvfb`, `debootstrap`, `acl` — ordinary packages, no configuration changed |
 
 ### 21.9 Revised tally after the sixth pass
 
