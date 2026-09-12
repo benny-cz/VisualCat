@@ -188,14 +188,19 @@ public static class SessionAccess
         // sweep needs nothing from the lease table it would have to be serialized against.
         if (Interlocked.Exchange(ref s_swept, 1) == 0)
         {
-            _ = Task.Run(() => SweepUnheldMarkers(leases));
+            _ = Task.Run(() => SweepMarkersOfVanishedSessions(leases));
         }
 
         // Case-folded on the platform whose paths are, so two spellings of one path cannot
         // take two different leases over the same session.
         var key = OperatingSystem.IsWindows() ? path.ToUpperInvariant() : path;
         var stem = Path.Combine(leases, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))));
-        var entry = new Entry(stem + ".read", stem + ".write", stem + ".intent");
+        var entry = new Entry(stem + ".read", stem + ".write", stem + IntentSuffix);
+
+        // Which session this lease belongs to, so a sweep can tell a marker whose session is
+        // gone from one whose session is merely idle. The file name is a hash and cannot say
+        // (F-24). It lives beside the sessions themselves, inside the owner-only data root.
+        TryRecordSession(stem + IntentSuffix, path);
         Entries.Add(path, entry);
         return entry;
     }
@@ -203,11 +208,13 @@ public static class SessionAccess
     /// <summary>How many marker files one sweep looks at, so a huge directory cannot stall a launch.</summary>
     private const int MaximumSweptMarkers = 5_000;
 
+    /// <summary>The suffix of the marker that records which session a lease belongs to.</summary>
+    private const string IntentSuffix = ".intent";
+
     private static int s_swept;
 
     /// <summary>
-    /// Removes marker files that no process is holding, once per process, when the lease
-    /// directory is first opened.
+    /// Removes the markers of sessions that no longer exist, once per process.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -216,18 +223,21 @@ public static class SessionAccess
     /// leaves behind found a growing directory with no explanation (finding F-24).
     /// </para>
     /// <para>
-    /// Deleting them is safe because their existence is not the lock: only an open handle is, and
-    /// a marker is recreated on demand by the next user. A marker that any process is holding
-    /// cannot be opened exclusively here, so it is left exactly where it is. Every failure is
-    /// swallowed — a sweep that cannot run must never stop a session from opening.
+    /// The condition is deliberately narrow. A marker's existence is not the lock — only an open
+    /// handle is — so deleting an unheld marker is harmless in principle, but unlinking a name
+    /// another process is in the middle of opening refuses that process a lease it should have
+    /// had, and "this capture is in use" is a much worse thing to be wrong about than a stray
+    /// zero-byte file. So only markers naming a session directory that is gone are considered,
+    /// and only while every one of the three can be held exclusively — which is never true of a
+    /// lease anybody holds.
     /// </para>
     /// </remarks>
-    private static void SweepUnheldMarkers(string leaseRoot)
+    private static void SweepMarkersOfVanishedSessions(string leaseRoot)
     {
         try
         {
             var examined = 0;
-            foreach (var marker in Directory.EnumerateFiles(leaseRoot))
+            foreach (var intent in Directory.EnumerateFiles(leaseRoot, "*" + IntentSuffix))
             {
                 if (++examined > MaximumSweptMarkers)
                 {
@@ -236,26 +246,75 @@ public static class SessionAccess
 
                 try
                 {
-                    // Opening it exclusively is the question being asked: if anyone holds this
-                    // lease, in this process or another, this throws and the marker stays.
-                    // FileShare.Delete lets the unlink happen while the exclusive handle is
-                    // still held, which leaves no window in which another process could take
-                    // the lease on a name this one is about to remove.
-                    using var held = new FileStream(
-                        marker,
-                        FileMode.Open,
-                        FileAccess.ReadWrite,
-                        FileShare.Delete);
-                    File.Delete(marker);
+                    var session = File.ReadAllText(intent).Trim();
+                    if (session.Length == 0 || Directory.Exists(session) || File.Exists(session))
+                    {
+                        continue;
+                    }
+
+                    var stem = intent[..^IntentSuffix.Length];
+                    DeleteIfUnheld(stem + ".read");
+                    DeleteIfUnheld(stem + ".write");
+                    DeleteIfUnheld(intent);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
-                    // Held, or not ours to remove. Either way it is not residue.
+                    // Held, unreadable, or gone already. None of those is residue to remove.
                 }
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+        }
+    }
+
+    /// <summary>
+    /// Removes one marker, but only while holding it exclusively, so no process can be between
+    /// opening that name and locking it.
+    /// </summary>
+    private static void DeleteIfUnheld(string marker)
+    {
+        if (!File.Exists(marker))
+        {
+            return;
+        }
+
+        try
+        {
+            // FileShare.Delete lets the unlink happen while the exclusive handle is still held,
+            // which leaves no window in which another process could take the lease on a name
+            // this one is about to remove.
+            using var held = new FileStream(marker, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete);
+            File.Delete(marker);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>Notes which session a marker belongs to, if it does not say so already.</summary>
+    private static void TryRecordSession(string intentPath, string sessionPath)
+    {
+        try
+        {
+            if (File.Exists(intentPath) && new FileInfo(intentPath).Length > 0)
+            {
+                return;
+            }
+
+            // Shared with everything: this is a note beside the lock, never the lock itself, and
+            // a writer that loses a race simply writes the same text.
+            using var stream = new FileStream(
+                intentPath,
+                FileMode.OpenOrCreate,
+                FileAccess.Write,
+                FileShare.ReadWrite | FileShare.Delete);
+            using var writer = new StreamWriter(stream, Encoding.UTF8) { NewLine = "\n" };
+            writer.Write(sessionPath);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // A marker that cannot say which session it belongs to is simply never swept.
         }
     }
 

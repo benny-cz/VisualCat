@@ -103,31 +103,38 @@ internal static class VisualCatCli
             return 0;
         }
 
+        // Two stages, because an interruption should not cost the reader what has already been
+        // captured. The first signal asks the source to stop and lets the pipeline publish and
+        // finalize what it has, so the session that survives is complete as far as it goes and
+        // passes `vcat verify`. A second signal gives up on that and cancels outright.
+        //
+        // Before this, SIGINT was not reaching anything at all — an index signalled 2.5 s into
+        // a 10 s run finished all 900,001 lines and exited 0, so Ctrl+C looked like it worked
+        // by doing nothing — and SIGTERM, which is how a long index actually gets interrupted
+        // on Linux (a systemd stop, a logout, a container shutdown, a bare kill), was the
+        // runtime's default terminate: the process was torn down mid-publication and left a
+        // session stuck in Importing with one recoverable entry (finding F-18).
+        using var stop = new CancellationTokenSource();
         using var cancellation = new CancellationTokenSource();
         Console.CancelKeyPress += (_, eventArgs) =>
         {
             eventArgs.Cancel = true;
-            cancellation.Cancel();
+            RequestShutdown(stop, cancellation);
         };
 
-        // SIGTERM is how a long index actually gets interrupted on Linux — a systemd stop, a
-        // session logout, a container shutdown and a bare kill all send it — and only SIGINT
-        // was wired to cancellation. The runtime's default handler tore the process down
-        // mid-publication, so the same interruption that left a clean, verifiable session under
-        // Ctrl+C left one stuck in "Importing" with a single recoverable entry under kill
-        // (finding F-18). Cancel:true takes over from the default terminate, and the handler
-        // then waits for the cooperative shutdown to finish publishing rather than returning
-        // immediately, which would let the runtime exit anyway.
+        // Cancel:true takes over from the default disposition, and the handler then waits for
+        // the cooperative shutdown to publish rather than returning immediately, which would
+        // let the runtime exit anyway.
         using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
         {
             context.Cancel = true;
-            cancellation.Cancel();
+            RequestShutdown(stop, cancellation);
             _shutdownDrained.Wait(ShutdownDrainTimeout);
         });
         using var sighup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, context =>
         {
             context.Cancel = true;
-            cancellation.Cancel();
+            RequestShutdown(stop, cancellation);
             _shutdownDrained.Wait(ShutdownDrainTimeout);
         });
 
@@ -174,7 +181,7 @@ internal static class VisualCatCli
             options.RejectExtraPositions(command, PositionalLimit(command));
             return command switch
             {
-                "index" => await IndexAsync(options, cancellation.Token).ConfigureAwait(false),
+                "index" => await IndexAsync(options, stop.Token, cancellation.Token).ConfigureAwait(false),
                 "info" => await InfoAsync(options, cancellation.Token).ConfigureAwait(false),
                 "stats" => await StatsAsync(options, cancellation.Token).ConfigureAwait(false),
                 "query" => await QueryAsync(options, cancellation.Token).ConfigureAwait(false),
@@ -184,7 +191,7 @@ internal static class VisualCatCli
                 "verify" => await VerifyAsync(options, cancellation.Token).ConfigureAwait(false),
                 "generate-test-log" => await GenerateAsync(options, cancellation.Token).ConfigureAwait(false),
                 "adb-devices" => await AdbDevicesAsync(options, cancellation.Token).ConfigureAwait(false),
-                "capture-adb" => await CaptureAdbAsync(options, cancellation.Token).ConfigureAwait(false),
+                "capture-adb" => await CaptureAdbAsync(options, stop.Token, cancellation.Token).ConfigureAwait(false),
                 _ => throw new CommandException($"Unknown command '{args[0]}'."),
             };
         }
@@ -228,7 +235,27 @@ internal static class VisualCatCli
         }
     }
 
-    private static async Task<int> IndexAsync(Arguments options, CancellationToken cancellationToken)
+    /// <summary>
+    /// Asks the running command to finish, and on a second request gives up on finishing.
+    /// </summary>
+    private static void RequestShutdown(CancellationTokenSource stop, CancellationTokenSource cancellation)
+    {
+        if (stop.IsCancellationRequested)
+        {
+            cancellation.Cancel();
+            return;
+        }
+
+        Console.Error.WriteLine(
+            "Stopping: finishing what has been read so the session can be verified. " +
+            "Signal again to give up on that.");
+        stop.Cancel();
+    }
+
+    private static async Task<int> IndexAsync(
+        Arguments options,
+        CancellationToken stopToken,
+        CancellationToken cancellationToken)
     {
         var input = options.RequiredPosition(0, "index requires a log file path.");
         var output = options.GetValue("--output") ?? Path.GetFullPath(input) + ".vcat";
@@ -279,6 +306,7 @@ internal static class VisualCatCli
             output,
             settings,
             progress,
+            gracefulStopToken: stopToken,
             cancellationToken: cancellationToken).ConfigureAwait(false);
         long published;
         using (result.Snapshot)
@@ -510,7 +538,10 @@ internal static class VisualCatCli
         return 0;
     }
 
-    private static async Task<int> CaptureAdbAsync(Arguments options, CancellationToken cancellationToken)
+    private static async Task<int> CaptureAdbAsync(
+        Arguments options,
+        CancellationToken stopToken,
+        CancellationToken cancellationToken)
     {
         var serial = options.GetValue("--serial") ?? throw new CommandException("capture-adb requires --serial.");
         var output = options.GetValue("--output") ?? $"adb-{Sanitize(serial)}-{DateTime.UtcNow:yyyyMMdd-HHmmss}.vcat";
@@ -571,9 +602,12 @@ internal static class VisualCatCli
             FormatOverride = LogcatFormat.ThreadTime,
             PortableRaw = true,
         };
+        // A duration limit and a terminating signal are the same request: stop reading and
+        // publish what is there.
         using var stop = duration is { } limit
             ? new CancellationTokenSource(limit)
             : new CancellationTokenSource();
+        using var stopRegistration = stopToken.Register(stop.Cancel);
         var result = await SessionCoordinator.ImportAsync(
             source,
             output,

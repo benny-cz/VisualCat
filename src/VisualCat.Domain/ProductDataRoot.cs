@@ -126,7 +126,23 @@ public static class ProductDataRoot
         var root = System.IO.Path.Combine(storage, ProductFolder);
         try
         {
-            Directory.CreateDirectory(root);
+            // Owner-only, which is what the XDG base-directory specification asks for and what
+            // the content deserves: everything under here is log data that is usually not the
+            // operator's own. Created with the mode rather than narrowed afterwards, so there is
+            // no instant at which it is wider than intended. Parents are created at the
+            // account's own umask, because ~/.local and ~/.local/share belong to the desktop,
+            // not to this product.
+            if (OperatingSystem.IsWindows())
+            {
+                Directory.CreateDirectory(root);
+            }
+            else
+            {
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(root) ?? ".");
+                Directory.CreateDirectory(
+                    root,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
         {

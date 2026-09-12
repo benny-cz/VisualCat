@@ -3457,8 +3457,8 @@ an interrupted run resumes from the last line here without re-deriving anything.
 | Repo | `E:\VisualCat` on the Windows host |
 | Guest | `benny@172.24.178.166` (VMware, key auth; `. ~/vcat-run/env.sh`) |
 | Phone | Samsung SM-G990B `RFCRC0A9GND`, PIN `1111`, **lock the screen when finished** |
-| Last completed | Batch E (F-17, F-23, docs for F-03/F-10/F-24/F-27/F-30) done; 1,071 tests green; CHANGELOG and CLI.md updated |
-| Next step | Package linux-x64 and run the live verification on the guest |
+| Last completed | F-01 verified live on the guest and the phone |
+| Next step | Live-verify the remaining CLI findings (F-06, F-07, F-18, F-19, F-20, F-25, F-26, F-28, F-29) |
 
 ### 20.2 Plan — batches, and why in this order
 
@@ -3479,7 +3479,7 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 
 | Finding | Severity | Implemented | Unit test | Live-verified on the guest |
 |---|---|---|---|---|
-| F-01 | Major | yes | yes — 1,033 pass | pending |
+| F-01 | Major | yes | yes — 1,071 pass | **yes** — 4,000/4,000 on the phone, confidence 1.000 |
 | F-02 | Minor | yes | yes | pending |
 | F-03 | Minor | yes | yes | pending |
 | F-04 | Minor | yes | yes | pending |
@@ -3510,3 +3510,60 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 | F-29 | Minor | yes | yes | pending |
 | F-30 | Minor | yes | yes | pending |
 | F-31 | Major | yes | yes | pending |
+
+### 20.4 Live verification on the guest
+
+Same host as Part I: Ubuntu 22.04.5, GNOME 42.9 on Wayland with the app as an XWayland client,
+VMware guest, software rendering. Same physical phone, Samsung SM-G990B `RFCRC0A9GND`, reached
+through the Windows host's ADB server exactly as §1.5 describes.
+
+| Field | Value |
+|---|---|
+| Candidate | built from repository commit `3bd3a01` (the remediation), packaged `pwsh tools/package.ps1 -Runtime linux-x64 -Archive` |
+| Desktop tar.gz SHA-256 | `3bdd4628dcdc351acda84d7f3118d554a80386dc041be1e5e101b1cd3649823d` (45,481,545 B) |
+| CLI tar.gz SHA-256 | `2c31a24d7eb03dda939e4aac0a258ef4cefa7fdf35254660b570d4e05564ebe2` (35,908,659 B) |
+| `VisualCat` SHA-256 | `377cf365e40f29578dbbcd29759ebd94f15ee52366210538483b2609b6812884` |
+| `vcat` SHA-256 | `2fc977f91b9f6b8db7cd3747f6c1005c8b8004720a724d4175973bb67195736a` |
+| Version as reported | `vcat 2.0.13+3bd3a0105eed4123636d9412cf6bcdc5eab64093` |
+| `<FIX>` | `~/vcat-run/candidate/fix-20260912/{desktop,cli}` |
+| Environment | `. ~/vcat-run/env-fix.sh` — same shape as `env.sh`, pointing at the fixed candidate |
+| Packaged on | Windows, so the tarball carries no executable bit — plan Appendix B #1, corrected with `chmod +x` and not a finding |
+
+Unit coverage on the Windows host before any of this: **1,071 tests, 0 failures** across
+`VisualCat.Domain.Tests` (47), `VisualCat.Core.Tests` (150), `VisualCat.Application.Tests` (180)
+and `VisualCat.App.Tests` (694).
+
+#### [F-01](#f-01) · `logcat -v long` and five-digit thread ids — **CLOSED**
+
+The report's own four-record reproduction, byte for byte:
+
+```shell
+vcat index long-shapes.txt --format long --output long-shapes.vcat
+# entries 4   unknown 0   format LongFormat   confidence 1
+# counters: parsedEntries 4, timedEntries 4, continuations 4, ignoredBlanks 4, templates 4
+```
+
+Four of four, where the run measured **two**. The four continuations are the four message
+lines, which is what a long-format record is made of.
+
+**On the same phone.** 4,000 records, `adb -s RFCRC0A9GND logcat -d -v long -b main -t 4000`:
+
+| Measure | Part I | Now |
+|---|---|---|
+| header lines with a 5-digit tid | 472 of 4,001 | **891 of 4,050** |
+| `parsedEntries` | 3,528 | **4,000** |
+| records lost | **472** | **0** |
+| `unknownLines` / `rejectedCandidates` | 0 / 0 | 0 / 0 |
+| auto-detection confidence | **0.449** — refused | **1.000** |
+| auto-detected format | — | `LongFormat` |
+
+The 50 bracketed lines that are not headers — `[Global GC RCS|IDLE] checkForTryRegister id: 1244`,
+`[2125]> 140`, `[LOWI-Scan] lowi_close_record:…` — are message bodies and are still counted as
+continuations, which is correct: none of them opens on a digit or carries a `P/Tag` separator, so
+the new *is this an attempted header* test declines them. No line in this capture became a
+rejected candidate, because none of them is a malformed header.
+
+Detection now reaches 1.000 rather than the structural ~0.5 ceiling because a format is scored
+against the lines it is responsible for, and against the best score that format can reach — see
+§20.5.
+

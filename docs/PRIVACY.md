@@ -126,10 +126,14 @@ what stops another local account reading a capture saved to `/tmp` or to a group
 -writable project directory. On Windows the directory inherits its parent's ACL,
 which is the equivalent mechanism.
 
-**Lease markers.** `SessionAccess-v1/` holds three zero-byte files per session
-that cooperating processes lock to serialize access. They carry no content and
-no path — the file name is a hash. They are swept on start-up: a marker no
-process is holding is removed, and one that is held is left alone.
+**Lease markers.** `SessionAccess-v1/` holds three files per session that
+cooperating processes lock to serialize access. The lock is the open handle, not
+the file; two of the three are empty, and the third records which session
+directory the lease belongs to so that a marker can be recognised as stale. That
+path is the only content, it names a location and never log data, and it sits
+inside the same owner-only directory as the sessions themselves. Markers are
+swept on start-up: one whose session directory no longer exists, and which no
+process is holding, is removed.
 
 **Runtime sockets.** On Linux the .NET runtime creates one diagnostics IPC
 socket per process, `/tmp/dotnet-diagnostic-<pid>-<key>-socket`, and does not
