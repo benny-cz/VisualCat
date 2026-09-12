@@ -763,53 +763,62 @@ public sealed partial class MainView : IDialogHost
     }
 
     /// <summary>
-    /// Takes the workspace out of the accessibility tree for as long as a modal dialog is up.
+    /// Puts keyboard focus inside a dialog that opened without any.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// A dialog that is modal to the pointer was not modal to assistive technology: both
-    /// top-levels were exposed as <c>ACTIVE</c> siblings, and all 434 nodes of the workspace
-    /// behind the scrim stayed reachable, so a screen-reader user could drive controls the
-    /// pointer could not reach (finding F-11). Marking the owner's subtree <c>Raw</c> is the
-    /// half of that this product owns, and it is the half that matters: the nodes stop being
-    /// offered.
-    /// </para>
-    /// <para>
-    /// The other half — the dialog's own role and its <c>MODAL</c> state — is decided by the
-    /// toolkit's AT-SPI backend, which has no dialog control type to map to in Avalonia 12.1.1.
-    /// That part belongs upstream.
-    /// </para>
+    /// A <see cref="Window"/> is not focusable itself, so focusing it does nothing; the first
+    /// focusable control in it is what a reader would reach with Tab anyway, so that is what
+    /// gets focus. Runs after layout, and only when focus is not already inside — a body that
+    /// focuses its own control, as the import review focuses <em>Import</em>, keeps it.
     /// </remarks>
-    private ModalAccessibilityScope HideFromAssistiveTechnologyWhileModal()
+    private static void GiveKeyboardFocusTo(Window window)
     {
-        // Nested dialogs: only the outermost one restores, and it restores to Default.
-        if (_modalDepth++ == 0)
+        if (!window.IsVisible)
         {
-            AutomationProperties.SetAccessibilityView(this, AccessibilityView.Raw);
+            return;
         }
 
-        return new ModalAccessibilityScope(this);
+        if (window.FocusManager?.GetFocusedElement() is Visual focused &&
+            focused.FindAncestorOfType<Window>(includeSelf: true) == window)
+        {
+            return;
+        }
+
+        var first = window.GetVisualDescendants()
+            .OfType<InputElement>()
+            .FirstOrDefault(static element =>
+                element.Focusable && element.IsEffectivelyEnabled && element.IsEffectivelyVisible);
+        if (first is not null)
+        {
+            first.Focus();
+            return;
+        }
+
+        // Nothing in it can take focus — a dialog that is all text. Make the window itself
+        // focusable so key events have somewhere to route from, which is what Escape needs.
+        window.Focusable = true;
+        window.Focus();
     }
 
-    private int _modalDepth;
-
-    private sealed class ModalAccessibilityScope(MainView owner) : IDisposable
+    /// <summary>
+    /// Whether something inside the window has a dropdown open, which owns Escape first.
+    /// </summary>
+    private static bool HasOpenDropDown(TopLevel window)
     {
-        private bool _disposed;
-
-        public void Dispose()
+        if (window.FocusManager?.GetFocusedElement() is not Visual focused)
         {
-            if (_disposed)
-            {
-                return;
-            }
+            return false;
+        }
 
-            _disposed = true;
-            if (--owner._modalDepth == 0)
+        for (var current = focused; current is not null; current = current.GetVisualParent())
+        {
+            if (current is ComboBox { IsDropDownOpen: true })
             {
-                AutomationProperties.SetAccessibilityView(owner, AccessibilityView.Default);
+                return true;
             }
         }
+
+        return false;
     }
 
     public async Task<TResult?> ShowDialogAsync<TResult>(DialogBody<TResult> body)
@@ -844,27 +853,61 @@ public sealed partial class MainView : IDialogHost
                 args.Cancel = !body.Completion.IsCompleted;
             };
             window.Closed += (_, _) => body.ForceDismiss();
-            window.Opened += (_, _) => body.NotifyPresented();
+            window.Opened += (_, _) =>
+            {
+                body.NotifyPresented();
+
+                // A dialog that opens without keyboard focus is not reachable from the keyboard
+                // at all: Avalonia raises key events on the focused element, so with focus
+                // nowhere inside the window, nothing routes — no Escape, no Tab, no default
+                // button. "Lines not on the timeline" opened that way, which is why Escape
+                // closed two dialogs and not the third (finding F-12). Posted, so a body that
+                // focuses its own control first — the import review focuses Import — still
+                // wins; this only fills a vacuum.
+                Dispatcher.UIThread.Post(
+                    () => GiveKeyboardFocusTo(window),
+                    DispatcherPriority.Loaded);
+            };
+
+            // A note on what is *not* here, so nobody adds it back expecting it to work.
+            // A dialog that is modal to the pointer is not modal to assistive technology: both
+            // top-levels are exposed as ACTIVE siblings with no MODAL state, and all 434 nodes
+            // of the workspace behind the scrim stay SHOWING and reachable, so a screen-reader
+            // user can drive controls the pointer cannot (finding F-11). Avalonia 12.1.1's
+            // AT-SPI backend has no dialog control type to map an owned modal window to, emits
+            // no modal state, and honours neither AutomationProperties.AccessibilityView nor
+            // IsOffscreenBehavior for the owner's subtree — both were tried against a live
+            // AT-SPI tree on this platform and changed the measurement by nothing. It is an
+            // upstream fix; the half this product does own is Escape, below.
 
             // Escape cancels the open dialog. The window manager's close affordance was the only
             // route out of a sheet with no IsCancel button, and a keyboard-only reader reaches
-            // for Escape first (finding F-12). Bubbling rather than tunnelling, so a control
-            // that has its own use for Escape — a text field clearing itself — still wins.
-            window.KeyDown += (_, args) =>
-            {
-                if (args.Key != Key.Escape || args.Handled || body.Completion.IsCompleted)
+            // for Escape first (finding F-12).
+            //
+            // Tunnelling, not bubbling. A bubbling handler worked for *Appearance & timeline*
+            // and did nothing at all for *Lines not on the timeline*, because the selectable
+            // text in it takes Escape to clear its selection and marks it handled — so whether
+            // Escape closed a dialog depended on which control happened to have focus, which
+            // is exactly the unpredictability the finding is about. The one thing that
+            // legitimately owns Escape ahead of the dialog is an open dropdown, and that is
+            // the single exception below.
+            window.AddHandler(
+                InputElement.KeyDownEvent,
+                (object? _, KeyEventArgs args) =>
                 {
-                    return;
-                }
+                    if (args.Key != Key.Escape || body.Completion.IsCompleted || HasOpenDropDown(window))
+                    {
+                        return;
+                    }
 
-                // Dismiss, never apply: a dialog with a running preview treats this as its
-                // Cancel, which is what the reader is asking for.
-                body.Dismiss();
-                args.Handled = true;
-            };
+                    // Dismiss, never apply: a dialog with a running preview treats this as its
+                    // Cancel, which is what the reader is asking for.
+                    body.Dismiss();
+                    args.Handled = true;
+                },
+                RoutingStrategies.Tunnel);
 
             _desktopDialogs.Add(window);
-            using var hidden = HideFromAssistiveTechnologyWhileModal();
             try
             {
                 _ = window.ShowDialog(owner);
