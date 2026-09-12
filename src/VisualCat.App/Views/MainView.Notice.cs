@@ -144,6 +144,7 @@ public sealed partial class MainView
         AutomationProperties.SetName(dismiss, "Dismiss application status message");
         dismiss.Click += (_, _) => DismissNotice();
 
+        _brandNoticeAction.Click += async (_, _) => await InvokeNoticeActionAsync(_brandNoticeAction);
         var action = _noticeAction = new Button
         {
             IsVisible = false,
@@ -151,25 +152,7 @@ public sealed partial class MainView
             Padding = new Thickness(10, 0),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
-        action.Click += async (_, _) =>
-        {
-            if (_noticeActionInFlight || _noticeActionHandler is not { } handler)
-            {
-                return;
-            }
-
-            _noticeActionInFlight = true;
-            action.IsEnabled = false;
-            try
-            {
-                await handler();
-            }
-            finally
-            {
-                _noticeActionInFlight = false;
-                action.IsEnabled = _noticeActionHandler is not null;
-            }
-        };
+        action.Click += async (_, _) => await InvokeNoticeActionAsync(action);
 
         // A four-line scroll container is the worst of both: it spends the workspace's height
         // on a message and still cuts the message off, and the reader has to scroll inside a
@@ -372,6 +355,28 @@ public sealed partial class MainView
         }
     }
 
+    /// <summary>Runs the current notice's action once, whichever button asked for it.</summary>
+    /// <param name="button">The button that was pressed, disabled while the action runs.</param>
+    private async Task InvokeNoticeActionAsync(Button button)
+    {
+        if (_noticeActionInFlight || _noticeActionHandler is not { } handler)
+        {
+            return;
+        }
+
+        _noticeActionInFlight = true;
+        button.IsEnabled = false;
+        try
+        {
+            await handler();
+        }
+        finally
+        {
+            _noticeActionInFlight = false;
+            button.IsEnabled = _noticeActionHandler is not null;
+        }
+    }
+
     /// <summary>
     /// Publishes an operation result. Desktop keeps the compact brand-row message; Android
     /// additionally receives the always-visible notice lane because the brand row is removed
@@ -412,6 +417,13 @@ public sealed partial class MainView
             AutomationProperties.SetName(actionButton, action?.Label ?? string.Empty);
             _noticeActionHandler = action?.Invoke;
         }
+
+        // The desktop's brand-row line is its only notice surface, so its action lives there
+        // too — otherwise an offer arrives as a statement with nothing to act on (F-03).
+        _brandNoticeAction.Content = action?.Label;
+        _brandNoticeAction.IsVisible = !OperatingSystem.IsAndroid() && action is not null;
+        _brandNoticeAction.IsEnabled = action is not null && !_noticeActionInFlight;
+        AutomationProperties.SetName(_brandNoticeAction, action?.Label ?? string.Empty);
 
         text ??= string.Empty;
 

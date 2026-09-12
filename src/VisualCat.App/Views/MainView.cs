@@ -34,6 +34,22 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
     private readonly TabControl _tabs = new();
     private readonly TextBlock _message = new();
+
+    /// <summary>
+    /// The one thing a desktop notice offers the reader, beside its message in the brand row.
+    /// </summary>
+    /// <remarks>
+    /// Hidden unless the notice has an action, so a line that is only a statement stays a line.
+    /// </remarks>
+    private readonly Button _brandNoticeAction = new()
+    {
+        IsVisible = false,
+        MinHeight = 0,
+        Padding = new Thickness(10, 3),
+        Margin = new Thickness(10, 0, 0, 0),
+        VerticalAlignment = VerticalAlignment.Center,
+        FontSize = TextScale.Of(12),
+    };
     private readonly Border _emptyState = new();
     private readonly ModalWorkspaceBand _rootPanel = new();
     private readonly Dictionary<SessionTabViewModel, TabItem> _tabItems = [];
@@ -643,6 +659,14 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         _message.TextAlignment = TextAlignment.Right;
         Grid.SetColumn(_message, 1);
         brandRow.Children.Add(_message);
+
+        // The desktop's notice surface is this one compact line, and a notice that carries an
+        // action had nowhere to put it: the update offer said "Releases are published on
+        // GitHub" and then offered no way to get there, because the lane that holds the action
+        // button is Android-only (F-03). The button appears only when a notice actually has an
+        // action, so the ordinary line is unchanged.
+        Grid.SetColumn(_brandNoticeAction, 2);
+        brandRow.Children.Add(_brandNoticeAction);
         commandContent.Children.Add(brandRow);
 
         var toolbar = BuildActionToolbar();

@@ -3457,7 +3457,7 @@ an interrupted run resumes from the last line here without re-deriving anything.
 | Field | Value |
 |---|---|
 | Run ID | `20260912-linux-remediation` |
-| Status | **COMPLETE** — 28 of 31 findings closed and live-verified, 2 closed with a stated limit, 1 open upstream |
+| Status | **COMPLETE** — 29 of 31 findings closed and live-verified, 1 closed with a stated limit, 1 open upstream |
 | Branch | `main` (working tree; commits are made per batch) |
 | Repo | `E:\VisualCat` on the Windows host |
 | Guest | `benny@172.24.178.166` (VMware, key auth; `. ~/vcat-run/env.sh`) |
@@ -3513,7 +3513,7 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 | F-27 | Minor | yes | yes | **yes** — a second account is refused everything |
 | F-28 | Polish | yes | yes | **yes** — the four-way matrix |
 | F-29 | Minor | yes | yes | **yes** — 0 CR by default, identical after stripping |
-| F-30 | Minor | host bug + defences | n/a | **partly** — stopped portal recovers; masked portal holds one slot |
+| F-30 | Minor | host bug + defences | yes | **yes** — recovers when stopped; Cancel releases within 1 s when masked |
 | F-31 | Major | yes | yes | **yes** — cases 1, 4, 6 and 7 all detected and worded apart |
 
 ### 20.4 Live verification on the guest
@@ -3978,7 +3978,7 @@ The default is LF on every platform, chosen rather than inherited. The desktop o
 choice: the export review now carries **Line endings** beside **Encoding** and **Row order**, and
 its note reads *"A successful export remembers these three choices as the new defaults."*
 
-#### [F-30](#f-30) · A chooser that does not appear — **host bug; the product-side defences verified**
+#### [F-30](#f-30) · A chooser that does not appear — **CLOSED on the product side; the crash itself is a host bug**
 
 The finding is a crash in `xdg-desktop-portal-gnome`, not a VisualCat defect, and the product's
 part is to stop looking like a command that did nothing.
@@ -3987,12 +3987,15 @@ part is to stop looking like a command that did nothing.
 |---|---|
 | portal **stopped** — what a crash leaves | D-Bus activation restarts it, the chooser appears, Escape dismisses it, every file command is usable again |
 | chooser dismissed with **Escape** | portal stays `active`; no crash, across every use in this pass |
-| portal **masked** — an administrator action, not a crash | the call blocks with no timeout; the card says `Choosing portable archive…` with a Cancel, **the rest of the shell stays fully responsive** (the More menu opens, the window repaints at a new size), and only the one file-operation slot is held |
+| portal **masked** — an administrator action, not a crash | the call blocks with no timeout, and the card says `Choosing portable archive…` with a live Cancel; **Cancel releases it within 1 s** — `Choosing portable archive cancelled.` and every file command enabled again — and the rest of the shell stays fully responsive throughout (the More menu opens, the window repaints at a new size) |
 | chooser call that **throws** | the operation ends as though nothing was chosen, with the product's own sentence naming the cause |
 
-**Honest limit:** in the masked case the shell's Cancel does not release the slot, because the
-blocked D-Bus call never returns to observe the token. A masked portal is not a state a crash
-produces, and no data or other function is affected, but it is not closed.
+**A correction to my own first measurement.** An earlier attempt reported that Cancel did not
+release the slot in the masked case. It does, within a second. The first attempt clicked a stale
+node: the click helper was matching an accessible name without checking `STATE_SHOWING`, and the
+window had been resized between the two runs. Filtering by `SHOWING` and re-reading the extents
+immediately before the click — which is plan Appendix B's own advice, and §20.6's — makes it
+reproducible. Nothing about the product changed between the two measurements.
 
 #### [F-31](#f-31) · Rotation, and the two shapes the run could not detect — **CLOSED**
 
@@ -4064,8 +4067,8 @@ remediation added.
 | | |
 |---|---|
 | Findings | **31** — 8 Major, 13 Minor, 10 Polish |
-| Closed and live-verified | **28** |
-| Closed with a stated limit | **2** — [F-13](#f-13) (application and controls yes, structural nodes upstream), [F-30](#f-30) (a stopped portal recovers; a masked one holds one file-operation slot) |
+| Closed and live-verified | **29** |
+| Closed with a stated limit | **1** — [F-13](#f-13): the application and its controls yes, the structural `panel` names upstream |
 | Not closed | **1** — [F-11](#f-11), for which Avalonia 12.1.1 offers no product-side lever |
 | Unit tests | **1,071**, 0 failures — `VisualCat.Domain.Tests` 47, `VisualCat.Core.Tests` 150, `VisualCat.Application.Tests` 180, `VisualCat.App.Tests` 694 |
 | New regression coverage | `LinuxLiveTestRemediationTests` (32) and `LinuxLiveTestShellTests` (6), plus the long-format width cases in `ParserTests` and the corpus-width and confidence assertions in `SyntheticLogFormatTests` |
