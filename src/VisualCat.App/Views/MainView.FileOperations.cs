@@ -379,11 +379,13 @@ public sealed partial class MainView
     /// <param name="operation">The operation whose Cancel must be able to release the slot.</param>
     /// <param name="chose">Whether the result represents an actual choice.</param>
     /// <param name="what">What was being chosen, for the notice when nothing appeared.</param>
+    /// <param name="nothingChosen">What to return when the chooser could not be opened at all.</param>
     private async Task<T> RunChooserAsync<T>(
         Func<Task<T>> chooser,
         FileOperationHandle? operation,
         Func<T, bool> chose,
-        string what)
+        string what,
+        T nothingChosen)
     {
         ArgumentNullException.ThrowIfNull(chooser);
         ArgumentNullException.ThrowIfNull(chose);
@@ -403,24 +405,36 @@ public sealed partial class MainView
         }
         catch (Exception exception)
         {
+            // Not rethrown: a chooser that cannot open is not a failure of the command the
+            // reader asked for, and letting it reach the caller's own handler replaced this
+            // sentence with one that leads on a D-Bus type name. The operation ends as though
+            // nothing was chosen, with the true reason already on screen.
             WorkspaceViewModel.RecordFailure("chooser.failed", exception);
             ShowNotice(
-                $"The file chooser could not be opened, so {what} was not possible · " +
-                $"{WorkspaceViewModel.FriendlyMessage(exception)}",
+                ChooserUnavailable(what, WorkspaceViewModel.FriendlyMessage(exception)),
                 NoticeKind.Failure);
-            throw;
+            return nothingChosen;
         }
 
         if (!chose(result) && System.Diagnostics.Stopwatch.GetElapsedTime(started) < ImpossiblyFastChooser)
         {
-            ShowNotice(
-                $"The file chooser did not open, so {what} was not possible. " +
-                "On Linux this usually means the desktop's file-chooser service has stopped; " +
-                "signing out and back in restores it.",
-                NoticeKind.Failure);
+            ShowNotice(ChooserUnavailable(what, null), NoticeKind.Failure);
         }
 
         return result;
+    }
+
+    /// <summary>What to say when the platform's file chooser never appeared.</summary>
+    private static string ChooserUnavailable(string what, string? cause)
+    {
+        var sentence = $"The file chooser did not open, so {what} was not possible.";
+        if (OperatingSystem.IsLinux())
+        {
+            sentence += " On Linux this usually means the desktop's file-chooser service " +
+                        "(xdg-desktop-portal) has stopped; signing out and back in restores it.";
+        }
+
+        return string.IsNullOrWhiteSpace(cause) ? sentence : $"{sentence} The system said: {cause.Trim()}";
     }
 
     /// <summary>Releases whatever a chooser produced after its caller stopped waiting.</summary>

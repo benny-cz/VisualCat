@@ -63,7 +63,9 @@ internal static class SheetForm
         ArgumentNullException.ThrowIfNull(button);
         button.CornerRadius = new CornerRadius(6);
         button.BorderThickness = new Thickness(1);
-        button.Padding = new Thickness(16, 7);
+
+        // Colour and border only. Padding is left to the theme so the primary action stays
+        // exactly as tall as the Cancel beside it and the decision row keeps to one line.
         Apply();
         button.ActualThemeVariantChanged += (_, _) => Apply();
         return button;
@@ -869,7 +871,7 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         var cancel = new Button { Content = "Cancel", MinHeight = Mobile ? 48 : 0 };
         cancel.Click += (_, _) => Complete(null);
         buttons.Children.Add(cancel);
-        var save = new Button { Content = "Apply", IsDefault = true, MinHeight = Mobile ? 48 : 0 };
+        var save = SheetForm.PrimaryAction(new Button { Content = "Apply", IsDefault = true, MinHeight = Mobile ? 48 : 0 });
         save.Click += (_, _) => Complete(_settings with
         {
             Theme = _themeChoice?.Value ?? Value(_theme, ThemeChoices),
@@ -1071,7 +1073,7 @@ public sealed class SessionCacheDialog : DialogBody<ApplicationSettings>
         clean.Click += async (_, _) => await CleanAsync();
         var cancel = new Button { Content = "Cancel", MinHeight = Mobile ? 48 : 0 };
         cancel.Click += (_, _) => Complete(null);
-        var save = new Button { Content = "Save policy", IsDefault = true, MinHeight = Mobile ? 48 : 0 };
+        var save = SheetForm.PrimaryAction(new Button { Content = "Save policy", IsDefault = true, MinHeight = Mobile ? 48 : 0 });
         save.Click += (_, _) => Complete(CurrentSettings());
         var buttons = SheetForm.Decision(clean, cancel, save);
 
@@ -1414,7 +1416,7 @@ public sealed class ConfirmationDialog : DialogBody<bool>
         var cancel = new Button { Content = "Cancel", IsCancel = true, MinHeight = mobile ? 48 : 0 };
         cancel.Click += (_, _) => Complete(false);
         buttons.Children.Add(cancel);
-        var confirm = new Button { Content = confirmText, IsDefault = true, MinHeight = mobile ? 48 : 0 };
+        var confirm = SheetForm.PrimaryAction(new Button { Content = confirmText, IsDefault = true, MinHeight = mobile ? 48 : 0 });
         confirm.Click += (_, _) => Complete(true);
         buttons.Children.Add(confirm);
         Content = new StackPanel

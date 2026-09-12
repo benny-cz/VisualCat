@@ -52,8 +52,11 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
         ArgumentNullException.ThrowIfNull(countAsync);
         _countAsync = countAsync;
         var nameTemplate = templateName ?? TemplateNames.Fallback;
-        PreferredSize = new Size(590, 560);
-        MinimumSize = _mobile ? new Size(300, 340) : new Size(390, 390);
+        // Three labelled choices side by side need the width to show their values: at 590 the
+        // encoding read "UTF-8 with byte-or", which is the same defect as a value clipped in the
+        // settings dialog (finding F-14).
+        PreferredSize = new Size(720, 560);
+        MinimumSize = _mobile ? new Size(300, 340) : new Size(430, 390);
         ScrollsInternally = true;
         var mobile = _mobile;
         var scopeOptions = _scopeOptions;

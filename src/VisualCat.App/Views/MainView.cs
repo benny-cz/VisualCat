@@ -2010,7 +2010,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     }),
                     operation,
                     static chosen => chosen.Count > 0,
-                    "opening a log");
+                    "opening a log",
+                    []);
                 foreach (var file in files)
                 {
                     operation.Token.ThrowIfCancellationRequested();
@@ -2133,7 +2134,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             }),
             null,
             static chosen => chosen.Count > 0,
-            "opening a session");
+            "opening a session",
+            []);
         if (folders.Count == 0)
         {
             return;
@@ -2182,7 +2184,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     }),
                     operation,
                     static chosen => chosen.Count > 0,
-                    "opening an archive");
+                    "opening an archive",
+                    []);
                 if (files.Count == 0)
                 {
                     return null;
@@ -2257,7 +2260,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                     }),
                     operation,
                     static chosen => chosen.Count > 0,
-                    "saving the session");
+                    "saving the session",
+                    []);
                 if (folders.Count == 0)
                 {
                     return null;
@@ -2354,7 +2358,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 }),
                 operation,
                 static chosen => chosen is not null,
-                "exporting");
+                "exporting",
+                null);
             return file is null ? null : FileDestination.Of(file);
         }
     }
@@ -3285,7 +3290,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             }),
             null,
             static chosen => chosen.Count > 0,
-            "following a file");
+            "following a file",
+            []);
         if (files.Count == 0 || files[0].TryGetLocalPath() is not { } path)
         {
             return;
@@ -3791,7 +3797,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             }),
             null,
             static chosen => chosen is not null,
-            "saving the bundle");
+            "saving the bundle",
+            null);
         if (file is null)
         {
             return;

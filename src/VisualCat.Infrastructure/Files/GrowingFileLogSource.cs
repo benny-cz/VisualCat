@@ -141,13 +141,13 @@ public sealed class GrowingFileLogSource : ILogSource, ISourceDefectSource
         if (!info.Exists)
         {
             Interlocked.Exchange(ref _sourceChanged, 1);
-            throw new IOException("The followed file was removed.");
+            throw new FollowedSourceChangedException("The followed file was removed.");
         }
 
         if (identity.HasMoved(_path))
         {
             Interlocked.Exchange(ref _sourceChanged, 1);
-            throw new IOException(
+            throw new FollowedSourceChangedException(
                 "The followed file was replaced (rotated); the configured policy is to stop. " +
                 "Everything read before the rotation is kept.");
         }
@@ -155,7 +155,9 @@ public sealed class GrowingFileLogSource : ILogSource, ISourceDefectSource
         if (info.Length < delivered)
         {
             Interlocked.Exchange(ref _sourceChanged, 1);
-            throw new IOException("The followed file was truncated or rotated; the configured policy is to stop.");
+            throw new FollowedSourceChangedException(
+                "The followed file was truncated or rotated; the configured policy is to stop. " +
+                "Everything read before the change is kept.");
         }
     }
 

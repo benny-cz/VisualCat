@@ -217,7 +217,7 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
         _selectedInclude.Click += async (_, _) => await ToggleSelectedAsync(exclude: false);
         _selectedExclude.Click += async (_, _) => await ToggleSelectedAsync(exclude: true);
 
-        var done = new Button { Content = "Done", IsDefault = true, MinHeight = mobile ? 48 : 0 };
+        var done = SheetForm.PrimaryAction(new Button { Content = "Done", IsDefault = true, MinHeight = mobile ? 48 : 0 });
         done.Click += (_, _) =>
         {
             Complete(true);

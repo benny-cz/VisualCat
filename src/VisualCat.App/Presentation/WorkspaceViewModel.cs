@@ -1038,6 +1038,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         {
             // Already phrased for a person, including what survived.
             SegmentWriteRefusedException => cause.Message,
+            VisualCat.Infrastructure.Files.FollowedSourceChangedException => cause.Message,
 
             // Nothing to do with this session: the product has nowhere to keep anything. The
             // message already names the directory and the cause, and describing it as a session
