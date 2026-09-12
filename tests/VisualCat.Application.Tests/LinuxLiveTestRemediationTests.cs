@@ -342,4 +342,64 @@ public sealed class LinuxLiveTestRemediationTests
             try { Directory.Delete(root, true); } catch (IOException) { }
         }
     }
+
+    // ---------------------------------------------------------------- P-09
+
+    [Fact]
+    public async Task ASessionThatIsMissingAndOneThatIsRefusedSayDifferentThingsAsync()
+    {
+        // FileInfo.Exists answers false for "you may not look" exactly as it does for "it is
+        // not there", so a session whose directory an ACL denied was reported as a missing
+        // manifest — sending the reader after a file that is present and intact (P-09).
+        var root = Path.Combine(Path.GetTempPath(), $"vcat-p09-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var absent = Path.Combine(root, "absent.vcat");
+            Directory.CreateDirectory(absent);
+            var missing = await Assert.ThrowsAsync<FileNotFoundException>(
+                () => SessionStore.OpenAsync(absent, TestContext.Current.CancellationToken));
+            Assert.Equal("Session manifest was not found.", missing.Message);
+
+            if (OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            // A directory with no execute bit cannot be traversed, which is the shape an ACL
+            // denial takes at the filesystem layer. Root ignores the mode, so a test running
+            // as root would prove nothing and is skipped.
+            if (Environment.GetEnvironmentVariable("USER") == "root")
+            {
+                return;
+            }
+
+            var denied = Path.Combine(root, "denied.vcat");
+            Directory.CreateDirectory(denied);
+            await File.WriteAllTextAsync(
+                Path.Combine(denied, "manifest.json"),
+                "{}",
+                TestContext.Current.CancellationToken);
+            File.SetUnixFileMode(denied, UnixFileMode.UserRead);
+            try
+            {
+                var refused = await Record.ExceptionAsync(
+                    () => SessionStore.OpenAsync(denied, TestContext.Current.CancellationToken));
+                Assert.NotNull(refused);
+                Assert.IsNotType<FileNotFoundException>(refused);
+                Assert.Contains("denied", refused!.Message, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                File.SetUnixFileMode(
+                    denied,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
 }

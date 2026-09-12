@@ -144,6 +144,11 @@ run, and §20 records this remediation.
   toolkit presents a stale damage region: 4 of 5 openings of the settings dialog
   came up with 15–31% of the window never painted, and one hid the export
   review's own *Row order* and *Encoding* controls entirely.
+- **A session you are not allowed to read no longer reports a missing manifest.** `FileInfo.Exists`
+  answers false for "you may not look" exactly as it does for "it is not there", so a session
+  whose directory an ACL or a mode denied was reported as *Session manifest was not found* — the
+  same wrong diagnosis as the two above, sending the reader after a file that is present and
+  intact. It now says which it is, naming the path and the cause.
 - **Lease markers and runtime diagnostic sockets are swept.** Neither was ever
   removed; 127 markers accumulated in a few hours of testing, and 14 of 15 `/tmp`
   sockets belonged to processes that had exited. Both are now accounted for in

@@ -143,30 +143,41 @@ public static class SessionStore
     private static async Task<SessionManifest> ReadManifestAsync(string root, CancellationToken cancellationToken)
     {
         var manifestPath = Path.Combine(root, "manifest.json");
-        var manifestInfo = new FileInfo(manifestPath);
-        if (!manifestInfo.Exists)
+
+        // Opened rather than probed with FileInfo.Exists, which answers false for "you may not
+        // look" exactly as it does for "it is not there" — so a session whose directory an ACL
+        // denies was reported as "Session manifest was not found.", sending the reader after a
+        // file that is present and intact. Let the open say which it is: the same denial on a
+        // plain file already produced "Access to the path '…' is denied. cause: Permission
+        // denied", which is the sentence this case deserves too (P-09).
+        FileStream stream;
+        try
         {
-            throw new FileNotFoundException("Session manifest was not found.", manifestPath);
+            stream = new FileStream(
+                manifestPath,
+                FileMode.Open,
+                FileAccess.Read,
+                // A live capture republishes this manifest by atomic replace while readers are
+                // open on it. Without FileShare.Delete a Windows reader blocks that replace
+                // outright, so a progress snapshot opened at the wrong moment made the capture
+                // itself fail to finalize with UnauthorizedAccessException — reliably on a
+                // short capture, where the two coincide. Sharing delete lets the replace
+                // proceed; this handle goes on reading the version it opened.
+                FileShare.ReadWrite | FileShare.Delete,
+                64 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            throw new FileNotFoundException("Session manifest was not found.", manifestPath, exception);
         }
 
-        if (manifestInfo.Length > 128 * 1024 * 1024)
+        await using var owned = stream;
+        if (stream.Length > 128 * 1024 * 1024)
         {
             throw new InvalidDataException("Session manifest exceeds the 128 MB safety limit.");
         }
 
-        await using var stream = new FileStream(
-            manifestPath,
-            FileMode.Open,
-            FileAccess.Read,
-            // A live capture republishes this manifest by atomic replace while readers are
-            // open on it. Without FileShare.Delete a Windows reader blocks that replace
-            // outright, so a progress snapshot opened at the wrong moment made the capture
-            // itself fail to finalize with UnauthorizedAccessException — reliably on a
-            // short capture, where the two coincide. Sharing delete lets the replace
-            // proceed; this handle goes on reading the version it opened.
-            FileShare.ReadWrite | FileShare.Delete,
-            64 * 1024,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
         var manifest = await JsonSerializer.DeserializeAsync<SessionManifest>(stream, JsonOptions, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException("Session manifest is empty.");
         ValidateManifest(manifest);

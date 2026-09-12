@@ -4320,7 +4320,96 @@ not needed** — which is what makes it safe to ship enabled on every Linux host
 | Closed and live-verified | **30** |
 | Closed with a stated limit | **1** — [F-13](#f-13): the application and its controls yes, the structural `panel` names upstream |
 | Not closed | **1** — [F-11](#f-11), upstream in Avalonia |
-| §15 rows closed by this pass | **4** — `umask 077` under the desktop, low disk, quota/read-only/failing storage (L3, X-15), and a second distribution for both artifacts |
-| §15 rows still open | metal and the §4.2 performance budgets, ADB `no permissions`/`udev`/group membership, Orca end-to-end, the G4 desktop matrix beyond "no window manager", multi-monitor, an enforced ACL denial, the soak, and the Android leg of I-08 |
+| §15 rows closed by this pass | **5½** — `umask 077` under the desktop, low disk, quota/read-only/failing storage (L3, X-15), a second distribution for both artifacts, an enforced ACL denial (P-09), and the forward half of the Android leg of I-08 |
+| §15 rows still open | metal and the §4.2 performance budgets, ADB `no permissions`/`udev`/group membership, Orca end-to-end, the G4 desktop matrix beyond "no window manager", multi-monitor, the soak, and the reverse half of I-08 (no scriptable file-saving share target on this device) |
+| Defects found *by* this pass | **1** — a session an ACL denies was reported as a missing manifest (§21.12), the same wrong-diagnosis family as F-06 and F-19; fixed and pinned by a test |
+| Format compatibility across the fix | **PASS both ways** (§21.10) — the shipped 2.0.13 and the fixed build read each other's sessions, and their portable archives have identical member sets |
 | Unit tests | **1,071**, 0 failures |
 | VisualCat-attributable crashes, hangs or core dumps | **0**, across five storage-failure shapes and two distributions |
+
+### 21.10 Session-format compatibility across the fix — **PASS both ways**
+
+Not a finding and not a §15 row, but the largest regression risk this remediation carries: the
+parser, the store writer, the verifier's report shape, the archive extractor and the source
+identity all changed. A session written by one build has to be readable by the other, or the fix
+is a format break.
+
+The shipped 2.0.13 candidate is still in the guest at `~/vcat-run/candidate/rel-2.0.13`, which
+makes the comparison exact — the same corpus, both builds, in both directions.
+
+| Direction | `info` | `verify` | `query` | `export --type csv` |
+|---|---|---|---|---|
+| **shipped build reading a fixed-build session** | 0 | **0** | 0 | 0 — 19,999 rows |
+| **fixed build reading a shipped-build session** | 0 | **0** | 0 | — |
+
+And the portable archives themselves: **32 members each**, and the two member sets are
+**identical** — nothing added, nothing removed. [F-21](#f-21)'s allowlist accepts exactly what the
+shipped build writes, which is the property that makes it a bound rather than a break.
+
+### 21.11 §15 · The Android leg of I-08 — **forward direction PASS on the physical phone**
+
+The phone carries the **shipped** VisualCat 2.0.13 (`com.barebit.visualcat`, installed
+2026-09-09), so this is the sharper half of the question: does an archive written by the *fixed*
+Linux build open in a build that predates every fix?
+
+A 20,000-line corpus, indexed and exported as `portable-zip` by the fixed Linux CLI, pushed to
+`/sdcard/Download`, and opened through *More actions → Open portable archive…* and the system
+document picker:
+
+| | |
+|---|---|
+| notice | **`Opened linux-made.vcat.zip`** |
+| tab | `compat.txt` |
+| counts | **`19,998 in view · 19,998 match · 19,998 timed in session · 2 unparsed lines`** |
+| entries | render with five-digit identities — `66309:55984`, `27217:6761`, `3549:7764` |
+
+19,998 of 20,000 with 2 malformed lines is exactly what the corpus holds. The five-digit
+identities are [F-01](#f-01)'s generator change arriving on Android through a Linux-made archive.
+
+**The reverse direction was not completed.** *More actions → Share…* did produce an archive —
+`compat-20260912-164010.vcat.zip` — and offered it to the system share sheet, but this device has
+no file-saving target (no Files app; only Quick Share, Gmail, Drive, Outlook, Bluetooth,
+OneDrive), so there is no scriptable way to get the bytes back to the host. The property it would
+test — a shipped-format archive opening in the fixed build — is established by §21.10's second
+row, on the same format.
+
+The device was left as it was found: the imported tab closed, the pushed archive removed, the app
+stopped, and the phone asleep and locked (`deviceLocked=1`, `trustState=UNTRUSTED`).
+
+### 21.12 §15 · A correct ACL denial (P-09) — **PASS, after it found one more wrong diagnosis**
+
+The row had been attempted twice in Part I and proved nothing both times, because a plain `cat`
+control behaved identically to the product — the ACL was not actually denying anything. It does
+here, and getting the control right first is what made the row worth running.
+
+**Two controls, not one.** The first attempt at this pass measured `sudo -u vcatacl vcat …` and
+got `Sorry, user benny is not allowed to execute … as vcatacl` — sudo's own policy refusing the
+user switch, not the product refusing the file. `sudo runuser -u vcatacl --` is the form that
+works here, and the binary has to live somewhere the other account can traverse.
+
+| Case | `cat` | `vcat info` |
+|---|---|---|
+| no ACL, plain file | allowed | **exit 0** |
+| ACL denies that user, plain file | refused, `Permission denied` | **exit 1** — `error: Access to the path '/tmp/aclt2/src.txt' is denied.` `cause: Permission denied` |
+| no ACL, session directory | — | exit 0 |
+| ACL denies that user, session directory | — | exit 1 — **`error: Session manifest was not found.`** ✗ |
+
+The last row is a wrong diagnosis of the same family as [F-06](#f-06) and [F-19](#f-19): the
+manifest is present and intact, and the reader is sent looking for a missing file.
+`FileInfo.Exists` answers **false** for "you may not look" exactly as it does for "it is not
+there", and the product repeated it.
+
+**Fixed.** The manifest is opened rather than probed, and the open says which it is. Re-measured
+on the guest with the same ACL:
+
+| Case | Now |
+|---|---|
+| a session that genuinely is not there | `error: Log source was not found.` |
+| a session an ACL denies | **`error: Access to the path '/tmp/aclt2/s.vcat/manifest.json' is denied.`** `cause: Permission denied` |
+| the owner reading the same session | exit **0** — the denial is the ACL's, not a new refusal of our own |
+
+A regression test pins both halves without needing an ACL: a directory with no execute bit is the
+same shape at the filesystem layer, and it skips itself as root, where the mode is ignored.
+
+The probe account `vcatacl` and every ACL this row set were removed at cleanup; the guest has one
+account again.
