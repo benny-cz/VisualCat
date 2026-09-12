@@ -42,7 +42,7 @@ public static class SessionSaveService
         var parent = Path.GetDirectoryName(destinationRoot) ?? ".";
         Directory.CreateDirectory(parent);
         var temporary = Path.Combine(parent, $".{Path.GetFileName(destinationRoot)}.tmp-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(temporary);
+        SessionFileModes.CreateOwnerOnlyDirectory(temporary);
         try
         {
             await CopyDirectoryAsync(sourceRoot, temporary, progress, cancellationToken).ConfigureAwait(false);
@@ -66,6 +66,11 @@ public static class SessionSaveService
                         .ConfigureAwait(false);
                     await CopyPrefixAsync(raw, rawDestination, progress, cancellationToken).ConfigureAwait(false);
                 }
+
+                // Embedded raw evidence is verbatim log content that travels with the session
+                // wherever it is saved, so it is owner-only whatever the account's umask says
+                // (finding F-27).
+                SessionFileModes.MakeFileOwnerOnly(rawDestination);
 
                 manifest = manifest with
                 {
@@ -111,7 +116,7 @@ public static class SessionSaveService
             cancellationToken.ThrowIfCancellationRequested();
             RejectLink(directory);
             var relative = Path.GetFullPath(directory)[sourcePrefix.Length..];
-            Directory.CreateDirectory(Path.Combine(destination, relative));
+            SessionFileModes.CreateOwnerOnlyDirectory(Path.Combine(destination, relative));
         }
 
         var files = Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories)

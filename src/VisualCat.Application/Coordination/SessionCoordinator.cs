@@ -16,6 +16,16 @@ public sealed record ImportResult(SessionSnapshot Snapshot, FormatDetectionResul
 
 public sealed class SessionCoordinator
 {
+    /// <summary>
+    /// How long a live source may deliver nothing before whatever is pending is published.
+    /// </summary>
+    /// <remarks>
+    /// Chosen to sit just above the batching latency (250 ms) so an ordinary gap between chunks
+    /// does not trip it, and far below any interval a person would call a pause. The cost of a
+    /// tick with nothing to do is one comparison against an empty pending list.
+    /// </remarks>
+    private static readonly TimeSpan IdlePublishInterval = TimeSpan.FromMilliseconds(750);
+
     private static long _coordinatorCounter;
 
     public static async Task<ImportResult> ImportAsync(
@@ -147,8 +157,41 @@ public sealed class SessionCoordinator
 
         try
         {
-            await foreach (var parsed in parsedChannel.Reader.ReadAllAsync(pipelineToken).ConfigureAwait(false))
+            // A live source is read on an idle tick as well as on arrival. The store's
+            // time-based flush is evaluated only when an entry is added, so a source that
+            // pauses leaves its last partial batch in memory with nothing to trigger it: 13 of
+            // 120 records sat unpublished for more than 75 seconds after the writer stopped,
+            // while the status line told the reader the source had gone quiet, and a single
+            // further append released them all at once (finding F-09). A read that delivers
+            // nothing is exactly when the tail should be committed — waiting for a fuller batch
+            // then trades freshness for nothing.
+            var live = !source.Metadata.IsFinite;
+            Task<bool>? waitForBatch = null;
+            while (true)
             {
+                waitForBatch ??= parsedChannel.Reader.WaitToReadAsync(pipelineToken).AsTask();
+                if (live && !waitForBatch.IsCompleted)
+                {
+                    var idle = Task.Delay(IdlePublishInterval, pipelineToken);
+                    if (await Task.WhenAny(waitForBatch, idle).ConfigureAwait(false) != waitForBatch &&
+                        store.FlushPendingIfIdle() is not null)
+                    {
+                        await PublishFlushedSegmentAsync().ConfigureAwait(false);
+                        PublishProgress(IngestStage.Committing, false);
+                    }
+                }
+
+                if (!await waitForBatch.ConfigureAwait(false))
+                {
+                    break;
+                }
+
+                waitForBatch = null;
+                if (!parsedChannel.Reader.TryRead(out var parsed))
+                {
+                    continue;
+                }
+
                 pendingBatches.Add(parsed.BatchId, parsed);
                 while (pendingBatches.Remove(nextBatch, out var ordered))
                 {

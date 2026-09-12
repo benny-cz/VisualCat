@@ -201,4 +201,145 @@ public sealed class LinuxLiveTestRemediationTests
             try { Directory.Delete(root, true); } catch (IOException) { }
         }
     }
+
+    // ---------------------------------------------------------------- F-21
+
+    [Theory]
+    [InlineData("manifest.json", true)]
+    [InlineData("raw.log", true)]
+    [InlineData("view.json", true)]
+    [InlineData("templates-final.jsonl", true)]
+    [InlineData("source-order/records.bin", true)]
+    [InlineData("source-order/index.bin", true)]
+    [InlineData("segments/000001/timestamp.bin", true)]
+    [InlineData("segments/000001/checksums.json", true)]
+    [InlineData("segments/000001/bitmaps/level-255.rbm", true)]
+    [InlineData("segments-final-00000005/000004/payload.bin", true)]
+    [InlineData("diagnostics/session.jsonl", true)]
+    [InlineData("bomb.bin", false)]
+    [InlineData("a/b/c/d/e/f/g/h/i/j/k/deep.bin", false)]
+    [InlineData("segments/000001/../../escape.bin", false)]
+    [InlineData("source-order/unexpected.bin", false)]
+    [InlineData("segments/1/timestamp.bin", false)]
+    [InlineData("", false)]
+    public void OnlyFilesTheSessionFormatDefinesAreMembersOfASession(string entry, bool known)
+    {
+        // The extractor wrote every member it was given, so a 1.1 MB archive declaring a 1 GiB
+        // bomb.bin produced a 1.1 GiB directory in the product's own data root — and a
+        // 200-deep path and a 240-character name for the same reason (finding F-21).
+        Assert.Equal(known, SessionLayout.IsKnownMember(entry));
+    }
+
+    [Fact]
+    public async Task APortableArchiveCarryingSomethingThatIsNotPartOfASessionIsRefusedAsync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"vcat-f21-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var log = Path.Combine(root, "small.txt");
+            await File.WriteAllTextAsync(
+                log,
+                "05-15 14:13:37.000  1073  1151 I VCat: only line\n",
+                TestContext.Current.CancellationToken);
+            var session = Path.Combine(root, "session.vcat");
+            await using (var source = new FileLogSource(log))
+            {
+                var result = await SessionCoordinator.ImportAsync(
+                    source,
+                    session,
+                    new IngestSettings(
+                        null,
+                        "utf-8",
+                        new TimestampPolicy(2026, "UTC", DateTimeOffset.UtcNow),
+                        new TemplateSettings(),
+                        PortableRaw: true),
+                    cancellationToken: TestContext.Current.CancellationToken);
+                result.Snapshot.Dispose();
+            }
+
+            var archive = Path.Combine(root, "session.vcat.zip");
+            using (var snapshot = await SessionStore.OpenAsync(session, TestContext.Current.CancellationToken))
+            {
+                await PortableSessionArchiveService.CreateAsync(
+                    snapshot, archive, TestContext.Current.CancellationToken);
+            }
+
+            // A legitimate archive still round-trips.
+            var clean = Path.Combine(root, "clean.vcat");
+            await PortableSessionArchiveService.ExtractAsync(
+                archive, clean, TestContext.Current.CancellationToken);
+            Assert.True(Directory.Exists(clean));
+
+            using (var zip = System.IO.Compression.ZipFile.Open(
+                       archive, System.IO.Compression.ZipArchiveMode.Update))
+            {
+                var bomb = zip.CreateEntry("bomb.bin", System.IO.Compression.CompressionLevel.Optimal);
+                await using var stream = bomb.Open();
+                await stream.WriteAsync(new byte[16 * 1024 * 1024], TestContext.Current.CancellationToken);
+            }
+
+            var refused = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                PortableSessionArchiveService.ExtractAsync(
+                    archive, Path.Combine(root, "bombed.vcat"), TestContext.Current.CancellationToken));
+            Assert.Contains("bomb.bin", refused.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch (IOException) { }
+        }
+    }
+
+    // ---------------------------------------------------------------- F-27
+
+    [Fact]
+    public async Task ASessionIsOwnerOnlyWhateverTheAccountsUmaskSaysAsync()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), $"vcat-f27-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var log = Path.Combine(root, "small.txt");
+            await File.WriteAllTextAsync(
+                log,
+                "05-15 14:13:37.000  1073  1151 I VCat: only line\n",
+                TestContext.Current.CancellationToken);
+            var session = Path.Combine(root, "session.vcat");
+            await using (var source = new FileLogSource(log))
+            {
+                var result = await SessionCoordinator.ImportAsync(
+                    source,
+                    session,
+                    new IngestSettings(
+                        null,
+                        "utf-8",
+                        new TimestampPolicy(2026, "UTC", DateTimeOffset.UtcNow),
+                        new TemplateSettings(),
+                        PortableRaw: true),
+                    cancellationToken: TestContext.Current.CancellationToken);
+                result.Snapshot.Dispose();
+            }
+
+            // A session is somebody else's log. No group or other bit, whatever the umask is.
+            var mode = File.GetUnixFileMode(session);
+            Assert.Equal(
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+                mode);
+
+            var raw = Path.Combine(session, "raw.log");
+            if (File.Exists(raw))
+            {
+                Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(raw));
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch (IOException) { }
+        }
+    }
 }

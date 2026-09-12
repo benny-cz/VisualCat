@@ -135,10 +135,15 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             _source = source;
             _presence = presence;
             _pending = new List<NormalizedEntry>(settings.SegmentEntries);
-            Directory.CreateDirectory(_root);
-            Directory.CreateDirectory(Path.Combine(_root, "segments"));
-            Directory.CreateDirectory(Path.Combine(_root, "source-order"));
-            Directory.CreateDirectory(Path.Combine(_root, "diagnostics"));
+            // Owner-only, not umask-derived: the content is somebody else's log, and a session
+            // written to /tmp or a shared project directory was readable by every other local
+            // account (finding F-27). The directory mode is what carries it — without x on the
+            // session directory nothing inside it is reachable.
+            SessionFileModes.CreateOwnerOnlyDirectory(_root);
+            SessionFileModes.MakeDirectoryOwnerOnly(_root);
+            SessionFileModes.CreateOwnerOnlyDirectory(Path.Combine(_root, "segments"));
+            SessionFileModes.CreateOwnerOnlyDirectory(Path.Combine(_root, "source-order"));
+            SessionFileModes.CreateOwnerOnlyDirectory(Path.Combine(_root, "diagnostics"));
             _sourceRecordsStream = new FileStream(
                 Path.Combine(_root, "source-order", "records.bin"),
                 FileMode.Create,
@@ -337,6 +342,21 @@ public sealed class SessionStoreWriter : IAsyncDisposable
             outcome.Reason));
     }
 
+    /// <summary>
+    /// Seals whatever is pending because the source has stopped delivering, not because a
+    /// threshold was reached.
+    /// </summary>
+    /// <remarks>
+    /// The time-based flush in <see cref="AddEntry"/> is evaluated only when an entry arrives,
+    /// so a live source that pauses leaves its last partial batch in memory with nothing to
+    /// trigger it: the records were read, parsed and committed, and simply never published
+    /// (finding F-09). This is the trigger for that case, and it deliberately ignores the
+    /// widening flush interval — a paused writer is the moment freshness costs nothing, and
+    /// there is no risk of accumulating tiny segments because there is nothing arriving to
+    /// accumulate.
+    /// </remarks>
+    public SegmentManifest? FlushPendingIfIdle() => _pending.Count == 0 ? null : TryFlushSegment();
+
     public SegmentManifest? FlushSegment()
     {
         ThrowIfFinalized();
@@ -495,6 +515,10 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         }
 
         File.Move(destination + ".tmp", destination, true);
+
+        // Verbatim log content, and the one file in a session that is worth protecting even
+        // after it leaves the session directory (F-27).
+        SessionFileModes.MakeFileOwnerOnly(destination);
     }
 
     private uint InternTag(string value) => Intern(value, _tagIds, _tags);

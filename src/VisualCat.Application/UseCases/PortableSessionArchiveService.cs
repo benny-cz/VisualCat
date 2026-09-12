@@ -6,7 +6,29 @@ namespace VisualCat.Application.UseCases;
 public static class PortableSessionArchiveService
 {
     private const int MaximumEntries = 100_000;
-    private const long MaximumExpandedBytes = 1L * 1024 * 1024 * 1024 * 1024;
+
+    /// <summary>
+    /// The ceiling on everything one archive may expand to.
+    /// </summary>
+    /// <remarks>
+    /// A terabyte is not a bound: a 1.1 MB archive declaring a 1 GiB member wrote all of it into
+    /// the product's own data root without objection (finding F-21). Sessions are large but not
+    /// unbounded — a million-line capture with embedded raw evidence is a few gigabytes — so this
+    /// is set where a real session fits comfortably and a bomb does not.
+    /// </remarks>
+    private const long MaximumExpandedBytes = 64L * 1024 * 1024 * 1024;
+
+    /// <summary>How much one member may expand to beyond its compressed size.</summary>
+    /// <remarks>
+    /// Column files of repeated values compress extremely well, so the ratio has to be generous;
+    /// what it stops is the member that is nothing but a compressible pattern. Applied alongside
+    /// the member allowlist rather than instead of it: a name the session format does not define
+    /// is refused whatever it would expand to.
+    /// </remarks>
+    private const long MaximumEntryExpansionRatio = 1_000;
+
+    /// <summary>Below this, a member is too small for its ratio to mean anything.</summary>
+    private const long RatioExemptBytes = 64 * 1024;
 
     public static Task CreateAsync(
         SessionSnapshot snapshot,
@@ -78,6 +100,10 @@ public static class PortableSessionArchiveService
             progress?.Report(new FileWorkProgress(FileWorkStage.Publishing));
             await FileSystemPublish.MoveFileAsync(temporaryArchive, output, overwrite: true, cancellationToken)
                 .ConfigureAwait(false);
+
+            // The archive carries the session's embedded raw evidence, so it is owner-only for
+            // the same reason the evidence itself is (F-27).
+            SessionFileModes.MakeFileOwnerOnly(output);
         }
         catch
         {
@@ -114,7 +140,7 @@ public static class PortableSessionArchiveService
         }
 
         var temporary = destination + $".extract-{Guid.NewGuid():N}";
-        Directory.CreateDirectory(temporary);
+        SessionFileModes.CreateOwnerOnlyDirectory(temporary);
         try
         {
             await using var stream = new FileStream(
@@ -153,10 +179,31 @@ public static class PortableSessionArchiveService
                     continue;
                 }
 
+                // Only files the session format defines are written. A bomb payload, a
+                // 200-directory-deep path and a 240-character name are all the same defect seen
+                // three ways — none of them is part of a session — and naming the format's own
+                // members is the bound that needs no tuning (finding F-21).
+                if (!SessionLayout.IsKnownMember(entry.FullName))
+                {
+                    throw new InvalidDataException(
+                        $"Portable archive contains an entry that is not part of a session: {entry.FullName}");
+                }
+
                 expandedBytes = checked(expandedBytes + entry.Length);
                 if (expandedBytes > MaximumExpandedBytes)
                 {
-                    throw new InvalidDataException("Portable archive exceeds the expanded-size safety limit.");
+                    throw new InvalidDataException(
+                        $"Portable archive expands to more than {MaximumExpandedBytes / (1024 * 1024 * 1024):N0} GiB, " +
+                        "which is beyond what a session can legitimately contain.");
+                }
+
+                if (entry.Length > RatioExemptBytes &&
+                    entry.CompressedLength > 0 &&
+                    entry.Length / entry.CompressedLength > MaximumEntryExpansionRatio)
+                {
+                    throw new InvalidDataException(
+                        $"Portable archive entry '{entry.FullName}' expands {entry.Length / entry.CompressedLength:N0}-fold, " +
+                        $"beyond the {MaximumEntryExpansionRatio:N0}:1 limit.");
                 }
 
                 if (entry.ExternalAttributes != 0 &&
@@ -178,7 +225,7 @@ public static class PortableSessionArchiveService
                     throw new InvalidDataException($"Portable archive entry escapes the session root: {entry.FullName}");
                 }
 
-                Directory.CreateDirectory(Path.GetDirectoryName(path) ?? temporary);
+                SessionFileModes.CreateOwnerOnlyDirectory(Path.GetDirectoryName(path) ?? temporary);
                 await using var input = entry.Open();
                 await using var output = new FileStream(
                     path,

@@ -3457,8 +3457,8 @@ an interrupted run resumes from the last line here without re-deriving anything.
 | Repo | `E:\VisualCat` on the Windows host |
 | Guest | `benny@172.24.178.166` (VMware, key auth; `. ~/vcat-run/env.sh`) |
 | Phone | Samsung SM-G990B `RFCRC0A9GND`, PIN `1111`, **lock the screen when finished** |
-| Last completed | Batch B (F-06, F-07, F-18, F-19, F-20, F-25, F-26, F-28, F-29) implemented; suite green |
-| Next step | Batch C — follow loop, leases, archive, file modes |
+| Last completed | Batch C (F-09, F-21, F-24, F-27, F-31) implemented; 1,065 tests green |
+| Next step | Batch D — desktop shell and dialogs |
 
 ### 20.2 Plan — batches, and why in this order
 
@@ -3487,7 +3487,7 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 | F-06 | Minor | yes | yes | pending |
 | F-07 | Minor | yes | yes | pending |
 | F-08 | Polish | — | — | — |
-| F-09 | Major | — | — | — |
+| F-09 | Major | yes | yes | pending |
 | F-10 | Major | — | — | — |
 | F-11 | Major | — | — | — |
 | F-12 | Minor | — | — | — |
@@ -3499,14 +3499,14 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 | F-18 | Major | yes | yes | pending |
 | F-19 | Major | yes | yes | pending |
 | F-20 | Major | yes | yes | pending |
-| F-21 | Minor | — | — | — |
+| F-21 | Minor | yes | yes | pending |
 | F-22 | Minor | — | — | — |
 | F-23 | Polish | — | — | — |
-| F-24 | Polish | — | — | — |
+| F-24 | Polish | yes | yes | pending |
 | F-25 | Polish | yes | yes | pending |
 | F-26 | Minor | yes | yes | pending |
-| F-27 | Minor | — | — | — |
+| F-27 | Minor | yes | yes | pending |
 | F-28 | Polish | yes | yes | pending |
 | F-29 | Minor | yes | yes | pending |
 | F-30 | Minor | — | — | — |
-| F-31 | Major | — | — | — |
+| F-31 | Major | yes | yes | pending |

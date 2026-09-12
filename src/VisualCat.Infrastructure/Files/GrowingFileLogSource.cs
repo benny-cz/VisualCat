@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using VisualCat.Application.Ports;
 using VisualCat.Domain.Sessions;
@@ -83,6 +84,9 @@ public sealed class GrowingFileLogSource : ILogSource, ISourceDefectSource
         {
             throw new InvalidOperationException("The growing-file read buffer is smaller than the configured chunk size.");
         }
+
+        var identity = FollowedFileIdentity.Of(stream);
+        var lastIdentityCheck = Stopwatch.GetTimestamp();
         long offset = 0;
         while (!linked.IsCancellationRequested)
         {
@@ -98,23 +102,60 @@ public sealed class GrowingFileLogSource : ILogSource, ISourceDefectSource
                 buffer.AsSpan(0, read).CopyTo(chunk);
                 yield return new SourceChunk(offset, chunk);
                 offset += read;
+
+                // A successful read is not evidence that the file being read is still the file
+                // at the followed path: on Linux an open descriptor keeps an unlinked inode
+                // alive and readable, so a writer that keeps appending to the rotated-away file
+                // makes reads succeed forever while everything written to the live path is
+                // invisible (finding F-31, case 7). Checked no more often than one poll
+                // interval, so a busy stream does not stat per chunk.
+                if (Stopwatch.GetElapsedTime(lastIdentityCheck) < _pollInterval)
+                {
+                    continue;
+                }
+
+                lastIdentityCheck = Stopwatch.GetTimestamp();
+                RaiseIfSourceChanged(identity, offset);
                 continue;
             }
 
-            var info = new FileInfo(_path);
-            if (!info.Exists)
-            {
-                Interlocked.Exchange(ref _sourceChanged, 1);
-                throw new IOException("The followed file was removed.");
-            }
-
-            if (info.Length < offset)
-            {
-                Interlocked.Exchange(ref _sourceChanged, 1);
-                throw new IOException("The followed file was truncated or rotated; the configured policy is to stop.");
-            }
-
+            lastIdentityCheck = Stopwatch.GetTimestamp();
+            RaiseIfSourceChanged(identity, offset);
             await timer.WaitForNextTickAsync(linked.Token).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Ends the follow when the file at the followed path is no longer the file being read.
+    /// </summary>
+    /// <remarks>
+    /// Identity first, length second. Comparing lengths can see only a replacement that is
+    /// <em>shorter</em> than what has already been delivered, and an ordinary <c>logrotate</c>
+    /// without <c>copytruncate</c> — the default on most distributions — usually leaves a
+    /// replacement that is longer, so 93 records written to the file the product named as its
+    /// source never appeared and no source change was recorded at all (finding F-31).
+    /// </remarks>
+    private void RaiseIfSourceChanged(FollowedFileIdentity identity, long delivered)
+    {
+        var info = new FileInfo(_path);
+        if (!info.Exists)
+        {
+            Interlocked.Exchange(ref _sourceChanged, 1);
+            throw new IOException("The followed file was removed.");
+        }
+
+        if (identity.HasMoved(_path))
+        {
+            Interlocked.Exchange(ref _sourceChanged, 1);
+            throw new IOException(
+                "The followed file was replaced (rotated); the configured policy is to stop. " +
+                "Everything read before the rotation is kept.");
+        }
+
+        if (info.Length < delivered)
+        {
+            Interlocked.Exchange(ref _sourceChanged, 1);
+            throw new IOException("The followed file was truncated or rotated; the configured policy is to stop.");
         }
     }
 

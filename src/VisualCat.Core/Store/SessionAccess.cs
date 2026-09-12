@@ -184,6 +184,13 @@ public static class SessionAccess
                 "remove or replace it with a real directory.");
         }
 
+        // Off the caller's thread: a first launch must not wait on a directory sweep, and the
+        // sweep needs nothing from the lease table it would have to be serialized against.
+        if (Interlocked.Exchange(ref s_swept, 1) == 0)
+        {
+            _ = Task.Run(() => SweepUnheldMarkers(leases));
+        }
+
         // Case-folded on the platform whose paths are, so two spellings of one path cannot
         // take two different leases over the same session.
         var key = OperatingSystem.IsWindows() ? path.ToUpperInvariant() : path;
@@ -191,6 +198,65 @@ public static class SessionAccess
         var entry = new Entry(stem + ".read", stem + ".write", stem + ".intent");
         Entries.Add(path, entry);
         return entry;
+    }
+
+    /// <summary>How many marker files one sweep looks at, so a huge directory cannot stall a launch.</summary>
+    private const int MaximumSweptMarkers = 5_000;
+
+    private static int s_swept;
+
+    /// <summary>
+    /// Removes marker files that no process is holding, once per process, when the lease
+    /// directory is first opened.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing ever deleted them. Three zero-byte files per session accumulated for the life of
+    /// the account — 127 of them in a few hours of testing — and a user auditing what VisualCat
+    /// leaves behind found a growing directory with no explanation (finding F-24).
+    /// </para>
+    /// <para>
+    /// Deleting them is safe because their existence is not the lock: only an open handle is, and
+    /// a marker is recreated on demand by the next user. A marker that any process is holding
+    /// cannot be opened exclusively here, so it is left exactly where it is. Every failure is
+    /// swallowed — a sweep that cannot run must never stop a session from opening.
+    /// </para>
+    /// </remarks>
+    private static void SweepUnheldMarkers(string leaseRoot)
+    {
+        try
+        {
+            var examined = 0;
+            foreach (var marker in Directory.EnumerateFiles(leaseRoot))
+            {
+                if (++examined > MaximumSweptMarkers)
+                {
+                    return;
+                }
+
+                try
+                {
+                    // Opening it exclusively is the question being asked: if anyone holds this
+                    // lease, in this process or another, this throws and the marker stays.
+                    // FileShare.Delete lets the unlink happen while the exclusive handle is
+                    // still held, which leaves no window in which another process could take
+                    // the lease on a name this one is about to remove.
+                    using var held = new FileStream(
+                        marker,
+                        FileMode.Open,
+                        FileAccess.ReadWrite,
+                        FileShare.Delete);
+                    File.Delete(marker);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    // Held, or not ours to remove. Either way it is not residue.
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     private static void ReleaseUnused(string path, Entry entry)
