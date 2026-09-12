@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using VisualCat.Core.Query;
 using VisualCat.Core.Store;
+using VisualCat.Domain;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
 using VisualCat.Domain.Time;
@@ -79,7 +80,7 @@ public static class ExportService
             order,
             includeUtf8Bom: true,
             progress: null,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <returns>The number of data rows written, not counting the header.</returns>
@@ -104,7 +105,7 @@ public static class ExportService
             order,
             includeUtf8Bom,
             progress: null,
-            cancellationToken);
+            cancellationToken: cancellationToken);
 
     /// <summary>Exports CSV while reporting exact progress inside each file stage.</summary>
     public static async Task<long> ExportNormalizedCsvAsync(
@@ -115,6 +116,7 @@ public static class ExportService
         EntryOrder order,
         bool includeUtf8Bom,
         IProgress<FileWorkProgress>? progress = null,
+        NewlineStyle newline = NewlineStyle.Lf,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -122,7 +124,12 @@ public static class ExportService
         var written = 0L;
         await using var output = new AtomicDestination(destination);
         progress?.Report(new FileWorkProgress(FileWorkStage.WritingRows, 0, null, "rows"));
-        await using (var writer = new StreamWriter(output.Stream, new UTF8Encoding(includeUtf8Bom), 1024 * 1024, leaveOpen: true))
+        await using (var writer = new StreamWriter(output.Stream, new UTF8Encoding(includeUtf8Bom), 1024 * 1024, leaveOpen: true)
+        {
+            // Not Environment.NewLine: the same session must export byte for byte the same on
+            // every platform, or no cross-platform comparison of an export is possible (F-29).
+            NewLine = Newline.Of(newline),
+        })
         {
             await writer.WriteLineAsync("timestamp_utc,level,pid,tid,buffer,tag,template_id,message").ConfigureAwait(false);
             var row = new StringBuilder(512);
@@ -170,6 +177,7 @@ public static class ExportService
         TimeRange range,
         FilterSpec filter,
         bool markdown,
+        NewlineStyle newline = NewlineStyle.Lf,
         CancellationToken cancellationToken = default)
     {
         var templates = SessionQueryEngine.QueryTopTemplates(
@@ -180,7 +188,10 @@ public static class ExportService
             1,
             cancellationToken: cancellationToken);
         await using var output = new AtomicDestination(destination);
-        await using (var writer = new StreamWriter(output.Stream, new UTF8Encoding(true), 64 * 1024, leaveOpen: true))
+        await using (var writer = new StreamWriter(output.Stream, new UTF8Encoding(true), 64 * 1024, leaveOpen: true)
+        {
+            NewLine = Newline.Of(newline),
+        })
         {
             if (markdown)
             {
@@ -217,11 +228,15 @@ public static class ExportService
         string destination,
         FilterSpec filter,
         bool markdown,
+        NewlineStyle newline = NewlineStyle.Lf,
         CancellationToken cancellationToken = default)
     {
         var stats = SessionQueryEngine.QueryStatistics(snapshot, filter, 1, 100, cancellationToken);
         await using var output = new AtomicDestination(destination);
-        await using (var writer = new StreamWriter(output.Stream, new UTF8Encoding(true), 64 * 1024, leaveOpen: true))
+        await using (var writer = new StreamWriter(output.Stream, new UTF8Encoding(true), 64 * 1024, leaveOpen: true)
+        {
+            NewLine = Newline.Of(newline),
+        })
         {
             if (markdown)
             {

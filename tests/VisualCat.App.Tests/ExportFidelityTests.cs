@@ -158,7 +158,7 @@ public sealed class ExportFidelityTests
                     EntryOrder.Chronological,
                     includeUtf8Bom: false,
                     new CancelOnFirstReport(stop),
-                    stop.Token));
+                    cancellationToken: stop.Token));
 
             Assert.Equal(yesterday, await File.ReadAllTextAsync(destination, TestContext.Current.CancellationToken));
             Assert.Empty(Directory.GetFiles(

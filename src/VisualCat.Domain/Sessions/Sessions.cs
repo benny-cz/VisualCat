@@ -121,8 +121,14 @@ public sealed record TimestampPolicy(
     bool UseArrivalTimeForUntimed = false)
 {
     /// <summary>Creates the default policy for a finite file using its modification time.</summary>
+    /// <remarks>
+    /// The local zone is read through <see cref="Time.TimeZoneResolution"/> rather than from
+    /// <see cref="TimeZoneInfo.Local"/> directly, so a <c>TZ</c> the runtime could not honour is
+    /// reported instead of quietly becoming UTC — which would move every instant in a file that
+    /// carries no offset of its own (F-26).
+    /// </remarks>
     public static TimestampPolicy ForFile(DateTimeOffset fileModified, string? timeZoneId = null) =>
-        new(null, timeZoneId ?? TimeZoneInfo.Local.Id, fileModified);
+        new(null, timeZoneId ?? Time.TimeZoneResolution.LocalId(), fileModified);
 }
 
 /// <summary>Configures bounded, deterministic Drain-style template mining.</summary>

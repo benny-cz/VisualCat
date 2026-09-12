@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using VisualCat.Domain;
 
 namespace VisualCat.Core.Store;
 
@@ -170,14 +171,17 @@ public static class SessionAccess
         }
 
         // TEMP can differ between a GUI app, CLI and test host. Ownership must use a stable
-        // per-user location shared by all of them, independent of launch environment.
-        var storage = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrEmpty(storage)) throw new IOException("Session lease storage is unavailable.");
-        var leases = Path.Combine(storage, "VisualCat", "SessionAccess-v1");
+        // per-user location shared by all of them, independent of launch environment. The root
+        // is created if it is not there — a fresh account has no ~/.local/share, and failing on
+        // the lease directory reported a missing data root as unavailable lease storage, which
+        // is a symptom three layers from its cause (F-19).
+        var leases = ProductDataRoot.Combine("SessionAccess-v1");
         Directory.CreateDirectory(leases);
         if (File.GetAttributes(leases).HasFlag(FileAttributes.ReparsePoint))
         {
-            throw new IOException("Session lease storage is unavailable.");
+            throw new IOException(
+                $"The session lease directory '{leases}' is a link. VisualCat will not follow it; " +
+                "remove or replace it with a real directory.");
         }
 
         // Case-folded on the platform whose paths are, so two spellings of one path cannot

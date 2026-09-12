@@ -7,3 +7,11 @@ D/BriefTag( 1073): brief message
 [ 05-15 14:13:37.496  1073: 1151 E/LongTag ]
 long body line
 malformed evidence
+[ 05-15 14:13:37.003   926: 9315 W/Camera ]
+narrow tid body
+[ 05-15 14:13:37.004   926:12019 W/Camera ]
+wide tid body
+[ 05-15 14:13:37.005 10503:12019 W/Camera ]
+wide pid and tid body
+[ 05-15 14:13:37.006 10503: 5136 W/Camera ]
+wide pid body

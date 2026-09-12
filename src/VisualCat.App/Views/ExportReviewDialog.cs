@@ -79,6 +79,18 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
             SelectedIndex = request.DefaultIncludeUtf8Bom ? 1 : 0,
         };
         AutomationProperties.SetName(encoding, "Encoding");
+
+        // The same session has to export the same bytes wherever it is exported, so the default
+        // is LF on every platform rather than the host's own newline — and because that is a
+        // choice rather than an inheritance, it is offered here beside the encoding, which is
+        // the other decision of exactly this kind (F-29).
+        var lineEndings = new ComboBox
+        {
+            MinHeight = mobile ? 48 : 0,
+            ItemsSource = new[] { "LF (Unix, portable)", "CRLF (Windows)" },
+            SelectedIndex = request.DefaultNewline == NewlineStyle.Crlf ? 1 : 0,
+        };
+        AutomationProperties.SetName(lineEndings, "Line endings");
         var filterDetail = new ContentControl();
 
         var cancel = new Button
@@ -181,7 +193,8 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
             Complete(new ExportDecision(
                 selected,
                 rowOrder.SelectedIndex == 0 ? EntryOrder.SourceSequence : EntryOrder.Chronological,
-                encoding.SelectedIndex == 1));
+                encoding.SelectedIndex == 1,
+                lineEndings.SelectedIndex == 1 ? NewlineStyle.Crlf : NewlineStyle.Lf));
         };
 
         var warnings = new StackPanel { Spacing = 4 };
@@ -199,22 +212,14 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
 
         var optionGrid = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions(mobile ? "*" : "*,*"),
-            RowDefinitions = new RowDefinitions(mobile ? "Auto,Auto" : "Auto"),
+            ColumnDefinitions = new ColumnDefinitions(mobile ? "*" : "*,*,*"),
+            RowDefinitions = new RowDefinitions(mobile ? "Auto,Auto,Auto" : "Auto"),
             ColumnSpacing = 12,
             RowSpacing = 8,
         };
         optionGrid.Children.Add(Field("Row order", rowOrder));
-        var encodingField = Field("Encoding", encoding);
-        if (mobile)
-        {
-            Grid.SetRow(encodingField, 1);
-        }
-        else
-        {
-            Grid.SetColumn(encodingField, 1);
-        }
-        optionGrid.Children.Add(encodingField);
+        Place(optionGrid, Field("Encoding", encoding), 1, mobile);
+        Place(optionGrid, Field("Line endings", lineEndings), 2, mobile);
 
         _retry.MinHeight = mobile ? 48 : 0;
         _retry.Click += (_, _) => StartCounting();
@@ -240,7 +245,7 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
                     decisionStatus,
                     warnings,
                     optionGrid,
-                    Note("A successful export remembers these two choices as the new defaults."),
+                    Note("A successful export remembers these three choices as the new defaults."),
                     filterDetail,
                 },
             },
@@ -480,6 +485,24 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
         AutomationProperties.SetName(option, heading);
         AutomationProperties.SetHelpText(option, scope.Summary);
         return option;
+    }
+
+    /// <summary>
+    /// Puts one labelled option in the grid: side by side where there is width for it, stacked
+    /// on a phone.
+    /// </summary>
+    private static void Place(Grid grid, Control field, int index, bool mobile)
+    {
+        if (mobile)
+        {
+            Grid.SetRow(field, index);
+        }
+        else
+        {
+            Grid.SetColumn(field, index);
+        }
+
+        grid.Children.Add(field);
     }
 
     private static StackPanel Field(string label, Control value) => new StackPanel

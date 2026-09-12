@@ -24,7 +24,7 @@ public sealed class TimestampResolver
     public TimestampResolver(TimestampPolicy policy)
     {
         _policy = policy;
-        _zone = TimeZoneInfo.FindSystemTimeZoneById(policy.TimeZoneId);
+        _zone = TimeZoneResolution.Resolve(policy.TimeZoneId);
     }
 
     public ResolvedTimestamp Resolve(TimestampToken? token, InstantUs? arrival = null)

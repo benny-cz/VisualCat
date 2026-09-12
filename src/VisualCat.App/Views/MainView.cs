@@ -119,10 +119,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private bool _recentRefreshRequested;
     private int _recentRefreshDisposed;
 
-    private static string DiagnosticsDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VisualCat",
-        "Diagnostics");
+    private static string DiagnosticsDirectory => ProductDataRoot.Combine("Diagnostics");
 
     /// <summary>One view's registration on the platform's static event surface.</summary>
     private sealed class PlatformEventSubscription(
@@ -195,10 +192,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     }
 
     /// <summary>Where the settings file lives when nobody says otherwise.</summary>
-    internal static string DefaultSettingsPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "VisualCat",
-        "settings.json");
+    internal static string DefaultSettingsPath => Path.Combine(ProductDataRoot.Path, "settings.json");
 
     public MainView(IEnumerable<string>? startupPaths = null)
         : this(startupPaths, DefaultSettingsPath)
@@ -2287,7 +2281,8 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                 ? VisualCat.Domain.Queries.EntryOrder.Chronological
                 : VisualCat.Domain.Queries.EntryOrder.SourceSequence,
             _settings.ExportEncoding != "utf-8",
-            tab.IsLiveSourceAttached);
+            tab.IsLiveSourceAttached,
+            _settings.ExportNewline == "crlf" ? NewlineStyle.Crlf : NewlineStyle.Lf);
         if (!_fileOperations.TryBegin(
                 FileOperationKind.Export,
                 $"Preparing export · {request.SourceTitle}",
@@ -2417,6 +2412,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                                 decision.Order,
                                 decision.IncludeUtf8Bom,
                                 outputProgress,
+                                decision.Newline,
                                 cancellationToken);
                         },
                         operation.Progress,
@@ -2440,6 +2436,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                         ? "Chronological"
                         : "SourceSequence",
                     ExportEncoding = decision.IncludeUtf8Bom ? "utf-8-bom" : "utf-8",
+                    ExportNewline = decision.Newline == NewlineStyle.Crlf ? "crlf" : "lf",
                 };
                 try
                 {

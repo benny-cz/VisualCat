@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using VisualCat.Application.Ports;
+using VisualCat.Domain;
 using VisualCat.Domain.Sessions;
 
 namespace VisualCat.Infrastructure.Files;
@@ -37,7 +38,13 @@ public sealed class FileLogSource : ILogSource, ISourceDefectSource, IBoundedPro
         var info = new FileInfo(_path);
         if (!info.Exists)
         {
-            throw new FileNotFoundException("Log source was not found.", _path);
+            // "Not found" is the wrong diagnosis for a name that is there and readable but whose
+            // bytes are not valid UTF-8: .NET replaced them on the way in, so the string can no
+            // longer be encoded back to the name on disk, and the reader was sent looking for a
+            // missing file (finding F-06).
+            throw PathAddressability.IsAddressable(_path)
+                ? new FileNotFoundException("Log source was not found.", _path)
+                : new FileNotFoundException(PathAddressability.Explain(_path), _path);
         }
 
         _initialLength = info.Length;

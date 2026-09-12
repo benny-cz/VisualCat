@@ -10,6 +10,7 @@ public static class SessionVerifier
         var issues = new List<VerificationIssue>();
         long entries = 0;
         long sourceRecords = 0;
+        var rawVerified = false;
         SessionSnapshot? snapshot = null;
         try
         {
@@ -214,6 +215,7 @@ public static class SessionVerifier
                 try
                 {
                     await using var raw = await VerifiedRawSource.OpenAsync(snapshot, cancellationToken).ConfigureAwait(false);
+                    rawVerified = true;
                 }
                 catch (RawEvidenceException exception)
                 {
@@ -243,11 +245,75 @@ public static class SessionVerifier
             snapshot?.Dispose();
         }
 
+        var collapsed = Collapse(issues, out var truncated);
         return new VerificationReport(
             Path.GetFullPath(sessionPath),
             issues.All(static issue => !issue.IsError),
-            issues,
+            collapsed,
             entries,
-            sourceRecords);
+            sourceRecords,
+            rawVerified,
+            truncated);
+    }
+
+    /// <summary>How many distinct issue objects a report may carry before it is truncated.</summary>
+    /// <remarks>
+    /// P-07 asks the verifier for bounded output, and a thoroughly corrupted session can find a
+    /// distinct problem in every segment. Kept well above what any healthy session produces.
+    /// </remarks>
+    private const int MaximumDistinctIssues = 100;
+
+    /// <summary>How many collapsed messages a repeated issue keeps as evidence of its shape.</summary>
+    private const int SampleSize = 5;
+
+    /// <summary>
+    /// Folds byte-identical repeats into one object carrying a count and a bounded sample, and
+    /// caps the number of distinct objects (finding F-25).
+    /// </summary>
+    /// <remarks>
+    /// The verdict is unaffected — it is computed from the uncollapsed list — so this changes
+    /// only how much a reader has to scroll to learn the same thing.
+    /// </remarks>
+    private static List<VerificationIssue> Collapse(List<VerificationIssue> issues, out bool truncated)
+    {
+        truncated = false;
+        var collapsed = new List<VerificationIssue>();
+        var byCode = new Dictionary<string, int>(StringComparer.Ordinal);
+        var samples = new Dictionary<int, List<string>>();
+        foreach (var issue in issues)
+        {
+            if (byCode.TryGetValue(issue.Code, out var index))
+            {
+                var existing = collapsed[index];
+                var sample = samples[index];
+                if (sample.Count < SampleSize && !string.Equals(existing.Message, issue.Message, StringComparison.Ordinal))
+                {
+                    sample.Add(issue.Message);
+                }
+
+                collapsed[index] = existing with { Occurrences = existing.Occurrences + 1 };
+                continue;
+            }
+
+            if (collapsed.Count >= MaximumDistinctIssues)
+            {
+                truncated = true;
+                continue;
+            }
+
+            byCode[issue.Code] = collapsed.Count;
+            samples[collapsed.Count] = [];
+            collapsed.Add(issue);
+        }
+
+        for (var i = 0; i < collapsed.Count; i++)
+        {
+            if (collapsed[i].Occurrences > 1 && samples[i].Count > 0)
+            {
+                collapsed[i] = collapsed[i] with { Sample = samples[i] };
+            }
+        }
+
+        return collapsed;
     }
 }

@@ -72,8 +72,14 @@ public static class SyntheticLogGenerator
 
             instant = instant.AddMilliseconds(random.Next(0, 4));
             var eventInstant = random.NextDouble() < options.OutOfOrderRate ? instant.AddMilliseconds(-random.Next(1, 5000)) : instant;
-            var pid = random.Next(100, 20_000);
-            var tid = random.Next(100, 30_000);
+            // The long format prints the identity field as "%5d:%5d", so a five-digit thread id
+            // leaves no space after the colon and a four-digit one does. Both spellings must
+            // appear in every corpus, including a four-line one, or a parser that reads only one
+            // of them looks healthy against generated input (finding F-01). Walk the four width
+            // combinations deterministically rather than relying on the random range to cover
+            // them eventually.
+            var pid = line % 2 == 0 ? random.Next(100, 10_000) : random.Next(10_000, 100_000);
+            var tid = line % 4 < 2 ? random.Next(100, 10_000) : random.Next(10_000, 100_000);
             var level = (LogLevel)random.Next(0, 6);
             string tag;
             string message;

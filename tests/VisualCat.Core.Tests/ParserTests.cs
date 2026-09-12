@@ -17,6 +17,18 @@ public sealed class ParserTests
         { "1747311217.496123 1073 1151 W Wifi: slow\n", LogcatFormat.Epoch, 1073, 1151, LogLevel.Warn, "Wifi", "slow" },
         { "[ 05-15 14:13:37.496  1073: 1151 D/rlsservice ]\n", LogcatFormat.LongFormat, 1073, 1151, LogLevel.Debug, "rlsservice", "" },
 
+        // Android prints the long format's identity field as "%5d:%5d". A five-digit thread id
+        // fills the column, so there is no space after the colon and "pid:tid" arrives as a
+        // single token; a four-digit one leaves a space. Reading the field by whitespace saw
+        // only the spaced spelling, so 472 of 4,000 records from an SM-G990B were dropped and
+        // booked as continuations of the record above (finding F-01). All four width
+        // combinations must parse.
+        { "[ 05-15 14:13:37.003   926: 9315 W/Camera ]\n", LogcatFormat.LongFormat, 926, 9315, LogLevel.Warn, "Camera", "" },
+        { "[ 05-15 14:13:37.004   926:12019 W/Camera ]\n", LogcatFormat.LongFormat, 926, 12019, LogLevel.Warn, "Camera", "" },
+        { "[ 05-15 14:13:37.005 10503:12019 W/Camera ]\n", LogcatFormat.LongFormat, 10503, 12019, LogLevel.Warn, "Camera", "" },
+        { "[ 05-15 14:13:37.006 10503: 5136 W/Camera ]\n", LogcatFormat.LongFormat, 10503, 5136, LogLevel.Warn, "Camera", "" },
+        { "[ 05-15 14:13:37.007 +0000 10503:12019 W/Camera ]\n", LogcatFormat.LongFormat, 10503, 12019, LogLevel.Warn, "Camera", "" },
+
         // Verbatim shapes captured from a device (motorola edge 60 pro, API 35) under
         // -v threadtime[,year][,UTC|zone][,usec]. Tags containing colons are ordinary
         // on Android: binder worker threads and AudioFlinger classes both produce them.
@@ -202,6 +214,46 @@ public sealed class ParserTests
                             outcome.Kind is ParseOutcomeKind.ParsedEntry or ParseOutcomeKind.UntimedEntry);
             }
         }
+    }
+
+    /// <summary>
+    /// The whole point of F-01: a long-format file whose thread ids need all five columns must
+    /// yield one entry per header, and nothing may be quietly reclassified as body text of the
+    /// record above it. The four hand-written records are exactly as <c>logcat -v long</c>
+    /// prints them.
+    /// </summary>
+    [Fact]
+    public void EveryLongFormatIdentityWidthParsesAsItsOwnRecord()
+    {
+        string[] headers =
+        [
+            "[ 05-15 14:13:37.003   926: 9315 W/Camera ]",
+            "[ 05-15 14:13:37.004   926:12019 W/Camera ]",
+            "[ 05-15 14:13:37.005 10503:12019 W/Camera ]",
+            "[ 05-15 14:13:37.006 10503: 5136 W/Camera ]",
+        ];
+
+        var parsed = headers.Select(header => Parse(header + "\n", LogcatFormat.LongFormat)).ToArray();
+        Assert.All(parsed, outcome => Assert.Equal(ParseOutcomeKind.ParsedEntry, outcome.Kind));
+        Assert.Equal([926, 926, 10503, 10503], parsed.Select(static outcome => outcome.Fields!.Pid));
+        Assert.Equal([9315, 12019, 12019, 5136], parsed.Select(static outcome => outcome.Fields!.Tid));
+    }
+
+    /// <summary>
+    /// The second half of F-01. A bracketed line carrying a date and a priority/tag is an
+    /// attempted header; when it fails validation it must be counted as a rejected candidate,
+    /// which the chip bar surfaces and "Lines not on the timeline" can reach — never as a
+    /// continuation, which asserts it is message text of the entry above.
+    /// </summary>
+    [Theory]
+    [InlineData("[ 05-15 14:13:37.008 nope:12019 W/Camera ]", ParseOutcomeKind.RejectedCandidate)]
+    [InlineData("[ 05-15 14:13:37.009 10503:12019 WW/Camera ]", ParseOutcomeKind.RejectedCandidate)]
+    [InlineData("[ 05-15 14:13:37.010 1050312019 W/Camera ]", ParseOutcomeKind.RejectedCandidate)]
+    [InlineData("ordinary message body, not bracketed", ParseOutcomeKind.Continuation)]
+    [InlineData("[ this is a bracketed message body ]", ParseOutcomeKind.Continuation)]
+    public void AMalformedLongHeaderIsRejectedRatherThanFoldedIntoTheRecordAbove(string line, ParseOutcomeKind expected)
+    {
+        Assert.Equal(expected, Parse(line + "\n", LogcatFormat.LongFormat).Kind);
     }
 
     private static ParseOutcome Parse(string text, LogcatFormat format)

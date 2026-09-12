@@ -77,10 +77,7 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
     public event EventHandler<SessionTabViewModel>? TabRemoved;
 
     public ObservableCollection<SessionTabViewModel> Tabs { get; } = [];
-    public static string TemporarySessionRoot => s_temporarySessionRoot ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "VisualCat",
-            "Sessions");
+    public static string TemporarySessionRoot => s_temporarySessionRoot ?? ProductDataRoot.Combine("Sessions");
 
     public static void ConfigureTemporarySessionRoot(string? path)
     {
@@ -1041,6 +1038,11 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
         {
             // Already phrased for a person, including what survived.
             SegmentWriteRefusedException => cause.Message,
+
+            // Nothing to do with this session: the product has nowhere to keep anything. The
+            // message already names the directory and the cause, and describing it as a session
+            // that went missing sent readers hunting for a deleted capture (F-19).
+            ProductDataRootException => cause.Message,
             UnauthorizedAccessException =>
                 $"VisualCat is not allowed to read or write part of this session: {Detail(cause)}",
             FileNotFoundException or DirectoryNotFoundException =>

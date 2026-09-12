@@ -19,6 +19,12 @@ public sealed record ApplicationSettings(
     double TimelineMinimumBarWidth = 5,
     string ExportOrder = "SourceSequence",
     string ExportEncoding = "utf-8-bom",
+
+    // Deliberately not the host's newline. The same session exported on Linux and on Windows
+    // differed by nothing but carriage returns, so no team with mixed machines could diff two
+    // exports, check one into version control, or compare checksums in CI (F-29). "lf" is the
+    // deterministic default on every platform; "crlf" is there for tools that need it.
+    string ExportNewline = "lf",
     bool DiagnosticsEnabled = true,
     bool TemporaryCleanupEnabled = false,
     int TemporaryRetentionDays = 30,
@@ -172,6 +178,7 @@ public sealed class SettingsStore(string path)
         var exportEncoding = settings.ExportEncoding is "utf-8" or "utf-8-bom"
             ? settings.ExportEncoding
             : "utf-8-bom";
+        var exportNewline = settings.ExportNewline is "lf" or "crlf" ? settings.ExportNewline : "lf";
         var allowedBuffers = new HashSet<string>(["main", "system", "crash", "events", "radio"], StringComparer.Ordinal);
         var buffers = (settings.DefaultCaptureBuffers ?? ["main", "system", "crash"])
             .Where(allowedBuffers.Contains)
@@ -203,6 +210,7 @@ public sealed class SettingsStore(string path)
                 : 5,
             ExportOrder = exportOrder,
             ExportEncoding = exportEncoding,
+            ExportNewline = exportNewline,
             DefaultCapturePreRollSeconds = Math.Clamp(settings.DefaultCapturePreRollSeconds, 0, 3600),
             TemporaryRetentionDays = Math.Clamp(settings.TemporaryRetentionDays, 1, 3650),
             TemporaryRetentionMaximumBytes = settings.TemporaryRetentionMaximumBytes is > 0

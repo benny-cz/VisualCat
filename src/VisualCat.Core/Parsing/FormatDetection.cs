@@ -21,6 +21,7 @@ public sealed class FormatDetector
             .ToDictionary(static format => format, static _ => (Matched: 0, Valid: 0));
         var modifiers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var useful = 0;
+        var bracketed = 0;
 
         foreach (var memory in samples)
         {
@@ -36,6 +37,11 @@ public sealed class FormatDetector
             }
 
             useful++;
+            if (line[0] == (byte)'[' && line[^1] == (byte)']')
+            {
+                bracketed++;
+            }
+
             foreach (var format in totals.Keys.ToArray())
             {
                 var score = LogcatParser.Probe(line, format);
@@ -78,7 +84,8 @@ public sealed class FormatDetector
             {
                 var score = useful == 0 || pair.Value.Matched == 0
                     ? 0
-                    : (pair.Value.Matched / (double)useful) * Math.Min(1d, pair.Value.Valid / (pair.Value.Matched * 6d));
+                    : Coverage(pair.Key, pair.Value.Matched, bracketed, useful) *
+                      Math.Min(1d, pair.Value.Valid / (pair.Value.Matched * (double)BestScore(pair.Key)));
                 return new FormatCandidate(pair.Key, pair.Value.Matched, pair.Value.Valid, score);
             })
             .OrderByDescending(static candidate => candidate.Score)
@@ -100,6 +107,43 @@ public sealed class FormatDetector
             candidates,
             useful);
     }
+
+    /// <summary>
+    /// The share of the lines a format is responsible for that it actually matched.
+    /// </summary>
+    /// <remarks>
+    /// Every format but <c>long</c> prints one record per line, so the whole sample is its
+    /// responsibility. A <c>-v long</c> record is a bracketed header, its message, and a blank
+    /// separator, so roughly half the non-blank lines of a perfectly healthy file can never
+    /// match a header — which capped the format at ~0.5 however clean the capture was, put an
+    /// unmodified device dump permanently under the 0.6 review threshold, and made the collapse
+    /// caused by F-01 indistinguishable from the format's own shape. Score it against the lines
+    /// it is claiming, and keep a presence factor so one stray bracketed line in an unrelated
+    /// file cannot carry it.
+    /// </remarks>
+    private static double Coverage(LogcatFormat format, int matched, int bracketed, int useful)
+    {
+        if (format != LogcatFormat.LongFormat)
+        {
+            return matched / (double)useful;
+        }
+
+        if (bracketed == 0)
+        {
+            return 0;
+        }
+
+        var presence = Math.Min(1d, bracketed * 2d / useful);
+        return matched / (double)bracketed * presence;
+    }
+
+    /// <summary>
+    /// The highest <see cref="LogcatParser.Probe"/> score the format can reach when every field
+    /// it carries is present, so confidence measures how certainly a line is this format rather
+    /// than how many fields the format happens to define. <c>brief</c> has no timestamp at all,
+    /// so a flawless brief capture scored 4/6 and sat barely above the review threshold.
+    /// </summary>
+    private static int BestScore(LogcatFormat format) => format == LogcatFormat.Brief ? 4 : 6;
 
     private static ReadOnlySpan<byte> TrimLine(ReadOnlySpan<byte> line)
     {

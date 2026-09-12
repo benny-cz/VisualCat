@@ -106,7 +106,13 @@ public sealed class LogcatParser
 
         if (primaryFormat == LogcatFormat.LongFormat && text.Length > 0)
         {
-            return new ParseOutcome(ParseOutcomeKind.Continuation, source, null, "long-format body");
+            // A bracketed line carrying a date and a priority/tag is self-evidently an attempted
+            // header. Filing it as message text of the record above asserts something false about
+            // it, hides it from the chip bar and from "Lines not on the timeline", and counts it
+            // nowhere — which is how a parse defect became silent data loss (finding F-01).
+            return LooksLikeLongHeader(text.AsSpan())
+                ? ParseOutcome.Rejected(source, rejection ?? "malformed long-format header")
+                : new ParseOutcome(ParseOutcomeKind.Continuation, source, null, "long-format body");
         }
 
         return LooksLikeHeader(text.AsSpan())
@@ -418,18 +424,51 @@ public sealed class LogcatParser
         }
 
         var longOffset = TryConsumeZoneOffset(trimmed, ref position);
-        if (!TryToken(trimmed, ref position, out var pidWithColon) ||
-            !TryToken(trimmed, ref position, out var tidToken) ||
-            !TryToken(trimmed, ref position, out var priorityTag))
+        if (!TryToken(trimmed, ref position, out var idsToken))
         {
             rejection = "incomplete long-format header";
             return false;
         }
 
-        if (!TryCalendarTimestamp(date, time, longOffset, out var timestamp) ||
-            !pidWithColon.EndsWith(':') ||
-            !TryPositiveInt(pidWithColon[..^1], out var pid) ||
-            !TryPositiveInt(tidToken, out var tid))
+        // Android prints the identity field as "%5d:%5d", so a five-digit thread id fills the
+        // column and leaves no space after the colon: "926:12019" arrives as one token where
+        // "926: 9315" arrives as two. Splitting on whitespace saw only the second spelling and
+        // dropped every record with a wide tid — 472 of 4,000 from a real device, and the file
+        // then failed detection outright (finding F-01). Read the field as a unit and split it
+        // on its own colon, taking a following token only when the colon ends this one.
+        var colonIndex = idsToken.LastIndexOf(':');
+        if (colonIndex <= 0)
+        {
+            rejection = "invalid long-format header";
+            return false;
+        }
+
+        int pid;
+        int tid;
+        if (colonIndex == idsToken.Length - 1)
+        {
+            if (!TryToken(trimmed, ref position, out var spacedTid) ||
+                !TryPositiveInt(idsToken[..colonIndex], out pid) ||
+                !TryPositiveInt(spacedTid, out tid))
+            {
+                rejection = "invalid long-format header";
+                return false;
+            }
+        }
+        else if (!TryPositiveInt(idsToken[..colonIndex], out pid) ||
+                 !TryPositiveInt(idsToken[(colonIndex + 1)..], out tid))
+        {
+            rejection = "invalid long-format header";
+            return false;
+        }
+
+        if (!TryToken(trimmed, ref position, out var priorityTag))
+        {
+            rejection = "incomplete long-format header";
+            return false;
+        }
+
+        if (!TryCalendarTimestamp(date, time, longOffset, out var timestamp))
         {
             rejection = "invalid long-format header";
             return false;
@@ -682,6 +721,23 @@ public sealed class LogcatParser
                char.IsAsciiDigit(token[0]) &&
                char.IsAsciiDigit(token[1]) &&
                (value = ((token[0] - '0') * 10) + token[1] - '0') >= 0;
+    }
+
+    /// <summary>
+    /// Recognises a line that is trying to be a <c>-v long</c> header: bracketed, opening on a
+    /// digit, and carrying the <c>P/Tag</c> separator. Used to tell a malformed header apart from
+    /// an ordinary message body, which in long format is never bracketed end to end.
+    /// </summary>
+    private static bool LooksLikeLongHeader(ReadOnlySpan<char> line)
+    {
+        var trimmed = line.Trim();
+        if (trimmed.Length < 5 || trimmed[0] != '[' || trimmed[^1] != ']')
+        {
+            return false;
+        }
+
+        var inner = trimmed[1..^1].Trim();
+        return inner.Length > 0 && char.IsAsciiDigit(inner[0]) && inner.IndexOf('/') > 0;
     }
 
     private static bool LooksLikeHeader(ReadOnlySpan<char> line) =>

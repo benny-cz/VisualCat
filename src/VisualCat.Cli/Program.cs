@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using VisualCat.Application.Coordination;
 using VisualCat.Application.UseCases;
@@ -19,12 +20,33 @@ return await VisualCatCli.RunAsync(args).ConfigureAwait(false);
 
 internal static class VisualCatCli
 {
+    /// <summary>
+    /// How long a terminating signal waits for the cooperative shutdown to publish what it has.
+    /// </summary>
+    /// <remarks>
+    /// A <c>PosixSignal</c> handler that returns immediately lets the runtime carry on with the
+    /// default disposition, so cancelling without waiting still tears the process down
+    /// mid-publication. Long enough for a session to finalize its manifest; short enough that a
+    /// second signal, a <c>systemd</c> stop timeout, or an impatient operator is not left
+    /// waiting on a wedged writer.
+    /// </remarks>
+    private static readonly TimeSpan ShutdownDrainTimeout = TimeSpan.FromSeconds(20);
+
+    /// <summary>Set once the command has finished, so a terminating signal stops waiting.</summary>
+    private static readonly ManualResetEventSlim _shutdownDrained = new(false);
+
     // Output-only options: names instead of bare enum ordinals and ISO-8601 instants.
     // Session manifests keep their own serializer settings, so the on-disk format is
     // unaffected (§16.6 — the CLI is a human and automation surface at once).
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
+
+        // Indentation uses the host's newline unless told otherwise, which is why the same
+        // session's `templates` JSON was 602 bytes longer on Windows than on Linux and
+        // identical after stripping the carriage returns (finding F-29). Machine-readable
+        // output that depends on which machine produced it is not machine-readable.
+        NewLine = "\n",
         Converters =
         {
             new System.Text.Json.Serialization.JsonStringEnumConverter(),
@@ -57,6 +79,11 @@ internal static class VisualCatCli
 
     public static async Task<int> RunAsync(string[] args)
     {
+        // The trailing newline of every Console.WriteLine, for the same reason as the JSON
+        // indentation above: `vcat stats > stats.json` must produce the same bytes on every
+        // platform. Modern Windows consoles render bare LF correctly (F-29).
+        Console.Out.NewLine = "\n";
+
         if (args.Length == 1 && args[0] is "-v" or "--version" or "version")
         {
             Console.WriteLine($"vcat {ProductInfo.InformationalVersion}");
@@ -76,6 +103,27 @@ internal static class VisualCatCli
             cancellation.Cancel();
         };
 
+        // SIGTERM is how a long index actually gets interrupted on Linux — a systemd stop, a
+        // session logout, a container shutdown and a bare kill all send it — and only SIGINT
+        // was wired to cancellation. The runtime's default handler tore the process down
+        // mid-publication, so the same interruption that left a clean, verifiable session under
+        // Ctrl+C left one stuck in "Importing" with a single recoverable entry under kill
+        // (finding F-18). Cancel:true takes over from the default terminate, and the handler
+        // then waits for the cooperative shutdown to finish publishing rather than returning
+        // immediately, which would let the runtime exit anyway.
+        using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
+        {
+            context.Cancel = true;
+            cancellation.Cancel();
+            _shutdownDrained.Wait(ShutdownDrainTimeout);
+        });
+        using var sighup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, context =>
+        {
+            context.Cancel = true;
+            cancellation.Cancel();
+            _shutdownDrained.Wait(ShutdownDrainTimeout);
+        });
+
         try
         {
             var command = args[0].ToLowerInvariant();
@@ -94,9 +142,29 @@ internal static class VisualCatCli
 
             var options = Arguments.Parse(args[1..]);
 
+            // The XDG specification says a relative XDG_DATA_HOME is invalid and must be
+            // ignored, and .NET duly ignores it — which meant a user who asked for one
+            // directory silently got another (F-19). Ignoring it is correct; saying nothing
+            // is not. Once per run, on stderr, so it cannot corrupt a piped --json result.
+            if (ProductDataRoot.IgnoredDataHome is { } ignored)
+            {
+                Console.Error.WriteLine(
+                    $"warning: XDG_DATA_HOME='{ignored}' is a relative path, which the XDG " +
+                    $"specification does not allow, so it was ignored. VisualCat is using " +
+                    $"'{ProductDataRoot.Path}'.");
+            }
+
             // Same reason. An unrecognised option was silently ignored, so `--lines1000`
             // produced a million-line file instead of an error.
             options.RejectUnknown(command, KnownOptions(command));
+
+            // And the same again for arguments that are not options. Everything after a POSIX
+            // "--" is an operand, so `vcat index -- log.txt --output s.vcat` hands three
+            // positionals to a command that reads one — which, silently ignored, would have
+            // written the session beside the log instead of where it was asked (F-07). Extra
+            // positionals were already dropped before "--" existed; naming them is what makes
+            // the separator safe to use.
+            options.RejectExtraPositions(command, PositionalLimit(command));
             return command switch
             {
                 "index" => await IndexAsync(options, cancellation.Token).ConfigureAwait(false),
@@ -145,6 +213,12 @@ internal static class VisualCatCli
 
             return 1;
         }
+        finally
+        {
+            // However the command ended, a signal handler still parked on the drain gate must be
+            // released: the work it was waiting for is over (F-18).
+            _shutdownDrained.Set();
+        }
     }
 
     private static async Task<int> IndexAsync(Arguments options, CancellationToken cancellationToken)
@@ -156,6 +230,13 @@ internal static class VisualCatCli
             throw new CommandException($"Output already exists: {output}. Use --force to replace it.");
         }
 
+        // The exclusive write lease is taken before --force touches anything, and held across
+        // the import. It used to be taken inside the import, after the delete, so a second
+        // writer starting a moment later deleted part of the session the first one was still
+        // publishing: the loser was correctly refused, and the winner exited 0 leaving a
+        // session that failed verification (finding F-20). The lease nests, so the coordinator's
+        // own acquisition inside is a no-op.
+        using var reservation = SessionAccess.Write(output);
         if (Directory.Exists(output))
         {
             var full = Path.GetFullPath(output);
@@ -192,8 +273,10 @@ internal static class VisualCatCli
             settings,
             progress,
             cancellationToken: cancellationToken).ConfigureAwait(false);
+        long published;
         using (result.Snapshot)
         {
+            published = result.Snapshot.Descriptor.Counters.TimedEntries;
             if (!Console.IsErrorRedirected)
             {
                 Console.Error.WriteLine();
@@ -213,7 +296,39 @@ internal static class VisualCatCli
             }, JsonOptions));
         }
 
+        // Belt and braces for F-20: the lease now keeps two vcat processes off one session, but
+        // nothing can stop a tool that does not take it. Re-reading the published manifest costs
+        // one open — it is O(segments), not O(entries) — and turns "exited 0, leaves a session
+        // that fails verification" into a loud failure at the moment it happens.
+        await ConfirmPublishedAsync(output, published, cancellationToken).ConfigureAwait(false);
         return 0;
+    }
+
+    /// <summary>
+    /// Re-reads a session that has just been published and refuses to call it a success if what
+    /// is on disk is not what was written.
+    /// </summary>
+    private static async Task ConfirmPublishedAsync(string path, long expectedEntries, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var snapshot = await SessionStore.OpenAsync(path, cancellationToken).ConfigureAwait(false);
+            var actual = snapshot.Descriptor.Counters.TimedEntries;
+            if (actual != expectedEntries)
+            {
+                throw new IOException(
+                    $"The published session reports {actual:N0} timed entries where {expectedEntries:N0} " +
+                    "were written. Something changed it while it was being published; run " +
+                    "'vcat verify' on it and index it again.");
+            }
+        }
+        catch (Exception exception) when (exception is not (OperationCanceledException or IOException))
+        {
+            throw new IOException(
+                $"The session was written but could not be read back from '{path}': {exception.Message}. " +
+                "Run 'vcat verify' on it and index it again.",
+                exception);
+        }
     }
 
     private static async Task<int> InfoAsync(Arguments options, CancellationToken cancellationToken)
@@ -293,6 +408,7 @@ internal static class VisualCatCli
     {
         var type = options.GetValue("--type") ?? "raw";
         var order = ParseOrder(options.GetValue("--order"));
+        var newline = ParseNewline(options.GetValue("--newline"));
         using var snapshot = await OpenRequiredAsync(options, cancellationToken).ConfigureAwait(false);
         var destination = options.RequiredPosition(1, "export requires a session path and destination.");
         var range = Range(options, snapshot);
@@ -303,19 +419,21 @@ internal static class VisualCatCli
                 await ExportService.ExportRawAsync(snapshot, destination, range, filter, order, cancellationToken).ConfigureAwait(false);
                 break;
             case "csv":
-                await ExportService.ExportNormalizedCsvAsync(snapshot, destination, range, filter, order, cancellationToken).ConfigureAwait(false);
+                await ExportService.ExportNormalizedCsvAsync(
+                    snapshot, destination, range, filter, order,
+                    includeUtf8Bom: true, progress: null, newline, cancellationToken).ConfigureAwait(false);
                 break;
             case "templates-md":
-                await ExportService.ExportTemplateReportAsync(snapshot, destination, range, filter, true, cancellationToken).ConfigureAwait(false);
+                await ExportService.ExportTemplateReportAsync(snapshot, destination, range, filter, true, newline, cancellationToken).ConfigureAwait(false);
                 break;
             case "templates-csv":
-                await ExportService.ExportTemplateReportAsync(snapshot, destination, range, filter, false, cancellationToken).ConfigureAwait(false);
+                await ExportService.ExportTemplateReportAsync(snapshot, destination, range, filter, false, newline, cancellationToken).ConfigureAwait(false);
                 break;
             case "stats-md":
-                await ExportService.ExportStatisticsAsync(snapshot, destination, filter, true, cancellationToken).ConfigureAwait(false);
+                await ExportService.ExportStatisticsAsync(snapshot, destination, filter, true, newline, cancellationToken).ConfigureAwait(false);
                 break;
             case "stats-csv":
-                await ExportService.ExportStatisticsAsync(snapshot, destination, filter, false, cancellationToken).ConfigureAwait(false);
+                await ExportService.ExportStatisticsAsync(snapshot, destination, filter, false, newline, cancellationToken).ConfigureAwait(false);
                 break;
             case "portable":
                 await PortableSessionService.SavePortableAsync(snapshot, destination, cancellationToken).ConfigureAwait(false);
@@ -334,9 +452,29 @@ internal static class VisualCatCli
     private static async Task<int> VerifyAsync(Arguments options, CancellationToken cancellationToken)
     {
         var path = options.RequiredPosition(0, "verify requires a .vcat session path.");
-        var report = await SessionVerifier.VerifyAsync(path, !options.Has("--skip-raw"), cancellationToken).ConfigureAwait(false);
+        var checkRaw = !options.Has("--skip-raw");
+        var report = await SessionVerifier.VerifyAsync(path, checkRaw, cancellationToken).ConfigureAwait(false);
         Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
-        return report.IsValid ? 0 : 3;
+        if (!report.IsValid)
+        {
+            return 3;
+        }
+
+        // "Nothing was detected as wrong" and "the evidence was checked and matches" are two
+        // different answers, and only the first one has an exit code of its own. A standard
+        // session whose external source has been deleted verifies clean because it never owned
+        // that source — which a script reading $? cannot tell from a session whose raw evidence
+        // was checked (finding F-28). --require-raw is that stronger question, asked explicitly.
+        if (checkRaw && options.Has("--require-raw") && !report.RawVerified)
+        {
+            Console.Error.WriteLine(
+                "error: the raw evidence could not be checked, so this session is unverified " +
+                "rather than verified. Re-index from the original source, or export it as a " +
+                "portable session so the evidence travels with it.");
+            return 4;
+        }
+
+        return 0;
     }
 
     private static async Task<int> GenerateAsync(Arguments options, CancellationToken cancellationToken)
@@ -472,7 +610,7 @@ internal static class VisualCatCli
     private static TimestampPolicy Policy(Arguments options, DateTimeOffset reference, string? sourceZoneId = null) =>
         new(
             options.GetNullableInt("--year", 1, 9999),
-            options.GetValue("--timezone") ?? sourceZoneId ?? TimeZoneInfo.Local.Id,
+            options.GetValue("--timezone") ?? sourceZoneId ?? TimeZoneResolution.LocalId(),
             reference);
 
     private static FilterSpec Filter(Arguments options)
@@ -524,6 +662,18 @@ internal static class VisualCatCli
 
         throw new CommandException($"{option} value '{value}' must be an ISO-8601 timestamp or integer microseconds.");
     }
+
+    /// <summary>
+    /// Reads <c>--newline</c>. The default is LF on every platform, deliberately rather than by
+    /// inheritance from the host, so the same session and options produce the same bytes
+    /// wherever they run (F-29).
+    /// </summary>
+    private static NewlineStyle ParseNewline(string? value) => value?.ToLowerInvariant() switch
+    {
+        null or "" or "lf" => NewlineStyle.Lf,
+        "crlf" => NewlineStyle.Crlf,
+        _ => throw new CommandException($"Unknown --newline '{value}'. Use lf or crlf."),
+    };
 
     private static LogcatFormat? ParseFormat(string? value) => value?.ToLowerInvariant() switch
     {
@@ -617,8 +767,14 @@ internal static class VisualCatCli
         ["export"] = new(
             "vcat export <session.vcat> <output> " +
             "[--type raw|csv|templates-md|templates-csv|stats-md|stats-csv|portable|portable-zip] " +
-            $"[--from ISO|us] [--to ISO|us] [--order chronological|source] {FilterUsage}"),
-        ["verify"] = new("vcat verify <session.vcat> [--skip-raw]"),
+            $"[--from ISO|us] [--to ISO|us] [--order chronological|source] [--newline lf|crlf] {FilterUsage}",
+            "--newline applies to the text types; it defaults to lf on every platform so the " +
+            "same session and options export byte for byte the same on Linux, macOS and Windows."),
+        ["verify"] = new(
+            "vcat verify <session.vcat> [--skip-raw] [--require-raw]",
+            "--require-raw exits 4 when the raw evidence could not be checked at all, which a " +
+            "clean verdict on its own does not distinguish from a session whose evidence was " +
+            "checked and matched."),
         // --format was parsed by GenerateAsync and rejected here, so the one option the live
         // test plan's §3.2 asks for by name could not be passed at all: `vcat
         // generate-test-log --format brief` failed as an unknown option while the code behind
@@ -639,6 +795,14 @@ internal static class VisualCatCli
 
     /// <summary>One command's complete usage text, and anything a reader needs beside it.</summary>
     private sealed record CommandHelp(string Usage, string? Note = null);
+
+    /// <summary>How many arguments that are not options the command reads.</summary>
+    private static int PositionalLimit(string command) => command switch
+    {
+        "search" or "export" => 2,
+        "adb-devices" or "capture-adb" => 0,
+        _ => 1,
+    };
 
     private static HashSet<string>? KnownOptions(string command) =>
         Commands.TryGetValue(command, out var help) ? OptionsIn($"{help.Usage} {help.Note}") : null;
@@ -723,10 +887,22 @@ internal sealed class Arguments
     public static Arguments Parse(IReadOnlyList<string> args)
     {
         var parsed = new Arguments();
+        var optionsEnded = false;
         for (var i = 0; i < args.Count; i++)
         {
             var value = args[i];
-            if (!value.StartsWith("--", StringComparison.Ordinal))
+
+            // A bare "--" ends option parsing, as it does in every POSIX tool. Without it a file
+            // whose name begins with "-" has no safe spelling on Linux, where such names are
+            // legal, and every script written to the usual convention fails on the separator
+            // rather than on its argument (finding F-07).
+            if (!optionsEnded && value == "--")
+            {
+                optionsEnded = true;
+                continue;
+            }
+
+            if (optionsEnded || !value.StartsWith("--", StringComparison.Ordinal))
             {
                 parsed._positions.Add(value);
                 continue;
@@ -737,7 +913,7 @@ internal sealed class Arguments
             {
                 parsed._options[value[..equals]] = value[(equals + 1)..];
             }
-            else if (i + 1 < args.Count && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+            else if (i + 1 < args.Count && args[i + 1] != "--" && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
             {
                 parsed._options[value] = args[++i];
             }
@@ -774,6 +950,26 @@ internal sealed class Arguments
                     $"'{command}' does not take '{name}'. Run 'vcat {command} --help' to see what it does take.");
             }
         }
+    }
+
+    /// <summary>
+    /// Refuses arguments beyond the ones the command reads, naming them.
+    /// </summary>
+    public void RejectExtraPositions(string command, int limit)
+    {
+        if (_positions.Count <= limit)
+        {
+            return;
+        }
+
+        var extra = string.Join(", ", _positions.Skip(limit).Select(static value => $"'{value}'"));
+        throw new CommandException(
+            limit == 0
+                ? $"'{command}' takes no arguments of its own, but got {extra}. " +
+                  $"Run 'vcat {command} --help' to see what it does take."
+                : $"'{command}' takes {limit} argument{(limit == 1 ? string.Empty : "s")} " +
+                  $"before its options, but got {_positions.Count}; unexpected: {extra}. " +
+                  "Everything after a bare '--' is treated as a file name, never as an option.");
     }
 
     public bool Has(string name) => _options.ContainsKey(name);

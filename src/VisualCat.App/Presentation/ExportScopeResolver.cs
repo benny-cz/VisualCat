@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Globalization;
+using VisualCat.Domain;
 using VisualCat.Domain.Entries;
 using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
@@ -28,7 +29,8 @@ public sealed record FrozenExportRequest(
     TimeRange? ExplicitRange,
     EntryOrder DefaultOrder,
     bool DefaultIncludeUtf8Bom,
-    bool CaptureContinues);
+    bool CaptureContinues,
+    NewlineStyle DefaultNewline = NewlineStyle.Lf);
 
 /// <summary>One deduplicated export query. Its range and filter are complete and immutable.</summary>
 public sealed record ResolvedExportScope(
@@ -59,7 +61,8 @@ public sealed record ResolvedExportScope(
 public sealed record ExportDecision(
     ResolvedExportScope Scope,
     EntryOrder Order,
-    bool IncludeUtf8Bom);
+    bool IncludeUtf8Bom,
+    NewlineStyle Newline = NewlineStyle.Lf);
 
 /// <summary>Pure scope algebra shared by presentation and deterministic tests.</summary>
 public static class ExportScopeResolver

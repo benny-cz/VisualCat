@@ -22,6 +22,8 @@ namespace VisualCat.Core.Tests;
 /// </remarks>
 public sealed class SyntheticLogFormatTests
 {
+    private const char NewlineChar = '\n';
+
     [Theory]
     [InlineData(LogcatFormat.ThreadTime)]
     [InlineData(LogcatFormat.Time)]
@@ -46,6 +48,53 @@ public sealed class SyntheticLogFormatTests
             .ToArray();
         var detection = FormatDetector.Detect(samples);
         Assert.Equal(format, detection.PrimaryFormat);
+
+        // Detecting the right format is not enough on its own: a parser that reads only some of
+        // the records still names the format correctly while its score collapses. The long
+        // format's five-digit thread ids scored 0.449 against a real device dump — under the 0.6
+        // acceptance threshold — and that single number is what would have caught F-01. Hold the
+        // whole matrix to a confident detection, not merely a correct one.
+        Assert.True(
+            detection.Confidence >= 0.9,
+            $"{format} detected at {detection.Confidence:F3}; a generated corpus of its own format must be unambiguous");
+    }
+
+    /// <summary>
+    /// F-01's other half, at the level a corpus can assert it: the generator walks the identity
+    /// widths deliberately, so every format's corpus must contain both the four-column and the
+    /// five-column spelling, and every one of them must parse.
+    /// </summary>
+    [Fact]
+    public async Task TheLongFormatCorpusCarriesBothIdentityWidthsAndParsesAllOfThem()
+    {
+        using var stream = new MemoryStream();
+        await SyntheticLogGenerator.GenerateAsync(
+            stream,
+            new SyntheticLogOptions(400, Seed: 42, UnknownLineRate: 0, Format: LogcatFormat.LongFormat),
+            TestContext.Current.CancellationToken);
+
+        var headers = Encoding.UTF8.GetString(stream.ToArray())
+            .Split(NewlineChar, StringSplitOptions.RemoveEmptyEntries)
+            .Where(static line => line.StartsWith('[') && line.EndsWith(']'))
+            .ToArray();
+
+        Assert.Contains(headers, static header => header.Contains(": ", StringComparison.Ordinal));
+        Assert.Contains(
+            headers,
+            static header => !header.Contains(": ", StringComparison.Ordinal) && header.Contains(':', StringComparison.Ordinal));
+
+        var session = Guid.NewGuid();
+        long entryId = 0;
+        foreach (var header in headers)
+        {
+            var bytes = Encoding.UTF8.GetBytes(header);
+            var outcome = LogcatParser.Parse(
+                new SourceLine(session, entryId++, new RawSpan(0, bytes.Length), bytes),
+                LogcatFormat.LongFormat);
+            Assert.Equal(ParseOutcomeKind.ParsedEntry, outcome.Kind);
+        }
+
+        Assert.Equal(400, headers.Length);
     }
 
     /// <summary>
