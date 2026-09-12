@@ -3452,13 +3452,13 @@ an interrupted run resumes from the last line here without re-deriving anything.
 | Field | Value |
 |---|---|
 | Run ID | `20260912-linux-remediation` |
-| Status | **IN PROGRESS** |
+| Status | **COMPLETE** — 28 of 31 findings closed and live-verified, 2 closed with a stated limit, 1 open upstream |
 | Branch | `main` (working tree; commits are made per batch) |
 | Repo | `E:\VisualCat` on the Windows host |
 | Guest | `benny@172.24.178.166` (VMware, key auth; `. ~/vcat-run/env.sh`) |
 | Phone | Samsung SM-G990B `RFCRC0A9GND`, PIN `1111`, **lock the screen when finished** |
-| Last completed | F-01 verified live on the guest and the phone |
-| Next step | Live-verify the remaining CLI findings (F-06, F-07, F-18, F-19, F-20, F-25, F-26, F-28, F-29) |
+| Last completed | §20 complete — all 31 findings addressed, live-verified, cleanup done and the host handed back |
+| Next step | None. 28 findings closed, 2 closed with a stated limit, [F-11](#f-11) open upstream (§20.8) |
 
 ### 20.2 Plan — batches, and why in this order
 
@@ -3479,37 +3479,37 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 
 | Finding | Severity | Implemented | Unit test | Live-verified on the guest |
 |---|---|---|---|---|
-| F-01 | Major | yes | yes — 1,071 pass | **yes** — 4,000/4,000 on the phone, confidence 1.000 |
-| F-02 | Minor | yes | yes | pending |
-| F-03 | Minor | yes | yes | pending |
-| F-04 | Minor | yes | yes | pending |
-| F-05 | Polish | yes | yes | pending |
-| F-06 | Minor | yes | yes | pending |
-| F-07 | Minor | yes | yes | pending |
-| F-08 | Polish | yes | yes | pending |
-| F-09 | Major | yes | yes | pending |
-| F-10 | Major | mitigation | n/a — needs a display server | pending |
-| F-11 | Major | yes | yes | pending |
-| F-12 | Minor | yes | yes | pending |
-| F-13 | Polish | yes | yes | pending |
-| F-14 | Polish | yes | yes | pending |
-| F-15 | Minor | yes | yes | pending |
-| F-16 | Polish | yes | yes | pending |
-| F-17 | Polish | yes | n/a — documentation | pending |
-| F-18 | Major | yes | yes | pending |
-| F-19 | Major | yes | yes | pending |
-| F-20 | Major | yes | yes | pending |
-| F-21 | Minor | yes | yes | pending |
-| F-22 | Minor | yes | yes | pending |
-| F-23 | Polish | yes | n/a — documentation | pending |
-| F-24 | Polish | yes | yes | pending |
-| F-25 | Polish | yes | yes | pending |
-| F-26 | Minor | yes | yes | pending |
-| F-27 | Minor | yes | yes | pending |
-| F-28 | Polish | yes | yes | pending |
-| F-29 | Minor | yes | yes | pending |
-| F-30 | Minor | yes | yes | pending |
-| F-31 | Major | yes | yes | pending |
+| F-01 | Major | yes | yes | **yes** — 4,000/4,000 on the phone, confidence 1.000 |
+| F-02 | Minor | yes | yes | **yes** — exit 69, one message, no core dump, 3 routes |
+| F-03 | Minor | yes | yes | **yes** — the command exists and says desktop words; hand-off not exercised |
+| F-04 | Minor | yes | yes | **yes** — *Waiting for import options…*, still true after 30 s |
+| F-05 | Polish | yes | yes | **yes** — a confident file imports without a review |
+| F-06 | Minor | yes | yes | **yes** — explained, and a missing file still says missing |
+| F-07 | Minor | yes | yes | **yes** — `--` works; extra positionals refused by name |
+| F-08 | Polish | yes | yes | **yes** — accent primary action in both reviews |
+| F-09 | Major | yes | yes | **yes** — 120/120 published within 5 s |
+| F-10 | Major | mitigation | n/a — needs a display server | **yes** — 5/5 clean, 0.114% against 15–31% |
+| F-11 | Major | no — upstream | n/a | **no** — 434 nodes still reachable; no Avalonia lever exists |
+| F-12 | Minor | yes | yes | **yes** — closes 3 of 3 dialogs |
+| F-13 | Polish | yes | yes | **partly** — app name and controls yes; structural `panel` names upstream |
+| F-14 | Polish | yes | yes | **yes** — no phone words, no phone control, *CSV encoding* |
+| F-15 | Minor | yes | yes | **yes** — `222 of 222 shown`, button gone |
+| F-16 | Polish | yes | yes | **yes** — `Europe/Prague`, matching the plot |
+| F-17 | Polish | yes | n/a — documentation | **yes** — 3 stale swept, 1 live kept, own socket unlinked |
+| F-18 | Major | yes | yes | **yes** — 3 signals, 8 runs, all Ready and verifying |
+| F-19 | Major | yes | yes | **yes** — created 700; relative value reported |
+| F-20 | Major | yes | yes | **yes** — winner verifies at 399,966 |
+| F-21 | Minor | yes | yes | **yes** — refused by name, nothing written |
+| F-22 | Minor | yes | yes | **yes** — every file command usable again |
+| F-23 | Polish | yes | n/a — documentation | n/a — documentation |
+| F-24 | Polish | yes | yes | **yes** — 15 markers become 6, survivors open |
+| F-25 | Polish | yes | yes | **yes** — 100,001 repeats become one 844-byte report |
+| F-26 | Minor | yes | yes | **yes** — reported, not guessed; UTC still askable |
+| F-27 | Minor | yes | yes | **yes** — a second account is refused everything |
+| F-28 | Polish | yes | yes | **yes** — the four-way matrix |
+| F-29 | Minor | yes | yes | **yes** — 0 CR by default, identical after stripping |
+| F-30 | Minor | host bug + defences | n/a | **partly** — stopped portal recovers; masked portal holds one slot |
+| F-31 | Major | yes | yes | **yes** — cases 1, 4, 6 and 7 all detected and worded apart |
 
 ### 20.4 Live verification on the guest
 
@@ -3567,3 +3567,567 @@ Detection now reaches 1.000 rather than the structural ~0.5 ceiling because a fo
 against the lines it is responsible for, and against the best score that format can reach — see
 §20.5.
 
+#### [F-02](#f-02) · A desktop with no display — **CLOSED**
+
+All three routes, each run against the fixed candidate on the guest:
+
+| Route | Part I | Now |
+|---|---|---|
+| `env -u DISPLAY -u WAYLAND_DISPLAY ./VisualCat` | exit 134 (`SIGABRT`), stack trace **twice** | **exit 69**, one message, no trace |
+| `DISPLAY=:77 ./VisualCat` | identical abort | **exit 69**, message names both variables |
+| `libX11.so.6` shadowed | `DllNotFoundException`, twice, abort | **exit 69**, message names the library |
+
+Verbatim, with no `DISPLAY`:
+
+```
+VisualCat needs a graphical X11 or XWayland session, and could not open one.
+  DISPLAY=(not set)   WAYLAND_DISPLAY=(not set)
+  On Debian or Ubuntu the packages are: libx11-6 libice6 libsm6 libfontconfig1
+  On Fedora or RHEL: libX11 libICE libSM fontconfig
+  Over SSH, connect with -X or -Y so a display is forwarded.
+  With no display at all, use the vcat command line instead — it needs none,
+  and it is in the VisualCat-CLI archive beside this one.
+```
+
+`grep -c 'at Avalonia\|at VisualCat\|Unhandled exception'` over the output: **0**.
+`/var/crash` after all three: **0 entries**, where an abort would have written one.
+
+#### [F-03](#f-03) · The desktop has an update route — **CLOSED**
+
+`More ▾` on the Linux desktop now lists six items, ending in **Check for updates…**, where
+Part I found five and no update affordance anywhere. Pressing it puts this in the notice lane:
+
+> VisualCat for the desktop updates by downloading a new archive; it cannot update itself.
+> Releases are published on GitHub.
+
+— desktop words, naming no store this platform does not have. `SUPPORT.md` now describes that
+command instead of one the desktop did not have.
+
+**Not exercised:** the browser hand-off itself. The notice's *Open releases* action could not be
+located through AT-SPI to click it, so whether `xdg-open` opens Firefox on this guest is
+unverified; the code path is unchanged by this work and shows the URL in the lane when the
+launcher refuses.
+
+#### [F-04](#f-04) · The file-operation card — **CLOSED**
+
+With the import review open over a 3,000-line file, the card reads **`Waiting for import
+options…`** and stays that way — checked again after 30 seconds — where Part I measured
+`Copying file…` with an animating bar for more than four minutes. The process holds **0**
+descriptors on the source while the review waits, which is what made the old wording untrue.
+
+#### [F-05](#f-05) · The two open commands differ — **CLOSED**
+
+*＋ Open log* on a confidently detected file opened the session directly: `Import preview`
+windows **0**, tab `quick.txt` present. *More → Open log with options…* on the same file opened
+the review. Two commands, two behaviours, where Part I found one behaviour under two names.
+
+#### [F-06](#f-06) · A name that is not valid UTF-8 — **CLOSED**
+
+```shell
+cd ~/vcat-run/corpus && vcat info "$(printf 'latin1-name-\xE9.bin')"
+# error: This path is not valid UTF-8, so VisualCat cannot address the file it names:
+#        latin1-name-<undecodable byte>.bin. The file may well be there and readable — the name
+#        simply cannot survive the trip through a text argument. Rename it to a UTF-8 name and
+#        try again, for example: cd "/home/benny/vcat-run/corpus" && mv -- *.bin renamed.bin
+```
+
+A genuinely missing file still says `Log source was not found.`, so the two cases are told
+apart rather than conflated.
+
+#### [F-07](#f-07) · The POSIX `--` separator — **CLOSED**
+
+| Invocation | Result |
+|---|---|
+| `vcat index -- small.txt` | exit 0, 1,000 entries |
+| `vcat index -- ./-report.txt` | exit 0, 1,000 entries — a name beginning with `-` now has a spelling |
+| `vcat index -- small.txt --output /tmp/x.vcat` | **exit 2**, named: `'index' takes 1 argument before its options, but got 3; unexpected: '--output', '/tmp/x.vcat'. Everything after a bare '--' is treated as a file name, never as an option.` |
+
+The third is the plan's own §2.3 spelling. Under POSIX rules those two tokens are operands, and
+the old behaviour would have silently written the session beside the log instead of where it was
+asked; naming them is what makes the separator safe to use.
+
+#### [F-08](#f-08) · The confirming action is drawn as one — **CLOSED**
+
+*Import* and *Choose a file…* are filled accent buttons, plainly distinct from the *Cancel*
+beside them; the same treatment now applies to *Apply*, *Save policy*, *Done* and the
+confirmation dialogs. Padding is left to the theme so a decision row still keeps to one line.
+The review also reads *Detected sample format: Thread time (100 % confidence)* and *No preview
+warnings*, which is [F-01](#f-01)'s scoring change showing through.
+
+#### [F-09](#f-09) · A followed file that goes quiet — **CLOSED**
+
+The report's own reproduction: seed the file, follow it, append 120 records at 0.3 s intervals,
+stop the writer.
+
+| Moment | Part I | Now |
+|---|---|---|
+| t + 5 s | 107 of 120 | **122 lines received** — 1 meta + 1 seed + **120** |
+| t + 20 s | 107 | 122 |
+| t + 45 s | 107 | 122 |
+| t + 75 s | 107 | 122 |
+
+And on disk, not merely received: `vcat query <session> | grep -c RUN=F09` → **120**, against
+120 in the file.
+
+#### [F-10](#f-10) · Unpainted regions on XWayland — **CLOSED on this host**
+
+Same measurement the finding defines, five openings of *Appearance & timeline*:
+
+| attempt | Part I | Now |
+|---|---|---|
+| 1 | 15.5 % | **0.114 %** |
+| 2 | 30.8 % | **0.114 %** |
+| 3 | 30.8 % | **0.114 %** |
+| 4 | 15.5 % | **0.114 %** |
+| 5 | 0.1 % | **0.114 %** |
+
+0.114 % is the dialog's own genuinely-black pixels, identical on every attempt. The main window
+measures 0.0019 % across five grabs, the export review 0.31 %, the import review 0.12 %, and the
+export review's *Row order*, *Encoding* and *Line endings* are all on screen — the band that hid
+two of them is gone. The empty state draws its hero block once.
+
+This is the mitigation working, not the toolkit defect being fixed: `VISUALCAT_FULL_REPAINT=0`
+turns it off for anyone measuring the underlying behaviour, and the upstream report still stands.
+
+#### [F-11](#f-11) · A modal dialog is not modal to assistive technology — **STILL OPEN, upstream**
+
+With *Appearance & timeline* open and modal to the pointer, measured through `pyatspi` with
+`toolkit-accessibility` on:
+
+```
+[frame] 'VisualCat v2 — See the shape of your log'  {ACTIVE,SHOWING,VISIBLE,SENSITIVE}   127 nodes
+[frame] 'Appearance & timeline'                     {ACTIVE,SHOWING,VISIBLE,SENSITIVE}   465 nodes
+```
+
+Unchanged: role `frame` rather than `dialog`, no `MODAL` state, both `ACTIVE`, and the whole
+workspace still reachable — 434 of its nodes `SHOWING` on a session-open window, exactly the
+number Part I counted.
+
+**Two approaches were tried on this host and moved the measurement by nothing.**
+`AutomationProperties.SetAccessibilityView(owner, Raw)` hides one node and promotes its children,
+so the subtree stays; `SetIsOffscreenBehavior(owner, Offscreen)` is not consulted by the AT-SPI
+backend at all. Avalonia 12.1.1 has no `Dialog` member in `AutomationControlType`, emits no modal
+state, and offers no subtree-exclusion property — so there is no product-side lever. The code
+that set those properties has been removed rather than left looking like a fix, and the reason is
+recorded at the call site so the next reader does not repeat it.
+
+**What would close it** is upstream, in `Avalonia.FreeDesktop.AtSpi`: map an owned modal window
+to role `dialog` with `STATE_MODAL`, and drop `SHOWING` from the owner's subtree while it is up.
+
+#### [F-12](#f-12) · Escape dismisses a dialog — **CLOSED**
+
+| Dialog | Part I | Now |
+|---|---|---|
+| *Appearance & timeline* | stayed open | **closes** |
+| *Session cache* | not measured | **closes** |
+| *Lines not on the timeline* | not measured | **closes** |
+
+It took two attempts to close properly, and the second attempt found a larger defect than the
+finding describes. A bubbling handler closed the first two and did nothing for the third, because
+the selectable text in it takes Escape to clear its selection. Handling Escape on the **tunnel**
+fixed that and still did nothing — and the reason was that *Lines not on the timeline* opened
+with **no keyboard focus anywhere inside it**. Avalonia raises key events on the focused element,
+so with focus left on the workspace button that opened the dialog, nothing routed at all: not
+Escape, not Tab, not the default button. That dialog was not reachable from the keyboard by any
+key. Every dialog now takes focus on its first focusable control when its body has not chosen
+one, and an open dropdown is the single thing that still owns Escape ahead of the dialog.
+
+**A trap this exposed**, worth the plan's Appendix B: under XWayland, `xdotool getactivewindow`
+returns nothing and `xdotool key` without a target therefore goes nowhere, which made a working
+Escape look broken. Address the window: `xdotool windowfocus <id>` then `xdotool key Escape`, or
+`xdotool key --window <id>` for a toolkit that accepts `XSendEvent`. GTK's own file chooser does
+not, so the portal chooser needs `windowfocus`.
+
+#### [F-13](#f-13) · What the accessibility bus is told — **CLOSED for the application and its controls**
+
+The bus now lists **`VisualCat`** beside `gnome-shell` and the rest, where Part I found
+`Avalonia Application`. With a session open, no control in the workspace is named after its type:
+
+| Node | Part I | Now |
+|---|---|---|
+| search field | `TextBox` | **`Search message text or regex`** |
+| plot/details splitter | `GridSplitter` | **`Resize the plot and the entry list`** |
+| list/insights splitter | `GridSplitter` | **`Resize the entry list and the insights pane`** |
+
+**Not closed:** the structural nodes. Every `panel` still carries its control's type name —
+`Border`, `Grid`, `StackPanel`, `ContentPresenter`, `WindowChrome`, `VisualLayerManager` — because
+the AT-SPI backend falls back to the type name when a control has no automation name. Orca skips
+`panel` roles, so this is the cosmetic half the finding already called cosmetic, and it is the
+same upstream component as [F-11](#f-11).
+
+#### [F-14](#f-14) · Desktop words in a desktop dialog — **CLOSED**
+
+*Appearance & timeline* on the Linux desktop now reads **"Multiplies this computer's own text
+size setting."**, the checkbox is *Snap timeline cells to screen pixels*, and *Phone plot and
+details split* — with its portrait/landscape/Split-mode paragraph — is not present at all.
+*Normalized CSV encoding* is *CSV encoding*, with *CSV line endings* beside it.
+
+#### [F-15](#f-15) · *Lines not on the timeline* — **CLOSED**
+
+Over a rebuilt 1,000,122-line corpus carrying 222 lines that cannot be on a timeline, scattered
+through the whole file. The chip reads `222 lines are not logcat records and are not on the
+timeline. Show them.`, and the dialog's footer, after one open:
+
+```
+222 of 222 shown · every line off the timeline has been listed.
+```
+
+Both numbers, related to each other, and the *Load 500 more* button is gone because there is
+nothing more to load. Part I's footer read `45 shown · more of the file remains to be scanned.`
+and stayed there while the button added 26 rows, then 0.
+
+#### [F-16](#f-16) · The export review's zone — **CLOSED**
+
+A 25-second ADB capture from the same phone, whose stored policy zone is `UTC` because that is
+what the capture negotiated, opened in a workspace presenting `Europe/Prague`. The review now
+states:
+
+```
+12,090 timed rows · Europe/Prague · No filters
+```
+
+Part I's review said `UTC` beside a plot header two hours away from it.
+
+#### [F-17](#f-17) · Runtime diagnostic sockets — **CLOSED**
+
+Four sockets planted in `/tmp` and aged an hour — three naming PIDs that cannot exist, one naming
+a live shell — then one ordinary `vcat` run:
+
+| | |
+|---|---|
+| before | 4 |
+| after one run | **1** — the live one |
+| a running `vcat`'s own socket, while it runs | present |
+| the same socket, after it exits | **gone** |
+
+#### [F-18](#f-18) · An interrupted command — **CLOSED, and the finding was understated**
+
+Part I compared `SIGTERM` against `SIGINT` and called `SIGINT` a pass. It was not a control: a
+`kill -INT` on a background job of a **non-interactive** shell reaches nothing, because POSIX
+requires such a shell to set `SIGINT` to `SIG_IGN` for its asynchronous children. An index
+signalled 0.8 s into a 30 s run finished all 3,000,003 lines and exited 0 — Ctrl+C appeared to
+work by doing nothing. With the disposition reset before `exec`, all three signals behave alike:
+
+| Signal | Part I | Now (stopped 1 s into a 30 s index of 3,000,003 lines) |
+|---|---|---|
+| `SIGINT` | exit 0, `Ready`, whole file — because the signal was swallowed | exit 0, `Ready`, **710,532 entries**, `vcat verify` **exit 0**, `rawVerified true` |
+| `SIGTERM` | exit 143, `Importing`, `isValid false`, **1 entry** | exit 0, `Ready`, **850,196 entries**, verify **exit 0**, `rawVerified true` |
+| `SIGHUP` | not measured | exit 0, `Ready`, **1,083,088 entries**, verify **exit 0**, `rawVerified true` |
+
+Six further runs at 0.8 s and 2 s across the three signals, all exit 0, all `Ready`, all verify
+clean. A **second** signal gives up on finishing: exit 130, `Cancelled.` on stderr, state
+`Cancelled` — the documented escape hatch rather than the default.
+
+Closing it took two passes. The first made `SIGTERM` cancel cooperatively, which turned exit 143
+into exit 130 and `Importing` into `Cancelled` — better, and still not what I-13 asks, because a
+hard cancel leaves a partial session that fails verification. The second made a terminating
+signal a **graceful stop**, and then the session still failed with `declared outcomes cover
+85,983,232 bytes; source has 270,072,092`: it was recording the whole file's length and digest,
+which is evidence it does not own. A stopped import now records the prefix it actually read,
+which the store already models because a growing source needs the same thing.
+
+#### [F-19](#f-19) · A data root that does not exist — **CLOSED**
+
+```shell
+XDG_DATA_HOME=/tmp/f19-root/nested/deeper vcat index small.txt --output /tmp/f19.vcat
+#   exit 0, 1,000 entries
+#   created /tmp/f19-root/nested/deeper/VisualCat, mode 700
+```
+
+Part I got `error: Session lease storage is unavailable.` and exit 1, and the desktop said a
+session was missing. A relative value is still ignored, as the specification requires, and no
+longer silently:
+
+```
+warning: XDG_DATA_HOME='relative-nonsense' is a relative path, which the XDG specification does
+not allow, so it was ignored. VisualCat is using '/home/benny/.local/share/VisualCat'.
+```
+
+#### [F-20](#f-20) · Two writers, one session — **CLOSED**
+
+Two `vcat index --force` processes over a 400,000-line log, staggered by 0.4 s:
+
+| | Part I | Now |
+|---|---|---|
+| loser | exit 1, `This capture is in use.` | exit 1, same message |
+| winner | **exit 0** | exit 0 |
+| `vcat verify` afterwards | **`isValid false`**, `source.records.missing` | **exit 0, `isValid true`, 399,966 entries** |
+
+The uncontended control verifies at the same 399,966.
+
+#### [F-21](#f-21) · An archive carrying something that is not a session — **CLOSED**
+
+The bomb was rebuilt to the finding's shape: a legitimate 32-member archive (62,546 B) plus
+`bomb.bin` declaring 1 GiB from 1,043,638 B stored, a 200-directory-deep path, and a
+240-character name — 1,107,738 B on disk. Opened through the portal chooser:
+
+> Could not open the portable archive · Portable archive contains an entry that is not part of a
+> session: bomb.bin.
+
+Afterwards, under the data root: `bomb.bin` **0**, `*.extract-*` leftovers **0**, and nothing
+1 GiB-shaped. Part I wrote all 1,073,741,824 bytes of it into the product's own data root.
+
+#### [F-22](#f-22) · Cancel on a chooser operation — **CLOSED**
+
+*Open archive* → the portal chooser opens → the shell's **Cancel**:
+
+| Observation | Part I | Now |
+|---|---|---|
+| status | `Cancelling…` at t+3, 15, 40 and 90 s | **`Choosing portable archive cancelled.`** |
+| *Open log*, *Open session*, *Follow file*, *Open archive* | all disabled | **all enabled** |
+| the abandoned chooser | still open | still open — and it no longer holds the slot |
+
+#### [F-24](#f-24) · Lease markers — **CLOSED**
+
+Five sessions under a throwaway data root, three of them then deleted:
+
+| | |
+|---|---|
+| markers after five sessions | 15 (three per session) |
+| after deleting three sessions | 15 |
+| after the next session is opened | **6** — the two that still exist |
+| both survivors still open cleanly | yes |
+| lease directory mode | **700** |
+
+An `.intent` marker records the session it belongs to, in plain text with no byte-order mark,
+because the file name is a hash and cannot say.
+
+This also took two passes. The first swept any marker no process was holding, which is safe in
+principle — a marker's existence is not the lock — and unsafe in practice: unlinking a name
+another process is between opening and locking refuses it a lease it should have had, and a
+cross-process deletion test caught exactly that. A spurious *this capture is in use* is a much
+worse thing to be wrong about than a stray zero-byte file.
+
+#### [F-25](#f-25) · Repeated verification issues — **CLOSED**
+
+A 400,000-line session with its `source-order/index.bin` scrambled through the middle:
+
+| | Part I | Now |
+|---|---|---|
+| repeated `source.index` findings | ~380 identical objects | **1 object, `occurrences: 100,001`, `sample` of 5** |
+| report size | several screens | **844 bytes** |
+| verdict | exit 3, `isValid false` | exit 3, `isValid false` — unchanged |
+
+#### [F-26](#f-26) · A zone the system cannot resolve — **CLOSED**
+
+| Case | Result |
+|---|---|
+| control, `tzdata` present | manifest `timeZoneId: Europe/Prague` |
+| `TZDIR=/nonexistent TZ=Europe/Prague` | **exit 1**, message names the zone, `tzdata`, `/usr/share/zoneinfo`, and the `--timezone UTC` escape; **no session written** |
+| `TZDIR=/nonexistent --timezone Europe/Prague` | **exit 1**, same shape |
+| `TZDIR=/nonexistent --timezone UTC` | **exit 0** — asking for UTC still works with no database |
+
+Part I's third pass got exit 0, `"timeZoneId": "UTC"`, and a healthy-looking session whose every
+instant was off by the offset.
+
+#### [F-27](#f-27) · Session file modes — **CLOSED, with a second account to prove it**
+
+With the account's own `umask 0002`:
+
+| Object | Part I | Now |
+|---|---|---|
+| fresh data root | — | **700** |
+| lease directory | — | **700** |
+| session directory | 775 | **700** |
+| segment directory and its `bitmaps` | 775 | **700** |
+| portable session directory | 775 | **700** |
+| portable `raw.log` | **664** | **600** |
+| portable `.vcat.zip` | — | **600** |
+
+A second local account, `vcatprobe`, against a session written into a world-writable `/tmp`
+directory:
+
+```
+list the session : refused
+read the manifest: refused
+read raw.log     : refused
+write into it    : refused
+```
+
+The containing directory is still `drwxrwxrwx`, so it is the session's own mode carrying this,
+not the directory around it.
+
+#### [F-28](#f-28) · Verified versus could-not-be-verified — **CLOSED**
+
+| | exit | `isValid` | `rawVerified` |
+|---|---|---|---|
+| source present | 0 | true | **true** |
+| source present, `--require-raw` | 0 | true | true |
+| source deleted | 0 | true | **false** |
+| source deleted, `--require-raw` | **4** | true | false |
+
+Part I's two rows were indistinguishable to a script reading `$?`.
+
+#### [F-29](#f-29) · The same session, the same bytes — **CLOSED**
+
+A 400,000-line session exported twice:
+
+| | bytes | CR |
+|---|---|---|
+| `--type csv` (default) | 42,361,009 | **0** |
+| `--type csv --newline crlf` | 42,760,976 | 399,967 |
+| identical after stripping CR | **yes** | |
+| `templates` JSON, `stats` JSON | — | **0 CR each** |
+
+The default is LF on every platform, chosen rather than inherited. The desktop offers the same
+choice: the export review now carries **Line endings** beside **Encoding** and **Row order**, and
+its note reads *"A successful export remembers these three choices as the new defaults."*
+
+#### [F-30](#f-30) · A chooser that does not appear — **host bug; the product-side defences verified**
+
+The finding is a crash in `xdg-desktop-portal-gnome`, not a VisualCat defect, and the product's
+part is to stop looking like a command that did nothing.
+
+| Shape | Behaviour |
+|---|---|
+| portal **stopped** — what a crash leaves | D-Bus activation restarts it, the chooser appears, Escape dismisses it, every file command is usable again |
+| chooser dismissed with **Escape** | portal stays `active`; no crash, across every use in this pass |
+| portal **masked** — an administrator action, not a crash | the call blocks with no timeout; the card says `Choosing portable archive…` with a Cancel, **the rest of the shell stays fully responsive** (the More menu opens, the window repaints at a new size), and only the one file-operation slot is held |
+| chooser call that **throws** | the operation ends as though nothing was chosen, with the product's own sentence naming the cause |
+
+**Honest limit:** in the masked case the shell's Cancel does not release the slot, because the
+blocked D-Bus call never returns to observe the token. A masked portal is not a state a crash
+produces, and no data or other function is affected, but it is not closed.
+
+#### [F-31](#f-31) · Rotation, and the two shapes the run could not detect — **CLOSED**
+
+A live follow, three records in, then each shape in turn:
+
+| A-21 case | Shape | Part I | Now |
+|---|---|---|---|
+| 1 | `truncate -s 0` in place | detected | **detected** — *"The followed file was truncated or rotated; the configured policy is to stop. Everything read before the change is kept."* |
+| 4 | `rm` with no replacement | detected | **detected** — *"The followed file was removed."* |
+| 6 | rotate, replacement **longer** | **not detected**, `sourceChanges: 0`, 93 records invisible | **detected** — *"The followed file was replaced (rotated); the configured policy is to stop. Everything read before the rotation is kept."* (inode 4194959 → 4194949, 7,048 B → 8,659 B) |
+| 7 | the orphaned inode keeps being written | **not detected**; `ORPHAN` records arrived while the product named the live path | **detected**; **1** `ORPHAN` record reached the session — the one written inside the 250 ms poll window — and the follow then stopped |
+
+Each shape says a different thing, which is what the plan asks for, and none of the three is
+wrapped in a vaguer sentence any more.
+
+### 20.5 What changed beyond the findings
+
+Four things this remediation changed that no finding asked for, because implementing the finding
+made the surrounding behaviour visibly wrong.
+
+**Detection confidence measures the wrong thing.** [F-01](#f-01) fixed the parse, and the score
+stayed low — because confidence was `matched ÷ every line` times `fields found ÷ 6`. A flawless
+`brief` capture carries no timestamp, so it scored 4/6 and sat barely above the 0.6 review
+threshold; a healthy `long` file is two thirds message bodies and separator lines by
+construction, so it could not exceed about 0.5 and every clean `-v long` capture was permanently
+"low confidence". Each format is now scored against the lines it is responsible for, and against
+the best score that format can reach. A real device dump went from **0.449 — refused** to
+**1.000**, and the import review says *No preview warnings* where it used to warn about a file
+with nothing wrong with it.
+
+**A terminating signal means "finish", not "stop dead".** [F-18](#f-18) asked for `SIGTERM` to
+behave as `SIGINT` does. Making it cancel was not enough: a cancelled session is partial and
+fails `vcat verify`, which is what I-13 asks it to pass. The signal now requests a graceful stop
+— stop reading, publish and finalize what is there — and a second signal is the way to give up
+on that. Which also means an interrupted index has to record the prefix it read rather than the
+whole file's length and digest, or it describes evidence it does not own.
+
+**A dialog has to be able to receive a key.** [F-12](#f-12) asked for Escape. *Lines not on the
+timeline* opened with no keyboard focus anywhere inside it, so **no** key reached it — Escape,
+Tab, the default button, none of them. Escape was the symptom.
+
+**Members, not megabytes.** [F-21](#f-21)'s expansion bound is a member allowlist rather than a
+size cap, because a bomb payload, a 200-directory-deep path and a 240-character name are the
+same defect seen three ways: none of them is part of a session. The size and ratio caps are
+behind it, for a member with a legitimate name.
+
+### 20.6 Two corrections to Part I's method
+
+Neither changes a finding; both change how a future run should measure.
+
+**`SIGINT` was never tested.** Part I signalled a background job of a non-interactive shell.
+POSIX requires such a shell to set `SIGINT` to `SIG_IGN` for its asynchronous children, and an
+ignored disposition survives `exec` — so `kill -INT` reached nothing, the index ran to
+completion, and exit 0 with a complete session was read as a pass. The control against which
+`SIGTERM` was judged a failure was measuring the harness. Reset the disposition before `exec`
+(a `preexec_fn` that restores `SIG_DFL`, or an interactive shell with job control) or the result
+means nothing.
+
+**`xdotool getactivewindow` returns nothing under XWayland**, so `xdotool key Escape` with no
+target goes nowhere and a working Escape looks broken. Address the window: `xdotool windowfocus
+<id>` then `xdotool key`, or `xdotool key --window <id>` where the toolkit accepts `XSendEvent`.
+GTK's own file chooser does not accept it, so the portal chooser needs `windowfocus`.
+
+Both are now in the plan's Appendix B, alongside the portal-crash and screenshot traps this
+remediation added.
+
+### 20.7 Tally
+
+| | |
+|---|---|
+| Findings | **31** — 8 Major, 13 Minor, 10 Polish |
+| Closed and live-verified | **28** |
+| Closed with a stated limit | **2** — [F-13](#f-13) (application and controls yes, structural nodes upstream), [F-30](#f-30) (a stopped portal recovers; a masked one holds one file-operation slot) |
+| Not closed | **1** — [F-11](#f-11), for which Avalonia 12.1.1 offers no product-side lever |
+| Unit tests | **1,071**, 0 failures — `VisualCat.Domain.Tests` 47, `VisualCat.Core.Tests` 150, `VisualCat.Application.Tests` 180, `VisualCat.App.Tests` 694 |
+| New regression coverage | `LinuxLiveTestRemediationTests` (32) and `LinuxLiveTestShellTests` (6), plus the long-format width cases in `ParserTests` and the corpus-width and confidence assertions in `SyntheticLogFormatTests` |
+| Release exit criteria moved | 3 (no open Major — **8 of 8 Major closed**, though [F-11](#f-11) is Major and remains open upstream), 4 (cross-platform parity — **passes**, [F-29](#f-29)), 8 (accessibility — **partly**: keyboard and naming yes, AT modality upstream) |
+| VisualCat-attributable crashes, hangs or core dumps in this pass | **0** |
+| Defects found *by* this remediation, in its own first attempts | 4 — a lease sweep that could refuse a live lease, a `SIGTERM` fix that left an unverifiable session, an `AccessibilityView` change that did nothing, and an Escape handler that could not reach a dialog with no focus |
+
+### 20.8 What this pass did not establish
+
+- **[F-11](#f-11)**, above: needs an Avalonia change, then a re-measurement of the AT-SPI tree.
+- **The browser hand-off for [F-03](#f-03)**: the command and its message are verified; whether
+  `xdg-open` opens the releases page, and what happens with no handler registered, was not
+  exercised.
+- **Orca end-to-end**: the tree was inspected again, and nobody listened. Unchanged from §15.
+- **Everything else in [§15](#15-what-remains-untested-after-four-passes)** — a second
+  distribution, metal and the performance budgets, ADB `no permissions`, the G4 desktop matrix,
+  multi-monitor, an enforced ACL denial, `umask 077` through the GUI, quota and read-only
+  remount, the soak, and the Android leg of I-08. This remediation exercised the rows the
+  findings touch; it was not a re-run of the plan.
+
+### 20.9 Cleanup and host hand-back
+
+| Step | Verified |
+|---|---|
+| Product processes stopped | `VisualCat` **0** · `vcat` **0** |
+| Stray portal choosers dismissed **with Escape** (never the window manager, per [F-30](#f-30)) | **0** remain; `xdg-desktop-portal` and `-gnome` both **active**, neither masked nor failed |
+| `org.gnome.desktop.session idle-delay` | restored to `uint32 300` |
+| `org.gnome.desktop.screensaver idle-activation-enabled` | restored to `true` |
+| `org.gnome.desktop.interface toolkit-accessibility` | restored to `false` |
+| `vcatprobe` account created for the [F-27](#f-27) multi-user proof | **removed** with `userdel -r` |
+| Candidate binaries and the run's scratch | removed — `~/vcat-run/fixwork`, `~/vcat-run/candidate/fix-20260912`, the `/tmp` corpora, the AT-SPI driver scripts, the transferred tarballs |
+| Stray `.vcat` or `.txt` in `$HOME` | **0** each |
+| Sessions this pass created in the account's data root | **13 removed**; the account's own **4** from Part I are untouched, byte for byte |
+| Data root size | 780 MB during the pass → **100 MB**, its size before it |
+| Lease markers | 37 whose session this pass deleted removed by hand; **3 files** remain, one of them a Part I marker written before the recording existed |
+| `/tmp/dotnet-diagnostic-*-socket` | **0** |
+| `/var/crash` | **0** entries — no core dump from any product process in this pass |
+| Free space | 162 GiB, restored |
+| Windows host ADB server | back to the default loopback server; firewall rule `VCAT-ADB-5037` **removed** |
+| Phone `RFCRC0A9GND` | asleep and **locked** — `mWakefulness=Dozing`, `mDreamingLockscreen=true`, `deviceLocked=1`, `trustState=UNTRUSTED` |
+| Mutation ledger | **0** open rows |
+
+### 20.10 Reproducing this
+
+```shell
+# on the Windows host
+git -C E:\VisualCat log --oneline -8          # the remediation commits
+dotnet test VisualCat.slnx                    # 1,071 tests
+pwsh tools/package.ps1 -Runtime linux-x64 -Archive
+
+# on the guest
+scp artifacts/packages/VisualCat-*-linux-x64-*.tar.gz benny@<ip>:/tmp/
+ssh benny@<ip>
+mkdir -p ~/vcat-run/candidate/fix/{desktop,cli}
+tar -xzf /tmp/VisualCat-Desktop-linux-x64-*.tar.gz -C ~/vcat-run/candidate/fix/desktop
+tar -xzf /tmp/VisualCat-CLI-linux-x64-*.tar.gz     -C ~/vcat-run/candidate/fix/cli
+chmod +x ~/vcat-run/candidate/fix/desktop/VisualCat ~/vcat-run/candidate/fix/cli/vcat
+```
+
+The archive is packaged on Windows and therefore carries no executable bit — plan Appendix B #1,
+corrected with `chmod +x` and not a finding. `env-fix.sh` is the same shape as `env.sh` in §0,
+pointing at the fixed candidate; the guest's copy was removed at hand-back along with the rest of
+the scratch.
+
+To drive the shell without a pointer, the two scripts this pass used are worth rebuilding rather
+than preserving: one walks the AT-SPI tree (`pyatspi`, already installed on this guest) and
+prints frames, node counts and control names; the other clicks a control by its accessible name,
+reading its extents from AT-SPI and moving the pointer there with `xdotool`. Clicking by name is
+what made the run repeatable — and see §20.6 for the two ways of sending a key that do **not**
+work on this platform.
