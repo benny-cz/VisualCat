@@ -14,6 +14,11 @@ The run is documented **continuously**. §0 is the restore point and is rewritte
 every scenario, so an interrupted run resumes from the last line there. Findings are
 appended to §3 the moment they are observed.
 
+**Part II (§20) is the remediation.** It implements the suggested fix for every finding and
+live-verifies each one against the same guest and the same phone. Read
+[§20.1](#201-restore-point) for where it got to, [§20.3](#203-progress-ledger) for the
+per-finding state, and [§20.4](#204-live-verification-on-the-guest) for the measurements.
+
 ---
 
 ## 0. Restore point — resume here
