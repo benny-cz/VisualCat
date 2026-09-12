@@ -7,6 +7,7 @@ using VisualCat.Domain.Filters;
 using VisualCat.Domain.Queries;
 using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
+using VisualCat.Infrastructure.Adb;
 using VisualCat.Infrastructure.Files;
 
 namespace VisualCat.Application.Tests;
@@ -401,5 +402,44 @@ public sealed class LinuxLiveTestRemediationTests
             try { Directory.Delete(root, true); } catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
+    }
+
+    // ---------------------------------------------------------------- A-16
+
+    [Fact]
+    public void EveryTransportStateADeviceCanBeInIsRecognised()
+    {
+        // "no permissions" is two words followed by advisory prose, so a parser that took the
+        // second whitespace token read "no" and reported Unknown — losing the one state with a
+        // specific remedy — and every colon-bearing word of the advice became a property, so the
+        // URL arrived as a key called "[http" (A-16).
+        const string Output = """
+            List of devices attached
+            RFCRC0A9GND            device product:r9qxeea model:SM_G990B device:r9q transport_id:1
+            RFCRC0A9GNE            unauthorized usb:1-1 transport_id:3
+            RFCRC0A9GNF            offline usb:1-1 transport_id:4
+            RFCRC0A9GNG            no permissions (user in plugdev group; are your udev rules wrong?); see [http://developer.android.com/tools/device.html]
+            RFCRC0A9GNH            recovery transport_id:9
+            """;
+
+        var devices = AdbDeviceParser.Parse(Output);
+        Assert.Equal(5, devices.Count);
+
+        Assert.Equal(AdbDeviceState.Device, devices[0].State);
+        Assert.Equal("SM_G990B", devices[0].Model);
+        Assert.Equal("1", devices[0].TransportId);
+
+        Assert.Equal(AdbDeviceState.Unauthorized, devices[1].State);
+        Assert.Equal(AdbDeviceState.Offline, devices[2].State);
+
+        Assert.Equal(AdbDeviceState.NoPermissions, devices[3].State);
+        Assert.StartsWith("no permissions", devices[3].StateText, StringComparison.Ordinal);
+        Assert.DoesNotContain(devices[3].Properties.Keys, static key => key.StartsWith('['));
+        Assert.Empty(devices[3].Properties);
+
+        // A state this product does not model is still named rather than flattened to "Unknown".
+        Assert.Equal(AdbDeviceState.Unknown, devices[4].State);
+        Assert.Equal("recovery", devices[4].StateText);
+        Assert.Equal("9", devices[4].TransportId);
     }
 }

@@ -807,12 +807,43 @@ public sealed class AdbLogSource :
                     $"Device '{_serial}' has not authorized this computer. Accept the USB debugging prompt on the device and retry.",
                 AdbDeviceState.Offline =>
                     $"Device '{_serial}' is offline. Reconnect it or restart the ADB server, then retry.",
-                _ => $"Device '{_serial}' is not ready for capture (state: {device.State}).",
+                AdbDeviceState.NoPermissions => NoPermissionsMessage(_serial),
+                _ => $"Device '{_serial}' is not ready for capture (state: {Describe(device)}).",
             });
         }
 
         return device;
     }
+
+    /// <summary>
+    /// What to say about a device the daemon can see but may not open.
+    /// </summary>
+    /// <remarks>
+    /// The only transport state with a specific remedy, and the remedy is platform-specific: on
+    /// Linux it is a <c>udev</c> rule and a group, and naming them is the difference between a
+    /// dead end and two commands (A-16).
+    /// </remarks>
+    private static string NoPermissionsMessage(string serial)
+    {
+        var message =
+            $"ADB can see device '{serial}' but is not allowed to open it. " +
+            "This is a permission on the computer, not on the device.";
+        if (OperatingSystem.IsLinux())
+        {
+            message +=
+                " On Linux, add a udev rule for the device's vendor id and reload it — " +
+                "'sudo tee /etc/udev/rules.d/51-android.rules', then " +
+                "'sudo udevadm control --reload-rules && sudo udevadm trigger' — and make sure " +
+                "your account is in the group that rule grants (often plugdev). Unplug and " +
+                "replug the device, then retry.";
+        }
+
+        return message;
+    }
+
+    /// <summary>Names a device's state, preferring what the daemon actually printed.</summary>
+    private static string Describe(AdbDevice device) =>
+        string.IsNullOrWhiteSpace(device.StateText) ? device.State.ToString() : device.StateText;
 
     private async Task<string> NegotiateFormatAsync(CancellationToken cancellationToken)
     {
@@ -880,6 +911,7 @@ public sealed class AdbLogSource :
                     $"Device '{_serial}' has not authorized this computer. Accept the USB debugging prompt on the device and retry.",
                 AdbDeviceState.Offline =>
                     $"Device '{_serial}' is offline. Reconnect it or restart the ADB server, then retry.",
+                AdbDeviceState.NoPermissions => NoPermissionsMessage(_serial),
                 _ =>
                     $"Device '{_serial}' rejected every supported logcat format for buffers '{string.Join(',', _buffers)}'. " +
                     $"The buffer selection may be unavailable on this device. {detail}".TrimEnd(),

@@ -5,16 +5,36 @@ public enum AdbDeviceState
     Device,
     Unauthorized,
     Offline,
+
+    /// <summary>
+    /// The daemon can see the device but this account may not open it.
+    /// </summary>
+    /// <remarks>
+    /// On Linux this is a <c>udev</c> rule or a group the account is not in, and it is the one
+    /// transport state with a specific, actionable remedy. <c>adb</c> prints it as
+    /// <c>no permissions (…)</c> — two words, followed by advisory prose — so a parser that
+    /// takes the second whitespace token as the state reads <c>no</c> and calls it
+    /// <see cref="Unknown"/>, which is the one answer that helps nobody (A-16).
+    /// </remarks>
+    NoPermissions,
+
     Unknown,
 }
 
+/// <summary>One device as the ADB daemon currently sees it.</summary>
+/// <remarks>
+/// <c>StateText</c> is exactly what the daemon printed, so a state this product does not model —
+/// <c>recovery</c>, <c>sideload</c>, <c>bootloader</c>, <c>authorizing</c> — can still be named to
+/// the reader rather than reported as "Unknown".
+/// </remarks>
 public sealed record AdbDevice(
     string Serial,
     AdbDeviceState State,
     string? Model,
     string? Product,
     string? TransportId,
-    IReadOnlyDictionary<string, string> Properties);
+    IReadOnlyDictionary<string, string> Properties,
+    string StateText = "");
 
 public sealed record AdbCommandResult(int ExitCode, string StandardOutput, string StandardError);
 

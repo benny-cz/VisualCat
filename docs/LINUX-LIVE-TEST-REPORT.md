@@ -3518,6 +3518,7 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 | F-30 | Minor | host bug + defences | yes | **yes** — every shape, including masked (§21.2) |
 | F-31 | Major | yes | yes | **yes** — cases 1, 4, 6 and 7 all detected and worded apart |
 | F-32 | **Major** | no — upstream | n/a | **measured** (§21.13) — 168 nodes, unchanged by both levers; the window-focus half is closed |
+| F-33 | Minor | yes | yes | **yes** (§21.14) — five states through a stub, and the real phone unchanged |
 
 ### 20.4 Live verification on the guest
 
@@ -4345,9 +4346,9 @@ not needed** — which is what makes it safe to ship enabled on every Linux host
 | Closed with a stated limit | **1** — [F-13](#f-13): the application and its controls yes, the structural `panel` names upstream |
 | Not closed | **1** — [F-11](#f-11), upstream in Avalonia |
 | §15 rows closed by this pass | **6½** — `umask 077` under the desktop, low disk, quota/read-only/failing storage (L3, X-15), a second distribution for both artifacts, an enforced ACL denial (P-09), **Orca end-to-end (U-07)**, and the forward half of the Android leg of I-08 |
-| §15 rows still open | metal and the §4.2 performance budgets, ADB `no permissions`/`udev`/group membership, the G4 desktop matrix beyond "no window manager", multi-monitor, the soak, and the reverse half of I-08 (no scriptable file-saving share target on this device) |
+| §15 rows still open | metal and the §4.2 performance budgets, the **OS half** of ADB `no permissions`/`udev`/group membership (the product's half is closed — §21.14), the G4 desktop matrix beyond "no window manager", multi-monitor, the soak, and the reverse half of I-08 — confirmed blocked rather than assumed: Samsung My Files registers no `ACTION_SEND` receiver, and the only targets on this device are Quick Share, Gmail, Drive, Outlook, Bluetooth and OneDrive |
 | Defects found *by* this pass | **2** — a session an ACL denies was reported as a missing manifest (§21.12), the same wrong-diagnosis family as F-06 and F-19, fixed and pinned by a test; and [F-32](#f-32), a screen reader reading the shell's implementation types aloud, which is upstream. A third — a window read out whole because nothing in it held focus — was found the same way and is closed |
-| Findings after this pass | **32** — 9 Major, 13 Minor, 10 Polish |
+| Findings after this pass | **33** — 9 Major, 14 Minor, 10 Polish |
 | Format compatibility across the fix | **PASS both ways** (§21.10) — the shipped 2.0.13 and the fixed build read each other's sessions, and their portable archives have identical member sets |
 | Unit tests | **1,071**, 0 failures |
 | VisualCat-attributable crashes, hangs or core dumps | **0**, across five storage-failure shapes and two distributions |
@@ -4542,3 +4543,72 @@ setup:
 A headless test pins both halves: that the window focuses a control inside itself on open, and
 that the control is **not** `:focus-visible` — so a reader who never touches the keyboard sees no
 focus ring appear at launch, and the change costs a pointer user nothing.
+
+### 21.14 §15 · ADB transport states (A-16) — the product's half, and it was broken
+
+§15 keeps this row open because `no permissions`, `udev` rules and group membership need a device
+attached **directly** to the Linux host, and the guest is a client of the Windows host's ADB
+server. That is true of the *operating system's* half. The **product's** half — what VisualCat
+does when the daemon reports each state — needs no hardware at all, because `vcat adb-devices`
+and `capture-adb` both take `--adb <path>`. A twelve-line stub that prints each state is enough,
+and it found a defect.
+
+#### F-33 · Minor · `no permissions` is reported as an unknown state, and its advice becomes a device property
+
+**Severity** Minor by reach — you need a Linux host with no `udev` rule — but it is the *one*
+transport state with a specific, actionable remedy, and it was the one state the product could
+not name. On a fresh Linux install with a phone plugged in, this is the first thing a user meets.
+
+`adb devices -l` prints it as two words followed by prose:
+
+```
+RFCRC0A9GND            no permissions (user in plugdev group; are your udev rules wrong?); see [http://developer.android.com/tools/device.html]
+```
+
+The parser took the **second whitespace token** as the state, read `no`, and fell through to
+`Unknown`; then it treated every remaining token containing a colon as a `key:value` property, so
+the advisory URL arrived as a property named `[http`:
+
+```json
+{ "serial": "RFCRC0A9GND", "state": "Unknown",
+  "properties": { "[http": "//developer.android.com/tools/device.html]" } }
+```
+
+**Fixed.** The state is every token between the serial and the first genuine property, a property
+key must be a bare identifier, and `no permissions` has its own state with a remedy that names
+the platform's own mechanism. Measured through the stub, before and after:
+
+| adb prints | Before | After |
+|---|---|---|
+| `device product:… model:… transport_id:1` | `Device`, model and transport id read | unchanged |
+| *(nothing)* | no devices | unchanged |
+| `unauthorized` | `Unauthorized` | unchanged |
+| `offline` | `Offline` | unchanged |
+| `no permissions (…); see [http://…]` | **`Unknown`**, property `"[http"` | **`NoPermissions`**, **no properties** |
+| `recovery transport_id:9` | `Unknown`, nothing else | `Unknown` **and `stateText: "recovery"`**, transport id read |
+
+And what a capture now says for each:
+
+```
+noperm       exit 1  error: ADB can see device 'RFCRC0A9GND' but is not allowed to open it. This is a
+                     permission on the computer, not on the device. On Linux, add a udev rule for the
+                     device's vendor id and reload it — 'sudo tee /etc/udev/rules.d/51-android.rules',
+                     then 'sudo udevadm control --reload-rules && sudo udevadm trigger' — and make
+                     sure your account is in the group that rule grants (often plugdev). Unplug and
+                     replug the device, then retry.
+unauthorized exit 1  error: Device 'RFCRC0A9GND' has not authorized this computer. Accept the USB
+                     debugging prompt on the device and retry.
+offline      exit 1  error: Device 'RFCRC0A9GND' is offline. Reconnect it or restart the ADB server,
+                     then retry.
+```
+
+A state the product does not model is now named rather than flattened: `recovery` reports as
+`Unknown` **with** `stateText: "recovery"`, so the reader is told what the daemon said.
+
+**Regression check against the real phone**, through the same fixed parser: `state Device`,
+`stateText 'device'`, model `SM_G990B`, product `r9qxeea`, transport id `1`, all four properties
+read correctly; an 8-second capture produced 582 entries, state `Ready`, and `vcat verify` exit 0.
+
+**What is still open in this row** is exactly the OS half: whether a missing `udev` rule really
+produces that state, and whether adding the rule and the group clears it. That needs the device on
+the Linux host's own USB bus.

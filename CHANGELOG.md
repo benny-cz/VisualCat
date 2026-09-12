@@ -144,6 +144,14 @@ run, and §20 records this remediation.
   toolkit presents a stale damage region: 4 of 5 openings of the settings dialog
   came up with 15–31% of the window never painted, and one hid the export
   review's own *Row order* and *Encoding* controls entirely.
+- **A device ADB is not allowed to open is named, and told how to fix it.** `adb devices -l` prints
+  that state as two words followed by prose — *no permissions (user in plugdev group; are your
+  udev rules wrong?); see [http://…]* — and the parser took the second word, read **no**, and
+  reported an unknown state; the advisory URL then arrived as a device property called `[http`. It
+  is the one transport state with a specific remedy, and it was the one the product could not
+  name. It now says so, and on Linux names the udev rule, the reload commands and the group. A
+  state VisualCat does not model — `recovery`, `sideload` — is reported with what the daemon
+  actually said rather than flattened to "unknown".
 - **A screen reader no longer hears the whole window read out at once.** Orca announces a window
   that has no focused control by reading everything in it, and the main window had none — so the
   notice, the strapline, every count, the template list and the entry list arrived as a single

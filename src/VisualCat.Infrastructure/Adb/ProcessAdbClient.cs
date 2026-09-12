@@ -123,32 +123,80 @@ public static class AdbDeviceParser
                 continue;
             }
 
-            var properties = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var token in tokens.Skip(2))
+            // The state is every token after the serial up to the first genuine property, because
+            // it is not always one word: "no permissions (user in plugdev group; are your udev
+            // rules wrong?); see [http://…]" is one state followed by advice. Taking the second
+            // token read "no" and reported Unknown, and every colon-bearing word of the advice
+            // became a property — the URL arrived as a key called "[http" (A-16).
+            var stateEnd = tokens.Length;
+            for (var i = 1; i < tokens.Length; i++)
             {
-                var colon = token.IndexOf(':');
-                if (colon > 0)
+                if (IsProperty(tokens[i]))
                 {
-                    properties[token[..colon]] = token[(colon + 1)..];
+                    stateEnd = i;
+                    break;
                 }
+            }
+
+            var stateText = string.Join(' ', tokens[1..stateEnd]);
+            var properties = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var token in tokens[stateEnd..])
+            {
+                if (!IsProperty(token))
+                {
+                    continue;
+                }
+
+                var colon = token.IndexOf(':');
+                properties[token[..colon]] = token[(colon + 1)..];
             }
 
             devices.Add(new AdbDevice(
                 tokens[0],
-                tokens[1] switch
+                stateText switch
                 {
                     "device" => AdbDeviceState.Device,
                     "unauthorized" => AdbDeviceState.Unauthorized,
                     "offline" => AdbDeviceState.Offline,
+                    _ when stateText.StartsWith("no permissions", StringComparison.Ordinal) =>
+                        AdbDeviceState.NoPermissions,
                     _ => AdbDeviceState.Unknown,
                 },
                 properties.GetValueOrDefault("model"),
                 properties.GetValueOrDefault("product"),
                 properties.GetValueOrDefault("transport_id"),
-                properties));
+                properties,
+                stateText));
         }
 
         return devices;
+    }
+
+    /// <summary>
+    /// Whether a token is one of <c>adb devices -l</c>'s trailing <c>key:value</c> pairs.
+    /// </summary>
+    /// <remarks>
+    /// A key is a bare identifier — <c>model</c>, <c>transport_id</c>, <c>usb</c>. Anything else
+    /// carrying a colon is prose, and the advisory URL adb prints for a device it may not open is
+    /// exactly that.
+    /// </remarks>
+    private static bool IsProperty(string token)
+    {
+        var colon = token.IndexOf(':');
+        if (colon <= 0)
+        {
+            return false;
+        }
+
+        foreach (var character in token.AsSpan(0, colon))
+        {
+            if (!char.IsAsciiLetterOrDigit(character) && character != '_')
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
 
