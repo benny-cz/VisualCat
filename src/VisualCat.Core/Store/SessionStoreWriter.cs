@@ -504,6 +504,59 @@ public sealed class SessionStoreWriter : IAsyncDisposable
         return new SourceIdentity("file", embedded ? null : fullPath, info.Length, info.LastWriteTimeUtc, Convert.ToHexString(hash), embedded);
     }
 
+    /// <summary>
+    /// The identity of the first <paramref name="length"/> bytes of a file, for a session that
+    /// indexed a prefix of it rather than the whole thing.
+    /// </summary>
+    /// <remarks>
+    /// An interrupted import owns exactly what it read. Recording the whole file's length and
+    /// digest would describe evidence the session does not have, and the verifier — correctly —
+    /// refuses that. Raw evidence is already modelled as a verified prefix, because a growing
+    /// source needs the same thing.
+    /// </remarks>
+    public static async Task<SourceIdentity> CreateFilePrefixIdentityAsync(
+        string path,
+        long length,
+        CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        var fullPath = Path.GetFullPath(path);
+        var info = new FileInfo(fullPath);
+        await using var stream = new FileStream(
+            fullPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite,
+            1024 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+        using var sha = SHA256.Create();
+        var buffer = new byte[1024 * 1024];
+        var remaining = Math.Min(length, info.Length);
+        while (remaining > 0)
+        {
+            var read = await stream.ReadAsync(
+                buffer.AsMemory(0, (int)Math.Min(buffer.Length, remaining)),
+                cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                break;
+            }
+
+            sha.TransformBlock(buffer, 0, read, null, 0);
+            remaining -= read;
+        }
+
+        sha.TransformFinalBlock([], 0, 0);
+        return new SourceIdentity(
+            "file",
+            fullPath,
+            Math.Min(length, info.Length),
+            info.LastWriteTimeUtc,
+            Convert.ToHexString(sha.Hash!),
+            false);
+    }
+
     public static async Task EmbedRawAsync(string sourcePath, string sessionRoot, CancellationToken cancellationToken)
     {
         var destination = Path.Combine(sessionRoot, "raw.log");

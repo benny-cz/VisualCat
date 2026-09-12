@@ -79,7 +79,7 @@ public static class TimeZoneResolution
 
     private static string Explain(string timeZoneId, Exception? cause) =>
         $"Time zone '{timeZoneId}' could not be resolved" +
-        (cause is null ? " — the request was silently answered with UTC" : string.Empty) +
+        (cause is null ? ", so the runtime answered it with UTC" : string.Empty) +
         ". The system time-zone database (tzdata, /usr/share/zoneinfo) appears to be missing or " +
         "unreadable. Install it, or state the zone explicitly with --timezone UTC if UTC is what " +
         "you meant: timestamps in a logcat file without an offset are interpreted in this zone, " +

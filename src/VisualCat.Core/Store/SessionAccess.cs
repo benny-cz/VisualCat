@@ -176,7 +176,7 @@ public static class SessionAccess
         // the lease directory reported a missing data root as unavailable lease storage, which
         // is a symptom three layers from its cause (F-19).
         var leases = ProductDataRoot.Combine("SessionAccess-v1");
-        Directory.CreateDirectory(leases);
+        SessionFileModes.CreateOwnerOnlyDirectory(leases);
         if (File.GetAttributes(leases).HasFlag(FileAttributes.ReparsePoint))
         {
             throw new IOException(
@@ -309,7 +309,8 @@ public static class SessionAccess
                 FileMode.OpenOrCreate,
                 FileAccess.Write,
                 FileShare.ReadWrite | FileShare.Delete);
-            using var writer = new StreamWriter(stream, Encoding.UTF8) { NewLine = "\n" };
+            // No byte-order mark: this is a path for a sweep to compare, not a document.
+            using var writer = new StreamWriter(stream, new UTF8Encoding(false)) { NewLine = "\n" };
             writer.Write(sessionPath);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

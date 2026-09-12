@@ -33,8 +33,12 @@ internal static class SegmentWriter
 
         var relative = Path.Combine(segmentContainer, id.ToString("D6", System.Globalization.CultureInfo.InvariantCulture));
         var directory = Path.Combine(sessionRoot, relative);
-        Directory.CreateDirectory(directory);
-        Directory.CreateDirectory(Path.Combine(directory, "bitmaps"));
+        // Owner-only like the session directory above them. The session directory's own mode is
+        // what carries the guarantee — without x on it nothing inside is reachable — but a
+        // segment directory can be copied out of a session, and it is log content wherever it
+        // ends up (finding F-27).
+        SessionFileModes.CreateOwnerOnlyDirectory(directory);
+        SessionFileModes.CreateOwnerOnlyDirectory(Path.Combine(directory, "bitmaps"));
 
         // Columns are built in memory and written once. Emitting them field by field
         // through BinaryWriter cost one virtual call per value — nineteen per entry —

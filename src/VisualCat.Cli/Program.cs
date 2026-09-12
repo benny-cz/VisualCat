@@ -116,27 +116,21 @@ internal static class VisualCatCli
         // session stuck in Importing with one recoverable entry (finding F-18).
         using var stop = new CancellationTokenSource();
         using var cancellation = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, eventArgs) =>
-        {
-            eventArgs.Cancel = true;
-            RequestShutdown(stop, cancellation);
-        };
 
+        // Every terminating signal through one registration each, rather than SIGINT through
+        // Console.CancelKeyPress and the rest through this. CancelKeyPress fires only where the
+        // runtime sees a console: under `ssh host 'vcat index …'`, in a systemd unit, in a
+        // container, a `kill -INT` reached nothing at all, so an index signalled 0.8 s into a
+        // 30 s run read the whole file and exited 0 — Ctrl+C appeared to work by doing nothing.
+        // PosixSignal is raised for Ctrl+C as well, on Unix and on Windows, so one route serves
+        // both and neither can fire twice for one press.
+        //
         // Cancel:true takes over from the default disposition, and the handler then waits for
         // the cooperative shutdown to publish rather than returning immediately, which would
         // let the runtime exit anyway.
-        using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
-        {
-            context.Cancel = true;
-            RequestShutdown(stop, cancellation);
-            _shutdownDrained.Wait(ShutdownDrainTimeout);
-        });
-        using var sighup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, context =>
-        {
-            context.Cancel = true;
-            RequestShutdown(stop, cancellation);
-            _shutdownDrained.Wait(ShutdownDrainTimeout);
-        });
+        using var sigint = Terminating(PosixSignal.SIGINT, stop, cancellation);
+        using var sigterm = Terminating(PosixSignal.SIGTERM, stop, cancellation);
+        using var sighup = Terminating(PosixSignal.SIGHUP, stop, cancellation);
 
         try
         {
@@ -234,6 +228,18 @@ internal static class VisualCatCli
             _shutdownDrained.Set();
         }
     }
+
+    /// <summary>Routes one terminating signal into the two-stage shutdown.</summary>
+    private static PosixSignalRegistration Terminating(
+        PosixSignal signal,
+        CancellationTokenSource stop,
+        CancellationTokenSource cancellation) =>
+        PosixSignalRegistration.Create(signal, context =>
+        {
+            context.Cancel = true;
+            RequestShutdown(stop, cancellation);
+            _shutdownDrained.Wait(ShutdownDrainTimeout);
+        });
 
     /// <summary>
     /// Asks the running command to finish, and on a second request gives up on finishing.

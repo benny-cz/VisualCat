@@ -315,6 +315,25 @@ public sealed class SessionCoordinator
                     store.UpdateSourceIdentity(await IdentityOfRawAsync(rawPath, true, cancellationToken).ConfigureAwait(false));
                 }
             }
+            else if (source.Metadata.SourcePath is { } stoppedPath &&
+                     Interlocked.Read(ref bytesRead) is var covered &&
+                     covered < identity.Length)
+            {
+                // An import that was stopped before it reached the end of the file indexes a
+                // prefix of it, and the session must say so: recording the whole file's length
+                // and digest made the session describe evidence it does not own, so a stopped
+                // index published a Ready session that then failed its own verification with
+                // "declared outcomes cover 85,983,232 bytes; source has 270,072,092"
+                // (finding F-18, second half). The store already models raw evidence as a
+                // verified prefix — that is what a growing source needs — so recording the
+                // prefix this session actually read is all it takes for the session to be as
+                // verifiable as a complete one.
+                store.UpdateSourceIdentity(
+                    await SessionStoreWriter.CreateFilePrefixIdentityAsync(
+                        stoppedPath,
+                        covered,
+                        cancellationToken).ConfigureAwait(false));
+            }
 
             await StopProcessSamplingAsync().ConfigureAwait(false);
             var descriptor = CreateDescriptor(SessionState.Ready, true);
