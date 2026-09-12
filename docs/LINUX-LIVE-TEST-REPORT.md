@@ -3464,8 +3464,8 @@ an interrupted run resumes from the last line here without re-deriving anything.
 | Repo | `E:\VisualCat` on the Windows host |
 | Guest | `benny@172.24.178.166` (VMware, key auth; `. ~/vcat-run/env.sh`) |
 | Phone | Samsung SM-G990B `RFCRC0A9GND`, PIN `1111`, **lock the screen when finished** |
-| Last completed | §21.13 — Orca run end to end for the first time; F-32 recorded (upstream), the window-focus half fixed and pinned |
-| Next step | None reachable on this host. [F-11](#f-11) and [F-32](#f-32) need an Avalonia change; §21.9 lists the §15 rows that need hardware |
+| Last completed | §21.14–21.16 — A-16's product half closed (F-33), G4 passed on openbox and i3, multi-monitor found unachievable here; guest handed back, phone locked |
+| Next step | None reachable on this host. [F-11](#f-11) and [F-32](#f-32) need an Avalonia change; what is left in §21.9 needs hardware, a second head, KDE/Xfce, or 30–50 hours |
 
 ### 20.2 Plan — batches, and why in this order
 
@@ -4333,7 +4333,7 @@ not needed** — which is what makes it safe to ship enabled on every Linux host
 | Free space | 162 GiB |
 | Phone `RFCRC0A9GND` | imported tab closed, pushed archive removed, app stopped, asleep and **locked** (`deviceLocked=1`, `trustState=UNTRUSTED`) |
 | Host ADB server | loopback only; firewall rule `VCAT-ADB-5037` removed |
-| Left installed on the guest by this pass | `xvfb`, `debootstrap`, `acl` — ordinary packages, no configuration changed |
+| Left installed on the guest by this pass | `xvfb`, `debootstrap`, `acl`, `openbox`, `i3-wm`, `x11-utils` — ordinary packages, no configuration changed. `~/.config/i3` and the `speechd.conf` this run wrote were removed |
 | Orca and `speech-dispatcher` | Orca stopped; the `speechd.conf` this pass wrote to point at the dummy synthesizer removed, along with its directory. Both were already installed on the guest |
 | The guest's screen | **locked.** GNOME locked the session during the pass — Appendix B #3, and specifically the form the report warns about: restoring the idle timer at one hand-back makes the next pass hit it. It cannot be unlocked remotely: `loginctl unlock-session` reports success and does not unlock, the `org.gnome.ScreenSaver.SetActive` call times out, and a Wayland lock screen takes no input from an X client. Nothing is broken by it — ssh, the filesystem and the VM are unaffected — but the next person at the console will need the account password |
 
@@ -4345,10 +4345,10 @@ not needed** — which is what makes it safe to ship enabled on every Linux host
 | Closed and live-verified | **30** |
 | Closed with a stated limit | **1** — [F-13](#f-13): the application and its controls yes, the structural `panel` names upstream |
 | Not closed | **1** — [F-11](#f-11), upstream in Avalonia |
-| §15 rows closed by this pass | **6½** — `umask 077` under the desktop, low disk, quota/read-only/failing storage (L3, X-15), a second distribution for both artifacts, an enforced ACL denial (P-09), **Orca end-to-end (U-07)**, and the forward half of the Android leg of I-08 |
-| §15 rows still open | metal and the §4.2 performance budgets, the **OS half** of ADB `no permissions`/`udev`/group membership (the product's half is closed — §21.14), the G4 desktop matrix beyond "no window manager", multi-monitor, the soak, and the reverse half of I-08 — confirmed blocked rather than assumed: Samsung My Files registers no `ACTION_SEND` receiver, and the only targets on this device are Quick Share, Gmail, Drive, Outlook, Bluetooth and OneDrive |
+| §15 rows closed by this pass | **8½** — `umask 077` under the desktop, low disk, quota/read-only/failing storage (L3, X-15), a second distribution for both artifacts, an enforced ACL denial (P-09), **Orca end-to-end (U-07)**, the product's half of the ADB transport states (A-16), **two more window managers (G4)**, and the forward half of the Android leg of I-08. Multi-monitor was attempted two ways and is not achievable on this host (§21.16) |
+| §15 rows still open | metal and the §4.2 performance budgets, the **OS half** of ADB `no permissions`/`udev`/group membership (the product's half is closed — §21.14), KDE Plasma and Xfce specifically (openbox, i3 and no-WM all pass — §21.15), multi-monitor (attempted two ways on this host and not achievable — §21.16), the soak, and the reverse half of I-08 — confirmed blocked rather than assumed: Samsung My Files registers no `ACTION_SEND` receiver, and the only targets on this device are Quick Share, Gmail, Drive, Outlook, Bluetooth and OneDrive |
 | Defects found *by* this pass | **2** — a session an ACL denies was reported as a missing manifest (§21.12), the same wrong-diagnosis family as F-06 and F-19, fixed and pinned by a test; and [F-32](#f-32), a screen reader reading the shell's implementation types aloud, which is upstream. A third — a window read out whole because nothing in it held focus — was found the same way and is closed |
-| Findings after this pass | **33** — 9 Major, 14 Minor, 10 Polish |
+| Findings after this pass | **33** — 9 Major, 14 Minor, 10 Polish. Three of them ([F-31](#f-31) aside) were found by this pass rather than by the five test passes: the ACL misdiagnosis, [F-32](#f-32) and [F-33](#f-33) |
 | Format compatibility across the fix | **PASS both ways** (§21.10) — the shipped 2.0.13 and the fixed build read each other's sessions, and their portable archives have identical member sets |
 | Unit tests | **1,071**, 0 failures |
 | VisualCat-attributable crashes, hangs or core dumps | **0**, across five storage-failure shapes and two distributions |
@@ -4612,3 +4612,44 @@ read correctly; an 8-second capture produced 582 entries, state `Ready`, and `vc
 **What is still open in this row** is exactly the OS half: whether a missing `udev` rule really
 produces that state, and whether adding the rule and the group clears it. That needs the device on
 the Linux host's own USB bus.
+
+### 21.15 §15 · The desktop-environment matrix (G4, U-05/U-26) — **two more window managers, both PASS**
+
+§21.6 established that the desktop runs with **no window manager at all**. This adds the two
+shapes that differ most from GNOME's Mutter, both under `Xvfb` on the guest so nothing touches the
+user's own session: **openbox**, a stacking, non-compositing WM, and **i3**, a tiling one.
+
+| Property | Mutter (Part I and §20) | openbox | i3 |
+|---|---|---|---|
+| window decorated | yes | **yes** — `_NET_FRAME_EXTENTS 1, 1, 20, 5` | i3's own title bar; no frame extents, by design |
+| geometry | the app's 1440×900 | the app's 1440×900 honoured | **forced to 1596×960** by the tiler, and accepted without complaint |
+| dialog is `WM_TRANSIENT_FOR` its owner | — | **yes** (`0x600013` = the main window) | **yes** (`0x800013` = the main window) |
+| dialog placement | centred on the owner | **centred** — owner centre x 631, dialog centre x 632 | **centred** — owner centre x 802, dialog centre x 802; i3 floats it rather than tiling it |
+| dialog size | 520×820 | 520×820 | **420×620** — sized down to the smaller space rather than overflowing |
+| Escape closes the dialog | yes | **yes** | **yes** |
+| the window behind is inert while the dialog is up | yes | **yes** — clicking *Close session g4.txt* behind the dialog did nothing; the tab count stayed at 1 | — |
+| renders the complete workspace | yes | yes | **yes** — heat map, minimap, entry list, templates, `Ready · 1,003 entries` |
+
+**One observation, and it is the X-level counterpart of [F-11](#f-11).** The dialog declares
+`_NET_WM_WINDOW_TYPE_NORMAL` and `_NET_WM_STATE_DEMANDS_ATTENTION` — **no `_NET_WM_STATE_MODAL`**.
+So the modality is not advertised to the window manager either, only to the toolkit. It made no
+practical difference on either WM tested, because the toolkit blocks the input itself and both
+honour `WM_TRANSIENT_FOR` for stacking; a WM that relies on the modal hint for focus or stacking
+would not know. Same component, same upstream fix as F-11.
+
+**Still untested:** KDE Plasma and Xfce specifically. Every behaviour that differs *between*
+window managers — decoration, transient ownership, placement, a forced geometry, modality,
+Escape — is now exercised on three of them, so the remaining risk in this row is small.
+
+### 21.16 §15 · Multi-monitor (U-03, U-04) — **not achievable on this host**
+
+Recorded as attempted rather than left unqualified, so the next run does not spend the time again.
+
+| Approach | Result |
+|---|---|
+| `Xvfb :92 +xinerama -screen 0 1280x800x24 -screen 1 1024x768x24` | Xvfb creates two **separate X screens** (`:92.0`, `:92.1`), not one multi-head desktop: `xdpyinfo -ext XINERAMA` reports **one head**, `1280x800 @ 0,0` |
+| `Xvfb :92 -screen 0 2304x800x24` then `xrandr --setmonitor` twice | silently ignored — `xrandr --listmonitors` still reports `Monitors: 1`, the whole screen; Xvfb's RandR does not implement it |
+
+A genuine second head needs either a second VMware display — which means editing the `.vmx` and
+restarting the guest, and would leave the machine at a login screen this run cannot get back into
+— or real hardware. The row stays open, with the two dead ends now written down.
