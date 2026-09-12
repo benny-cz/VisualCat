@@ -17,7 +17,9 @@ appended to §3 the moment they are observed.
 **Part II (§20) is the remediation.** It implements the suggested fix for every finding and
 live-verifies each one against the same guest and the same phone. Read
 [§20.1](#201-restore-point) for where it got to, [§20.3](#203-progress-ledger) for the
-per-finding state, and [§20.4](#204-live-verification-on-the-guest) for the measurements.
+per-finding state, [§20.4](#204-live-verification-on-the-guest) for the measurements, and
+[§21](#21-sixth-pass--closing-what-208-left-and-four-rows-from-15) for the sixth pass, which
+closed what §20.8 left open and four standing rows from §15.
 
 ---
 
@@ -3457,13 +3459,13 @@ an interrupted run resumes from the last line here without re-deriving anything.
 | Field | Value |
 |---|---|
 | Run ID | `20260912-linux-remediation` |
-| Status | **COMPLETE** — 29 of 31 findings closed and live-verified, 1 closed with a stated limit, 1 open upstream |
+| Status | **COMPLETE** — 30 of 31 findings closed and live-verified, 1 closed with a stated limit, 1 open upstream; §21 adds a sixth pass that also closed four standing §15 rows |
 | Branch | `main` (working tree; commits are made per batch) |
 | Repo | `E:\VisualCat` on the Windows host |
 | Guest | `benny@172.24.178.166` (VMware, key auth; `. ~/vcat-run/env.sh`) |
 | Phone | Samsung SM-G990B `RFCRC0A9GND`, PIN `1111`, **lock the screen when finished** |
-| Last completed | §20 complete — all 31 findings addressed, live-verified, cleanup done and the host handed back |
-| Next step | None. 28 findings closed, 2 closed with a stated limit, [F-11](#f-11) open upstream (§20.8) |
+| Last completed | §21 sixth pass — F-03's hand-off and F-30's masked case closed; four §15 rows run (umask 077 GUI, low disk, failing storage, Debian 12 desktop and CLI) |
+| Next step | None. 30 of 31 closed, [F-13](#f-13) partly (upstream), [F-11](#f-11) open upstream |
 
 ### 20.2 Plan — batches, and why in this order
 
@@ -3486,7 +3488,7 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 |---|---|---|---|---|
 | F-01 | Major | yes | yes | **yes** — 4,000/4,000 on the phone, confidence 1.000 |
 | F-02 | Minor | yes | yes | **yes** — exit 69, one message, no core dump, 3 routes |
-| F-03 | Minor | yes | yes | **yes** — the command exists and says desktop words; hand-off not exercised |
+| F-03 | Minor | yes | yes | **yes** — the command, the words, and the browser hand-off (§21.1) |
 | F-04 | Minor | yes | yes | **yes** — *Waiting for import options…*, still true after 30 s |
 | F-05 | Polish | yes | yes | **yes** — a confident file imports without a review |
 | F-06 | Minor | yes | yes | **yes** — explained, and a missing file still says missing |
@@ -3513,7 +3515,7 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 | F-27 | Minor | yes | yes | **yes** — a second account is refused everything |
 | F-28 | Polish | yes | yes | **yes** — the four-way matrix |
 | F-29 | Minor | yes | yes | **yes** — 0 CR by default, identical after stripping |
-| F-30 | Minor | host bug + defences | yes | **yes** — recovers when stopped; Cancel releases within 1 s when masked |
+| F-30 | Minor | host bug + defences | yes | **yes** — every shape, including masked (§21.2) |
 | F-31 | Major | yes | yes | **yes** — cases 1, 4, 6 and 7 all detected and worded apart |
 
 ### 20.4 Live verification on the guest
@@ -4139,3 +4141,186 @@ prints frames, node counts and control names; the other clicks a control by its 
 reading its extents from AT-SPI and moving the pointer there with `xdotool`. Clicking by name is
 what made the run repeatable — and see §20.6 for the two ways of sending a key that do **not**
 work on this platform.
+
+## 21. Sixth pass — closing what §20.8 left, and four rows from §15
+
+§20.8 listed three things the remediation had not established. Two are now closed, one remains
+upstream. While the guest was up, four standing rows from [§15](#15-what-remains-untested-after-four-passes)
+were run as well, because the fixed build changes what they measure.
+
+### 21.1 [F-03](#f-03)'s browser hand-off — **CLOSED, and it found the other half of the finding**
+
+The command existed and said the right thing; pressing its action did nothing, because there was
+no action to press. The desktop's only notice surface is the compact line in the brand row, and
+the lane that carries a notice's action button is **Android-only** — `host.IsVisible =
+OperatingSystem.IsAndroid() && …`. So every notice action on the desktop was silently dropped, and
+*Check for updates…* arrived as a statement that releases are on GitHub with no way to get there.
+That is exactly the half of F-03 the finding asks for: *"says so plainly **and offers to open the
+releases page**"*.
+
+The action now appears beside the message on the desktop as well, and only when a notice carries
+one, so an ordinary line is unchanged. Measured:
+
+| | |
+|---|---|
+| action button on the desktop | `'Open releases'` — `showing=True enabled=True` |
+| pressing it | Firefox started; window title **`Releases · benny-cz/VisualCat — Mozilla Firefox`** |
+| the URL it was given | `https://github.com/benny-cz/VisualCat/releases` |
+| route | the desktop's default handler through `xdg-open`, as the finding asks |
+
+### 21.2 [F-30](#f-30)'s masked-portal case — **CLOSED; the earlier limit was my own bad measurement**
+
+§20.4 recorded that with the portal masked, the shell's *Cancel* did not release the file-operation
+slot. It does. Re-measured with the click helper filtering on `STATE_SHOWING` and re-reading the
+control's extents immediately before clicking — §20.6's own advice — with the portal stopped
+**and** masked:
+
+| t | state |
+|---|---|
+| chooser requested | `Choosing portable archive…` · *Open archive* disabled · *Cancel* enabled |
+| **1 s after Cancel** | **`Choosing portable archive cancelled.`** · *Open archive* **enabled** |
+| 5 s after | unchanged |
+
+The first attempt had clicked a stale node from a differently-sized window. Nothing about the
+product differed between the two measurements. F-30's product side is closed in every shape.
+
+### 21.3 [F-11](#f-11) — **still upstream, unchanged**
+
+Nothing new was tried. §20.4 records the two approaches that do not work and what would close it.
+
+### 21.4 §15 · `umask 077` under the desktop — **PASS**
+
+The remaining half of P-22: the CLI leg passed in Part I's third pass, the GUI leg was open. The
+desktop launched under `umask 077` with a fresh data root, imported a 5,000-line log through
+`--log`, and opened it:
+
+| Object | Mode |
+|---|---|
+| data root | **700** |
+| `Sessions/` | **700** |
+| `SessionAccess-v1/` | **700** |
+| session directory | **700** |
+| `manifest.json` | **600** |
+| a segment directory | **700** |
+
+Nothing was refused, and the session opened normally — which is the point of the row: a stricter
+umask must not break the product, and it does not.
+
+### 21.5 §15 · Low disk and a filesystem that fails — **PASS, with one observation**
+
+Three shapes on a loop-mounted ext4 filesystem, the third through a `device-mapper` target swapped
+for one that errors on every I/O — which is what `errors=remount-ro` exists for and the closest
+this host can get to a disk dying under a running import.
+
+**A filesystem that runs out** (172 MiB free, a 172 MiB source):
+
+```
+error: No space left on device : '/mnt/vcatsmall/full.vcat/source-order/records.bin'
+exit 1
+```
+
+The message names the condition **and the exact file**, which is what makes it actionable. What
+survives is more interesting: `info`, `query`, `stats` and `search` all exit 0 and see all
+**900,001** entries, so no captured data is lost or unreachable. `vcat verify` exits 3 and says
+`Source-record stream is truncated.` — which is **true**: the write was cut mid-record by `ENOSPC`.
+Freeing space and re-indexing succeeds and verifies clean.
+
+*The observation.* The session is left in state `Importing`, `finalized: false`, rather than
+`Failed`. The coordinator does try to publish a failure state, and on a full filesystem there is
+nowhere to write it — you cannot record that you ran out of room in the room you ran out of. No
+change is proposed: the error message is accurate, the data is intact and readable, and `verify`
+is honest about what it found.
+
+**A read-only filesystem.** A session seeded while writable, then `mount -o remount,ro`:
+
+| Command | Exit |
+|---|---|
+| `info` | **0** |
+| `query` | **0** |
+| `verify` | **0** |
+| `search` | **0** |
+| `index` into it | 1 — `error: Read-only file system : '/mnt/vcatsmall/new.vcat'` |
+| `export` into it | 1 — `error: Read-only file system : '…/out.csv.tmp-…'` |
+
+A session on read-only media — a snapshot, a shared mount, an archive volume — is fully usable,
+and every write is refused by name. That is the contract this row exists to check.
+
+**The device failing under a running import.** A `linear` device-mapper target swapped for an
+`error` target four seconds into an index:
+
+```
+kernel: EXT4-fs (dm-0): Remounting filesystem read-only
+kernel: Buffer I/O error on dev dm-0, logical block 153584, async page read
+vcat:   error: Input/output error : '/mnt/vcatfail/dead.vcat/source-order/records.bin'
+        exit 1
+```
+
+No crash, no hang, no core dump (`/var/crash` **0**), no orphaned process. The product reports the
+I/O error against the file it was writing and exits.
+
+### 21.6 §15 · A second distribution — **PASS, desktop and CLI**
+
+§15 named this *"the highest-value remaining item"*. A Debian 12.15 root (`debootstrap
+--variant=minbase`, glibc **2.36**, 755 MB) with only the packages
+[F-02](#f-02)'s message names — `libx11-6 libice6 libsm6 libfontconfig1` — plus `libicu72`,
+`tzdata` and `xvfb`.
+
+**The CLI, on Debian 12:**
+
+| | |
+|---|---|
+| `vcat --version` | `2.0.13+41c7b28…` |
+| `index small.txt` | 1,000 entries, format `ThreadTime`, **confidence 1.000** |
+| `verify` | exit **0** |
+| `export --type csv` | exit 0, **0 carriage returns** — the [F-29](#f-29) default holds on a second distribution |
+
+**The desktop, on Debian 12**, under `Xvfb :99` at 1400×900 with **no window manager at all**: it
+started, imported through `--log`, and rendered the complete workspace — heat map with all six
+severity rows, minimap, time axis, entry list, templates pane, and a status line reading
+`Ready · 1,000 entries`. `stderr` was empty. The data root was created by the [F-19](#f-19) fix at
+mode **700**, the session directory at **700**, and the session verifies. The entry list shows
+five-digit thread ids — `10503 / 5136`, `14132 / 24503`, `985 / 18176` — rendering correctly,
+which is [F-01](#f-01) visible in the product.
+
+That closes §15's second-distribution row for both artifacts, and adds a data point the plan does
+not ask for: the desktop runs with **no window manager**, which no GNOME measurement can establish.
+
+### 21.7 §15 · [F-10](#f-10)'s control, on a real X server — **the defect is XWayland-specific, confirmed on the fixed build**
+
+The same binary on `Xvfb` — a real X server, not XWayland — measured three times with the
+mitigation on and three times with `VISUALCAT_FULL_REPAINT=0`:
+
+| | unpainted |
+|---|---|
+| mitigation on, grabs 1–3 | 1.973 % |
+| mitigation off, grabs 1–3 | **1.972 %** |
+
+Identical to three decimal places. The 1.97 % is the root window's own black margin around a
+1400×900 app window, not unpainted product pixels. Two things follow: the rendering defect really
+is XWayland-specific, as Part I's §7.17 concluded, and **the mitigation costs nothing where it is
+not needed** — which is what makes it safe to ship enabled on every Linux host.
+
+### 21.8 Sixth-pass cleanup
+
+| Step | Verified |
+|---|---|
+| Debian 12 chroot | `/srv/deb12` removed, `/srv` removed, **0** stray bind mounts |
+| Loop filesystems and the device-mapper target | unmounted, `dmsetup remove --force`, `losetup -D`; **0** `vcat*` dm devices, **0** loops on this pass's images, `/mnt` back to `hgfs` alone |
+| Images and corpora | `/tmp/{fail,ro,small}.img`, `/tmp/{fill,ro,fit,s}.txt` removed |
+| `Xvfb` and `debootstrap` installed for this pass | left in place — ordinary packages, no configuration changed; note them if the guest is ever audited for what this run added |
+| Product processes | `VisualCat` **0** · `vcat` **0** |
+| `/var/crash` | **0** entries across every storage-failure shape |
+| Free space | 162 GiB |
+
+### 21.9 Revised tally after the sixth pass
+
+| | |
+|---|---|
+| Findings | **31** — 8 Major, 13 Minor, 10 Polish |
+| Closed and live-verified | **30** |
+| Closed with a stated limit | **1** — [F-13](#f-13): the application and its controls yes, the structural `panel` names upstream |
+| Not closed | **1** — [F-11](#f-11), upstream in Avalonia |
+| §15 rows closed by this pass | **4** — `umask 077` under the desktop, low disk, quota/read-only/failing storage (L3, X-15), and a second distribution for both artifacts |
+| §15 rows still open | metal and the §4.2 performance budgets, ADB `no permissions`/`udev`/group membership, Orca end-to-end, the G4 desktop matrix beyond "no window manager", multi-monitor, an enforced ACL denial, the soak, and the Android leg of I-08 |
+| Unit tests | **1,071**, 0 failures |
+| VisualCat-attributable crashes, hangs or core dumps | **0**, across five storage-failure shapes and two distributions |

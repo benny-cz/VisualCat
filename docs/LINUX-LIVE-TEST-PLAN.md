@@ -3614,6 +3614,25 @@ report.
 
     See F-10. `VISUALCAT_FULL_REPAINT=0` turns off the product's mitigation, for
     measuring the underlying behaviour.
+53. **`xdotool getactivewindow` returns nothing under XWayland**, so `xdotool key <key>` with no
+    target goes nowhere and a control that works looks broken. Address the window: `xdotool key
+    --window <id>` for the product's own windows (Avalonia accepts `XSendEvent`), and `xdotool
+    windowfocus <id>` **then** `xdotool key` for a GTK portal chooser, which does not. See
+    report §20.6.
+54. **A `kill -INT` on a background job of a non-interactive shell reaches nothing.** POSIX makes
+    such a shell set `SIGINT` to `SIG_IGN` for its asynchronous children, and the disposition
+    survives `exec` — so the process runs to completion and exit 0 looks like a clean
+    cancellation. `SIGTERM` and `SIGHUP` are delivered normally, which is what makes the pair look
+    asymmetric when it is not. Reset the disposition before `exec` (a `preexec_fn` restoring
+    `SIG_DFL`, or an interactive shell with job control) before concluding anything about signal
+    handling. See report §20.6.
+55. **Click a control by its accessible name, and re-read its extents immediately before the
+    click.** Driving the shell through AT-SPI (`pyatspi`, already installed) removes every
+    coordinate guess, but a node found earlier can be stale: filter on `STATE_SHOWING` and read
+    `queryComponent().getExtents(DESKTOP_COORDS)` in the same breath as the click. A stale node
+    produced a false "Cancel does not work" that cost a cycle (report §21.2). An abandoned portal
+    chooser also sits **on top of** the app, so clicks at desktop coordinates land on it rather
+    than on the window you meant — dismiss it first.
 
 ---
 
