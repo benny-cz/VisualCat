@@ -3591,6 +3591,29 @@ report.
     product JSON file through `ConvertFrom-Json | Format-List` on a comma-decimal
     host prints doubles with a comma. That is the shell, not the product — check the
     raw bytes.
+51. **A file chooser that stops appearing mid-run is usually the portal having
+    crashed, not the product ignoring the click.** Closing an `xdg-desktop-portal-gnome`
+    chooser with the window manager's close affordance — `xdotool windowclose`, or the
+    title-bar ✕ — trips a GTK assertion inside the portal process and takes the unit
+    down; after repeated crashes it stays `failed` and every later chooser request in
+    that session is served by the fallback backend or by nothing at all. Dismiss
+    choosers with **Escape**, which never triggers it. Check with
+    `systemctl --user is-active xdg-desktop-portal-gnome` and recover with
+    `systemctl --user reset-failed xdg-desktop-portal-gnome`. See F-30.
+52. **A screenshot is not proof of what was rendered.** On XWayland a window can be
+    presented with a band that was never painted, so a capture can be missing controls
+    the product laid out correctly. Measure the unpainted fraction before filing
+    anything about a missing control, and retake rather than file a capture that is
+    not clean:
+
+    ```shell
+    W=$(xdotool search --class VisualCat | tail -1)
+    import -window "$W" -silent /tmp/w.png
+    convert /tmp/w.png -colorspace gray -threshold 2% -negate -format '%[fx:mean*100]' info:
+    ```
+
+    See F-10. `VISUALCAT_FULL_REPAINT=0` turns off the product's mitigation, for
+    measuring the underlying behaviour.
 
 ---
 

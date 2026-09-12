@@ -14,6 +14,143 @@ screenshot says which build it came from.
 ## [Unreleased]
 
 ### Fixed
+
+#### From the Linux live test
+
+A five-pass live run of the shipped `linux-x64` release against a real Ubuntu
+desktop and a physical phone found 31 defects; these close them.
+[`docs/LINUX-LIVE-TEST-REPORT.md`](docs/LINUX-LIVE-TEST-REPORT.md) records the
+run, and §20 records this remediation.
+
+- **`logcat -v long` no longer loses a record whose thread id needs five digits.**
+  Android prints that field as `%5d:%5d`, so a wide thread id leaves no space
+  after the colon — and reading the field by whitespace saw only the spaced
+  spelling. 472 of 4,000 records from a real Galaxy S21 FE vanished from the
+  timeline, the counts, the facets, the templates and every export, filed as
+  *continuations* of the record above them, which is an assertion that they are
+  its message text. They were not. The two counters a reader would check —
+  unknown lines and rejected candidates — both said zero, and because so many
+  headers failed, an ordinary unmodified `-v long` dump was refused outright as
+  an unrecognised format. A bracketed line that fails validation is now a
+  *rejected candidate*, which is counted, shown in the chip bar and reachable
+  from **Lines not on the timeline**.
+- **Format confidence now measures how certainly a file is a format, not how many
+  fields the format has.** A flawless `brief` capture — which carries no
+  timestamp — scored 4 out of 6 and sat barely above the review threshold, and a
+  healthy `long` file could not exceed about 0.5 because two thirds of its lines
+  are, correctly, not headers.
+- **A followed file publishes its tail when the writer pauses.** The store's
+  timed flush was evaluated only when an entry arrived, so a source that went
+  quiet left its last records in memory: 13 of 120 were still missing 75 seconds
+  after the writer stopped, while the status line said the source had gone quiet
+  and a single further append released them all.
+- **Follow notices an ordinary `logrotate`.** It compared lengths, which can only
+  see a replacement *shorter* than what has already been read — and a rotation's
+  replacement is usually longer, while on Linux the rotated-away file stays open
+  and readable. So reads kept succeeding from a file that no longer had that
+  name, 93 records written to the followed path never appeared, and the session
+  recorded no source change at all. Identity is compared now, on every poll, and
+  a rotation gets its own sentence rather than the truncation one.
+- **Two `vcat index --force` processes writing one session no longer corrupt it.**
+  The loser was correctly refused, but `--force` deleted the existing session
+  *before* taking the write lease, so it deleted part of what the winner was
+  publishing — and the winner exited 0 leaving a session that failed
+  verification. The lease is taken first now, and a published session is read
+  back before the command claims success.
+- **`SIGTERM` behaves as `SIGINT` does, as the reference has always said.** A
+  `systemd` stop, a container shutdown, a logout or a bare `kill` left a session
+  stuck in `Importing` with one recoverable entry where Ctrl+C left a clean one
+  with 899,900.
+- **The data directory is created rather than reported unavailable.** A fresh
+  account with no `~/.local/share`, or an `XDG_DATA_HOME` set in a shell profile
+  but never created, produced `Session lease storage is unavailable.` on the
+  command line and, worse, *"Part of the session is missing. It may have been
+  moved or deleted while it was open."* in the shell — which sends the reader
+  looking for a deleted capture when the fix is `mkdir -p`. A relative
+  `XDG_DATA_HOME` is still ignored, as the specification requires, but no longer
+  silently.
+- **A session is owner-only wherever it is written.** Honouring the account's
+  `umask` is correct POSIX behaviour and it meant a session saved to `/tmp` under
+  Ubuntu's default `umask 002` was readable — including a portable session's
+  embedded `raw.log`, which is the log content verbatim — by every other account
+  on the machine.
+- **A portable archive extracts only what a session is made of.** A 1.1 MB
+  archive declaring a 1 GiB `bomb.bin` wrote all of it into the product's own
+  data directory; so did a 200-directory-deep path and a 240-character file
+  name. None of them is part of a session.
+- **A time zone the system cannot resolve is reported, not guessed.** On a
+  machine without `tzdata` — a container, a minimal image, a CI runner —
+  `TZ=Europe/Prague` was silently answered with UTC, which moves every instant in
+  a file that carries no offset of its own, in a session that looks entirely
+  healthy.
+- **Text output is byte-identical on every platform.** Every text export and
+  every JSON result used the host's newline, so the same session exported on
+  Linux and Windows differed by 5,001 carriage returns and nothing else: two
+  machines could not diff one session's export, commit it, or compare checksums.
+  The default is now LF everywhere, with `--newline crlf` on the command line and
+  a **Line endings** choice in the export review and the settings dialog.
+- **`vcat` accepts the POSIX `--` separator**, so a file whose name begins with
+  `-` has a safe spelling; and an argument beyond the ones a command reads is
+  refused by name instead of ignored.
+- **`vcat verify` distinguishes "verified" from "could not be verified".** A
+  standard session whose source file has been deleted verified clean with exit 0
+  — reasonable on its own, indistinguishable to a script from a session whose
+  evidence was checked. `--require-raw` asks the stronger question. Repeated
+  findings are collapsed too: one corrupted file produced about 380 identical
+  lines in the report.
+- **A path that is not valid UTF-8 is explained, not reported missing.** Such
+  names are legal on Linux and cannot survive .NET's argument decoding; saying
+  "Log source was not found" sent the reader looking for a file that is sitting
+  there and readable by every other tool.
+- **A desktop with no display says what is wrong.** No `DISPLAY`, a `DISPLAY`
+  nothing is listening on, or an absent `libX11` printed a bare .NET stack trace
+  **twice** and aborted with a core dump. It now names the missing packages, how
+  to forward a display over SSH, and that `vcat` needs none.
+- **The desktop has an update route.** *Check for updates…* was gated on the host
+  being able to say where it was installed from, which no desktop head answered,
+  so the command existed nowhere outside Android while `SUPPORT.md` described it
+  to desktop readers.
+- **The file-operation card stops claiming to copy while you decide.** It read
+  *"Copying file…"*, with an animating bar, for the whole life of the import
+  review — over four minutes on a 90 KiB file — with no descriptor open on the
+  source and nothing on disk.
+- **On the desktop, *Open log* and *Open log with options…* are now two different
+  things.** Both forced the review, so the second promised nothing the first did
+  not already do. Plain *Open log* imports a confidently detected file directly.
+- **Cancel on a file chooser releases the shell.** The chooser was awaited
+  without the operation's token, so Cancel could not dismiss it: the shell sat on
+  *"Cancelling…"* indefinitely and every file command stayed disabled until the
+  reader dismissed the chooser themselves. A chooser that never appears at all —
+  which happens when the desktop's portal service has crashed — is now reported
+  rather than looking like a command that did nothing.
+- **Escape closes a dialog**, on every dialog, and a dialog's confirming button
+  is drawn as the primary action: a live, clickable **Import** was lighter than
+  the **Cancel** beside it and read as disabled.
+- **A modal dialog is modal to a screen reader.** All 434 nodes of the workspace
+  behind the scrim stayed reachable, so an assistive-technology user could drive
+  controls the pointer could not reach.
+- **The product introduces itself as VisualCat** on the accessibility bus rather
+  than as *"Avalonia Application"*, and the search field and both splitters are
+  named for what they do rather than for what they are.
+- **Phone controls and phone words are out of the desktop settings dialog**, and
+  *Normalized CSV encoding* is *CSV encoding*.
+- **Lines not on the timeline** says how many of the counted lines are on screen
+  and how far the scan has read, and *Load 500 more* keeps scanning until it has
+  added a page of rows rather than one slice of file — it used to add 26, then 0.
+- **The export review states its range in the zone the workspace is showing.** It
+  published UTC beside a plot labelled `Europe/Prague`, two hours apart, both
+  correct and neither obviously the same instants.
+- **Windows and dialogs repaint fully after a resize on XWayland**, where the
+  toolkit presents a stale damage region: 4 of 5 openings of the settings dialog
+  came up with 15–31% of the window never painted, and one hid the export
+  review's own *Row order* and *Encoding* controls entirely.
+- **Lease markers and runtime diagnostic sockets are swept.** Neither was ever
+  removed; 127 markers accumulated in a few hours of testing, and 14 of 15 `/tmp`
+  sockets belonged to processes that had exited. Both are now accounted for in
+  `PRIVACY.md`.
+
+#### Other
+
 - **A large import now finishes showing the whole log.** A log committed in more than one
   segment could finish with the plot, the severity totals, the time axis, the entry list, the
   templates and every counter derived from them drawing a *prefix* of the session — 100,001 of

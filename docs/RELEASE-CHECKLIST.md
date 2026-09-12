@@ -58,6 +58,22 @@ be published from an unmerged commit or one that would fail a pull request:
 - [ ] Android own-app and Wireless-debugging full-device modes are tested on physical hardware, including first pairing, saved reconnect, Stop/disconnect, background/resume, rotation, and revoked/stale pairing recovery.
 - [ ] Cancel is exercised during Wireless-ADB discovery/connection and during the low-level pairing handshake. Discovery/connection must unwind promptly; pairing may remain visibly `Cancelling…` until LibADB's local socket handshake returns, but Live must not start afterward and no authenticated ADB connection may remain.
 - [ ] Android Live warning/setup UX matches the Release transport: the scope chooser contains no normal-Play `READ_LOGS` promise/jargon, choosing a scope does not trigger a redundant second disclosure before capture, saved pairing hides the new-code form until explicit recovery, and Back/scrim dismissal during pairing follows the same visible `Cancelling…` lifecycle as the Cancel button.
+- [ ] The exact Linux candidate satisfies the applicable rows of the
+      [Linux live test plan](LINUX-LIVE-TEST-PLAN.md); the release record names its
+      run ID, coverage gaps, findings, evidence hash index, and cleanup result.
+- [ ] Every screenshot filed as Linux release evidence is checked for unpainted
+      regions before it is filed, and any capture with a non-zero unpainted
+      fraction is retaken rather than kept. An XWayland client can present a
+      window with a band that was never drawn, so a screenshot is not by itself
+      proof of what the product rendered
+      (`docs/LINUX-LIVE-TEST-REPORT.md` F-10):
+
+      ```shell
+      W=$(xdotool search --class VisualCat | tail -1)
+      import -window "$W" -silent /tmp/w.png
+      convert /tmp/w.png -colorspace gray -threshold 2% -negate -format '%[fx:mean*100]' info:
+      ```
+
 - [ ] Privacy, support matrix, known limits, migration policy, and third-party notices are current.
 - [ ] Components the SBOM reports without license metadata have been resolved by
       hand and explained in `docs/THIRD-PARTY-NOTICES.md`.

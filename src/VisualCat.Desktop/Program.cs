@@ -2,6 +2,7 @@ using Avalonia;
 using VisualCat.App;
 using VisualCat.App.Platform;
 using VisualCat.Domain;
+using VisualCat.Infrastructure.Diagnostics;
 
 namespace VisualCat.Desktop;
 
@@ -23,9 +24,16 @@ internal static class Program
         // described it to desktop readers (finding F-03).
         PlatformSourceRegistry.GetInstallOrigin ??= static () => AppInstallOrigin.PortableArchive;
 
+        // The runtime's diagnostics IPC socket is the only thing this product leaves outside
+        // its declared data root, and nothing ever removed it: fifteen accumulated in one
+        // session of ordinary use, fourteen of them from processes long gone (finding F-17).
+        RuntimeResidue.SweepExitedDiagnosticSockets();
+        AppDomain.CurrentDomain.ProcessExit += static (_, _) => RuntimeResidue.RemoveOwnDiagnosticSocket();
+
         try
         {
             BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+            RuntimeResidue.RemoveOwnDiagnosticSocket();
         }
         catch (Exception exception) when (IsGraphicalStartupFailure(exception))
         {

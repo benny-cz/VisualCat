@@ -29,6 +29,15 @@ repository's release workflow, verify the build provenance attestation with the
 gh attestation verify VisualCat-Desktop-linux-x64-*.tar.gz --repo benny-cz/VisualCat
 ```
 
+That prints nothing when it succeeds and stdout is not a terminal, which is
+indistinguishable from doing nothing. Ask it for the answer instead, and check
+the digest against the version the application itself reports:
+
+```shell
+gh attestation verify VisualCat-Desktop-linux-x64-*.tar.gz --repo benny-cz/VisualCat   --format json | jq '.[0].verificationResult.signature.certificate
+    | {sourceRepositoryURI, buildSignerURI, sourceRepositoryDigest}'
+```
+
 ## What each archive contains
 
 Alongside the application, every desktop and CLI archive contains:

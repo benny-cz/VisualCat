@@ -3457,8 +3457,8 @@ an interrupted run resumes from the last line here without re-deriving anything.
 | Repo | `E:\VisualCat` on the Windows host |
 | Guest | `benny@172.24.178.166` (VMware, key auth; `. ~/vcat-run/env.sh`) |
 | Phone | Samsung SM-G990B `RFCRC0A9GND`, PIN `1111`, **lock the screen when finished** |
-| Last completed | Batch D (desktop shell, 14 findings) implemented; 1,071 tests green |
-| Next step | Batch E — documentation and runtime residue, then the live run on the guest |
+| Last completed | Batch E (F-17, F-23, docs for F-03/F-10/F-24/F-27/F-30) done; 1,071 tests green; CHANGELOG and CLI.md updated |
+| Next step | Package linux-x64 and run the live verification on the guest |
 
 ### 20.2 Plan — batches, and why in this order
 
@@ -3495,13 +3495,13 @@ documentation. Each batch is built and unit-tested on the Windows host, then pac
 | F-14 | Polish | yes | yes | pending |
 | F-15 | Minor | yes | yes | pending |
 | F-16 | Polish | yes | yes | pending |
-| F-17 | Polish | — | — | — |
+| F-17 | Polish | yes | n/a — documentation | pending |
 | F-18 | Major | yes | yes | pending |
 | F-19 | Major | yes | yes | pending |
 | F-20 | Major | yes | yes | pending |
 | F-21 | Minor | yes | yes | pending |
 | F-22 | Minor | yes | yes | pending |
-| F-23 | Polish | — | — | — |
+| F-23 | Polish | yes | n/a — documentation | pending |
 | F-24 | Polish | yes | yes | pending |
 | F-25 | Polish | yes | yes | pending |
 | F-26 | Minor | yes | yes | pending |

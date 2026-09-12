@@ -14,6 +14,7 @@ using VisualCat.Domain.Queries;
 using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
 using VisualCat.Infrastructure.Adb;
+using VisualCat.Infrastructure.Diagnostics;
 using VisualCat.Infrastructure.Files;
 
 return await VisualCatCli.RunAsync(args).ConfigureAwait(false);
@@ -79,6 +80,12 @@ internal static class VisualCatCli
 
     public static async Task<int> RunAsync(string[] args)
     {
+        // The runtime leaves one diagnostics IPC socket per process in the temporary directory
+        // and never unlinks it (finding F-17). A short-lived command run in a loop is the
+        // fastest way to accumulate them.
+        RuntimeResidue.SweepExitedDiagnosticSockets();
+        AppDomain.CurrentDomain.ProcessExit += static (_, _) => RuntimeResidue.RemoveOwnDiagnosticSocket();
+
         // The trailing newline of every Console.WriteLine, for the same reason as the JSON
         // indentation above: `vcat stats > stats.json` must produce the same bytes on every
         // platform. Modern Windows consoles render bare LF correctly (F-29).

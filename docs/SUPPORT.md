@@ -130,7 +130,14 @@ local-first log viewer should do without being asked. **Check for updates…** s
 so plainly and offers to open
 [the releases page](https://github.com/benny-cz/VisualCat/releases) in your
 browser, where you can download the newer APK and install it the same way you
-installed this one. Desktop releases work the same way: download the new archive.
+installed this one.
+
+**On the desktop** the command is in the same place — **More ▾ → Check for
+updates…** — and it does the same thing: it says that a desktop build cannot
+update itself and offers to open the releases page, where you download the new
+archive and unpack it over the old one. It contacts nothing until you press the
+button, and then only your browser. If no browser handler is configured, the
+product prints the address rather than failing quietly.
 
 See `PRIVACY.md` for exactly what the Play check does and does not send.
 

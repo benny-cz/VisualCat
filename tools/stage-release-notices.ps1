@@ -148,6 +148,15 @@ to the source commit and workflow that produced them:
 
   gh attestation verify <archive> --repo benny-cz/VisualCat
 
+That command prints nothing at all when it succeeds and stdout is not a terminal,
+which is indistinguishable from doing nothing, so ask it for the answer instead:
+
+  gh attestation verify <archive> --repo benny-cz/VisualCat --format json | jq     '.[0].verificationResult.signature.certificate
+     | {sourceRepositoryURI, buildSignerURI, sourceRepositoryDigest}'
+
+sourceRepositoryDigest is the commit this build came from; it matches the version
+VisualCat shows in Session info and that `vcat --version` prints.
+
 $platformNotes
 
 Documentation and support

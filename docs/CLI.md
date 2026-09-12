@@ -3,9 +3,10 @@
 `vcat` indexes Android logcat text into verified local VisualCat sessions, queries
 those sessions, exports results, and captures live logs through ADB. Commands use
 exit code `0` on success, `2` for invalid command input, `3` when verification
-finds corruption or a bounded search times out, `130` when cancelled, and `1` for
-other failures. Diagnostics
-go to standard error; structured results go to standard output.
+finds corruption or a bounded search times out, `4` when `verify --require-raw`
+could not check the raw evidence at all, `130` when cancelled, and `1` for other
+failures. Diagnostics go to standard error; structured results go to standard
+output.
 
 NuGet.org publication is not currently configured. Download
 `VisualCat.Cli.2.0.13.nupkg` from the
@@ -36,6 +37,18 @@ Run `vcat <command> --help` for that command's complete accepted option list.
 - Logcat formats are `threadtime`, `time`, `brief`, `long`, and `epoch`.
 - JSON property names are camel-cased. Enums are names rather than integers and
   instants are ISO-8601 UTC strings.
+- A bare `--` ends option parsing, as it does in every POSIX tool: everything
+  after it is a file name, so a log whose name begins with `-` has a safe
+  spelling. Arguments beyond the ones a command reads are refused by name rather
+  than ignored.
+- Text output uses a single line feed on every platform, chosen rather than
+  inherited from the host, so the same session and options produce byte-identical
+  output on Linux, macOS and Windows. `export --newline crlf` asks for the other
+  one.
+- The zone that interprets timestamps comes from `--timezone`, then the source,
+  then the system. A zone the system cannot resolve is reported rather than
+  quietly answered with UTC — on a machine with no `tzdata` that would move every
+  instant in a file that carries no offset of its own.
 - Set `VISUALCAT_DEBUG=1` to include exception details in error output.
 
 ## `--version`
@@ -177,11 +190,17 @@ vcat templates crash.vcat --levels E,F --top 20
 ```text
 vcat export <session.vcat> <output> --type <type>
             [--from <ISO|us>] [--to <ISO|us>]
-            [--order chronological|source] [filters]
+            [--order chronological|source] [--newline lf|crlf] [filters]
 ```
 
 Exports the selected range and filters, then prints the absolute destination
 path. `--type` defaults to `raw`.
+
+`--newline` applies to every text type — `csv`, `templates-md`, `templates-csv`,
+`stats-md`, `stats-csv` — and defaults to `lf` on every platform, so the same
+session exported with the same options on Linux and on Windows is byte-identical
+and can be diffed, committed, or checksum-compared without normalising anything
+first. `raw` and the portable types carry source bytes and are unaffected.
 
 | Type | Output |
 |---|---|
@@ -209,7 +228,7 @@ exports carry the source bytes and are unaffected.
 ## `verify`
 
 ```text
-vcat verify <session.vcat> [--skip-raw]
+vcat verify <session.vcat> [--skip-raw] [--require-raw]
 ```
 
 Validates the manifest, columns, bitmaps, checksums, offsets, and raw source
@@ -217,8 +236,22 @@ coverage. `--skip-raw` omits verification of external raw data. The JSON report
 contains `isValid` plus validation details; exit code `3` means the report is
 invalid.
 
+**`isValid` and `rawVerified` are two different answers.** `isValid` means
+nothing was detected as wrong. `rawVerified` means the raw evidence was actually
+checked against its recorded hash. A standard session deliberately does not own
+its source, so one whose source file has been deleted is `isValid: true` with a
+`source.unavailable` note and exit `0` — verified as far as it can be, which is
+not the same as verified. `--require-raw` asks the stronger question and exits
+`4` when the answer is no; it is the same axis as `--skip-raw`, seen from the
+other end.
+
+Repeated findings are collapsed: an issue that occurs many times appears once
+with `occurrences` and a bounded `sample`, and a thoroughly corrupted session
+reports at most 100 distinct issues with `truncated: true`.
+
 ```shell
 vcat verify crash.vcat
+vcat verify crash.vcat --require-raw    # exit 4 if the evidence could not be checked
 ```
 
 ## `generate-test-log`
@@ -295,7 +328,10 @@ version, and device model/fingerprint; `vcat info <session.vcat>` prints that
 - Progress is written only when standard error is connected to a terminal, so
   redirected structured output remains clean.
 - Send Ctrl+C to request cancellation; completed session generations remain
-  recoverable when an import or capture is interrupted.
+  recoverable when an import or capture is interrupted. `SIGTERM` and `SIGHUP`
+  take the same path — a `systemd` stop, a container shutdown, a session logout
+  and a bare `kill` all leave a session that verifies — and the process waits up
+  to 20 seconds for the in-flight generation to publish before exiting.
 - Treat every `.vcat` directory as sensitive: a live or portable session retains
   the device's byte-faithful `raw.log`, which can contain network names, account or
   device identifiers, notification text, tokens, paths, and proprietary data.

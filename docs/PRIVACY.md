@@ -105,3 +105,39 @@ messages are redacted. Diagnostic bundles omit raw logs and redact paths,
 hashes, file names, tags, templates, process names, searches, and device serials;
 the UI still requires an explicit sensitive-metadata acknowledgement before
 creating one.
+
+## What VisualCat leaves on disk, and where
+
+Everything the product owns lives under one directory, and a user auditing it
+should find nothing outside that directory unaccounted for. This is that account.
+
+**The data root.** `$XDG_DATA_HOME/VisualCat` on Linux (in practice
+`~/.local/share/VisualCat`), `%LOCALAPPDATA%\VisualCat` on Windows,
+`~/Library/Application Support/VisualCat` on macOS. It is created on first use,
+with parent directories, and holds `Sessions/`, `Diagnostics/`,
+`SessionAccess-v1/` and `settings.json`. Deleting it removes every trace of
+VisualCat's own state.
+
+**Session file modes.** A session is, by construction, log content that is often
+not the operator's own, so VisualCat does not leave it to the account's `umask`:
+session directories are created `700` and a portable session's embedded
+`raw.log` is `600`, wherever the session is written. On a shared machine that is
+what stops another local account reading a capture saved to `/tmp` or to a group
+-writable project directory. On Windows the directory inherits its parent's ACL,
+which is the equivalent mechanism.
+
+**Lease markers.** `SessionAccess-v1/` holds three zero-byte files per session
+that cooperating processes lock to serialize access. They carry no content and
+no path — the file name is a hash. They are swept on start-up: a marker no
+process is holding is removed, and one that is held is left alone.
+
+**Runtime sockets.** On Linux the .NET runtime creates one diagnostics IPC
+socket per process, `/tmp/dotnet-diagnostic-<pid>-<key>-socket`, and does not
+remove it. VisualCat unlinks its own on the way out, and on start-up removes any
+whose process no longer exists. It is a zero-byte socket with no content; this is
+tidiness, not a disclosure.
+
+**Nothing else.** No caches outside the data root, no registry keys, no files in
+the home directory itself, and no network state — VisualCat opens no socket of
+its own on any platform, and the only outbound traffic it can produce is an
+update check on Google Play (above) or a browser you asked it to open.
