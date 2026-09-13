@@ -415,6 +415,22 @@ public sealed class SessionActivityTests
         Assert.Null(WorkspaceViewModel.ImportRemedy(new IOException("disk")));
     }
 
+    /// <summary>
+    /// Carriage-return framing has its own remedy, because the generic one — choose a format
+    /// override — cannot help: the framing is wrong whichever format is chosen (report §24).
+    /// </summary>
+    [Fact]
+    public void CarriageReturnFramingIsToldHowToFixTheFileRatherThanTheFormat()
+    {
+        var remedy = WorkspaceViewModel.ImportRemedy(new ImportSourceException(
+            ImportFailureReason.CarriageReturnFramed,
+            "carriage returns"));
+
+        Assert.NotNull(remedy);
+        Assert.Contains("line endings", remedy, StringComparison.Ordinal);
+        Assert.DoesNotContain("format override", remedy, StringComparison.Ordinal);
+    }
+
     private static string BuildLog(int lines, TimeSpan span)
     {
         var builder = new StringBuilder(lines * 96);

@@ -57,6 +57,7 @@ public sealed class SessionCoordinator
 
         var samples = await source.ProbeAsync(200, cancellationToken).ConfigureAwait(false);
         ImportSourceException.ThrowIfUnsupportedEncoding(samples);
+        ImportSourceException.ThrowIfCarriageReturnFramed(samples);
 
         var detection = settings.FormatOverride is { } format
             ? new FormatDetectionResult(format, [], 1, [new FormatCandidate(format, samples.Count, samples.Count * 6, 1)], samples.Count)

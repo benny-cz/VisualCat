@@ -1,6 +1,7 @@
 using System.Text;
 using VisualCat.Application.Coordination;
 using VisualCat.Application.UseCases;
+using VisualCat.Core.Parsing;
 using VisualCat.Core.Store;
 using VisualCat.Domain;
 using VisualCat.Domain.Filters;
@@ -480,5 +481,33 @@ public sealed class LinuxLiveTestRemediationTests
         {
             Assert.Empty(hidden);
         }
+    }
+
+    // ------------------------------------------------- lone-CR framing (F-36)
+
+    [Fact]
+    public void OnlyAProbedPrefixThatIsGenuinelyCarriageReturnFramedIsRefused()
+    {
+        // A false positive here refuses a good log, so the rule is deliberately narrow: exactly
+        // one sample — which means the probed prefix held no line feed at all — and at least
+        // three of its carriage-return-separated parts reading as logcat lines.
+        static ReadOnlyMemory<byte> Bytes(string value) => Encoding.UTF8.GetBytes(value);
+        const string Record = "05-15 14:13:37.000  1234  5678 I Tag : message";
+
+        Assert.True(CarriageReturnFraming.IsCarriageReturnFramed(
+            [Bytes($"{Record}\r{Record}\r{Record}\r{Record}")]));
+
+        // Two records is a stray byte, not a framing convention.
+        Assert.False(CarriageReturnFraming.IsCarriageReturnFramed([Bytes($"{Record}\r{Record}")]));
+
+        // An LF-framed source: more than one sample, so a record quoted inside a message cannot
+        // trip it however many carriage returns it carries.
+        Assert.False(CarriageReturnFraming.IsCarriageReturnFramed(
+            [Bytes($"{Record}\r{Record}\r{Record}\r{Record}"), Bytes(Record), Bytes(Record)]));
+
+        // One enormous line of prose, and a CRLF line, are both ordinary.
+        Assert.False(CarriageReturnFraming.IsCarriageReturnFramed([Bytes(new string('x', 100_000))]));
+        Assert.False(CarriageReturnFraming.IsCarriageReturnFramed([Bytes($"{Record}\r")]));
+        Assert.False(CarriageReturnFraming.IsCarriageReturnFramed([]));
     }
 }

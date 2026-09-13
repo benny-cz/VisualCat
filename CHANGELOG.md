@@ -17,11 +17,11 @@ screenshot says which build it came from.
 
 #### From the Linux live test
 
-An eight-pass live run of the shipped `linux-x64` release against a real Ubuntu
-desktop and a physical phone found 35 defects; these close every one with a
+A nine-pass live run of the shipped `linux-x64` release against a real Ubuntu
+desktop and a physical phone found 36 defects; these close every one with a
 product-side fix. Two are upstream in Avalonia's AT-SPI backend and stay open.
 [`docs/LINUX-LIVE-TEST-REPORT.md`](docs/LINUX-LIVE-TEST-REPORT.md) records the
-run, §20 records this remediation, and §21–§23 the passes that followed it.
+run, §20 records this remediation, and §21–§24 the passes that followed it.
 
 - **`logcat -v long` no longer loses a record whose thread id needs five digits.**
   Android prints that field as `%5d:%5d`, so a wide thread id leaves no space
@@ -169,6 +169,14 @@ run, §20 records this remediation, and §21–§23 the passes that followed it.
   dialog host installs that handler, and this one dialog is shown directly rather than through it,
   so it was the single place where a keyboard-only reader had no way out but the window manager's
   close button. An open device list still takes Escape first, to close itself.
+- **A log whose records are separated by carriage returns is refused by name, not read as one
+  record.** Every reader here frames on line feeds, so such a file is a single enormous line — and
+  when the head of that line parses, the import *succeeded*: one entry, confidence 1.000, zero
+  unknown lines, and every other record buried inside that entry's message. A 40-record file became
+  one record and reported nothing missing. It now says what is wrong with the file and how to fix
+  it. Framing on carriage returns instead would have been the larger change and the wrong one: a
+  bare carriage return inside a message is legitimate, so a reader that split on it would invent
+  records in ordinary logs.
 - **A screen reader no longer hears the whole window read out at once.** Orca announces a window
   that has no focused control by reading everything in it, and the main window had none — so the
   notice, the strapline, every count, the template list and the entry list arrived as a single

@@ -1471,6 +1471,48 @@ public sealed class PipelineIntegrationTests
     }
 
     [Fact]
+    public async Task CarriageReturnFramedInputIsRefusedRatherThanReadAsOneRecord()
+    {
+        // Every reader here frames on LF, so a CR-only file is one enormous line. The head of
+        // that line parses, so the import used to *succeed*: one entry, confidence 1.000, zero
+        // unknown lines, and the other thirty-nine records inside that entry's message. Silent
+        // loss with a clean bill of health is the one outcome this product must never produce
+        // (report §24).
+        var records = Enumerable.Range(1, 40)
+            .Select(static index => $"05-15 14:13:{index % 60:00}.000  1234  5678 I Tag{index} : message {index}");
+        var content = Encoding.UTF8.GetBytes(string.Join('\r', records) + '\r');
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-cr-{Guid.NewGuid():N}.vcat");
+        await using var source = new MemoryLogSource(content, [content.Length]);
+
+        var failure = await Assert.ThrowsAsync<ImportSourceException>(() =>
+            SessionCoordinator.ImportAsync(source, root, Settings(1)));
+        Assert.Equal(ImportFailureReason.CarriageReturnFramed, failure.Reason);
+        Assert.Contains("carriage returns", failure.Message, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(root));
+    }
+
+    [Fact]
+    public async Task TheSameRecordsSeparatedByLineFeedsStillImport()
+    {
+        // The control the refusal is worth nothing without: identical records, LF-framed.
+        var records = Enumerable.Range(1, 40)
+            .Select(static index => $"05-15 14:13:{index % 60:00}.000  1234  5678 I Tag{index} : message {index}");
+        var content = Encoding.UTF8.GetBytes(string.Join('\n', records) + '\n');
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-lf-{Guid.NewGuid():N}.vcat");
+        await using var source = new MemoryLogSource(content, [content.Length]);
+        try
+        {
+            var result = await SessionCoordinator.ImportAsync(source, root, Settings(1));
+            Assert.Equal(40, result.Snapshot.Descriptor.Counters.ParsedEntries);
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    [Fact]
     public async Task HighCardinalityTemplatesKeepManifestAndSidecarGrowthLinear()
     {
         const int templateCount = 5_000;

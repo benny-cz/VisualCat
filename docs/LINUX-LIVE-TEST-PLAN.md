@@ -764,7 +764,8 @@ filesystem permits, and those are the rows a Windows run cannot cover at all.
 |---|---|
 | `empty.txt` | Zero bytes; one clear empty-source outcome |
 | `notalog.bin` | Binary input; refused or fully accounted, never invented entries |
-| `crlf.txt`, `lf.txt`, `mixed-eol.txt`, `cr-only.txt` | Exact byte offsets across every newline form, including lone CR |
+| `crlf.txt`, `lf.txt`, `mixed-eol.txt` | Exact byte offsets across LF, CRLF and mixed endings |
+| `cr-only.txt` | Refused, naming carriage-return framing as the cause — never imported as one record |
 | `bom.txt` | UTF-8 BOM handled without corrupting the first record |
 | `nonutf8.bin` | Invalid sequences retained and accounted, no silent replacement claim |
 | `truncated.txt` | A final incomplete line and an incomplete long-format record |
@@ -1656,8 +1657,9 @@ the primary format.
 Open every §3.2 finite file, including the hostile-name and non-UTF-8 rows. No
 crash or hang; invalid bytes, continuations, untimed, unknown, and rejected records
 remain counted and reachable; 2 MiB lines are bounded, inspectable, wrappable, and
-copyable; source offsets remain exact across LF, CRLF, lone CR, BOM, and
-no-final-newline; control, NUL, and bidi content cannot alter surrounding UI. A
+copyable; source offsets remain exact across LF, CRLF, BOM, and
+no-final-newline, and a lone-CR source is refused by name rather than read as a
+single record; control, NUL, and bidi content cannot alter surrounding UI. A
 one-line source and an empty file each produce one coherent result. A non-UTF-8 path is
 displayed, reopened, exported, and recorded in diagnostics without invention or
 replacement.

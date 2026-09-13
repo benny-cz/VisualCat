@@ -1138,6 +1138,12 @@ public sealed partial class WorkspaceViewModel : INotifyPropertyChanged, IAsyncD
             return "Convert or save the log as UTF-8, then open that UTF-8 copy.";
         }
 
+        if (failure.Reason == ImportFailureReason.CarriageReturnFramed)
+        {
+            return "Save it again with Unix (LF) line endings, which most text editors offer, " +
+                   "then open that copy.";
+        }
+
         // No Markdown: this is read by a plain TextBlock, so backticks around logcat and .vcat
         // rendered as literal backticks in the failure card (finding 20).
         return OperatingSystem.IsAndroid()

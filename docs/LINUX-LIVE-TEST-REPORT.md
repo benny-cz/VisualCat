@@ -3257,7 +3257,7 @@ second column.
 | ~~Quota, read-only remount, low disk (L3, X-15)~~ | **Closed in §21.5.** Full filesystem, read-only remount, and a device-mapper error target under a running import | — |
 | **Soak (X-03, X-05–X-09, X-20–X-23, X-28)** | Needs a dedicated host and 30–50 h | Dedicated hardware |
 | **Android leg of I-08** | Forward direction passes on the physical phone (§21.11) | A file-saving share target on the device for the reverse direction |
-| **Lone-CR offsets** | The input is refused (§2.17 item 3) | n/a — the plan expectation needs softening first |
+| ~~Lone-CR offsets~~ | **Closed in §24.** The refusal was an accident of the corpus: a lone-CR log that starts with a record imported as **one** entry at confidence 1.000 with nothing reported missing → [F-36](#f-36) | — |
 
 ## 16. Fourth-pass cleanup and host hand-back
 
@@ -5038,3 +5038,145 @@ does autologin again.
 | Unit tests | **1,078**, 0 failures |
 | Defects found *by* the seventh and eighth passes | **2** — [F-34](#f-34) and [F-35](#f-35) |
 | VisualCat-attributable crashes, hangs or core dumps | **0**, across eight passes |
+
+## 24. Ninth pass — the row that was written off, and should not have been
+
+[§15](#15-what-remains-untested-after-four-passes)'s last untried row was **lone-CR offsets**,
+carried since the first pass with the reason *"the input is refused (§2.17 item 3)"* and the
+remedy *"n/a — the plan expectation needs softening first"*. §2.17 had judged the refusal honest
+and moved the work to the plan. It was worth checking that judgement before acting on it, and the
+judgement was wrong: the refusal was an accident of which corpus was used.
+
+### 24.1 What §2.17 item 3 actually measured
+
+`cr-only.txt` in this report's corpus is `tr '\n' '\r' < lf.txt`, and `lf.txt` begins with
+logcat's own banner:
+
+```
+--------- beginning of main^M05-15 14:13:37.000000 10503  5136 D Camera  : Rendering surface …
+```
+
+Framed on LF — which is what every reader in this product does — that whole 90 KB file is **one
+line**, and that line starts with `--------- beginning of main`, which is a buffer divider rather
+than a record. Detection therefore finds nothing and the import is refused. That is the behaviour
+§2.17 recorded, and it is real, but it is a property of the **first eight characters of the
+corpus**, not of the product.
+
+Take the same file without the banner — a trimmed log, `logcat -d` piped somewhere, any capture
+that starts with a record — and the one line starts with a valid ThreadTime header. Then it parses.
+
+### 24.2 What happens then
+
+Measured against the **shipped 2.0.13**, on a 40-record lone-CR file that begins with a record:
+
+```json
+{ "format": "ThreadTime", "confidence": 1, "entries": 1, "unknown": 0 }
+```
+
+and the counters agree with themselves: `sourceLines 1`, `parsedEntries 1`, `unknownLines 0`,
+`rejectedCandidates 0`, `continuations 0`. The other thirty-nine records are inside the first
+entry's message, and the raw range of that one entry is the whole file:
+
+```
+"raw": { "offset": 0, "length": 2422 },
+"message": "message number 1\r05-15 14:13:02.000  1234  5678 I Tag2   : message number 2\r05-15 …"
+```
+
+---
+
+#### F-36 · Major · A carriage-return-framed log imports as a single record, at full confidence, with nothing reported missing
+
+**Severity** Major, and for the same reason [F-01](#f-01) was: records disappear and every number
+a reader would check to notice says the import was perfect. 97.5 % of this file is gone from the
+timeline, the counts, the facets, the templates and every export; the confidence score is
+**1.000**; unknown lines and rejected candidates are both **zero**. Nothing in the product
+contradicts it.
+
+**It is not a regression.** The shipped release does it, so it predates the whole remediation —
+§20.5's confidence rework changed nothing here. It survived nine passes because the one corpus
+aimed at it happens to start with a buffer divider.
+
+**Where** the framing, which is LF across all six readers — `FileLogSource`, `LineBatching`,
+`NewlineRecordFramer`, `AdbLogSource`, `MemoryLogSource`, `TemplateTable`.
+
+**Fixed by refusing, not by framing on CR.** Framing on CR would be the larger change and the
+wrong one: a bare carriage return inside a message is legitimate and does occur, so a reader that
+split on it would invent records in ordinary logs — the mirror image of this defect. The import
+now refuses a source whose probed prefix is genuinely CR-framed, and says which:
+
+```
+error: This log separates its records with carriage returns rather than line feeds, so the
+whole file is one line and only the first record would be read.
+```
+
+with the desktop's failure card adding the remedy — *"Save it again with Unix (LF) line endings,
+which most text editors offer, then open that copy."* — beside the same sentence, under **This log
+could not be read**, with *Open another log* and *Close this tab*. The reason travels as its own
+`ImportFailureReason`, because the generic advice for an undetectable format — choose a format
+override — cannot help here: the framing is wrong whichever format is chosen.
+
+**The rule is deliberately narrow**, because a false positive refuses a good log. It fires only
+when the probed prefix is **exactly one sample** — which means it contained no line feed at all —
+**and** at least three of that sample's carriage-return-separated parts read as logcat lines. A
+record quoted inside a message cannot trip it, because an LF-framed file yields many samples; a
+2 MiB line of prose cannot, because prose does not parse as logcat.
+
+**Measured, before and after, on the guest:**
+
+| Input | shipped 2.0.13 | fixed |
+|---|---|---|
+| `cr-only.txt` (the report's corpus, opens with the banner) | `No supported logcat format could be detected in this file.` | **names carriage-return framing** |
+| the same records without the banner | **`entries: 1`, `confidence: 1`, `unknown: 0`** | **refused**, exit 1, no session directory created |
+| the same records, LF-framed | 40 entries | **40 entries** |
+| `crlf.txt` · `lf.txt` · `mixed-eol.txt` · `bom.txt` | 1,000 entries each | **1,000 entries each** |
+
+The last row is the one that matters for a guard like this: the three newline corpora the plan
+names, and the BOM corpus, are untouched.
+
+### 24.3 The plan change §2.17 asked for — now a different one
+
+§2.17 item 3 proposed softening the plan because the refusal was honest. The refusal was *not*
+reliably honest, so the softening is narrower than proposed. `docs/LINUX-LIVE-TEST-PLAN.md` now
+reads:
+
+| | |
+|---|---|
+| §3.2 corpus table | `cr-only.txt` moves to its own row: **"Refused, naming carriage-return framing as the cause — never imported as one record"**, and the offsets row covers LF, CRLF and mixed endings |
+| A-08 | *"source offsets remain exact across LF, CRLF, BOM, and no-final-newline, **and a lone-CR source is refused by name rather than read as a single record**"* |
+
+That is now a property the plan can check and the product satisfies, rather than one it cannot.
+
+**The other three items of §2.17 are closed by the product**, checked on the current build while
+this row was open: B-04's review-on-open is [F-05](#f-05)'s fix, `--` before filenames works
+([F-07](#f-07)), and I-14's *"detected as its own format at full confidence"* now holds for
+`brief` — it detects at **1.000** and its 40 records arrive as 40 **untimed** entries, counted as
+such, which is what a format with no timestamp should produce.
+
+### 24.4 Ninth-pass cleanup
+
+| Step | Verified |
+|---|---|
+| corpora, sessions, screenshots, `Xvfb` log, data root | removed; `/tmp` holds only VMware's own entries |
+| processes | `VisualCat` **0** · `Xvfb` **0** |
+| `/var/crash` | **0** · free space 162 GiB |
+| the guest | Wayland session, autologin, unlocked, untouched otherwise |
+| the phone | on the Windows host, locked, not used by this pass |
+
+### 24.5 Final tally
+
+| | |
+|---|---|
+| Findings | **36** — 11 Major, 15 Minor, 10 Polish |
+| Closed and live-verified | **33** |
+| Closed with a stated limit | **1** — [F-13](#f-13) |
+| Not closed | **2** — [F-11](#f-11) and [F-32](#f-32), both upstream in Avalonia's AT-SPI backend |
+| §15 rows still open | **4**, all needing hardware or time: metal and the §4.2 budgets, the soak, multi-monitor, and the reverse direction of I-08 |
+| Unit tests | **1,082**, 0 failures |
+| Defects found by passes 7–9 | **3** — [F-34](#f-34), [F-35](#f-35), [F-36](#f-36) |
+| VisualCat-attributable crashes, hangs or core dumps | **0**, across nine passes |
+
+**What this pass is really about.** Every one of the three defects found since §21 was behind a
+row someone had already written off — A-16 as *"needs hardware"*, the WM matrix as *"low risk, the
+others passed"*, lone CR as *"refused, so n/a"*. None of those judgements was dishonest; each was
+made from the evidence to hand. The cheapest way to find the next defect in this product is to
+re-examine the reason a row was closed without being run.
