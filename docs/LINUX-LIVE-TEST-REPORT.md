@@ -3255,8 +3255,8 @@ second column.
 | ~~A correct ACL denial (P-09)~~ | **Closed in §21.12**, after finding one more wrong diagnosis | — |
 | ~~`umask 077` under the desktop~~ | **Closed in §21.4.** Data root, sessions, lease root and segments all 700, manifest 600 | — |
 | ~~Quota, read-only remount, low disk (L3, X-15)~~ | **Closed in §21.5.** Full filesystem, read-only remount, and a device-mapper error target under a running import | — |
-| **Soak (X-03, X-05–X-09, X-22, X-23, X-28)** | Endurance rows only. **X-20 and X-21 are closed in §25** — they are bounded repetitions, not endurance runs; X-21 passes and X-20 found [F-37](#f-37) | Dedicated hardware and 30–50 h |
-| **Android leg of I-08** | Forward direction passes on the physical phone (§21.11) | A file-saving share target on the device for the reverse direction |
+| **Soak (X-03, X-05, X-07–X-09, X-22, X-23, X-28)** | Endurance rows only. **X-20 and X-21 are closed in §25**; **X-06 is running** as of §26.2, instrumented down to per-generation GC; X-07's power-inhibitor half is closed in §25.3. X-05 cannot run beside X-06 on one VM (§26.4) | Dedicated hardware and 30–50 h |
+| **Android leg of I-08** | Forward direction passes (§21.11). Reverse is blocked precisely (§26.3): the archive lives in the app's private cache, the share sheet has no file-saving target, this host has no Bluetooth, and Send to PC wants a Microsoft account link | A file-manager app on the phone, or Phone Link paired |
 | ~~Lone-CR offsets~~ | **Closed in §24.** The refusal was an accident of the corpus: a lone-CR log that starts with a record imported as **one** entry at confidence 1.000 with nothing reported missing → [F-36](#f-36) | — |
 
 ## 16. Fourth-pass cleanup and host hand-back
@@ -5305,3 +5305,110 @@ report has recorded `pkill -f` biting once before, with `orca`; `pkill -x`, alwa
 | Not closed | **2** — [F-11](#f-11), [F-32](#f-32), both upstream in Avalonia |
 | Unit tests | **1,083**, 0 failures |
 | §15 rows fully closed | all but four, and those four need hardware, hours, or a second physical monitor |
+
+## 26. Eleventh pass — X-06 started, and what I-08's reverse direction actually needs
+
+Two of the four rows §15 still carries were chosen to be attempted: the overnight growing-file
+soak (X-06) and the Android leg of I-08 in reverse. X-06 is **running**, instrumented, and
+§26.2 says how to read it. I-08's reverse direction is now blocked on one precise thing, which
+§26.3 names.
+
+### 26.1 Setting X-06 up, and three traps
+
+**A follow cannot be started without the portal.** The desktop has no `--follow` argument — the
+only route into `GrowingFileLogSource` is the *Follow file* button and its chooser. Under `Xvfb`
+that is unreachable: the portal's dialog is a **Wayland surface belonging to the GNOME session**,
+so it never appears on the `Xvfb` display and `xdotool search` cannot see it. The click is not
+lost — the shell shows *Opening log…* with a live *Cancel*, and the operation waits, correctly,
+for a chooser that is being drawn somewhere else. Two measurements that looked like product
+defects for ten minutes each were this:
+
+| What it looked like | What it was |
+|---|---|
+| *Follow file* does nothing and says nothing | the chooser is open on the locked GNOME session, invisible to `Xvfb` |
+| the portal is not running (`pgrep -c xdg-desktop-portal` → 0) | `pgrep` matches `/proc/<pid>/comm`, which is truncated to 15 characters; `xdg-desktop-por` never matches. `systemctl --user status` showed all three portal services **active**, and `pgrep -fc` counts 4 |
+
+So X-06 runs in the guest's **real GNOME session**, which a `systemctl restart gdm` — or a VM
+power cycle — brings back unlocked, thanks to the autologin this guest already has. A power
+cycle is the better of the two: a bare `gdm` restart came back as an **X11** session, while the
+power cycle restores the Wayland session the rest of this report measured. Both were tried.
+
+The chooser itself is driven exactly as [§21](#21-sixth-pass--closing-what-208-left-and-four-rows-from-15)
+records — `vmrun captureScreen` to see it, then `xdotool` by absolute screen coordinate, because
+XTEST reaches a Wayland surface through the compositor even though `xdotool search` cannot find
+it. `Ctrl+L`, the full path, `Return`.
+
+**Third trap: `/tmp` does not survive a reboot.** The first setup — a portable .NET runtime,
+`dotnet-counters`, the corpus — was staged in `/tmp` and a power cycle erased all of it. The soak
+now lives in `~/vcat-run/x06`.
+
+### 26.2 X-06 · what is running, and how to read it
+
+Started 2026-09-13 18:30 CEST, and it keeps running until stopped.
+
+| Piece | Where |
+|---|---|
+| the followed file | `~/vcat-run/x06/grow.log`, opened through *Follow file*, status line `Capturing · … (follow)` |
+| the producer | `x06-producer.sh` — a 400-line burst, then **4 minutes idle**, forever; that idle window is what the row is about |
+| its ledger | `producer.ledger`, one line per burst with the running total and the file size, for the exact final-sequence check the plan asks for |
+| `/proc` sampling | `proc.tsv`, every 60 s: RSS, VmHWM, threads, descriptors, mapped regions, CPU seconds, `read_bytes`, `rchar`, and the producer's line count |
+| GC by generation | `gc.csv`, every 30 s, from `dotnet-counters collect --counters System.Runtime` against the app's diagnostic socket — including `dotnet.gc.last_collection.heap.size` split by **gen0/gen1/gen2/loh/poh**, which is the quantity the row names specifically |
+
+The .NET runtime and `dotnet-counters` are unpacked under `~/vcat-run/x06/tools` — nothing is
+installed system-wide, and deleting the directory removes them.
+
+**What a pass looks like.** Idle cost plateaus: between bursts, CPU seconds should barely advance
+and `read_bytes` should not move at all; RSS, descriptors and mapped regions should be flat across
+hours rather than sloping. **What the failure looks like**, and the reason the row exists: a
+large-object-heap figure in `gc.csv` that climbs while nothing is being delivered, with a gen2
+collection cadence to match — the regression this guards against allocated a 1 MiB buffer *per
+poll*, about 4 MiB/s and 15 GiB/h, while the followed file was idle.
+
+**To stop it:** `pkill -x VisualCat` and `pkill -f x06-` on the guest — but use `pkill -x` on the
+scripts' own names if the shell you type it in contains the string, which is how [§25.4](#254-cleanup)
+killed its own session.
+
+### 26.3 I-08 reverse direction — **blocked, and now precisely**
+
+[§21.11](#2111-15--the-android-leg-of-i-08--forward-direction-pass-on-the-physical-phone) left
+this as *"no file-saving target"*. That is right, and this pass pins down exactly why and exactly
+what would unblock it.
+
+The archive is real and the share flow works: *More actions → Share…* produced
+`On-device logcat 20h01m16-20260913-163526.vcat.zip` and handed it to the system sheet. The
+problem is entirely on the receiving side.
+
+| | |
+|---|---|
+| where the app writes it | `CacheDir/share/` — the app's **private** internal storage. `adb` cannot read it, and `run-as` needs a debuggable build, which the shipped release is not |
+| is there another way out of the app? | no. On Android the only outbound commands are *Share…* and *Export CSV…*; there is no save-to-file path for the archive |
+| every target the sheet offers | Quick Share · Gmail · Drive · Outlook · Bluetooth · **Send to PC** · OneDrive. The list was scrolled to the end; there is no file manager on it |
+| Bluetooth | this Windows host has **no Bluetooth radio** |
+| Send to PC | Phone Link **is** installed on the host, but the phone is not linked: tapping it opens a Microsoft account sign-in / QR flow. Linking an account is not something this run will do on the owner's behalf |
+
+**What would unblock it**, cheapest first: install any file-manager app on the phone that
+registers as a share target, so the archive can be saved to `/sdcard/Download` and pulled; or
+complete the Phone Link pairing, after which *Send to PC* delivers it to Windows; or have the
+owner share it anywhere they like and say where the bytes landed.
+
+Not a defect either way — and the property it would test, a shipped-format archive opening in the
+fixed build, is already established by [§21.10](#2110-session-format-compatibility-across-the-fix--pass-both-ways)
+on the same format.
+
+### 26.4 X-05 conflicts with X-06 on one VM
+
+Recorded so the next run does not discover it late. The four-hour ADB endurance row needs the
+phone on the guest's own USB bus, and [§22.1](#221-getting-the-device-onto-the-guest) establishes
+that passthrough requires a line in the `.vmx` and a **power cycle** — which would kill a running
+X-06. Running both at once instead makes each one's central claim — "absence of sustained resource
+growth" for X-05, "idle cost plateaus" for X-06 — a measurement of the other. They are sequential
+rows on a single machine: X-06 first, because it is the longer one and needs no device, then X-05.
+
+### 26.5 State the guest and the phone were left in
+
+| | |
+|---|---|
+| the guest | GNOME **Wayland** session, autologin, **unlocked**, idle blanking disabled for the soak (`idle-delay 0`, screensaver idle activation off) — **restore both when the soak ends** |
+| running on it | one `VisualCat` following `grow.log`, the producer, the `/proc` sampler, and `dotnet-counters`. Nothing else |
+| the phone | back at its launcher, temporary UI dumps deleted, and **locked** — `deviceLocked=1`, `trustState=UNTRUSTED`, dozing |
+| `/var/crash` | **0** |
