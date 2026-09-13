@@ -1,9 +1,12 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using VisualCat.Infrastructure.Adb;
 
 namespace VisualCat.App.Views;
@@ -77,6 +80,24 @@ public sealed class AdbCaptureDialog : Window, IDisposable
         MinHeight = 410;
         CanResize = true;
         Content = Build();
+
+        // Escape cancels, on the tunnel, with an open dropdown as the one exception — the same
+        // contract every other dialog gets from the shell's dialog host (finding F-12). This one
+        // is shown with ShowDialog directly rather than through that host, so it was the single
+        // dialog in the product where Escape did nothing, on every window manager.
+        AddHandler(
+            InputElement.KeyDownEvent,
+            (object? _, KeyEventArgs args) =>
+            {
+                if (args.Key != Key.Escape || HasOpenDropDown(this))
+                {
+                    return;
+                }
+
+                args.Handled = true;
+                Close(false);
+            },
+            RoutingStrategies.Tunnel);
         _deviceRefreshTimer.Tick += async (_, _) => await RefreshDevicesAsync();
         Opened += async (_, _) =>
         {
@@ -181,6 +202,31 @@ public sealed class AdbCaptureDialog : Window, IDisposable
         actions.Children.Add(_start);
         root.Children.Add(actions);
         return root;
+    }
+
+    /// <summary>
+    /// Whether an open dropdown owns Escape ahead of the dialog.
+    /// </summary>
+    /// <remarks>
+    /// The device picker is a <see cref="ComboBox"/>, and Escape with its list open means "close
+    /// the list", not "abandon the capture".
+    /// </remarks>
+    private static bool HasOpenDropDown(TopLevel window)
+    {
+        if (window.FocusManager?.GetFocusedElement() is not Visual focused)
+        {
+            return false;
+        }
+
+        for (var current = focused; current is not null; current = current.GetVisualParent())
+        {
+            if (current is ComboBox { IsDropDownOpen: true })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task RefreshDevicesAsync()

@@ -2,7 +2,9 @@ using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Avalonia.LogicalTree;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -222,6 +224,38 @@ public sealed class LinuxLiveTestShellTests
         finally
         {
             dialog.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task EscapeCancelsTheLiveCaptureDialogLikeEveryOtherDialog()
+    {
+        // Every dialog in the shell gets Escape from the dialog host in MainView.Overlays, on
+        // the tunnel and with an open dropdown as the only exception (F-12). This one is shown
+        // with ShowDialog directly rather than through that host, so it was the single dialog
+        // where Escape did nothing — found under kwin, true on every window manager.
+        using var dialog = new AdbCaptureDialog(new EmptyDeviceClient());
+        var closed = false;
+        dialog.Closed += (_, _) => closed = true;
+        dialog.Show();
+        try
+        {
+            Dispatcher.UIThread.RunJobs();
+            dialog.KeyPressQwerty(PhysicalKey.Escape, RawInputModifiers.None);
+            for (var attempt = 0; attempt < 100 && !closed; attempt++)
+            {
+                Dispatcher.UIThread.RunJobs();
+                await Task.Delay(10);
+            }
+
+            Assert.True(closed);
+        }
+        finally
+        {
+            if (!closed)
+            {
+                dialog.Close();
+            }
         }
     }
 

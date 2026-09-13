@@ -3250,8 +3250,8 @@ second column.
 | **Metal, a real GPU, and every §4.2 performance budget** | This host is confirmed software rendering (§7.18) | A physical Linux host. **No performance number in this report is a baseline** |
 | ~~ADB `no permissions` / `unauthorized` / `offline`, `udev`, group membership (A-16)~~ | **Closed in §21.14 and §22.3.** The product's half against a stub → [F-33](#f-33); the OS half with the phone on the guest's own USB bus → [F-34](#f-34) | — |
 | ~~Orca end-to-end (U-07)~~ | **Closed in §21.13.** Orca 42.0 with a dummy speech module needs no human; it found [F-32](#f-32) and the wall of text | — |
-| **G4 desktop-environment matrix (U-05, U-26)** | Mostly closed: GNOME, openbox, i3 and no window manager at all (§21.6, §21.15) | KDE Plasma and Xfce specifically |
-| **Multi-monitor (U-03, U-04)** | Single 1× output; §21.16 records two approaches that do not work on this host | A second VMware display and a guest restart, or hardware |
+| ~~G4 desktop-environment matrix (U-05, U-26)~~ | **Closed in §21.15 and §23.1.** GNOME, openbox, i3, kwin, xfwm4 and no window manager at all; §23.1 found [F-35](#f-35) | — |
+| **Multi-monitor (U-03, U-04)** | **Out of scope for this host** (§21.16, §23.2): five approaches recorded as dead ends. VMware drives guest topology from its own window, so the guest's second head has no modes | Workstation in multi-monitor mode across two *physical* host monitors, or hardware |
 | ~~A correct ACL denial (P-09)~~ | **Closed in §21.12**, after finding one more wrong diagnosis | — |
 | ~~`umask 077` under the desktop~~ | **Closed in §21.4.** Data root, sessions, lease root and segments all 700, manifest 600 | — |
 | ~~Quota, read-only remount, low disk (L3, X-15)~~ | **Closed in §21.5.** Full filesystem, read-only remount, and a device-mapper error target under a running import | — |
@@ -4916,3 +4916,125 @@ back to Windows. Nothing else in the guest needs changing — the key pair is al
 | Unit tests | **1,077**, 0 failures |
 | Defects found *by* this pass | **1** — [F-34](#f-34), plus one incomplete remedy in an already-shipped message |
 | VisualCat-attributable crashes, hangs or core dumps | **0** |
+
+## 23. Eighth pass — the last two §15 rows that were reachable
+
+After [§22](#22-seventh-pass--the-phone-on-the-guests-own-usb-bus), §15 had six rows left. Four
+need hardware or time this host does not have: metal and the §4.2 budgets, the 30–50 hour soak,
+the reverse direction of I-08 (the phone has no file-saving share target), and lone-CR offsets
+(which needs the plan's expectation softened first). The other two were reachable, and one of
+them found a defect.
+
+### 23.1 §15 · KDE Plasma and Xfce (G4, U-05/U-26) — **PASS, and it found the one dialog without Escape**
+
+[§21.15](#2115-15--the-desktop-environment-matrix-g4-u-05u-26--two-more-window-managers-both-pass)
+closed openbox, i3 and no window manager at all; this closes the two the row named. `kwin-x11`
+and `xfwm4` were installed on the guest and each run under `Xvfb :93` at 1600×1000, with the same
+session and the same measurement as §21.15 — nothing touched the user's GNOME session.
+
+| | expected | **kwin 5.24** | **xfwm4 4.16** |
+|---|---|---|---|
+| renders the complete workspace | yes | **yes** — heat map with all six severity rows, minimap, entry list, templates, `Ready · 1,000 entries` | **yes**, the same |
+| decorated by the WM | yes | **yes** — `_NET_FRAME_EXTENTS 4, 4, 31, 4` | **yes** — `5, 5, 29, 5` |
+| placement | anywhere sane | 80,63 · 1440×900 | 5,29 · 1440×900 |
+| dialog is `WM_TRANSIENT_FOR` its owner | yes | **yes** (`0x400013`) | **yes** (`0x400013`) |
+| dialog centred on its owner | yes | **exactly** — owner centre 800,513, dialog centre **800,513** | **exactly** — owner centre 725,479, dialog centre **725,479** |
+| dialog size | its natural 600×410 | **600×410** | **600×410** |
+| the window behind is inert | yes | **yes** — clicking *Close session g4.txt* behind the dialog did nothing | **yes**, the same |
+| Escape closes the dialog | yes | **no** → fixed, see below | **no** → fixed |
+| `stderr` | empty | **empty** | **empty** |
+
+The dialog carries `_NET_WM_WINDOW_TYPE_NORMAL` and **no `_NET_WM_STATE_MODAL`** on both, exactly
+as §21.15 found on openbox and i3. That is now four window managers with the same observation,
+which makes it a property of the toolkit rather than of any desktop: the modality is advertised to
+the toolkit and to nothing else. Same component and same upstream fix as [F-11](#f-11).
+
+---
+
+#### F-35 · Minor · One dialog in the product does not close on Escape
+
+**Severity** Minor — one dialog, and it has a *Cancel* button a pointer user can reach. It is
+recorded because [F-12](#f-12) is a keyboard-accessibility finding that was closed as *"Escape
+closes the dialog"*, and that turned out to be true of every dialog but one.
+
+The shell's dialog host in `MainView.Overlays` installs the Escape handler — on the tunnel, with
+an open dropdown as the single exception, for the reasons F-12 records. Every dialog in the
+product is shown through it except one: the **Live ADB capture** dialog is a `Window` subclass
+shown with `ShowDialog<bool>(owner)` directly, so it never got the handler. Escape did nothing
+there, on every window manager; kwin is simply where it was noticed, because that was the first
+measurement of this dialog rather than of the ones §21.15 used.
+
+**Fixed** by giving it the same contract in its own constructor — the same tunnel, the same
+dropdown exception (its device picker is a `ComboBox`, and Escape with the list open means "close
+the list"). A headless test pins it. Re-measured:
+
+| | before | after |
+|---|---|---|
+| kwin: Escape on the dialog | dialog still up, `_NET_ACTIVE_WINDOW` **was** the dialog | **closed**, app alive, session intact |
+| xfwm4: Escape on the dialog | — | **closed**, app alive, session intact |
+
+**One control worth recording**, because it is the reason the first measurement was not believed:
+`xdotool key --window` *did* reach the dialog. `xprop -root _NET_ACTIVE_WINDOW` named the dialog
+as the active window, and two other spellings of the keystroke behaved identically. The key was
+arriving; nothing was listening.
+
+**A second control, for free.** With no Android device attached, the dialog under xfwm4 showed the
+plain *"No devices detected. Connect a device and enable USB debugging, then refresh."* — so
+[F-34](#f-34)'s probe stays silent on a machine where the phone is genuinely absent, which is the
+other half of it never crying wolf.
+
+### 23.2 §15 · Multi-monitor (U-03, U-04) — **still not achievable; three more dead ends**
+
+[§21.16](#2116-15--multi-monitor-u-03-u-04--not-achievable-on-this-host) recorded two approaches
+that fail and named what it would take: *"a second VMware display — which means editing the `.vmx`
+and restarting the guest, and would leave the machine at a login screen this run cannot get back
+into."* [§22](#22-seventh-pass--the-phone-on-the-guests-own-usb-bus) removed that blocker — the
+guest has GDM autologin, so a power cycle comes back to an **unlocked** desktop, and §22 did
+exactly that three times. So the row was retried properly. It still does not work, and now for a
+reason that is about the host rather than about the method.
+
+| Approach | Result |
+|---|---|
+| `svga.numDisplays = "2"` (plus `svga.maxWidth/maxHeight` raised) in the `.vmx`, guest power-cycled | guest boots with **one** head. `vmwgfx` always creates eight connectors, `Virtual-1` connected and `Virtual-2`…`Virtual-8` disconnected, exactly as before the change |
+| force the connector: `echo on > /sys/class/drm/card0-Virtual-2/status` | the kernel reports it **connected** — and mutter still lists only `Virtual-1`, before and after a full GDM restart |
+| the same forced connector under Xorg: `xrandr --output Virtual2 --mode 1024x768 --right-of Virtual1` | `xrandr: Configure crtc 1 failed`. `Virtual2` is listed as connected with **no modes at all** |
+| `xrandr --setmonitor` on `Xvfb` (§21.16's second approach, re-tested with the output named correctly) | ignored, confirmed. The server reports **RandR 1.6** and `xrandr` is 1.5.1, so the request is well-formed; `--listmonitors` still shows the one automatic monitor |
+
+**Why**, and this is the part worth writing down: the guest's second head has no modes because the
+*host* offers one display to this VM. VMware Workstation drives guest display topology from its
+own window, so a second guest head needs Workstation in multi-monitor mode across two **physical**
+host monitors. That is not a VM setting, it is a takeover of the host's second screen while
+someone is using it, so the row closes as **out of scope for this host** rather than untried.
+Everything short of that is now written down, and there are five dead ends in this report; do not
+spend time on a sixth.
+
+### 23.3 Eighth-pass cleanup and hand-back
+
+| Step | Verified |
+|---|---|
+| `kwin-x11`, `xfwm4` and their 126 dependencies | purged by exact name from `apt` history, then `autoremove --purge`; `kwin_x11` and `xfwm4` both gone, nothing else removed |
+| forced DRM connector | reverted to `detect`; `Virtual-2` back to `disconnected` |
+| `.vmx` | restored from the backup taken before this pass — `svga.maxWidth 1600`, `svga.maxHeight 1200`, no `numDisplays` |
+| `Xvfb`, staged builds, corpora, screenshots | gone; `/tmp` holds only VMware's own entries after the power cycle |
+| the guest's session | **Wayland**, autologin, **unlocked**, one monitor at 1280×800 — as found |
+| processes | `VisualCat` **0** · `Xvfb` **0** |
+| `/var/crash` | **0** · free space 162 GiB |
+
+One correction to this pass's own method, so it is not repeated: killing `gnome-shell` on a
+Wayland session does **not** get the session back, because GDM's autologin runs once per GDM
+start. It looks exactly like the compositor failing to start. Use `systemctl restart gdm`, which
+does autologin again.
+
+### 23.4 Final tally
+
+| | |
+|---|---|
+| Findings | **35** — 10 Major, 15 Minor, 10 Polish |
+| Closed and live-verified | **32** |
+| Closed with a stated limit | **1** — [F-13](#f-13) |
+| Not closed | **2** — [F-11](#f-11) and [F-32](#f-32), both upstream in Avalonia's AT-SPI backend |
+| §15 rows closed by this pass | **1** — the G4 desktop matrix, now five window managers |
+| §15 rows that will not close on this host | **5** — metal and the §4.2 budgets, the soak, multi-monitor, the reverse direction of I-08, and lone-CR offsets (a plan expectation, not a product gap) |
+| Unit tests | **1,078**, 0 failures |
+| Defects found *by* the seventh and eighth passes | **2** — [F-34](#f-34) and [F-35](#f-35) |
+| VisualCat-attributable crashes, hangs or core dumps | **0**, across eight passes |

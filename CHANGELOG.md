@@ -17,11 +17,11 @@ screenshot says which build it came from.
 
 #### From the Linux live test
 
-A seven-pass live run of the shipped `linux-x64` release against a real Ubuntu
-desktop and a physical phone found 34 defects; these close every one with a
+An eight-pass live run of the shipped `linux-x64` release against a real Ubuntu
+desktop and a physical phone found 35 defects; these close every one with a
 product-side fix. Two are upstream in Avalonia's AT-SPI backend and stay open.
 [`docs/LINUX-LIVE-TEST-REPORT.md`](docs/LINUX-LIVE-TEST-REPORT.md) records the
-run, §20 records this remediation, and §21–§22 the passes that followed it.
+run, §20 records this remediation, and §21–§23 the passes that followed it.
 
 - **`logcat -v long` no longer loses a record whose thread id needs five digits.**
   Android prints that field as `%5d:%5d`, so a wide thread id leaves no space
@@ -165,6 +165,10 @@ run, §20 records this remediation, and §21–§22 the passes that followed it.
   line and in the live-capture dialog alike. The remedy now also names `adb kill-server`: a
   running daemon keeps the credentials it started with, so joining the group changes nothing
   until it restarts.
+- **Escape closes the live-capture dialog**, like every other dialog in the product. The shell's
+  dialog host installs that handler, and this one dialog is shown directly rather than through it,
+  so it was the single place where a keyboard-only reader had no way out but the window manager's
+  close button. An open device list still takes Escape first, to close itself.
 - **A screen reader no longer hears the whole window read out at once.** Orca announces a window
   that has no focused control by reading everything in it, and the main window had none — so the
   notice, the strapline, every count, the template list and the entry list arrived as a single
