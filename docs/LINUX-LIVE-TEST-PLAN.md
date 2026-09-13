@@ -3700,6 +3700,9 @@ plus the change-based selection in §12.1.
 - [`WINDOWS-LIVE-TEST-PLAN.md`](WINDOWS-LIVE-TEST-PLAN.md) — the primary desktop
   plan, the cross-platform parity partner, and the source of the tier discipline
   used here.
+- [`MACOS-LIVE-TEST-PLAN.md`](MACOS-LIVE-TEST-PLAN.md) — the other Unix desktop
+  plan, the closest sibling to this one, and the partner for byte-parity and
+  POSIX-behaviour comparisons.
 - [`ANDROID-LIVE-TEST-PLAN.md`](ANDROID-LIVE-TEST-PLAN.md) — companion-device live
   test plan and the origin of this tier structure.
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — layer ownership and invariants.

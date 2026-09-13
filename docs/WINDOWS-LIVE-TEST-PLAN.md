@@ -3121,6 +3121,9 @@ row plus the change-based selection in §12.1.
 
 - [`LINUX-LIVE-TEST-PLAN.md`](LINUX-LIVE-TEST-PLAN.md) — the Linux desktop plan
   and the cross-platform parity partner for sessions, exports, and archives.
+- [`MACOS-LIVE-TEST-PLAN.md`](MACOS-LIVE-TEST-PLAN.md) — the macOS desktop plan,
+  the second Unix parity partner, and the only one covering two published
+  architectures of one build.
 - [`ANDROID-LIVE-TEST-PLAN.md`](ANDROID-LIVE-TEST-PLAN.md) — companion-device
   live test plan and cross-surface source of the tier discipline used here.
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — layer ownership and invariants.
