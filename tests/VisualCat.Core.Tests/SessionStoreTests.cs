@@ -501,4 +501,54 @@ public sealed class SessionStoreTests
             }
         }
     }
+
+    /// <summary>
+    /// A lease marker that never recorded which session it belongs to can never satisfy the
+    /// vanished-session test, so before this it outlived every sweep for the life of the account
+    /// — the slow remainder of F-24, found by X-20's several-hundred-session churn (report §25).
+    /// </summary>
+    [Fact]
+    public void AnIntentThatNeverRecordedItsSessionIsReclaimedOnceItIsOldEnough()
+    {
+        var leases = Path.Combine(Path.GetTempPath(), $"visualcat-leases-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(leases);
+        try
+        {
+            var stale = Path.Combine(leases, "AAAA");
+            var fresh = Path.Combine(leases, "BBBB");
+            var live = Path.Combine(leases, "CCCC");
+            var session = Path.Combine(leases, "session.vcat");
+            Directory.CreateDirectory(session);
+
+            foreach (var stem in new[] { stale, fresh, live })
+            {
+                File.WriteAllText(stem + ".read", string.Empty);
+                File.WriteAllText(stem + ".write", string.Empty);
+            }
+
+            File.WriteAllText(stale + ".intent", string.Empty);
+            File.WriteAllText(fresh + ".intent", string.Empty);
+            File.WriteAllText(live + ".intent", session);
+            File.SetLastWriteTimeUtc(stale + ".intent", DateTime.UtcNow.AddHours(-2));
+
+            SessionAccess.SweepMarkersOfVanishedSessions(leases);
+
+            // Old and unattributable: residue.
+            Assert.False(File.Exists(stale + ".intent"));
+            Assert.False(File.Exists(stale + ".read"));
+            Assert.False(File.Exists(stale + ".write"));
+
+            // Unattributable but new enough that a process could still be writing its path.
+            Assert.True(File.Exists(fresh + ".intent"));
+
+            // Attributable, and its session is right there.
+            Assert.True(File.Exists(live + ".intent"));
+            Assert.True(File.Exists(live + ".read"));
+        }
+        finally
+        {
+            try { Directory.Delete(leases, true); } catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
 }

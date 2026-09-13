@@ -17,11 +17,11 @@ screenshot says which build it came from.
 
 #### From the Linux live test
 
-A nine-pass live run of the shipped `linux-x64` release against a real Ubuntu
-desktop and a physical phone found 36 defects; these close every one with a
+A ten-pass live run of the shipped `linux-x64` release against a real Ubuntu
+desktop and a physical phone found 37 defects; these close every one with a
 product-side fix. Two are upstream in Avalonia's AT-SPI backend and stay open.
 [`docs/LINUX-LIVE-TEST-REPORT.md`](docs/LINUX-LIVE-TEST-REPORT.md) records the
-run, §20 records this remediation, and §21–§24 the passes that followed it.
+run, §20 records this remediation, and §21–§25 the passes that followed it.
 
 - **`logcat -v long` no longer loses a record whose thread id needs five digits.**
   Android prints that field as `%5d:%5d`, so a wide thread id leaves no space
@@ -169,6 +169,11 @@ run, §20 records this remediation, and §21–§24 the passes that followed it.
   dialog host installs that handler, and this one dialog is shown directly rather than through it,
   so it was the single place where a keyboard-only reader had no way out but the window manager's
   close button. An open device list still takes Escape first, to close itself.
+- **A lease marker that never recorded which session it belongs to is reclaimed.** The sweep that
+  removes markers of deleted sessions skips any marker it cannot attribute, so one that never got
+  its session path written outlived every sweep for the life of the account — the slow remainder
+  of the growing lease directory fixed earlier. An unattributable marker older than an hour is now
+  residue, removed under the same rule that still refuses to touch a marker any process holds.
 - **A log whose records are separated by carriage returns is refused by name, not read as one
   record.** Every reader here frames on line feeds, so such a file is a single enormous line — and
   when the head of that line parses, the import *succeeded*: one entry, confidence 1.000, zero

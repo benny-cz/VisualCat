@@ -3255,7 +3255,7 @@ second column.
 | ~~A correct ACL denial (P-09)~~ | **Closed in §21.12**, after finding one more wrong diagnosis | — |
 | ~~`umask 077` under the desktop~~ | **Closed in §21.4.** Data root, sessions, lease root and segments all 700, manifest 600 | — |
 | ~~Quota, read-only remount, low disk (L3, X-15)~~ | **Closed in §21.5.** Full filesystem, read-only remount, and a device-mapper error target under a running import | — |
-| **Soak (X-03, X-05–X-09, X-20–X-23, X-28)** | Needs a dedicated host and 30–50 h | Dedicated hardware |
+| **Soak (X-03, X-05–X-09, X-22, X-23, X-28)** | Endurance rows only. **X-20 and X-21 are closed in §25** — they are bounded repetitions, not endurance runs; X-21 passes and X-20 found [F-37](#f-37) | Dedicated hardware and 30–50 h |
 | **Android leg of I-08** | Forward direction passes on the physical phone (§21.11) | A file-saving share target on the device for the reverse direction |
 | ~~Lone-CR offsets~~ | **Closed in §24.** The refusal was an accident of the corpus: a lone-CR log that starts with a record imported as **one** entry at confidence 1.000 with nothing reported missing → [F-36](#f-36) | — |
 
@@ -5180,3 +5180,128 @@ row someone had already written off — A-16 as *"needs hardware"*, the WM matri
 others passed"*, lone CR as *"refused, so n/a"*. None of those judgements was dishonest; each was
 made from the evidence to hand. The cheapest way to find the next defect in this product is to
 re-examine the reason a row was closed without being run.
+
+## 25. Tenth pass — the reachable half of the soak row
+
+§15's soak row is written as one thing needing *"a dedicated host and 30–50 h"*. Reading the rows
+it names, that is true of most of them and not of two: **X-20** (high session count and cache
+churn) and **X-21** (the repetition leak pass) are bounded repetitions, not endurance runs. Both
+were run here, on the guest, in about an hour. X-21 passes outright; X-20 passes and leaves one
+thing worth fixing.
+
+### 25.1 X-21 · Repetition leak pass — **PASS**
+
+Two loops against one process, driven by `xdotool` under `Xvfb :96`, with `/proc/<pid>` sampled
+throughout. The corpus is the five formats `vcat generate-test-log` produces — threadtime, brief,
+long, epoch and time — 20,000 lines each, which is the plan's "mixed sources".
+
+**500 dialog open/close cycles.** *Recent captures* was chosen over the ADB dialog because it
+does real work each time — it enumerates the session store — without spawning a subprocess:
+
+| cycle | RSS | threads | descriptors | mapped regions | dialogs left open |
+|---|---|---|---|---|---|
+| 0 | 309,440 kB | 29 | **240** | 1,562 | 0 |
+| 50 | 326,896 kB | 36 | **240** | 1,605 | 0 |
+| 150 | 335,100 kB | 35 | **240** | 1,603 | 0 |
+| 300 | 330,844 kB | 35 | **240** | 1,605 | 0 |
+| 500 | 330,848 kB | 35 | **240** | 1,606 | 0 |
+
+RSS rises 21 MB over the first fifty cycles and then does not move again — 330–336 MB with no
+trend over the remaining 450. Descriptors are **240 at every single sample**, mapped regions
+settle by cycle 50, and no dialog is ever left behind.
+
+**200 open → analyze → close cycles**, each one: open *Recent captures*, select a capture, *Open*,
+wait for the workspace, close the tab.
+
+| cycle | RSS | threads | descriptors | mapped regions | tabs left |
+|---|---|---|---|---|---|
+| 0 | 320,588 kB | 32 | **159** | 1,540 | 0 |
+| 40 | 338,852 kB | 36 | **159** | 1,569 | 0 |
+| 80 | 366,112 kB | 34 | **159** | 1,564 | 0 |
+| 120 | 362,092 kB | 35 | **159** | 1,568 | 0 |
+| 160 | 358,116 kB | 36 | **159** | 1,576 | 0 |
+| 200 | 358,124 kB | 34 | **159** | 1,569 | 0 |
+
+The same shape: a working set that grows to about 360 MB by cycle 80 and then flattens — the last
+120 cycles end **lower** than cycle 80 — with descriptors pinned at **159** and mapped regions
+flat. The process survived all 700 cycles across both loops, `stderr` was empty, `/var/crash` held
+nothing, and the window came back to a clean home screen afterwards. Closing all five tabs by hand
+released **81** descriptors (240 → 159), which is the release the loop then reproduces two hundred
+times without drift.
+
+Two of the plan's named quantities are not covered: GC counts by generation and large-object-heap
+size, which this run sampled only through RSS and mapped regions. What the row exists to catch —
+"return to the baseline envelope" — is answered by the descriptor and mapping counts, which are
+exact rather than approximate.
+
+### 25.2 X-20 · High session count and cache churn — **PASS, with one thing fixed**
+
+Three hundred sessions built with the CLI into their own data root (129 MB), then the desktop
+opened against them.
+
+| Assertion | Result |
+|---|---|
+| listing stays responsive | *Recent captures* with **200** sessions opened in **0.65 s**, every row sized and stated |
+| the computed size matches the filesystem | reported **366.07 KiB** per session against **370.01 KiB** of files on disk — a fixed **4,041-byte** difference which is exactly `manifest.json` + `.capture-identity`. `EstimateSessionSize` sums the data deliberately: a session's own size cannot include the manifest that carries it |
+| retention removes exactly what it names | the confirmation named all three captures, their dates and their sizes, and totalled them (`3 × 366.07 KiB` = "about 1.07 MiB"). After *Delete permanently*: **200 → 197**, exactly `churn-298/299/300` gone, `churn-295/296/297` untouched |
+| the lease directory does not accumulate | three markers per session — `.intent`, `.read`, `.write` — bounded, not growing. Deleting 100 sessions left 890 markers until the next process ran, which swept it to **593** and then held steady. That is [§20](#20-remediation-pass--restore-point)'s sweep working |
+
+---
+
+#### F-37 · Polish · A lease marker that never recorded its session is never reclaimed
+
+One marker out of the ~900 this churn created survived every sweep: an `.intent` file of **zero
+bytes**, with its `.write` sibling, naming no session at all.
+
+The sweep only removes markers whose *recorded* session directory is gone, and it deliberately
+skips an intent it cannot read a path from — `if (session.Length == 0 …) continue;`. For a marker
+that never got its path written, that condition can never become true, so it outlives every sweep
+for the life of the account. It is the slow remainder of [F-24](#f-24): one marker pair per few
+hundred lease acquisitions rather than three files per session, but with the same end state — a
+directory that grows and is never tidied, which is what a user auditing what VisualCat leaves
+behind will find.
+
+**Fixed**, narrowly. Age is what makes it safe: a process caught between creating the intent and
+writing its path is milliseconds old, so an empty intent older than **an hour** is residue and
+nothing else. It is then removed under exactly the same `DeleteIfUnheld` rule as any other
+marker — the sweep still refuses to touch anything a process holds, because "this capture is in
+use" remains a far worse thing to be wrong about than a stray zero-byte file. A unit test pins all
+three cases: an old empty intent is reclaimed, a fresh empty one is not, and an attributable one
+whose session exists is left alone.
+
+### 25.3 What is left of the soak row
+
+| Row | Why it stays open |
+|---|---|
+| X-03 · twenty-million-entry live growth | needs hardware this host cannot stand in for; §15 already records that no performance number here is a baseline |
+| X-05 · four-hour ADB capture endurance | four hours with the phone attached to the guest |
+| X-06 · overnight growing-file soak | 8–12 h |
+| X-07 · minimized/unmapped/obscured capture | needs a compositor that can minimize and obscure — no window manager under `Xvfb` can |
+| X-08, X-09 · ADB ring-buffer pressure and the transport gauntlet | a device, hours, and deliberate transport abuse |
+| X-22 · multi-instance collision soak | several hours |
+| X-23 · display/GPU/compositor transitions | the same hardware multi-monitor needs (§23.2) |
+| X-28 · host reboot, logout, crash-recovery handoff | reboots of the host under test |
+
+### 25.4 Cleanup
+
+| Step | Verified |
+|---|---|
+| both app instances, both `Xvfb` servers, both driver scripts | stopped; `VisualCat` **0** · `Xvfb` **0** · `vcat` **0** |
+| corpora, 300 sessions, two throwaway data roots, screenshots | removed; `/tmp` empty of anything but VMware's own entries |
+| the two sample tables | kept as `~/vcat-run/evidence/x21-{dialog,open-close}-cycles.tsv` |
+| `/var/crash` | **0** · free space 162 GiB |
+
+One method note, because it cost this pass its own ssh session: **`pkill -f leak.sh` matches the
+shell running the command that contains those words**, so the cleanup killed itself halfway. The
+report has recorded `pkill -f` biting once before, with `orca`; `pkill -x`, always.
+
+### 25.5 Tally
+
+| | |
+|---|---|
+| Findings | **37** — 11 Major, 15 Minor, 11 Polish |
+| Closed and live-verified | **34** |
+| Closed with a stated limit | **1** — [F-13](#f-13) |
+| Not closed | **2** — [F-11](#f-11), [F-32](#f-32), both upstream in Avalonia |
+| Unit tests | **1,083**, 0 failures |
+| §15 rows fully closed | all but four, and those four need hardware, hours, or a second physical monitor |

@@ -211,6 +211,9 @@ public static class SessionAccess
     /// <summary>The suffix of the marker that records which session a lease belongs to.</summary>
     private const string IntentSuffix = ".intent";
 
+    /// <summary>How old an intent with no recorded session must be before it counts as residue.</summary>
+    private static readonly TimeSpan UnattributableMarkerGrace = TimeSpan.FromHours(1);
+
     private static int s_swept;
 
     /// <summary>
@@ -232,7 +235,7 @@ public static class SessionAccess
     /// lease anybody holds.
     /// </para>
     /// </remarks>
-    private static void SweepMarkersOfVanishedSessions(string leaseRoot)
+    internal static void SweepMarkersOfVanishedSessions(string leaseRoot)
     {
         try
         {
@@ -247,7 +250,21 @@ public static class SessionAccess
                 try
                 {
                     var session = File.ReadAllText(intent).Trim();
-                    if (session.Length == 0 || Directory.Exists(session) || File.Exists(session))
+                    if (session.Length == 0)
+                    {
+                        // An intent whose path never got written can never be attributed, so the
+                        // vanished-session test below can never fire for it and it would outlive
+                        // every sweep — the slow remainder of F-24, one marker pair per few
+                        // hundred leases. Age is what makes removing it safe: a process between
+                        // creating this file and writing to it is milliseconds old, so anything
+                        // older than the grace is residue, and DeleteIfUnheld still refuses to
+                        // touch a marker anybody holds.
+                        if (DateTime.UtcNow - File.GetLastWriteTimeUtc(intent) < UnattributableMarkerGrace)
+                        {
+                            continue;
+                        }
+                    }
+                    else if (Directory.Exists(session) || File.Exists(session))
                     {
                         continue;
                     }
