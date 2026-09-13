@@ -5395,6 +5395,23 @@ Not a defect either way — and the property it would test, a shipped-format arc
 fixed build, is already established by [§21.10](#2110-session-format-compatibility-across-the-fix--pass-both-ways)
 on the same format.
 
+**Update — the route is built and stops one tap short.** The owner chose the file-manager route, so
+Total Commander (C. Ghisler, from Google Play) was installed on the phone and **does** register
+`DirBrowseActivity` as an `ACTION_SEND` receiver for `application/zip`. Two Android behaviours had
+to be worked through, both worth remembering:
+
+- **A freshly installed app is in the *stopped* state** and Android excludes stopped packages from
+  implicit intent resolution, so it cannot appear in a share sheet until it has been launched once.
+- Even then it is not visible: Samsung's share sheet app row is a **horizontal** carousel. A
+  vertical swipe does nothing; `input swipe 900 <rowY> 200 <rowY>` reveals the rest, and Total
+  Commander is there, followed by *Dálší*.
+
+Selecting it opens Total Commander's own first-run gate — *"Pro pokračování musíte souhlasit s
+našimi zásadami soukromí"*, agree or quit. Agreeing to a third party's privacy policy is a consent
+this run will not give in the owner's name, so the row pauses there. One tap on **SOUHLASÍM**, at
+any time, and the rest is scriptable: re-share, choose Total Commander, save to `/sdcard/Download`,
+`adb pull`, and open the archive on the Linux guest.
+
 ### 26.4 X-05 conflicts with X-06 on one VM
 
 Recorded so the next run does not discover it late. The four-hour ADB endurance row needs the
