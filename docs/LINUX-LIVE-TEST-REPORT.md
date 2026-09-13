@@ -5451,3 +5451,37 @@ rows on a single machine: X-06 first, because it is the longer one and needs no 
 | running on it | one `VisualCat` following `grow.log`, the producer, the `/proc` sampler, and `dotnet-counters`. Nothing else |
 | the phone | back at its launcher, temporary UI dumps deleted, and **locked** — `deviceLocked=1`, `trustState=UNTRUSTED`, dozing |
 | `/var/crash` | **0** |
+
+## 27. Twelfth pass — the two upstream findings, re-checked against the newest Avalonia
+
+[F-11](#f-11) and [F-32](#f-32) are the only findings this report leaves open, and both say the
+same thing: the fix is in Avalonia's AT-SPI backend, not here. That claim is worth re-testing
+whenever the framework moves, so it was.
+
+**A newer Avalonia exists.** This repository pins **12.1.1**; NuGet's newest stable is **12.1.2**.
+
+**It does not touch the Linux accessibility backend.** Its accessibility work is on other
+platforms entirely — *Implement VoiceOver support* (iOS), and three Android automation-peer fixes
+(unregister peers leaving the visual tree, a stale accessibility virtual view id, and not walking
+an `InteropAutomationPeer` during traversal). There is nothing about `Avalonia.FreeDesktop`, an
+accessible name derived from a control's type, `AutomationProperties.AccessibilityView`, or a
+modal state for an owned window. So neither finding is fixed, and the version was **not** bumped:
+a framework upgrade is a change this report has no measurement asking for.
+
+**Neither is reported upstream yet**, which [F-32](#f-32) suggested doing — *"the two are worth
+reporting together"*. Searched on 2026-09-13:
+
+| Search | Result |
+|---|---|
+| open issues with `at-spi`/`atspi` in the title | **none** |
+| open issues about a modal window or dialog not reaching accessibility APIs | **none** |
+| open Linux accessibility issues | **one** — [#21724](https://github.com/AvaloniaUI/Avalonia/issues/21724), *"Accessibility: Labels don't get reported on their target components on Linux"*, last updated 2026-07-11: Orca 50.2 announces only `TextBox` and never the label targeting it |
+
+That last one is not either of these findings, but it is the same component and the same symptom
+class — Orca being told the wrong thing on Linux — which is useful context for whoever files them:
+the backend is under active report, and these two would land beside a live issue rather than into
+silence.
+
+**What has not changed:** §20.4 and §21.13 each measured both findings against a live AT-SPI tree
+and found no product-side lever, three times between them. Nothing in 12.1.2 changes that, and
+nothing here re-measured it, because there is no new binary to measure.
