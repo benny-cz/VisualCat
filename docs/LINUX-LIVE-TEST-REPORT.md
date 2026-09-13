@@ -5407,10 +5407,32 @@ to be worked through, both worth remembering:
   Commander is there, followed by *Dálší*.
 
 Selecting it opens Total Commander's own first-run gate — *"Pro pokračování musíte souhlasit s
-našimi zásadami soukromí"*, agree or quit. Agreeing to a third party's privacy policy is a consent
-this run will not give in the owner's name, so the row pauses there. One tap on **SOUHLASÍM**, at
-any time, and the rest is scriptable: re-share, choose Total Commander, save to `/sdcard/Download`,
-`adb pull`, and open the archive on the Linux guest.
+našimi zásadami soukromí"*, agree or quit. The owner tapped **SOUHLASÍM**, and the share then reached
+Total Commander's *Uložit soubor jako* dialog with the archive in hand — and stopped one step
+further on, for a reason that is about modern Android rather than about either product.
+
+**Where it actually stops.** Total Commander 3.62 targets **SDK 36** and declares
+`MANAGE_EXTERNAL_STORAGE` and `READ_EXTERNAL_STORAGE` — **no** `WRITE_EXTERNAL_STORAGE`, because on
+a modern target that permission grants nothing. So its save browser can write outside its own
+sandbox in exactly two ways, and neither is usable here:
+
+| Route | Outcome |
+|---|---|
+| pick `Download` (or any real path) in its list | *"Pokud si přejete přístup do této složky, potřebujete dát Total Commander plný přístup k souborům"* — **All files access**. Granting one app read/write over every file on the owner's phone is not a permission this run will take on their behalf |
+| the SAF route, *Vlastní umístění* | works as far as a **scoped** grant — Android refuses a tree grant on `Download` itself, so a `Download/vcat-share` subfolder was created and granted, which is modest and revocable. But Total Commander's *save as* dialog never offers that granted tree as a destination: it is not in the location list and its bookmark list is empty, so *OK* has nowhere to write and does nothing |
+| typing a full path into the name field | treated as a filename, not a path; no file is written |
+
+Nothing here is a VisualCat defect — the app handed a correct `application/zip` to the system, and
+the archive is real. It is a file manager whose only unscoped write path is a permission worth
+more than this row.
+
+**Cleaned up afterwards:** the empty `Download/vcat-share` was removed, the UI dumps deleted, and
+the phone locked. Total Commander is still installed, and can be removed with
+`adb uninstall com.ghisler.android.TotalCommander`.
+
+**What would still finish it**, if the row is ever worth another go: a file manager that writes
+through SAF for its *save* flow rather than only for browsing, or the owner saving the archive by
+hand from the share sheet and naming the path.
 
 ### 26.4 X-05 conflicts with X-06 on one VM
 
