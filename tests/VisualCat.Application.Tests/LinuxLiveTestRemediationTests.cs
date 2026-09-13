@@ -442,4 +442,43 @@ public sealed class LinuxLiveTestRemediationTests
         Assert.Equal("recovery", devices[4].StateText);
         Assert.Equal("9", devices[4].TransportId);
     }
+
+    // ------------------------------------------------- A-16, second half (F-34)
+
+    [Fact]
+    public void TheNoPermissionsLineARealDeviceProducesSurvivesItsAdvisoryUrl()
+    {
+        // Measured on a Samsung SM-G990B passed through to the Linux guest with the android
+        // udev rule masked: adb names the account and the group it is missing, prints the
+        // advisory URL, and only then the real properties. Taking the first colon-bearing word
+        // as a property turned the URL into a key called "[http" and lost the state entirely.
+        const string Output = """
+            List of devices attached
+            RFCRC0A9GND            no permissions (user vcatadb is not in the plugdev group); see [http://developer.android.com/tools/device.html] usb:2-1 transport_id:1
+            """;
+
+        var device = Assert.Single(AdbDeviceParser.Parse(Output));
+        Assert.Equal(AdbDeviceState.NoPermissions, device.State);
+        Assert.Contains("not in the plugdev group", device.StateText, StringComparison.Ordinal);
+        Assert.Equal("2-1", device.Properties["usb"]);
+        Assert.Equal("1", device.TransportId);
+        Assert.Equal(2, device.Properties.Count);
+    }
+
+    [Fact]
+    public void TheUsbProbeClaimsAPermissionProblemOnlyWhenItMeasuredOne()
+    {
+        // The probe exists to correct one message, so a false positive is worse than the defect
+        // it fixes: every ordinary machine must come back with nothing, it must never throw
+        // where /sys is absent or unreadable, and off Linux it must not look at all.
+        var hidden = UsbDeviceAccess.UnopenableAdbDevices();
+        var explanation = UsbDeviceAccess.MissingDeviceExplanation();
+
+        Assert.Equal(hidden.Count == 0, explanation is null);
+        Assert.All(hidden, entry => Assert.StartsWith("/dev/bus/usb/", entry, StringComparison.Ordinal));
+        if (!OperatingSystem.IsLinux())
+        {
+            Assert.Empty(hidden);
+        }
+    }
 }

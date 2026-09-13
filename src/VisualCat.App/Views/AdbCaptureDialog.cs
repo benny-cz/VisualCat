@@ -279,9 +279,20 @@ public sealed class AdbCaptureDialog : Window, IDisposable
 
     private void SetNormalDeviceStatus()
     {
-        _status.Text = _detectedDeviceCount == 0
+        if (_detectedDeviceCount > 0)
+        {
+            _status.Text =
+                $"{CountedDevices(_detectedDeviceCount)} detected. Unauthorized devices must be approved on the device.";
+            return;
+        }
+
+        // An empty list is the one case where the obvious advice can be wrong: ADB omits a
+        // device whose USB node this account may not read, so a user whose udev rule grants a
+        // group they are not in is told to plug in the phone that is already plugged in (F-34).
+        var hidden = UsbDeviceAccess.MissingDeviceExplanation();
+        _status.Text = hidden is null
             ? "No devices detected. Connect a device and enable USB debugging, then refresh."
-            : $"{CountedDevices(_detectedDeviceCount)} detected. Unauthorized devices must be approved on the device.";
+            : $"No devices detected. {hidden} {UsbDeviceAccess.ShortRemedy}";
     }
 
     private static string CountedDevices(int count) => count == 1 ? "1 device" : $"{count:N0} devices";

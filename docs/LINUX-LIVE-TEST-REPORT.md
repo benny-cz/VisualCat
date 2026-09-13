@@ -3240,21 +3240,23 @@ with **Escape** — the route a user actually takes — never triggers it.
 ## 15. What remains untested after four passes
 
 This supersedes §5.2 and §10.10. Nothing here is a pass; each row is a coverage gap with its reason.
+Struck-through rows were closed by the sixth and seventh passes (§21, §22); the pointer is in the
+second column.
 
 | Row | Why it is still open | What it needs |
 |---|---|---|
 | ~~A-21~~ | — | **Closed in §17.** Cases 1 and 4 pass; cases 6 and 7 reproduce the predicted hole → [F-31](#f-31). Cases 2, 3 and 5 were not run: they exercise the same detection path cases 1 and 4 already prove |
-| **A full run on a second distribution** | §10.2 established the glibc floor at **2.28** by running the CLI on Debian 10/11/12, but only `--version`. No desktop session, no B tier | Debian or Fedora with a graphical session |
+| ~~A full run on a second distribution~~ | **Closed in §21.6.** Debian 12.15, glibc 2.36, CLI and desktop, the whole workspace rendering with no window manager at all | — |
 | **Metal, a real GPU, and every §4.2 performance budget** | This host is confirmed software rendering (§7.18) | A physical Linux host. **No performance number in this report is a baseline** |
-| **ADB `no permissions` / `unauthorized` / `offline`, `udev`, group membership (A-16)** | The guest is a client of the host's ADB server (§1.5) | A device attached directly to the Linux host |
-| **Orca end-to-end (U-07)** | The AT-SPI tree was inspected (§2.15) but nobody listened | A human through the B-19 journey with Orca 42.0 |
-| **G4 desktop-environment matrix (U-05, U-26)** | GNOME only; G0 and G1 both covered (§7.17) | KDE Plasma, Xfce, and one tiling WM |
-| **Multi-monitor (U-03, U-04)** | Single 1× output. U-02/U-11 scaling is now covered (§13.6) | A second output, ideally at a different scale |
-| **A correct ACL denial (P-09)** | Two attempts; a plain `cat` control behaved identically both times (§7.8, §10.8), so the row proves nothing about the product | An ACL the kernel demonstrably enforces |
-| **`umask 077` under the desktop** | The CLI leg passes (§10.7) | The same check driven through the GUI |
-| **Quota, read-only remount, low disk (L3, X-15)** | Not executed | A dedicated loop-mounted filesystem |
+| ~~ADB `no permissions` / `unauthorized` / `offline`, `udev`, group membership (A-16)~~ | **Closed in §21.14 and §22.3.** The product's half against a stub → [F-33](#f-33); the OS half with the phone on the guest's own USB bus → [F-34](#f-34) | — |
+| ~~Orca end-to-end (U-07)~~ | **Closed in §21.13.** Orca 42.0 with a dummy speech module needs no human; it found [F-32](#f-32) and the wall of text | — |
+| **G4 desktop-environment matrix (U-05, U-26)** | Mostly closed: GNOME, openbox, i3 and no window manager at all (§21.6, §21.15) | KDE Plasma and Xfce specifically |
+| **Multi-monitor (U-03, U-04)** | Single 1× output; §21.16 records two approaches that do not work on this host | A second VMware display and a guest restart, or hardware |
+| ~~A correct ACL denial (P-09)~~ | **Closed in §21.12**, after finding one more wrong diagnosis | — |
+| ~~`umask 077` under the desktop~~ | **Closed in §21.4.** Data root, sessions, lease root and segments all 700, manifest 600 | — |
+| ~~Quota, read-only remount, low disk (L3, X-15)~~ | **Closed in §21.5.** Full filesystem, read-only remount, and a device-mapper error target under a running import | — |
 | **Soak (X-03, X-05–X-09, X-20–X-23, X-28)** | Needs a dedicated host and 30–50 h | Dedicated hardware |
-| **Android leg of I-08** | The Windows leg passes in both directions (§13.4) | The companion app on the phone |
+| **Android leg of I-08** | Forward direction passes on the physical phone (§21.11) | A file-saving share target on the device for the reverse direction |
 | **Lone-CR offsets** | The input is refused (§2.17 item 3) | n/a — the plan expectation needs softening first |
 
 ## 16. Fourth-pass cleanup and host hand-back
@@ -4653,3 +4655,264 @@ Recorded as attempted rather than left unqualified, so the next run does not spe
 A genuine second head needs either a second VMware display — which means editing the `.vmx` and
 restarting the guest, and would leave the machine at a login screen this run cannot get back into
 — or real hardware. The row stays open, with the two dead ends now written down.
+
+## 22. Seventh pass — the phone on the guest's own USB bus
+
+[§21.14](#2114-15--adb-transport-states-a-16--the-products-half-and-it-was-broken) closed the
+product's half of A-16 against a stub and named what was left: *"whether a missing `udev` rule
+really produces that state, and whether adding the rule and the group clears it. That needs the
+device on the Linux host's own USB bus."* This pass put it there. It closed the row, and it found
+one more defect — the worse half of the same problem.
+
+### 22.1 Getting the device onto the guest
+
+Recorded because the obvious route does not work and cost this pass its first twenty minutes.
+
+**`vmrun connectNamedDevice` cannot attach a USB device that is not already in the VM's
+configuration.** Every name form was accepted with exit 0 and did nothing; `vmware.log` records
+the truth each time:
+
+| Name tried | Log |
+|---|---|
+| `SAMSUNG_Android` (the name in the log's own device line) | `Attempting to connect nonexistent device` |
+| `usb:2`, `usb:3` (the `.vmx` key style) | same |
+| `path:1/0/7/3`, `1/0/7/3`, `0x04e8:0x6860` | same |
+
+The route that works is one line in the `.vmx` and a power cycle — the VM already had
+`usb.present` and `ehci.present` set:
+
+```
+usb.autoConnect.device0 = "0x04e8:0x6860"
+```
+
+After that the phone arrives on the guest's own EHCI bus, and Windows loses it, which is what
+passthrough means:
+
+```
+usb 2-1: new high-speed USB device number 4 using ehci-pci
+usb 2-1: New USB device found, idVendor=04e8, idProduct=6860
+usb 2-1: Product: SAMSUNG_Android   SerialNumber: RFCRC0A9GND
+$ lsusb | grep 04e8
+Bus 002 Device 004: ID 04e8:6860 Samsung Electronics Co., Ltd
+```
+
+**Authorisation had to be arranged in advance.** A device passed through to the guest is a *new*
+computer as far as the phone is concerned, and the "Allow USB debugging?" prompt cannot be
+answered — the phone is locked and the host that could drive its UI no longer owns it. Copying
+the host's own `~/.android/adbkey` and `adbkey.pub` into the guest makes the phone recognise the
+guest immediately. Do this **before** the switch, or the row cannot be run at all.
+
+**A replug primitive, which the row needs three times.** `udevadm trigger` does *not* recompute an
+existing device node's ownership — udev preserves the permissions of a node that already exists
+(`Preserve permissions of /dev/bus/usb/002/003, uid=0, gid=46, mode=0664`). Only a fresh
+enumeration applies a changed rule. Dropping the device in the guest is enough, because VMware's
+autoconnect immediately re-offers it:
+
+```
+echo 2-1 | sudo tee /sys/bus/usb/drivers/usb/unbind      # the matching bind fails EBUSY — ignore it
+```
+
+Five seconds later the device is back with a new `devnum` and freshly computed permissions.
+
+### 22.2 What a stock GNOME desktop already grants — and why `no permissions` is rarer than the docs suggest
+
+Masking `/lib/udev/rules.d/51-android.rules` was **not** enough to reproduce the condition. The
+device came back readable and writable anyway. `udevadm test` says why:
+
+```
+2-1: /usr/lib/udev/rules.d/50-udev-default.rules:54  MODE 0664
+2-1: /usr/lib/udev/rules.d/60-libgphoto2-6.rules:10  GROUP 46      (plugdev)
+2-1: /usr/lib/udev/rules.d/73-seat-late.rules:16     RUN 'uaccess'
+     TAGS=:uaccess:seat:   ID_MEDIA_PLAYER=1   ID_MTP_DEVICE=1
+```
+
+Two grants that have nothing to do with Android tooling: **libgphoto2** claims the phone as a
+camera and gives it to `plugdev`, and **logind's `uaccess`** gives the *active seat user* a POSIX
+ACL on it because `media-player-info` tagged it as an MTP device:
+
+```
+$ getfacl -p /dev/bus/usb/002/003
+user::rw-   user:benny:rw-   group::rw-   mask::rw-   other::r--
+```
+
+So on an ordinary GNOME workstation the person sitting at the screen can always open a modern
+Samsung phone, with or without the android rules. **The population A-16 actually hits is the one
+that is not at the screen**: a CI runner, a remote developer over ssh, a service account, a
+container, a minimal or headless install. That is who this row was run as — a second account,
+`vcatadb`, not the seat user and not in `plugdev`, which is the honest reproduction and the one
+that matters.
+
+### 22.3 §15 · ADB `no permissions`, `udev` and group membership (A-16) — **CLOSED, both halves**
+
+Three states, one phone, one guest, the same account throughout. Everything below is the fixed
+build (`2.0.13+15fa9df` plus this pass's change) against the real device.
+
+| | rules in force | device node | the account's access | `adb devices -l` |
+|---|---|---|---|---|
+| **A** | none (both android and libgphoto2 rules masked) | `root:root` **0664** | `other::r--` — read, no write | `no permissions (user vcatadb is not in the plugdev group); see [http://…]` |
+| **B** | `SUBSYSTEM=="usb", ATTR{idVendor}=="04e8", MODE="0660", GROUP="plugdev"` | `root:plugdev` **0660** | none | **nothing at all** |
+| **C** | the same rule, account added to `plugdev` | `root:plugdev` **0660** | `group::rw-` | `RFCRC0A9GND   device   usb:2-1   product:r9qxeea   model:SM_G990B` |
+
+Three things this establishes that the stub could not:
+
+1. **`no permissions` is the *world-readable* case.** ADB reads a device's descriptors before it
+   decides whether to list it. Mode 0664 lets it read and not write, so it lists the device and
+   says why it cannot use it. Mode 0660 lets it do neither, so it says nothing.
+2. **The rule alone is not enough, and neither is the group alone.** B has the rule and no group;
+   C has both. Only C works. That is exactly the pair the product's message names.
+3. **A running ADB server keeps the credentials it started with.** After `usermod -aG plugdev`,
+   with the account genuinely in the group, the device was *still* invisible until
+   `adb kill-server`. This is not in the message the previous pass shipped, and it is now — see
+   below.
+
+**F-33 re-verified against the real string.** The stub in §21.14 used the `(user in plugdev
+group; are your udev rules wrong?)` variant. The real device produced a different one, and with
+trailing properties *after* the advisory URL, which the synthetic case did not cover:
+
+```
+RFCRC0A9GND    no permissions (user vcatadb is not in the plugdev group); see [http://developer.android.com/tools/device.html] usb:2-1 transport_id:1
+```
+
+The build that shipped before F-33 — `2.0.13+692ad6b`, still staged on the guest — was run against
+it first, as a control:
+
+| | before F-33 | after |
+|---|---|---|
+| `state` | **`Unknown`** | **`NoPermissions`** |
+| `properties` | `{"[http": "//developer.android.com/tools/device.html]", "usb": "2-1", "transport_id": "1"}` | `{"usb": "2-1", "transport_id": "1"}` |
+| `stateText` | *(absent)* | `no permissions (user vcatadb is not in the plugdev group); see [http://…]` |
+
+and `capture-adb` in state A exits **1** with nothing on stdout, no half-created session, and the
+remedy on stderr.
+
+---
+
+#### F-34 · Major · A device this account may not open is reported as a device that is not connected
+
+**Severity** Major. It is state **B** above, and it is the state a user reaches *by following the
+advice* — they add the udev rule they were told to add, forget the group, and the product stops
+mentioning permissions at all. What it says instead is wrong in both halves:
+
+```
+error: Device 'RFCRC0A9GND' was not found (no devices are connected).
+       Connect the device and enable USB debugging.
+```
+
+The device **is** connected. USB debugging **is** enabled. Both instructions are already
+satisfied, so a reader who trusts the message has nowhere to go; the one place the fault actually
+is — a permission on their own computer — is the one place the message does not point. And it is
+the more likely of the two failures, because `MODE="0660"` is what the android rules and most
+copy-pasted recipes actually use: the friendlier `no permissions` only appears when *no* rule is
+installed at all.
+
+**Where** `AdbLogSource`'s two device-resolution sites, and the desktop's live-capture dialog,
+which had the same sentence.
+
+**Fixed.** ADB cannot see the device, but the operating system can, and it will say so without
+opening anything: an ADB interface is USB class `ff`, subclass `42`, protocol `01`, and interface
+descriptors in `sysfs` stay world-readable when the device node does not. `UsbDeviceAccess` walks
+`/sys/bus/usb/devices`, finds any such interface, resolves its parent's `busnum`/`devnum` to
+`/dev/bus/usb/BBB/DDD`, and reports the ones this process cannot open read-write. Measured live,
+in state B:
+
+```
+error: Device 'RFCRC0A9GND' was not found (no devices are connected). An Android device with
+USB debugging enabled is attached to this computer and this account may not open it —
+/dev/bus/usb/002/006 (SAMSUNG_Android, serial RFCRC0A9GND, mode 0660) — and ADB leaves out a
+device whose USB node it cannot read. To fix it, add a udev rule for the device's vendor id and
+reload it — 'sudo tee /etc/udev/rules.d/51-android.rules', then 'sudo udevadm control
+--reload-rules && sudo udevadm trigger' — and make sure your account is in the group that rule
+grants (often plugdev). Then replug the device and restart the daemon with 'adb kill-server',
+because a running server keeps the credentials it started with.
+```
+
+**The remedy text changed too**, in both messages — the quotation in
+[F-33](#f-33) above ends *"Unplug and replug the device, then retry"*, which is incomplete. This
+pass hit the gap live: the account was in `plugdev`, the node was `root:plugdev 0660`, and the
+device stayed invisible until the ADB server was restarted. Replugging fixes a changed **rule**;
+`adb kill-server` fixes a changed **group**. The message now names both.
+
+**It must never cry wolf**, so two controls:
+
+| Control | Result |
+|---|---|
+| the seat user, who *can* open the device, asks for a serial that does not exist | `Device 'NOSUCHDEVICE' was not found (connected devices: RFCRC0A9GND). Connect the device and enable USB debugging.` — the plain sentence, no permission claim |
+| every machine in CI, and Windows | the probe reports nothing: it is inert off Linux, returns nothing where `/sys` is absent, and treats a busy or vanished node as openable rather than as evidence |
+
+A test pins the second: the probe's two entry points must agree, every entry it does produce must
+be a `/dev/bus/usb/` path, and off Linux it must return nothing at all. A second test pins the
+real device line from state A, and a headless Avalonia test pins the dialog's status text.
+
+### 22.4 The same three states through the desktop
+
+The dialog carried the same wrong sentence, and it is the first thing a GUI user sees. Run as the
+same non-seat account under `Xvfb :92`, against the same phone at the same moment:
+
+**State B, before and after the fix** — the dialog now reads:
+
+> No devices detected. An Android device with USB debugging enabled is attached to this computer
+> and this account may not open it — /dev/bus/usb/002/006 (SAMSUNG_Android, serial RFCRC0A9GND,
+> mode 0660) — and ADB leaves out a device whose USB node it cannot read. Add a udev rule granting
+> a group your account is in — often plugdev — then replug the device, run 'adb kill-server', and
+> refresh.
+
+**State C** — `RFCRC0A9GND · SM_G990B · Device` in the picker, `1 device detected`, *Start
+capture* enabled.
+
+### 22.5 A live ADB capture in the desktop, on Linux, over real USB — **PASS**
+
+Never run before: every earlier ADB measurement on this guest went through the *Windows* host's
+ADB server over TCP. This one is the guest's own ADB server on the guest's own USB bus, driven
+from the desktop UI by an account with no graphical session and no privileges beyond `plugdev`.
+
+| | |
+|---|---|
+| while running | `Capturing · 2,487 lines received · 61/s · ADB device RFCRC0A9GND`, heat map filling across all six severity rows, templates pane building |
+| on *Stop capture* | state **`Ready`**, format `ThreadTime`, confidence **1.000** |
+| counters | `sourceLines 4195 = parsedEntries 4008 + metaRecords 187 + unknownLines 0 + rejectedCandidates 0 + continuations 0 + ignoredBlanks 0` |
+| `vcat verify` | `issues: []`, `entriesChecked 4008`, `sourceRecordsChecked 4195`, **`rawVerified: true`**, `truncated: false` |
+| the session directory, on a brand-new account's first ever run | **700** — [F-19](#f-19)/[F-27](#f-27) holding where nothing existed before |
+
+The CLI leg of the same thing, as the same account: a 12-second capture, `rawVerified: true`,
+confidence 1.000. [F-01](#f-01)'s width fix is visible in both — this is a Samsung, the device
+whose five-digit thread ids started this whole report.
+
+### 22.6 Seventh-pass cleanup and hand-back
+
+| Step | Verified |
+|---|---|
+| test account `vcatadb` | `userdel -r`; `id vcatadb` → *no such user* |
+| `udev` overrides this pass added | all removed; `/etc/udev/rules.d/` back to its four snap rules, nothing else |
+| staged copies (`/tmp/vcatcli`, `/tmp/vcatdesk`, sessions, screenshots, `Xvfb` log) | removed; `/tmp` holds only VMware's own entries |
+| processes | `VisualCat` **0** · `vcat` **0** · `adb` **0** · `Xvfb` **0** |
+| `/var/crash` | **0** |
+| USB passthrough | `usb.autoConnect.device0` removed from the `.vmx`; guest `lsusb` shows only VMware's virtual hub and mouse |
+| the phone | back on the Windows host — `RFCRC0A9GND device product:r9qxeea model:SM_G990B` — and left locked |
+| the guest | powered back up, autologin session **unlocked** (`LockedHint=no`), 162 GiB free |
+
+Two things were deliberately **left in place**, both noted here so they are not a surprise:
+
+- **`~/.android/adbkey` and `adbkey.pub` in the guest** — a copy of the host's own ADB key pair.
+  It is what makes the guest able to talk to the phone without a tap on the device, so it is kept
+  on purpose, per the request to make the VM ADB-accessible. Delete `~/.android` in the guest to
+  undo it.
+- **`~/vcat-run/candidate/head2`** — this pass's build, alongside the existing `head` and
+  `rel-2.0.13`.
+
+**To do this again**, the whole setup is two steps: add `usb.autoConnect.device0 = "0x04e8:0x6860"`
+to the `.vmx` (with the guest powered off) and power it back on. Remove the line to give the phone
+back to Windows. Nothing else in the guest needs changing — the key pair is already there.
+
+### 22.7 Revised tally after the seventh pass
+
+| | |
+|---|---|
+| Findings | **34** — 10 Major, 14 Minor, 10 Polish |
+| Closed and live-verified | **31** |
+| Closed with a stated limit | **1** — [F-13](#f-13): the application and its controls yes, the structural `panel` names upstream |
+| Not closed | **2** — [F-11](#f-11) and [F-32](#f-32), both upstream in Avalonia's AT-SPI backend, both measured against a live tree |
+| §15 rows closed by this pass | **1** — ADB `no permissions` / `udev` / group membership, both halves |
+| §15 rows still open | metal and the §4.2 performance budgets, the soak, KDE Plasma and Xfce specifically, multi-monitor (recorded as unachievable here, §21.16), and the reverse direction of I-08 (no file-saving share target on the device, §21.11) |
+| Unit tests | **1,077**, 0 failures |
+| Defects found *by* this pass | **1** — [F-34](#f-34), plus one incomplete remedy in an already-shipped message |
+| VisualCat-attributable crashes, hangs or core dumps | **0** |

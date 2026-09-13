@@ -792,11 +792,7 @@ public sealed class AdbLogSource :
             string.Equals(candidate.Serial, _serial, StringComparison.Ordinal));
         if (device is null)
         {
-            var known = devices.Count == 0
-                ? "no devices are connected"
-                : $"connected devices: {string.Join(", ", devices.Select(static value => value.Serial))}";
-            throw new AdbCaptureUnavailableException(
-                $"Device '{_serial}' was not found ({known}). Connect the device and enable USB debugging.");
+            throw new AdbCaptureUnavailableException(NotFoundMessage(_serial, devices));
         }
 
         if (device.State != AdbDeviceState.Device)
@@ -830,15 +826,31 @@ public sealed class AdbLogSource :
             "This is a permission on the computer, not on the device.";
         if (OperatingSystem.IsLinux())
         {
-            message +=
-                " On Linux, add a udev rule for the device's vendor id and reload it — " +
-                "'sudo tee /etc/udev/rules.d/51-android.rules', then " +
-                "'sudo udevadm control --reload-rules && sudo udevadm trigger' — and make sure " +
-                "your account is in the group that rule grants (often plugdev). Unplug and " +
-                "replug the device, then retry.";
+            message += $" On Linux the fix is a udev rule and a group: {UsbDeviceAccess.ShellRemedy}";
         }
 
         return message;
+    }
+
+    /// <summary>
+    /// What to say when the requested serial is not in the list — including the case where the
+    /// device is on the bus and ADB simply could not read it.
+    /// </summary>
+    /// <remarks>
+    /// "Connect the device and enable USB debugging" is wrong advice for an account that is not
+    /// in the group a <c>udev</c> rule grants: the device is connected, debugging is on, and
+    /// ADB says nothing at all because it may not even read the node. Measured live against a
+    /// real phone — mode 0664 reports "no permissions", mode 0660 reports nothing (F-34).
+    /// </remarks>
+    private static string NotFoundMessage(string serial, IReadOnlyList<AdbDevice> devices)
+    {
+        var known = devices.Count == 0
+            ? "no devices are connected"
+            : $"connected devices: {string.Join(", ", devices.Select(static value => value.Serial))}";
+        var hidden = UsbDeviceAccess.MissingDeviceExplanation();
+        return hidden is null
+            ? $"Device '{serial}' was not found ({known}). Connect the device and enable USB debugging."
+            : $"Device '{serial}' was not found ({known}). {hidden} To fix it, {UsbDeviceAccess.ShellRemedy}";
     }
 
     /// <summary>Names a device's state, preferring what the daemon actually printed.</summary>
@@ -899,10 +911,7 @@ public sealed class AdbLogSource :
                 string.Equals(candidate.Serial, _serial, StringComparison.Ordinal));
             if (device is null)
             {
-                var known = devices.Count == 0
-                    ? "no devices are connected"
-                    : $"connected devices: {string.Join(", ", devices.Select(static value => value.Serial))}";
-                return $"Device '{_serial}' was not found ({known}). Connect the device and enable USB debugging.";
+                return NotFoundMessage(_serial, devices);
             }
 
             return device.State switch

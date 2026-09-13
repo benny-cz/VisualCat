@@ -14,6 +14,7 @@ using VisualCat.App.Views;
 using VisualCat.Domain;
 using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
+using VisualCat.Infrastructure.Adb;
 using VisualCat.Infrastructure.Configuration;
 
 namespace VisualCat.App.Tests;
@@ -175,5 +176,70 @@ public sealed class LinuxLiveTestShellTests
         {
             window.Close();
         }
+    }
+
+    // ------------------------------------------------- A-16, second half (F-34)
+
+    [AvaloniaFact]
+    public async Task AnEmptyDeviceListDoesNotBlameTheDeviceForTheComputerSPermissions()
+    {
+        // ADB omits a device whose USB node the account may not read, so "connect a device and
+        // enable USB debugging" is told to a user whose phone is already connected with
+        // debugging already on — the real fault being a udev rule granting a group they are not
+        // in. Measured live: mode 0664 reports "no permissions", mode 0660 reports nothing.
+        using var dialog = new AdbCaptureDialog(new EmptyDeviceClient());
+        dialog.Show();
+        try
+        {
+            var status = string.Empty;
+            for (var attempt = 0; attempt < 200 && status.Length == 0; attempt++)
+            {
+                Dispatcher.UIThread.RunJobs();
+                status = dialog.GetVisualDescendants().OfType<TextBlock>()
+                    .Select(static block => block.Text ?? string.Empty)
+                    .FirstOrDefault(static text => text.StartsWith("No devices detected", StringComparison.Ordinal))
+                    ?? string.Empty;
+                if (status.Length == 0)
+                {
+                    await Task.Delay(10);
+                }
+            }
+
+            Assert.StartsWith("No devices detected.", status, StringComparison.Ordinal);
+            var explanation = UsbDeviceAccess.MissingDeviceExplanation();
+            if (explanation is null)
+            {
+                Assert.Equal(
+                    "No devices detected. Connect a device and enable USB debugging, then refresh.",
+                    status);
+            }
+            else
+            {
+                Assert.Contains(explanation, status, StringComparison.Ordinal);
+                Assert.Contains(UsbDeviceAccess.ShortRemedy, status, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    }
+
+    private sealed class EmptyDeviceClient : IAdbClient
+    {
+        public string ExecutablePath => "fake-adb";
+
+        public Task<IReadOnlyList<AdbDevice>> ListDevicesAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<AdbDevice>>([]);
+        }
+
+        public Task<AdbCommandResult> RunAsync(
+            IReadOnlyList<string> arguments,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public IAdbProcess StartProcess(IReadOnlyList<string> arguments) =>
+            throw new NotSupportedException();
     }
 }

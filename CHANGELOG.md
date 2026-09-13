@@ -17,10 +17,11 @@ screenshot says which build it came from.
 
 #### From the Linux live test
 
-A five-pass live run of the shipped `linux-x64` release against a real Ubuntu
-desktop and a physical phone found 31 defects; these close them.
+A seven-pass live run of the shipped `linux-x64` release against a real Ubuntu
+desktop and a physical phone found 34 defects; these close every one with a
+product-side fix. Two are upstream in Avalonia's AT-SPI backend and stay open.
 [`docs/LINUX-LIVE-TEST-REPORT.md`](docs/LINUX-LIVE-TEST-REPORT.md) records the
-run, and §20 records this remediation.
+run, §20 records this remediation, and §21–§22 the passes that followed it.
 
 - **`logcat -v long` no longer loses a record whose thread id needs five digits.**
   Android prints that field as `%5d:%5d`, so a wide thread id leaves no space
@@ -152,6 +153,18 @@ run, and §20 records this remediation.
   name. It now says so, and on Linux names the udev rule, the reload commands and the group. A
   state VisualCat does not model — `recovery`, `sideload` — is reported with what the daemon
   actually said rather than flattened to "unknown".
+- **A phone this account may not open is no longer reported as a phone that is not plugged in.**
+  ADB reads a device's descriptors before it decides whether to list it, so a `udev` rule granting
+  a group you are not in — `MODE="0660"`, which is what the standard Android rules use — makes the
+  device disappear from `adb devices` altogether instead of reporting *no permissions*. What
+  followed told the reader to connect the device and enable USB debugging, both already true, and
+  never mentioned the one place the fault was: a permission on their own computer. VisualCat now
+  looks for an ADB interface on the computer's own USB bus that this account cannot open — USB
+  interface descriptors stay world-readable when the device node does not, so this costs nothing
+  and opens nothing — and names the node, the product, the serial and the mode, on the command
+  line and in the live-capture dialog alike. The remedy now also names `adb kill-server`: a
+  running daemon keeps the credentials it started with, so joining the group changes nothing
+  until it restarts.
 - **A screen reader no longer hears the whole window read out at once.** Orca announces a window
   that has no focused control by reading everything in it, and the main window had none — so the
   notice, the strapline, every count, the template list and the entry list arrived as a single
