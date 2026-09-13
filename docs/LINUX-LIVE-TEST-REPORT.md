@@ -5276,7 +5276,7 @@ whose session exists is left alone.
 | X-03 · twenty-million-entry live growth | needs hardware this host cannot stand in for; §15 already records that no performance number here is a baseline |
 | X-05 · four-hour ADB capture endurance | four hours with the phone attached to the guest |
 | X-06 · overnight growing-file soak | 8–12 h |
-| X-07 · minimized/unmapped/obscured capture | needs a compositor that can minimize and obscure — no window manager under `Xvfb` can |
+| X-07 · minimized/unmapped/obscured capture | five 60-minute intervals, and a compositor that can minimize and obscure. **Its power-boundary half is closed**: with a 200,000-line session open, `systemd-inhibit --list` showed the same **7** inhibitors as before it started and **none** owned by VisualCat, which is what the plan expects — the product neither takes an idle, sleep or shutdown inhibitor nor relies on one |
 | X-08, X-09 · ADB ring-buffer pressure and the transport gauntlet | a device, hours, and deliberate transport abuse |
 | X-22 · multi-instance collision soak | several hours |
 | X-23 · display/GPU/compositor transitions | the same hardware multi-monitor needs (§23.2) |
