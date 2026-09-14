@@ -27,10 +27,45 @@ line there. Findings are appended to [§3](#3-findings) the moment they are obse
 | Field | Value |
 |---|---|
 | Run ID | `20260914-macos-arm64-m1` |
-| Status | **IN PROGRESS** |
-| Last completed | §2.23 — B-13 follow (FAIL), B-16/I-07 export equivalence, P-01 network, P-02 sockets, P-16.1 |
-| Next step | B-19 window state and U-01 small-window matrix; B-21 off-timeline evidence; a Q6 pass from a terminal with no grants; cleanup and hand-back |
-| Findings | 21 open (F-01 … F-21): **6 Major**, 10 Minor, 5 Polish |
+| Status | **PASS 1 COMPLETE** — cleanup done and the Mac handed back ([§5](#5-mutation-ledger-and-hand-back)) |
+| Last completed | §2.26 — B-19 window state, U-01 minimum size, U-05 full screen, U-10 appearance, settings inventory |
+| Next step | [§4.5](#45-where-the-next-pass-should-start) — the Q6/Q7 consent pass from iTerm2, then a human keyboard-and-mouse pass, then a VoiceOver soak aimed at [F-14](#f-14) |
+| Findings | **22** (F-01 … F-22): **6 Major**, 11 Minor, 5 Polish |
+
+### Findings at a glance
+
+| # | Sev | What |
+|---|---|---|
+| [F-01](#f-01) | Minor | The shipped macOS `README.txt` tells the user to run `sha256sum`, absent before macOS 26 |
+| [F-02](#f-02) | Minor | The macOS tarballs have no wrapper directory — `tar -xzf` scatters 240 files |
+| [F-03](#f-03) | **Major** | The macOS menu bar calls the product **"Avalonia Application"**, and there are no menus at all |
+| [F-04](#f-04) | Minor | The data root is created world-readable (0755) — superseded in detail by F-08 |
+| [F-05](#f-05) | Minor | `SUPPORT.md` publishes no macOS floor; the binaries declare `minos 12.0` |
+| [F-06](#f-06) | **Major** | 2.0.13 still ships the `logcat -v long` silent data loss that `main` has fixed |
+| [F-07](#f-07) | Minor | Sessions record `Europe/Bratislava` on a Mac set to `Europe/Prague` |
+| [F-08](#f-08) | **Major** | Every saved session is world-readable, contradicting `PRIVACY.md` in its own words |
+| [F-09](#f-09) | **Major** | A click on a modally-blocked window is queued and replayed after the dialog closes |
+| [F-10](#f-10) | **Major** | `--adb` pointing at a missing path or a directory is silently ignored in favour of `PATH` |
+| [F-11](#f-11) | Minor | `~/Library/Android/sdk` — the macOS SDK location — is never probed |
+| [F-12](#f-12) | Polish | Three ADB messages that each send the reader one step the wrong way |
+| [F-13](#f-13) | Polish | A `.vcat` session is a folder, so the save panel lets you save a session inside one |
+| [F-14](#f-14) | **Major** | Abort inside `-[AvnAccessibilityElement raiseLiveRegionChanged]` — an accessibility crash |
+| [F-15](#f-15) | Minor | Two dialogs reserve roughly half their height for nothing |
+| [F-16](#f-16) | Polish | The search field has no accessible name; the entry legend collides with the status bar |
+| [F-17](#f-17) | Minor | `openSessionPaths` is written on every exit and never read back |
+| [F-18](#f-18) | **Major** | Follow leaves the newest records out of the view; two counters on screen disagree |
+| [F-19](#f-19) | Minor | The shipped README links docs from `main`, so users read post-release features |
+| [F-20](#f-20) | Minor | Desktop and CLI default to different CSV row orders |
+| [F-21](#f-21) | Polish | Recent captures' two selection models; unfitted first paint; export path not shown |
+| [F-22](#f-22) | Minor | Native full screen draws the toolbar under the window's own title bar |
+
+**The release recommendation this run produces.** Two of the six Major findings —
+[F-06](#f-06) and [F-08](#f-08) — are defects that `main` has already fixed and that 2.0.13
+still ships: silent loss of two thirds of a `logcat -v long` file, and a stated privacy
+guarantee that is false. Neither needs new code; both need a release. Cutting **2.0.14** is
+the single highest-value action arising from this run, and [F-19](#f-19) makes it more
+urgent, because every 2.0.13 user reading the documentation their own archive links to is
+already reading about the fixed behaviour.
 
 **To resume.**
 
@@ -1143,462 +1178,84 @@ would be clearer if *Open* acted on a single checked capture, or if the buttons 
 under headings that named which selection each one uses. Filed as part of
 [F-21](#f-21).
 
+### 2.24 B-19 / U-01 / U-05 — window state, minimum size, and full screen
+
+**Verdict: PASS on sizing and restore; FAIL on native full screen ([F-22](#f-22)).**
+
+| Assertion | Result |
+|---|---|
+| Minimum window size | **900 × 628 points**, enforced — requests for 400 × 300 and 200 × 150 both clamp to it |
+| Responsive command collapse | **works** — at the minimum size *Save portable* and *Export* move into *More*, the analysis controls wrap to two rows, and the severity chips drop their counts |
+| Green button | enters **native full screen** (`AXFullScreen` → `true`), not zoom |
+| Exit full screen | restores the previous frame exactly (`0, 30, 1440, 797`) |
+| Size persisted across a clean ⌘Q | **yes** — `settings.json` `windowWidth 1120`, `windowHeight 652`; restored frame `1120 × 680` (652 client + 28 title bar), re-persisted as 652. **No creep across cycles** |
+| Position persisted | **no** — set to `120, 90`, restored at `0, 30` |
+| ⌘Q | quits cleanly, writes settings, leaves no process |
+
+At the 900 × 628 minimum the layout holds together, with one casualty: the entry list is
+left roughly one row tall and its single visible row is cut in half by the *SELECTED ENTRY*
+bar — the same vertical-budget collision as [F-16](#f-16)'s second point, at its worst. The
+log content is the first thing squeezed out of a small window, which is the wrong thing to
+sacrifice.
+
+**Full screen is the failure.** With the window at `0, 0, 1440, 900`, the window's own
+title bar is drawn below the menu bar and **on top of the toolbar row**, leaving only the
+bottom ~40 % of *Open log*, *ADB live*, *Open session*, *Recent*, *Follow file*, *Open
+archive*, *Save*, *Save portable*, *Export* and *More* visible. Evidence:
+`b19-fullscreen.png` (the top 120 points) and `b19-fullscreen-whole.png` (the whole screen).
+The buttons still respond; they are simply half-hidden. See [F-22](#f-22).
+
+### 2.25 U-10 — light, dark, and automatic appearance
+
+**Verdict: PASS.**
+
+`settings.json` records `"theme": "System"`. Switching macOS from Dark to Light with
+`tell appearance preferences to set dark mode to false` **re-themed the running application
+live, with no restart and no flicker**, and switching back restored it. Evidence:
+`u10-dark.png`, `u10-light.png`.
+
+The light theme is a real design, not an inversion: the empty state's headline and subtitle
+keep their contrast, the six severity chips hold their hues at light-appropriate saturation
+and remain distinguishable from one another, disabled commands (*Save*, *Save portable*,
+*Export*) read clearly as disabled, and the *Recent captures on this device* list is legible
+with its size and state metadata. The identity line still reads
+`VisualCat 2.0.13+0670981 · local-first · no telemetry`.
+
+The system appearance was restored to Dark immediately afterwards (mutation ledger,
+[§5](#5-mutation-ledger-and-hand-back)).
+
+### 2.26 What `settings.json` actually contains
+
+Recorded in full because P-02 asks what the product stores, and because several findings
+above are visible in it. After a clean ⌘Q:
+
+```json
+{ "version": 1, "theme": "System", "highContrast": false, "textScale": 1,
+  "adbPath": null, "defaultCaptureBuffers": ["main","system","crash"],
+  "defaultCapturePreRollSeconds": 0, "sessionDirectory": null, "uiRefreshLimit": 30,
+  "intensityScale": "Logarithmic", "timelineNormalization": "PerRow",
+  "timelineMinimumUsPerPixel": 1, "timelinePixelSnap": true, "timelineMinimumBarWidth": 5,
+  "exportOrder": "SourceSequence", "exportEncoding": "utf-8-bom",
+  "diagnosticsEnabled": true, "temporaryCleanupEnabled": false,
+  "temporaryRetentionDays": 30, "temporaryRetentionMaximumBytes": null,
+  "windowWidth": 1120, "windowHeight": 652, "windowMaximized": false,
+  "liveCaptureNoticeAcknowledged": false,
+  "openSessionPaths": [ …three absolute session paths… ], "openSessionIndex": 2,
+  "workspaceDisplayMode": null, "updateDismissedVersionCode": 0,
+  "updateSnoozedUntilUtc": null, "updateLastCheckedUtc": null,
+  "mobileTimelineShare": null, "mobileTimelineWidthShare": null }
+```
+
+No telemetry identifier, no machine id, no user name, no network endpoint — consistent with
+the "local-first · no telemetry" claim. `exportOrder: "SourceSequence"` is
+[F-20](#f-20)'s remembered desktop default. `openSessionPaths` and `openSessionIndex` are
+[F-17](#f-17)'s written-but-never-read workspace. The file is mode `0644`
+([F-08](#f-08)).
+
 ---
 
 ## 3. Findings
-
-### F-18 · Major · Following a growing file leaves the newest records out of the view, and the two counters on screen disagree
-
-**Severity** Major — this is the *Follow a growing file* feature working incorrectly on its
-main assertion, on a product whose proposition is watching a log as it happens. Nothing is
-lost from disk, which keeps it out of Blocker territory; what the user sees is wrong, and
-nothing tells them so.
-
-**Where** Live-view refresh for a followed source: the workspace's snapshot query does not
-keep pace with the coordinator's ingest, and stops advancing when the source goes idle.
-
-**What happens.** Reproduced twice, with different producers.
-
-*Run 2* (no partial line, 40 records at 0.3 s). In the same window at the same moment:
-
-```
-status bar :  Capturing · 42 lines received · no source lines for 2m 20s · …/growing2.txt (follow)
-footer     :  32 in view  ·  33 match the filter  ·  33 in session
-raw.log    :  40 records   (grep -c 'seq=')
-```
-
-The status bar had counted every line. The store held every record. The footer said 33 and
-held that value for 2 minutes 20 seconds while the source sat idle — so this is not "the
-view is waiting for more", it is "the view stopped".
-
-Appending three more lines moved the footer **33 → 42**: three new plus six released
-stranded ones, still two behind the store. So a later arrival is what flushes the backlog.
-
-*Run 1* (with a partial line, 60 records) finished worse, because it also survived a Stop:
-
-```
-footer      : 51 in view · 51 match the filter · 51 in session
-status bar  : Stopped · 61 entries kept
-manifest    : "parsedEntries": 61, "sourceLines": 62, "unknownLines": 0
-```
-
-**51 and 61 on screen together**, after the capture had stopped and the session had been
-finalized. Closing the tab and reopening the same session from *Recent* gave
-`61 in view · 61 match the filter · 61 in session · Ready · 61 entries`. The data was never
-in doubt; only the live view was.
-
-**Expected.** B-13: "The final record sequence matches the ledger exactly… a pause leaves
-records stranded in memory" is a `Fail if`. Plan §4 also requires that visible counts and
-the plot agree.
-
-**Suggested fix.**
-
-1. **Make the idle transition flush.** Whatever publishes a batch — a size threshold, a
-   `batchLatencyMilliseconds` timer (the manifest records `250`), or a channel of capacity
-   `8` — something is holding the tail until the next arrival displaces it. The source going
-   quiet must be a *publish trigger*, not a reason to wait: the same code that already
-   detects "no source lines for 1m 32s" for the heartbeat should, on its first tick after
-   arrivals stop, force a final flush and a view refresh.
-2. **Flush on stop, unconditionally.** Run 1 shows the stale count surviving *Stop* and
-   finalization. Finalizing a session must re-query the view from the finalized manifest, so
-   the footer and the status bar cannot end up quoting different totals.
-3. **Never let the two totals diverge silently.** `<n> in session` in the footer and
-   `<n> entries kept` in the status bar are the same quantity from two paths. Compute both
-   from one source, and add a debug-build assertion that they match — this defect is exactly
-   the kind that a single shared accessor makes impossible.
-4. **Add the regression test the plan's oracle implies.** A headless follow test that writes
-   N records, waits past the batch latency with the writer idle, and asserts the *view's*
-   entry count equals N — not the store's. The existing tests evidently assert the store,
-   which is why this survived.
-5. While fixing it, check the `in view` / `match the filter` pair too: with no filters
-   active the footer reported `32 in view · 33 match the filter`, a consistent off-by-one
-   against its own unfiltered total.
-
-**Appendix-B trap checks.** Not a filter artifact — the chip bar read `No filters · showing
-everything in view` throughout. Not a time-window artifact — the footer's own span
-(`05-15 14:13:37.496 — 05-15 14:20:00.000`) covers every record, and every record shares one
-timestamp by construction. Not a producer artifact — the ledger records every append with a
-millisecond stamp and the file's byte length, and `grep -c 'seq='` on the file and on the
-session's `raw.log` both return the full count. Not specific to the partial-line variant —
-reproduced with a plain appender. Not a display-sleep artifact — `caffeinate -dimsu` held
-the display awake throughout.
-
----
-
-### F-19 · Minor · The shipped README links documentation from `main`, so a release's users read features their build does not have
-
-**Severity** Minor, but it is a documentation defect that regenerates itself after every
-release and affects every platform.
-
-**Where** The `README.txt` emitted into every release archive.
-
-**What happens.** The shipped `README.txt` ends with:
-
-```
-  Release notes   https://github.com/benny-cz/VisualCat/blob/main/docs/RELEASE-NOTES.md
-  CLI reference   https://github.com/benny-cz/VisualCat/blob/main/docs/CLI.md
-  Support matrix  https://github.com/benny-cz/VisualCat/blob/main/docs/SUPPORT.md
-```
-
-All three point at **`main`**, not at the release tag. So a 2.0.13 user follows the link
-their own archive gives them and reads documentation for code they do not have. Concretely,
-today:
-
-```shell
-$ vcat export small.vcat out.csv --type csv --newline crlf
-error: 'export' does not take '--newline'. Run 'vcat export --help' to see what it does take.
-```
-
-`main`'s `docs/CLI.md` documents `--newline lf|crlf` twice — in the conventions section and
-in the `export` synopsis — and `main`'s `Program.cs:452` implements it. The **v2.0.13 tag's**
-`docs/CLI.md` mentions `newline` zero times, so the tagged documentation is correct and
-consistent; only the link is wrong. The option was added on `main` in `c061c6e "Close the
-Linux run's parser and command-line findings"`, i.e. *because of* a previous live run — so
-the better the testing gets, the wider this gap grows.
-
-The same mechanism makes [F-05](#f-05) worse: a user reading `main`'s `SUPPORT.md` sees
-whatever it says today, not what was true for their build.
-
-**Suggested fix.**
-
-1. Emit the tag, not the branch, in the packaging template:
-   ```
-   Release notes   https://github.com/benny-cz/VisualCat/blob/v2.0.13/docs/RELEASE-NOTES.md
-   CLI reference   https://github.com/benny-cz/VisualCat/blob/v2.0.13/docs/CLI.md
-   Support matrix  https://github.com/benny-cz/VisualCat/blob/v2.0.13/docs/SUPPORT.md
-   ```
-   The version string is already interpolated into the README's first line, so this is the
-   same substitution applied three more times.
-2. Do the same for any in-app documentation link, and for the release announcement.
-3. Add a release-workflow check that every URL in a generated `README.txt` contains the tag
-   rather than `blob/main`.
-4. Independently: `vcat export --help` should list every option the command accepts; today
-   it is the authority a user falls back to when the website disagrees with their binary,
-   and in this case it was right.
-
-**Appendix-B trap checks.** The README text was read from the extracted archive, not from
-the repository. The `--newline` rejection was produced by the shipped `osx-arm64` binary.
-The tag-versus-`main` difference was confirmed with `git show v2.0.13:docs/CLI.md`.
-
----
-
-### F-20 · Minor · The desktop and the CLI default to different CSV row orders, and only one of them says so
-
-**Severity** Minor — both orders are correct and both are selectable. The cost is a
-comparison that fails for no visible reason.
-
-**Where** Desktop *Export CSV* dialog default versus `vcat export` default.
-
-**What happens.**
-
-| Surface | Default row order | Documented? |
-|---|---|---|
-| `vcat export` | **chronological** | yes — `CLI.md`: "`--order chronological` is the default; `--order source` preserves source sequence" |
-| Desktop *Export CSV* | **Source order** | only as the dialog's current value |
-
-The two exports of the same 1 000-entry session are byte-identical when the order matches
-and differ from line 243 when it does not:
-
-```shell
-$ cmp desktop-export.csv small.csv
-desktop-export.csv small.csv differ: char 25872, line 243
-```
-
-A user or a script that exports the same session from both surfaces with default options
-gets two different files and no explanation. The desktop dialog also states *"A successful
-export remembers these two choices as the new defaults"*, so after one deliberate change the
-desktop default is whatever that user last chose — which makes "the desktop default" a
-per-user value that no document can describe.
-
-**Suggested fix.**
-
-1. Pick one default and use it on both surfaces. **Chronological** is the better choice: it
-   is what the CLI already documents, it is what the timeline shows, and it is what a reader
-   expects from a log export.
-2. Show the effective order in the export result line, so a remembered preference is never
-   invisible: `Exported 1,000 timed rows · chronological order · all timed entries in
-   session · desktop-export.csv`.
-3. Record the order in the CSV itself — a leading comment row is awkward in CSV, so instead
-   name it in the export dialog's summary line beside the row count and time zone, where
-   `1,000 timed rows · Europe/Bratislava · No filters` already lives.
-4. Document the desktop defaults, and the fact that they are remembered, wherever the export
-   is described for end users.
-
-**Appendix-B trap checks.** Both files were produced on the same host from the same session
-minutes apart, so nothing about locale, time zone or tooling differs between them. The
-equality with `--order source` was proved by SHA-256, not by eye.
-
----
-
-### F-21 · Polish · Small UI frictions worth one pass each
-
-Grouped because each is a few lines and none is severe.
-
-**1. *Recent captures* has two selection models and explains neither.** The checkbox column
-drives the footer count and *Delete captures…*; the row highlight drives *Open*. Checking a
-capture leaves *Open* disabled, which reads as a broken button. Suggested: let *Open* act on
-a single checked capture as well as on a highlighted row, and label the two button groups
-("Selected captures: Delete…" / "Highlighted capture: Open").
-
-**2. The initial view after an import is not fitted, so a quarter of the heat map is empty.**
-Importing `small.txt` (span 1.501 s) opened at `2 s · 753 µs/px`, leaving ~0.5 s — about 25 %
-of the plot width — blank on the left, while the minimap below it was correctly fitted to
-the session. Pressing *Fit* gives `1.501 s · 565.1 µs/px` and fills the width. The rounded
-2 s window is presumably deliberate, but the first thing a user sees after opening a log is
-a quarter-empty canvas that looks like a quiet period in their data. Suggested: fit on
-first paint, and keep the round-number rounding for zoom steps where it helps.
-
-**3. The desktop export's result line names the file but not the folder.**
-`Exported 1,000 timed rows · all timed entries in session · desktop-export.csv` — on macOS,
-where the save panel may have been redirected by ⇧⌘G or by a remembered location, the
-absolute path is the useful part. The CLI prints it; the desktop should too, or should offer
-*Show in Finder*.
-
-**Appendix-B trap checks.** All three were observed on the running 2.0.13 build with
-evidence captured (`p161-recent.png`, `b06-session.png` versus `b06-fit.png`), and the
-*Recent captures* behaviour was confirmed by reading `AXEnabled` on the *Open* button
-before and after each kind of selection.
-
----
-
-### F-14 · Major · VisualCat aborts inside Avalonia's macOS accessibility bridge while announcing a live-region change
-
-**Severity** Major — an unhandled Objective-C exception aborts the process with no product
-message, no managed stack, and no chance to save. It sits on the accessibility path, so the
-users most exposed are the ones least able to recover.
-
-**Where** `libAvaloniaNative.dylib`, `-[AvnAccessibilityElement raiseLiveRegionChanged]`,
-reached from every `AutomationProperties.SetLiveSetting(…)` surface in the product —
-`MainView.Notice.cs:223,451`, `MainView.FileOperations.cs:98`,
-`AdbCaptureDialog.cs:70,71`, `ImportPreviewDialog.cs:123-125`,
-`FacetBrowserDialog.cs:305,306`, `NumberPromptDialog.cs:101`. Avalonia **12.1.1**.
-
-**What happened.** After ~2 h 40 m of ordinary use — an 8-minute ADB capture, a standard
-save, a portable save, a file import, filter and search work — with an accessibility client
-attached, the process died:
-
-```
-Exception Type:  EXC_CRASH (SIGABRT)
-Termination:     SIGNAL 6  Abort trap: 6
-asi:             libsystem_c.dylib: "abort() called"
-Faulting thread: 0  com.apple.main-thread
-```
-
-The last Objective-C exception backtrace names the frame exactly:
-
-```
-  __exceptionPreprocess
-  objc_exception_throw
-  -[__NSPlaceholderDictionary initWithObjects:forKeys:count:]
-  +[NSDictionary dictionaryWithObjects:forKeys:count:]
-  -[AvnAccessibilityElement raiseLiveRegionChanged]       ← libAvaloniaNative.dylib
-  …managed frames…
-```
-
-`+[NSDictionary dictionaryWithObjects:forKeys:count:]` raises `NSInvalidArgumentException`
-when **any key or value is nil**. `raiseLiveRegionChanged` builds the `userInfo` dictionary
-for `NSAccessibilityPostNotificationWithUserInfo` — `NSAccessibilityAnnouncementKey` plus
-`NSAccessibilityPriorityKey`. If the element's accessibility label resolves to `nil` at the
-moment the live region fires, that literal throws, nothing catches it, and the runtime
-aborts. Evidence: `~/Library/Logs/DiagnosticReports/VisualCat-2026-09-14-134131.ips`
-(64 400 bytes), pid 6166, `parentProc launchd`, `translated false`.
-
-**Not reproduced.** Roughly fifteen targeted attempts failed to trigger it again: the exact
-pre-crash keystroke sequence, repeated invalid-regex notices (which *are* an `Assertive`
-live region), filter changes, search, session reopen, and the shortcut matrix. So this is
-**one observed abort with a definitive native stack**, not a recipe. It is filed as Major
-rather than Blocker on that basis, and the [§4](#4-standing-list--what-is-still-untested)
-list carries the reproduction attempt.
-
-**Why it matters more than a one-off crash normally would.**
-
-- The crash is **on the accessibility path**, so it fires for exactly the users who depend
-  on VoiceOver, Switch Control, Voice Control, or Dictation — and for any automation. A
-  sighted user with no assistive technology running may never see it, which is also why it
-  could ship unnoticed.
-- macOS's own crash dialog reads **"Avalonia Application quit unexpectedly."** (captured in
-  `p161-recent.png`). A user cannot tell which application died, cannot search for it, and
-  cannot file a useful report. This is [F-03](#f-03) turning a bad moment into an
-  unreportable one.
-- An abort during a live ADB capture would end the capture with no notice.
-
-**Suggested fix.** Two independent layers, because either alone leaves a gap.
-
-1. **In the product — never let a live region have an empty accessible name.** Every
-   element that carries `AutomationLiveSetting` should be given a non-empty
-   `AutomationProperties.Name` *before* the live setting is attached, and should never be
-   allowed to fall back to empty. The clearest instance is
-   `MainView.FileOperations.cs`, where the announcement element is constructed with no text
-   and no name, given a live setting at line 98, and only named at line 221 — **after** the
-   `Text` assignment at line 220 that raises the change:
-   ```csharp
-   // Name first: setting Text raises the live region, and on macOS a live region whose
-   // accessible name is nil aborts the process inside NSDictionary (F-14).
-   if (!string.Equals(stage, _fileOperationAnnouncement.Text, StringComparison.Ordinal))
-   {
-       AutomationProperties.SetName(_fileOperationAnnouncement, stage);
-       _fileOperationAnnouncement.Text = stage;
-   }
-   ```
-   and give it a non-empty name at construction. Apply the same ordering wherever a live
-   region's text and name are set together, and add an assertion in a debug build that a
-   live-region element's effective name is never null or empty.
-2. **Upstream — the framework must not build a dictionary that can throw.** The correct
-   shape is to bail out rather than post an announcement with no text:
-   ```objc
-   NSString* announcement = [self accessibilityLabel];
-   if (announcement.length == 0) { return; }   // nothing to say; never throw
-   NSAccessibilityPostNotificationWithUserInfo(
-       self, NSAccessibilityAnnouncementRequestedNotification,
-       @{ NSAccessibilityAnnouncementKey : announcement,
-          NSAccessibilityPriorityKey     : @(priority) });
-   ```
-   This repository already tracks upstream Avalonia findings (`99e3947 Re-check the two
-   upstream findings against the newest Avalonia`), so this belongs on that list with the
-   `.ips` attached — it is a one-line guard with a clear crash report behind it.
-3. **Make the crash reportable.** Whatever the cause, a user should be able to say *what*
-   crashed. Fixing the application name ([F-03](#f-03)) changes the dialog from
-   "Avalonia Application quit unexpectedly" to "VisualCat quit unexpectedly", and the
-   `.ips` from `procName VisualCat` with `app_version ""` to one carrying the real version —
-   note that `app_version` and `build_version` are both **empty strings** in this report,
-   because a bare executable has no `Info.plist`. Add a mention of
-   `~/Library/Logs/DiagnosticReports/` to [`SUPPORT.md`](SUPPORT.md)'s bug-reporting
-   section so a macOS user knows where the evidence is.
-
-**Appendix-B trap checks.** Not a translated-execution artifact — `translated: false`, this
-was the native `osx-arm64` build. Not an out-of-memory or jetsam kill — the termination is
-`SIGNAL 6 Abort trap` from `abort()` after an uncaught ObjC exception, not `EXC_RESOURCE` or
-a jetsam event. Not a forced kill — `byProc: VisualCat`, `byPid: 6166`, i.e. the process
-aborted itself. Not a display-sleep or screen-lock artifact — the display was held awake by
-`caffeinate -dimsu` from 11:1x onward, and the crash is at 11:41:31 UTC.
-
----
-
-### F-15 · Minor · Two dialogs reserve roughly half their height for nothing
-
-**Severity** Minor — pure layout waste, but on a 1440 × 900-point desktop it pushes the
-buttons a long way from the content the user is reading, and it makes both dialogs look
-broken.
-
-**Where** `ImportPreviewDialog`, `AdbCaptureDialog`.
-
-**What happens.**
-
-| Dialog | Size | Content ends at | Empty |
-|---|---|---|---|
-| `Import preview — vcat-b05-small.txt` | 720 × 688 pt | ~250 pt | **~64 %** |
-| `Live ADB capture` | 600 × 438 pt | ~300 pt | **~31 %** |
-
-Evidence: `b05-import-preview.png`, `b11-adb-dialog.png`. In the import preview the eight
-lines of summary sit at the top, the collapsed *Import options* disclosure sits under them,
-and then there are roughly 430 points of nothing before *Cancel* and *Import* in the bottom
-right corner. The user reads at the top and clicks 430 points lower.
-
-The height is presumably reserved for *Import options* when expanded. Reserving it while
-collapsed is the defect: the dialog should size to its current content and grow when the
-disclosure opens, which is what every macOS disclosure does.
-
-**Suggested fix.**
-
-1. Let both dialogs size to content (`SizeToContent="WidthAndHeight"` with a sensible
-   `MaxHeight`), and let the disclosure's expansion resize the window. If a jump on expand
-   is unwanted, animate the height change rather than pre-reserving it.
-2. Put the action buttons directly under the content rather than anchored to the window
-   bottom, so they stay with what they act on at every size.
-3. While here: both dialogs are free-floating windows with their own traffic lights, and
-   the *Live ADB capture* dialog has an **enabled minimise button** while it is modal. See
-   [F-09](#f-09) suggestion 3 — presenting them as sheets fixes the sizing, the ownership
-   and the minimise trap in one change, and matches the native file chooser this same
-   application already presents correctly.
-
-**Appendix-B trap checks.** Not a scaled-resolution artifact — the measurements are in
-points from the accessibility API (`AXSize`), not pixels from the screenshot, so the
-display's 1440 × 900 scaled mode does not enter into them. Not a font-fallback artifact —
-the text renders at the expected size and is not clipped.
-
----
-
-### F-16 · Polish · The search field has no accessible name, and the selected-entry legend collides with the status bar
-
-**Severity** Polish — two small blemishes on an otherwise strong accessibility and layout
-story, grouped because each is a one-line fix.
-
-**1. The search field announces as an unnamed text field once it has content.**
-The field exposes `AXPlaceholderValue = "Search message text or regex…"` but no `AXTitle`
-and no `AXDescription`. VoiceOver reads a placeholder only while the field is empty, so a
-user who types a query and tabs away and back hears "text field" with no name. Every other
-control in the window is named; this is the one gap. Fix:
-
-```csharp
-AutomationProperties.SetName(_searchBox, "Search message text or regex");
-AutomationProperties.SetHelpText(_searchBox,
-    "Matches message text. Use the Regex checkbox for a regular expression, and Tags to match a tag.");
-```
-
-The help text also carries the answer to [F-12](#f-12)'s second point, where a user expects
-a tag search and gets none.
-
-**2. The selected-entry legend is drawn under the status bar.** With the *SELECTED ENTRY*
-inspector open on a 795-point-tall window, the legend line
-`en entry · mt marker · .. continuation · e? untimed · ?? unknown · !! rejected` is painted
-in the same band as `Ready · 1,000 entries`, and the two overlap (visible in
-`b06-selected.png` and `b06-sel4.png`). Nothing is lost — the legend is also reachable by
-scrolling — but the overlap makes both unreadable at the one window size this Mac's default
-scaled resolution gives a maximised window. Fix: put the legend inside the inspector's own
-scroller rather than letting it extend past the pane's bottom edge, and give the status bar
-a real row in the layout grid so nothing can be painted over it.
-
-**Appendix-B trap checks.** The AX attributes were read from the live process, not inferred.
-The overlap is visible in two independent captures taken minutes apart, at the same window
-size, and is not a capture-timing artifact.
-
----
-
-### F-17 · Minor · After a crash the sessions come back but the workspace does not, and nothing says where to look
-
-**Severity** Minor — no data is lost, which is the important part. The cost is that a user
-whose app died mid-analysis is shown an empty start page and has to work out for themselves
-that their work is under *Recent*.
-
-**Where** Workspace restoration on start-up.
-
-**What happens.** The crash in [F-14](#f-14) killed a process with two open tabs. The
-diagnostics log shows the workspace *was* persisted:
-
-```json
-{"TimestampUtc":"2026-09-14T11:24:11.817623+00:00","Subsystem":"main-view",
- "Name":"workspace.persisted","Properties":{"openSessionCount":"2","selectedIndex":"1"}}
-```
-
-On relaunch the app showed the **empty state** — headline, chips, and three text actions.
-Both sessions were intact and reachable through *Recent captures* (`vcat-b05-small ·
-191.44 KiB · complete` and `ADB RFCRC0A9GND 13h00m23 · 17.25 MiB · complete`), and
-reopening one restored all 1 000 entries. So recovery works; only the handoff is missing.
-
-**Expected.** Either the workspace is restored, or the user is told in one sentence that the
-previous session ended unexpectedly and where their captures are.
-
-**Suggested fix**, in increasing order of ambition:
-
-1. **Say it.** On a start-up that follows a persisted workspace which was never closed
-   cleanly, show a notice on the empty state:
-   *"VisualCat closed unexpectedly. Your 2 captures are safe — open them from Recent."*
-   with *Recent* as the action. One notice, one button, and the user never has to guess.
-   Set a "clean shutdown" marker beside the persisted workspace and clear it on an orderly
-   exit; its absence is the trigger.
-2. **Offer the restore.** Add *Restore previous session* beside it, reopening the tabs that
-   `workspace.persisted` recorded. Keep it an offer rather than automatic — reopening a
-   17 MB capture unasked is its own annoyance.
-3. Record the crash in the product's own diagnostics on the *next* start, so a diagnostic
-   bundle collected afterwards contains the fact that a crash happened. Today the
-   `.jsonl` simply stops, and the only trace is the macOS `.ips` the user does not know
-   about.
-
-**Appendix-B trap checks.** The persisted-workspace line was read from the product's own
-diagnostics file, not inferred. The sessions' survival was verified by reopening one and
-comparing its entry count with the pre-crash value.
-
----
+## 3. Findings
 
 ### F-01 · Minor · The shipped macOS `README.txt` tells the user to run a command macOS did not have until macOS 26
 
@@ -1861,8 +1518,15 @@ if (!OperatingSystem.IsWindows())
 ```
 
 and assert the mode in the existing privacy test so the promise is enforced rather than
-described. Re-verify against `Sessions/`, `SessionAccess-v1/` and `Diagnostics/` once
-[§2](#2-results) creates them.
+described.
+
+**Superseded by [F-08](#f-08).** Sessions, leases and a portable `raw.log` were created
+later in the run and are all world-readable too, which turns this from a hardening
+suggestion into a contract violation. Fix them together.
+
+**Appendix-B trap checks.** Not a `umask` artifact of the harness — `022` is this account's
+untouched default. Not an extraction artifact — these directories were created by the
+running product on first launch, verified by their absence beforehand.
 
 ---
 
@@ -2552,6 +2216,624 @@ the shipped artifact, confirmed by the absence of any `Info.plist` in the tarbal
 
 ---
 
+### F-14 · Major · VisualCat aborts inside Avalonia's macOS accessibility bridge while announcing a live-region change
+
+**Severity** Major — an unhandled Objective-C exception aborts the process with no product
+message, no managed stack, and no chance to save. It sits on the accessibility path, so the
+users most exposed are the ones least able to recover.
+
+**Where** `libAvaloniaNative.dylib`, `-[AvnAccessibilityElement raiseLiveRegionChanged]`,
+reached from every `AutomationProperties.SetLiveSetting(…)` surface in the product —
+`MainView.Notice.cs:223,451`, `MainView.FileOperations.cs:98`,
+`AdbCaptureDialog.cs:70,71`, `ImportPreviewDialog.cs:123-125`,
+`FacetBrowserDialog.cs:305,306`, `NumberPromptDialog.cs:101`. Avalonia **12.1.1**.
+
+**What happened.** After ~2 h 40 m of ordinary use — an 8-minute ADB capture, a standard
+save, a portable save, a file import, filter and search work — with an accessibility client
+attached, the process died:
+
+```
+Exception Type:  EXC_CRASH (SIGABRT)
+Termination:     SIGNAL 6  Abort trap: 6
+asi:             libsystem_c.dylib: "abort() called"
+Faulting thread: 0  com.apple.main-thread
+```
+
+The last Objective-C exception backtrace names the frame exactly:
+
+```
+  __exceptionPreprocess
+  objc_exception_throw
+  -[__NSPlaceholderDictionary initWithObjects:forKeys:count:]
+  +[NSDictionary dictionaryWithObjects:forKeys:count:]
+  -[AvnAccessibilityElement raiseLiveRegionChanged]       ← libAvaloniaNative.dylib
+  …managed frames…
+```
+
+`+[NSDictionary dictionaryWithObjects:forKeys:count:]` raises `NSInvalidArgumentException`
+when **any key or value is nil**. `raiseLiveRegionChanged` builds the `userInfo` dictionary
+for `NSAccessibilityPostNotificationWithUserInfo` — `NSAccessibilityAnnouncementKey` plus
+`NSAccessibilityPriorityKey`. If the element's accessibility label resolves to `nil` at the
+moment the live region fires, that literal throws, nothing catches it, and the runtime
+aborts. Evidence: `~/Library/Logs/DiagnosticReports/VisualCat-2026-09-14-134131.ips`
+(64 400 bytes), pid 6166, `parentProc launchd`, `translated false`.
+
+**Not reproduced.** Roughly fifteen targeted attempts failed to trigger it again: the exact
+pre-crash keystroke sequence, repeated invalid-regex notices (which *are* an `Assertive`
+live region), filter changes, search, session reopen, and the shortcut matrix. So this is
+**one observed abort with a definitive native stack**, not a recipe. It is filed as Major
+rather than Blocker on that basis, and the [§4](#4-standing-list--what-is-still-untested)
+list carries the reproduction attempt.
+
+**Why it matters more than a one-off crash normally would.**
+
+- The crash is **on the accessibility path**, so it fires for exactly the users who depend
+  on VoiceOver, Switch Control, Voice Control, or Dictation — and for any automation. A
+  sighted user with no assistive technology running may never see it, which is also why it
+  could ship unnoticed.
+- macOS's own crash dialog reads **"Avalonia Application quit unexpectedly."** (captured in
+  `p161-recent.png`). A user cannot tell which application died, cannot search for it, and
+  cannot file a useful report. This is [F-03](#f-03) turning a bad moment into an
+  unreportable one.
+- An abort during a live ADB capture would end the capture with no notice.
+
+**Suggested fix.** Two independent layers, because either alone leaves a gap.
+
+1. **In the product — never let a live region have an empty accessible name.** Every
+   element that carries `AutomationLiveSetting` should be given a non-empty
+   `AutomationProperties.Name` *before* the live setting is attached, and should never be
+   allowed to fall back to empty. The clearest instance is
+   `MainView.FileOperations.cs`, where the announcement element is constructed with no text
+   and no name, given a live setting at line 98, and only named at line 221 — **after** the
+   `Text` assignment at line 220 that raises the change:
+   ```csharp
+   // Name first: setting Text raises the live region, and on macOS a live region whose
+   // accessible name is nil aborts the process inside NSDictionary (F-14).
+   if (!string.Equals(stage, _fileOperationAnnouncement.Text, StringComparison.Ordinal))
+   {
+       AutomationProperties.SetName(_fileOperationAnnouncement, stage);
+       _fileOperationAnnouncement.Text = stage;
+   }
+   ```
+   and give it a non-empty name at construction. Apply the same ordering wherever a live
+   region's text and name are set together, and add an assertion in a debug build that a
+   live-region element's effective name is never null or empty.
+2. **Upstream — the framework must not build a dictionary that can throw.** The correct
+   shape is to bail out rather than post an announcement with no text:
+   ```objc
+   NSString* announcement = [self accessibilityLabel];
+   if (announcement.length == 0) { return; }   // nothing to say; never throw
+   NSAccessibilityPostNotificationWithUserInfo(
+       self, NSAccessibilityAnnouncementRequestedNotification,
+       @{ NSAccessibilityAnnouncementKey : announcement,
+          NSAccessibilityPriorityKey     : @(priority) });
+   ```
+   This repository already tracks upstream Avalonia findings (`99e3947 Re-check the two
+   upstream findings against the newest Avalonia`), so this belongs on that list with the
+   `.ips` attached — it is a one-line guard with a clear crash report behind it.
+3. **Make the crash reportable.** Whatever the cause, a user should be able to say *what*
+   crashed. Fixing the application name ([F-03](#f-03)) changes the dialog from
+   "Avalonia Application quit unexpectedly" to "VisualCat quit unexpectedly", and the
+   `.ips` from `procName VisualCat` with `app_version ""` to one carrying the real version —
+   note that `app_version` and `build_version` are both **empty strings** in this report,
+   because a bare executable has no `Info.plist`. Add a mention of
+   `~/Library/Logs/DiagnosticReports/` to [`SUPPORT.md`](SUPPORT.md)'s bug-reporting
+   section so a macOS user knows where the evidence is.
+
+**Appendix-B trap checks.** Not a translated-execution artifact — `translated: false`, this
+was the native `osx-arm64` build. Not an out-of-memory or jetsam kill — the termination is
+`SIGNAL 6 Abort trap` from `abort()` after an uncaught ObjC exception, not `EXC_RESOURCE` or
+a jetsam event. Not a forced kill — `byProc: VisualCat`, `byPid: 6166`, i.e. the process
+aborted itself. Not a display-sleep or screen-lock artifact — the display was held awake by
+`caffeinate -dimsu` from 11:1x onward, and the crash is at 11:41:31 UTC.
+
+---
+
+### F-15 · Minor · Two dialogs reserve roughly half their height for nothing
+
+**Severity** Minor — pure layout waste, but on a 1440 × 900-point desktop it pushes the
+buttons a long way from the content the user is reading, and it makes both dialogs look
+broken.
+
+**Where** `ImportPreviewDialog`, `AdbCaptureDialog`.
+
+**What happens.**
+
+| Dialog | Size | Content ends at | Empty |
+|---|---|---|---|
+| `Import preview — vcat-b05-small.txt` | 720 × 688 pt | ~250 pt | **~64 %** |
+| `Live ADB capture` | 600 × 438 pt | ~300 pt | **~31 %** |
+
+Evidence: `b05-import-preview.png`, `b11-adb-dialog.png`. In the import preview the eight
+lines of summary sit at the top, the collapsed *Import options* disclosure sits under them,
+and then there are roughly 430 points of nothing before *Cancel* and *Import* in the bottom
+right corner. The user reads at the top and clicks 430 points lower.
+
+The height is presumably reserved for *Import options* when expanded. Reserving it while
+collapsed is the defect: the dialog should size to its current content and grow when the
+disclosure opens, which is what every macOS disclosure does.
+
+**Suggested fix.**
+
+1. Let both dialogs size to content (`SizeToContent="WidthAndHeight"` with a sensible
+   `MaxHeight`), and let the disclosure's expansion resize the window. If a jump on expand
+   is unwanted, animate the height change rather than pre-reserving it.
+2. Put the action buttons directly under the content rather than anchored to the window
+   bottom, so they stay with what they act on at every size.
+3. While here: both dialogs are free-floating windows with their own traffic lights, and
+   the *Live ADB capture* dialog has an **enabled minimise button** while it is modal. See
+   [F-09](#f-09) suggestion 3 — presenting them as sheets fixes the sizing, the ownership
+   and the minimise trap in one change, and matches the native file chooser this same
+   application already presents correctly.
+
+**Appendix-B trap checks.** Not a scaled-resolution artifact — the measurements are in
+points from the accessibility API (`AXSize`), not pixels from the screenshot, so the
+display's 1440 × 900 scaled mode does not enter into them. Not a font-fallback artifact —
+the text renders at the expected size and is not clipped.
+
+---
+
+### F-16 · Polish · The search field has no accessible name, and the selected-entry legend collides with the status bar
+
+**Severity** Polish — two small blemishes on an otherwise strong accessibility and layout
+story, grouped because each is a one-line fix.
+
+**1. The search field announces as an unnamed text field once it has content.**
+The field exposes `AXPlaceholderValue = "Search message text or regex…"` but no `AXTitle`
+and no `AXDescription`. VoiceOver reads a placeholder only while the field is empty, so a
+user who types a query and tabs away and back hears "text field" with no name. Every other
+control in the window is named; this is the one gap. Fix:
+
+```csharp
+AutomationProperties.SetName(_searchBox, "Search message text or regex");
+AutomationProperties.SetHelpText(_searchBox,
+    "Matches message text. Use the Regex checkbox for a regular expression, and Tags to match a tag.");
+```
+
+The help text also carries the answer to [F-12](#f-12)'s second point, where a user expects
+a tag search and gets none.
+
+**2. The selected-entry legend is drawn under the status bar.** With the *SELECTED ENTRY*
+inspector open on a 795-point-tall window, the legend line
+`en entry · mt marker · .. continuation · e? untimed · ?? unknown · !! rejected` is painted
+in the same band as `Ready · 1,000 entries`, and the two overlap (visible in
+`b06-selected.png` and `b06-sel4.png`). Nothing is lost — the legend is also reachable by
+scrolling — but the overlap makes both unreadable at the one window size this Mac's default
+scaled resolution gives a maximised window. Fix: put the legend inside the inspector's own
+scroller rather than letting it extend past the pane's bottom edge, and give the status bar
+a real row in the layout grid so nothing can be painted over it.
+
+**Appendix-B trap checks.** The AX attributes were read from the live process, not inferred.
+The overlap is visible in two independent captures taken minutes apart, at the same window
+size, and is not a capture-timing artifact.
+
+---
+
+### F-17 · Minor · After a crash the sessions come back but the workspace does not, and nothing says where to look
+
+**Severity** Minor — no data is lost, which is the important part. The cost is that a user
+whose app died mid-analysis is shown an empty start page and has to work out for themselves
+that their work is under *Recent*.
+
+**Widened after §2.24: the workspace is not restored after a *clean* quit either.** A ⌘Q
+with three tabs open wrote
+
+```json
+"openSessionPaths": [
+  "…/Sessions/20260914-112411-vcat-b05-small-….vcat",
+  "…/Sessions/20260914-120054-growing.txt-….vcat",
+  "…/Sessions/20260914-120716-growing2.txt-….vcat" ],
+"openSessionIndex": 2
+```
+
+into `settings.json`, and the next two launches — 12 s and 25 s of settle time, both with
+stdout and stderr empty — came back to the **empty state with zero tabs**. So
+`openSessionPaths` is written on every exit and apparently never read. Either the field is
+vestigial, in which case it should stop being written (it is a list of absolute paths in a
+world-readable file — see [F-08](#f-08)), or restoration is unfinished.
+
+**Where** Workspace restoration on start-up.
+
+**What happens.** The crash in [F-14](#f-14) killed a process with two open tabs. The
+diagnostics log shows the workspace *was* persisted:
+
+```json
+{"TimestampUtc":"2026-09-14T11:24:11.817623+00:00","Subsystem":"main-view",
+ "Name":"workspace.persisted","Properties":{"openSessionCount":"2","selectedIndex":"1"}}
+```
+
+On relaunch the app showed the **empty state** — headline, chips, and three text actions.
+Both sessions were intact and reachable through *Recent captures* (`vcat-b05-small ·
+191.44 KiB · complete` and `ADB RFCRC0A9GND 13h00m23 · 17.25 MiB · complete`), and
+reopening one restored all 1 000 entries. So recovery works; only the handoff is missing.
+
+**Expected.** Either the workspace is restored, or the user is told in one sentence that the
+previous session ended unexpectedly and where their captures are.
+
+**Suggested fix**, in increasing order of ambition:
+
+1. **Say it.** On a start-up that follows a persisted workspace which was never closed
+   cleanly, show a notice on the empty state:
+   *"VisualCat closed unexpectedly. Your 2 captures are safe — open them from Recent."*
+   with *Recent* as the action. One notice, one button, and the user never has to guess.
+   Set a "clean shutdown" marker beside the persisted workspace and clear it on an orderly
+   exit; its absence is the trigger.
+2. **Offer the restore.** Add *Restore previous session* beside it, reopening the tabs that
+   `workspace.persisted` recorded. Keep it an offer rather than automatic — reopening a
+   17 MB capture unasked is its own annoyance.
+3. Record the crash in the product's own diagnostics on the *next* start, so a diagnostic
+   bundle collected afterwards contains the fact that a crash happened. Today the
+   `.jsonl` simply stops, and the only trace is the macOS `.ips` the user does not know
+   about.
+
+**Appendix-B trap checks.** The persisted-workspace line was read from the product's own
+diagnostics file, not inferred. The sessions' survival was verified by reopening one and
+comparing its entry count with the pre-crash value.
+
+---
+
+### F-18 · Major · Following a growing file leaves the newest records out of the view, and the two counters on screen disagree
+
+**Severity** Major — this is the *Follow a growing file* feature working incorrectly on its
+main assertion, on a product whose proposition is watching a log as it happens. Nothing is
+lost from disk, which keeps it out of Blocker territory; what the user sees is wrong, and
+nothing tells them so.
+
+**Where** **Snapshot publication in the session coordinator**, not the view. The product's
+own diagnostics prove it — the store publishes a snapshot only when new data arrives, so the
+final batch never gets one:
+
+```json
+12:07:44  "Name":"store.snapshot"  "snapshotGeneration":"5"  "timedEntries":"33"
+12:10:43  "Name":"store.snapshot"  "snapshotGeneration":"6"  "timedEntries":"42"
+12:16:38  "Name":"ingest.ready"    "sourceLines":"45" "timedEntries":"44" "snapshotGeneration":"8"
+```
+
+The UI's `33` and then `42` are exactly generations 5 and 6. The view is faithfully
+rendering the newest snapshot it has; the snapshot is what stops. The final truth — 44
+entries — only reaches generation 8, at `ingest.ready`, i.e. when the source is closed.
+
+**What happens.** Reproduced twice, with different producers.
+
+*Run 2* (no partial line, 40 records at 0.3 s). In the same window at the same moment:
+
+```
+status bar :  Capturing · 42 lines received · no source lines for 2m 20s · …/growing2.txt (follow)
+footer     :  32 in view  ·  33 match the filter  ·  33 in session
+raw.log    :  40 records   (grep -c 'seq=')
+```
+
+The status bar had counted every line. The store held every record. The footer said 33 and
+held that value for 2 minutes 20 seconds while the source sat idle — so this is not "the
+view is waiting for more", it is "the view stopped".
+
+Appending three more lines moved the footer **33 → 42**: three new plus six released
+stranded ones, still two behind the store. So a later arrival is what flushes the backlog.
+
+*Run 1* (with a partial line, 60 records) finished worse, because it also survived a Stop:
+
+```
+footer      : 51 in view · 51 match the filter · 51 in session
+status bar  : Stopped · 61 entries kept
+manifest    : "parsedEntries": 61, "sourceLines": 62, "unknownLines": 0
+```
+
+**51 and 61 on screen together**, after the capture had stopped and the session had been
+finalized. Closing the tab and reopening the same session from *Recent* gave
+`61 in view · 61 match the filter · 61 in session · Ready · 61 entries`. The data was never
+in doubt; only the live view was.
+
+**Expected.** B-13: "The final record sequence matches the ledger exactly… a pause leaves
+records stranded in memory" is a `Fail if`. Plan §4 also requires that visible counts and
+the plot agree.
+
+**Suggested fix.**
+
+1. **Make the idle transition publish a snapshot.** The `store.snapshot` events show
+   publication is driven by arrivals — a size threshold, the `batchLatencyMilliseconds`
+   timer the manifest records as `250`, or the capacity-`8` channel — and nothing publishes
+   once arrivals stop. The source going quiet must be a *publish trigger*, not a reason to
+   wait: the same timer that already produces `no source lines for 1m 32s` for the heartbeat
+   should, on its first tick after arrivals stop, force a snapshot. One extra call on the
+   path that already exists.
+2. **Flush on stop, unconditionally.** Run 1 shows the stale count surviving *Stop* and
+   finalization. Finalizing a session must re-query the view from the finalized manifest, so
+   the footer and the status bar cannot end up quoting different totals.
+3. **Never let the two totals diverge silently.** `<n> in session` in the footer and
+   `<n> entries kept` in the status bar are the same quantity from two paths. Compute both
+   from one source, and add a debug-build assertion that they match — this defect is exactly
+   the kind that a single shared accessor makes impossible.
+4. **Add the regression test the plan's oracle implies.** A headless follow test that writes
+   N records, waits past the batch latency with the writer idle, and asserts the *view's*
+   entry count equals N — not the store's. The existing tests evidently assert the store,
+   which is why this survived.
+5. While fixing it, check the `in view` / `match the filter` pair too: with no filters
+   active the footer reported `32 in view · 33 match the filter`, a consistent off-by-one
+   against its own unfiltered total.
+
+**Appendix-B trap checks.** Not a filter artifact — the chip bar read `No filters · showing
+everything in view` throughout. Not a time-window artifact — the footer's own span
+(`05-15 14:13:37.496 — 05-15 14:20:00.000`) covers every record, and every record shares one
+timestamp by construction. Not a producer artifact — the ledger records every append with a
+millisecond stamp and the file's byte length, and `grep -c 'seq='` on the file and on the
+session's `raw.log` both return the full count. Not specific to the partial-line variant —
+reproduced with a plain appender. Not a display-sleep artifact — `caffeinate -dimsu` held
+the display awake throughout.
+
+---
+
+### F-19 · Minor · The shipped README links documentation from `main`, so a release's users read features their build does not have
+
+**Severity** Minor, but it is a documentation defect that regenerates itself after every
+release and affects every platform.
+
+**Where** The `README.txt` emitted into every release archive.
+
+**What happens.** The shipped `README.txt` ends with:
+
+```
+  Release notes   https://github.com/benny-cz/VisualCat/blob/main/docs/RELEASE-NOTES.md
+  CLI reference   https://github.com/benny-cz/VisualCat/blob/main/docs/CLI.md
+  Support matrix  https://github.com/benny-cz/VisualCat/blob/main/docs/SUPPORT.md
+```
+
+All three point at **`main`**, not at the release tag. So a 2.0.13 user follows the link
+their own archive gives them and reads documentation for code they do not have. Concretely,
+today:
+
+```shell
+$ vcat export small.vcat out.csv --type csv --newline crlf
+error: 'export' does not take '--newline'. Run 'vcat export --help' to see what it does take.
+```
+
+`main`'s `docs/CLI.md` documents `--newline lf|crlf` twice — in the conventions section and
+in the `export` synopsis — and `main`'s `Program.cs:452` implements it. The **v2.0.13 tag's**
+`docs/CLI.md` mentions `newline` zero times, so the tagged documentation is correct and
+consistent; only the link is wrong. The option was added on `main` in `c061c6e "Close the
+Linux run's parser and command-line findings"`, i.e. *because of* a previous live run — so
+the better the testing gets, the wider this gap grows.
+
+The same mechanism makes [F-05](#f-05) worse: a user reading `main`'s `SUPPORT.md` sees
+whatever it says today, not what was true for their build.
+
+**Suggested fix.**
+
+1. Emit the tag, not the branch, in the packaging template:
+   ```
+   Release notes   https://github.com/benny-cz/VisualCat/blob/v2.0.13/docs/RELEASE-NOTES.md
+   CLI reference   https://github.com/benny-cz/VisualCat/blob/v2.0.13/docs/CLI.md
+   Support matrix  https://github.com/benny-cz/VisualCat/blob/v2.0.13/docs/SUPPORT.md
+   ```
+   The version string is already interpolated into the README's first line, so this is the
+   same substitution applied three more times.
+2. Do the same for any in-app documentation link, and for the release announcement.
+3. Add a release-workflow check that every URL in a generated `README.txt` contains the tag
+   rather than `blob/main`.
+4. Independently: `vcat export --help` should list every option the command accepts; today
+   it is the authority a user falls back to when the website disagrees with their binary,
+   and in this case it was right.
+
+**Appendix-B trap checks.** The README text was read from the extracted archive, not from
+the repository. The `--newline` rejection was produced by the shipped `osx-arm64` binary.
+The tag-versus-`main` difference was confirmed with `git show v2.0.13:docs/CLI.md`.
+
+---
+
+### F-20 · Minor · The desktop and the CLI default to different CSV row orders, and only one of them says so
+
+**Severity** Minor — both orders are correct and both are selectable. The cost is a
+comparison that fails for no visible reason.
+
+**Where** Desktop *Export CSV* dialog default versus `vcat export` default.
+
+**What happens.**
+
+| Surface | Default row order | Documented? |
+|---|---|---|
+| `vcat export` | **chronological** | yes — `CLI.md`: "`--order chronological` is the default; `--order source` preserves source sequence" |
+| Desktop *Export CSV* | **Source order** | only as the dialog's current value |
+
+The two exports of the same 1 000-entry session are byte-identical when the order matches
+and differ from line 243 when it does not:
+
+```shell
+$ cmp desktop-export.csv small.csv
+desktop-export.csv small.csv differ: char 25872, line 243
+```
+
+A user or a script that exports the same session from both surfaces with default options
+gets two different files and no explanation. The desktop dialog also states *"A successful
+export remembers these two choices as the new defaults"*, so after one deliberate change the
+desktop default is whatever that user last chose — which makes "the desktop default" a
+per-user value that no document can describe.
+
+**Suggested fix.**
+
+1. Pick one default and use it on both surfaces. **Chronological** is the better choice: it
+   is what the CLI already documents, it is what the timeline shows, and it is what a reader
+   expects from a log export.
+2. Show the effective order in the export result line, so a remembered preference is never
+   invisible: `Exported 1,000 timed rows · chronological order · all timed entries in
+   session · desktop-export.csv`.
+3. Record the order in the CSV itself — a leading comment row is awkward in CSV, so instead
+   name it in the export dialog's summary line beside the row count and time zone, where
+   `1,000 timed rows · Europe/Bratislava · No filters` already lives.
+4. Document the desktop defaults, and the fact that they are remembered, wherever the export
+   is described for end users.
+
+**Appendix-B trap checks.** Both files were produced on the same host from the same session
+minutes apart, so nothing about locale, time zone or tooling differs between them. The
+equality with `--order source` was proved by SHA-256, not by eye.
+
+---
+
+### F-21 · Polish · Small UI frictions worth one pass each
+
+Grouped because each is a few lines and none is severe.
+
+**1. *Recent captures* has two selection models and explains neither.** The checkbox column
+drives the footer count and *Delete captures…*; the row highlight drives *Open*. Checking a
+capture leaves *Open* disabled, which reads as a broken button. Suggested: let *Open* act on
+a single checked capture as well as on a highlighted row, and label the two button groups
+("Selected captures: Delete…" / "Highlighted capture: Open").
+
+**2. The initial view after an import is not fitted, so a quarter of the heat map is empty.**
+Importing `small.txt` (span 1.501 s) opened at `2 s · 753 µs/px`, leaving ~0.5 s — about 25 %
+of the plot width — blank on the left, while the minimap below it was correctly fitted to
+the session. Pressing *Fit* gives `1.501 s · 565.1 µs/px` and fills the width. The rounded
+2 s window is presumably deliberate, but the first thing a user sees after opening a log is
+a quarter-empty canvas that looks like a quiet period in their data. Suggested: fit on
+first paint, and keep the round-number rounding for zoom steps where it helps.
+
+**3. The desktop export's result line names the file but not the folder.**
+`Exported 1,000 timed rows · all timed entries in session · desktop-export.csv` — on macOS,
+where the save panel may have been redirected by ⇧⌘G or by a remembered location, the
+absolute path is the useful part. The CLI prints it; the desktop should too, or should offer
+*Show in Finder*.
+
+**Appendix-B trap checks.** All three were observed on the running 2.0.13 build with
+evidence captured (`p161-recent.png`, `b06-session.png` versus `b06-fit.png`), and the
+*Recent captures* behaviour was confirmed by reading `AXEnabled` on the *Open* button
+before and after each kind of selection.
+
+---
+
+### F-22 · Minor · Native full screen draws the toolbar underneath the window's own title bar
+
+**Severity** Minor — nothing stops working, and the fix is a layout inset. It is filed
+because full screen on a laptop is how a lot of people use an analysis tool, and because the
+result looks broken rather than cramped.
+
+**Where** Window chrome layout when `AXFullScreen` is true.
+
+**What happens.** The green button enters native full screen (correct for macOS — the plan's
+S4 asks which of zoom and full screen the button performs, and this build performs full
+screen). The window then sits at `0, 0, 1440, 900`, i.e. the whole display, and:
+
+- the macOS menu bar is drawn across the top of it (this Mac does not auto-hide the menu bar);
+- the window's own title bar — traffic lights plus `VisualCat v2 — See the shape of your log` —
+  is drawn immediately below the menu bar;
+- **the toolbar row is drawn underneath that title bar**, so only the bottom ~40 % of every
+  command button is visible.
+
+Evidence: `b19-fullscreen.png`, `b19-fullscreen-whole.png`. Exiting full screen restores the
+correct layout exactly, so this is purely a full-screen inset problem.
+
+**Expected.** In full screen the content should begin below whatever chrome is drawn over
+it, as it does in the windowed state.
+
+**Suggested fix.**
+
+1. Apply the top safe-area inset to the client content in full screen. Avalonia exposes this
+   through the window's `SafeAreaPadding` / `TopLevel.InsetsManager`; bind the toolbar's top
+   margin to it rather than assuming a constant, because the inset differs between windowed,
+   full screen, auto-hiding menu bar, and a notched display.
+2. **This is also the row where a notched MacBook would fail**, and this Mac
+   (`MacBookPro17,1`) has no camera housing, so S5 could not be tested here. The same inset
+   fix covers both; a notched Mac should be added to the coverage list rather than assumed
+   ([§4](#4-standing-list--what-is-still-untested)).
+3. Consider hiding the window's own title bar in full screen, as most macOS applications do,
+   so the vertical space goes to the content. If the title is worth keeping, move it into the
+   toolbar row.
+4. Separately, restore the **window position** as well as its size. `settings.json` stores
+   `windowWidth` and `windowHeight` but no position, so a window moved to a second display or
+   to a corner of a large screen comes back at `0, 30` every time. Storing the frame origin
+   plus the display's identity, and validating it against the current display arrangement
+   before use, is the complete fix.
+
+**Appendix-B trap checks.** Not a screenshot-cropping artifact — the whole-screen capture
+shows the same overlap, and the geometry was read from the accessibility API
+(`position 0, 0`, `size 1440 × 900`, `AXFullScreen true`). Not a scaled-resolution artifact —
+the windowed layout at the same scale is correct. Reproduced twice, entering full screen by
+clicking the green button and by setting `AXFullScreen` directly.
+
+---
+
 ## 4. Standing list — what is still untested
 
-*(populated at the end of each pass)*
+This is the honest inventory of what one pass did not reach. Nothing here is a pass or a
+fail; each row is a gap with the reason it stayed open.
+
+### 4.1 Blocked by the harness, and worth a human at the keyboard
+
+| Row | Why it is still open |
+|---|---|
+| **U-06 documented shortcuts** | `Ctrl+O/E/F/G`, `Ctrl+Shift+O`, `F3`, `N` were all exercised, and none had a visible effect — but the accessibility focus probe reported `no focused element` throughout, so the harness cannot separate "the shortcut does nothing" from "the app had no keyboard focus". A person pressing ⌘F and Ctrl+F settles it in ten seconds |
+| **Mouse selection of a log row** | Synthetic clicks operate every button in the product but did not change the entry-list selection; setting `AXSelected` did. Almost certainly a synthetic-input artifact, but only a physical click proves it |
+| **[F-14](#f-14) reproduction** | One abort with a definitive native stack; ~15 targeted attempts failed to trigger it again. Needs a VoiceOver-on soak |
+| **U-07 VoiceOver end-to-end** | The tree and the focus order were measured through the accessibility API ([§2.15](#215-u-07--u-08--the-accessibility-tree-is-genuinely-good), [§2.18](#218-u-06--the-keyboard-contract)). No screen reader was actually driven, so speech order, verbosity and the 25-level nesting cost are unmeasured |
+| **U-25 dynamic announcements** | The live-region path is where [F-14](#f-14) crashed; what it *says* is untested |
+
+### 4.2 Q6 — the consent pass this Mac could not produce
+
+Every launch path on this host gives VisualCat silent access: over SSH it inherits **Full
+Disk Access** from `sshd-keygen-wrapper`, and from Terminal.app it inherits Desktop,
+Documents and Downloads ([§2.16](#216-b-05--importing-through-the-macos-file-chooser-and-what-tcc-actually-did)).
+**iTerm2 was installed during this run specifically to provide a launcher with no grants**;
+the pass itself was not executed. It needs: a first launch from iTerm2, then *Open log* from
+`~/Desktop`, `~/Documents`, `~/Downloads`, an external volume and a network share, recording
+which prompt appears, **what application name it names**, and what the product says when the
+prompt is denied (Q7). This is the single highest-value untested row, because it is the one
+the plan calls "the most important macOS-only consequence of shipping an unbundled
+executable".
+
+### 4.3 Not attempted for want of privilege or hardware
+
+| Family | Reason |
+|---|---|
+| P-10 temporary-file boundary with `fs_usage`, X-16 `memory_pressure`, a dedicated case-sensitive APFS volume (M4), X-15 low-disk | `sudo` is password-protected on this Mac and the password was not requested |
+| S2/S3/U-03/U-04 multi-display, mixed scale, ProMotion, hot-plug | One built-in 60 Hz display only |
+| S5 notch and menu-bar safe area | `MacBookPro17,1` has no camera housing. Related to [F-22](#f-22), which the same inset fix would cover |
+| U-15 Touch Bar, Force Touch | Not present on this model |
+| A-29 / M2 / D3 upgrade from the previous release | Would need a genuine 2.0.12 data set; this account started clean |
+| P-17 multi-user isolation, P-09 ACL boundary | Needs a second local account, which needs administrator action on the owner's daily Mac |
+| M9 managed/hardened host | Not an MDM-managed Mac |
+
+### 4.4 Scenarios simply not reached in one pass
+
+X-01 through X-30 in full (only an 8-minute ADB capture and two short follows were run — no
+million-line import, no four-hour endurance, no overnight soak, no ring-buffer pressure, no
+descriptor exhaustion); A-01 through A-14 and A-21 through A-38 except where noted above;
+I-08 portable round trip through Android, Windows and Linux; I-15 cross-platform byte
+parity; I-16 architecture parity beyond the counter comparison in
+[§2.6](#26-b-02-second-half--m5--x-30--the-osx-x64-build-under-rosetta-2); the whole R
+regression pack; P-03 through P-08 and P-11 through P-21 except where noted; A-08's
+adversarial corpus sweep (the corpus was built but only `outcomes.txt` was exercised);
+B-15 `.vcat.zip` round trip; B-17 startup-argument dispatch; B-21 off-timeline evidence.
+
+### 4.5 Where the next pass should start
+
+1. **The Q6/Q7 consent pass from iTerm2** ([§4.2](#42-q6--the-consent-pass-this-mac-could-not-produce)) — highest value, needs nothing but a person to click.
+2. **A human keyboard and mouse pass** over [§4.1](#41-blocked-by-the-harness-and-worth-a-human-at-the-keyboard)'s first two rows — ten minutes, and it either closes two gaps or turns them into findings.
+3. **A VoiceOver soak** aimed at reproducing [F-14](#f-14).
+4. **X-01 and X-05** — a million-line import and a four-hour capture — because every performance number in this report is from a small corpus on a busy machine and there is still no macOS baseline.
+
+---
+
+## 5. Mutation ledger and hand-back
+
+Per plan §2.9 and §13.5. Everything this run changed on the Mac, and its state at hand-back.
+
+| What | Original | Changed to | Restored? |
+|---|---|---|---|
+| Homebrew cask `android-platform-tools` | absent | installed (`adb` 1.0.41 / 37.0.1) | **left installed** — needed for any future ADB row; removable with `brew uninstall --cask android-platform-tools` |
+| Homebrew casks `iterm2`, formula `cliclick` | absent | installed | **left installed** — iTerm2 is the launcher [§4.2](#42-q6--the-consent-pass-this-mac-could-not-produce) needs |
+| TCC: Accessibility for `/usr/libexec/sshd-keygen-wrapper` | absent | granted by the Mac's owner | **left granted** — remove in System Settings › Privacy & Security › Accessibility |
+| TCC: Screen Recording for `com.apple.Terminal` | already granted | unchanged | n/a |
+| Android device `RFCRC0A9GND` USB-debugging authorization for this Mac | unauthorized | authorized by the owner ("Always allow") | **left authorized** — revoke in Developer options › Revoke USB debugging authorizations |
+| `adb` server | not running | started on `tcp:5037` (loopback) | **stopped at hand-back** (`adb kill-server`) |
+| System appearance | Dark | Light for ~10 s during U-10 | **restored to Dark** |
+| Display sleep | `displaysleep 10`, unchanged | held awake with `caffeinate -dimsu` | **caffeinate killed at hand-back**; `pmset` never modified |
+| Screen lock | 300 s, unchanged | not modified | n/a — the screen did lock once mid-run and the owner unlocked it |
+| `~/Desktop`, `~/Documents`, `~/Downloads` | — | one 90 KB `vcat-b05-small.txt` in each, plus `café-nfc.txt` on the Desktop | **deleted at hand-back** |
+| `~/vcat-run/` | absent | run root: candidates, corpus, evidence, helper scripts | **left in place** — it is the evidence, and §0 depends on it |
+| `~/Library/Application Support/VisualCat/` | absent | created by the product: settings, 4 sessions (~18 MB), lease dir, diagnostics | **left in place** — it is evidence for [F-08](#f-08) and [F-17](#f-17). Delete with `rm -rf "$HOME/Library/Application Support/VisualCat"` |
+| `~/Library/Logs/DiagnosticReports/VisualCat-2026-09-14-134131.ips` | — | written by macOS | **left in place** — it is [F-14](#f-14)'s evidence |
+| `/tmp/stub*`, `/tmp/fakeadb`, `/tmp/noexec-adb`, `/tmp/dangling-adb`, `/tmp/*.vcat` | — | ADB stubs and scratch sessions | **deleted at hand-back** |
+| `~/Library/Application Support/Android/`, `~/Library/Android/` | absent | created and removed during the A-15 locator matrix | **already removed during the run** |
+| `~/.android/adbkey`, `adbkey.pub` | absent | created by `adb` on first start | **left in place** — deleting them would revoke the device authorization |
+| macOS version, SIP, Gatekeeper, firewall, `umask`, `ulimit`, Spotlight, Time Machine, clock, locale, input sources, display resolution | — | **never modified** | n/a |
+
+Nothing was disabled to make a test pass. Gatekeeper stayed enabled, SIP stayed enabled,
+and `spctl`'s rejection of the unsigned binary was recorded as the expected state rather
+than worked around.

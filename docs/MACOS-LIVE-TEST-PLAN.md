@@ -5022,6 +5022,10 @@ plus the change-based selection in §12.1.
 
 ## Related documents
 
+- [`MACOS-LIVE-TEST-REPORT.md`](MACOS-LIVE-TEST-REPORT.md) — the first execution
+  of this plan, on macOS 26.6.2 on an Apple M1. Read it before the next macOS
+  run: §0 is its restore point, §4 is the standing list of what it did not
+  reach, and §5 is what it changed on the host.
 - [`WINDOWS-LIVE-TEST-PLAN.md`](WINDOWS-LIVE-TEST-PLAN.md) — the primary desktop
   plan, a cross-platform parity partner, and the source of the tier discipline
   used here.
