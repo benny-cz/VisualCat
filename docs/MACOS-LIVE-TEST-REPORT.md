@@ -28,9 +28,9 @@ line there. Findings are appended to [§3](#3-findings) the moment they are obse
 |---|---|
 | Run ID | `20260914-macos-arm64-m1` |
 | Status | **IN PROGRESS** |
-| Last completed | §2.19 — B-05 import + TCC, B-06 byte-exact source context, B-07 filters, B-08 search, U-06 focus order, crash recovery |
-| Next step | B-16 CSV export and line endings; B-13 follow a growing file; B-19 window state; P-01 network |
-| Findings | 17 open (F-01 … F-17): **5 Major**, 8 Minor, 4 Polish |
+| Last completed | §2.23 — B-13 follow (FAIL), B-16/I-07 export equivalence, P-01 network, P-02 sockets, P-16.1 |
+| Next step | B-19 window state and U-01 small-window matrix; B-21 off-timeline evidence; a Q6 pass from a terminal with no grants; cleanup and hand-back |
+| Findings | 21 open (F-01 … F-21): **6 Major**, 10 Minor, 5 Polish |
 
 **To resume.**
 
@@ -987,9 +987,379 @@ The crash in [F-14](#f-14) is also, accidentally, a real crash-recovery test. On
   `Select all` / `Clear`, per-capture checkboxes whose accessible names carry name, date and
   size, a `Capture states` filter, and `Delete captures…` separated from `Close` / `Open`.
 
+### 2.20 B-13 — following a growing file
+
+**Verdict: FAIL — [F-18](#f-18).** The parts that work, work well; the count on screen is
+wrong and stays wrong.
+
+Producer: `~/vcat-run/grow.sh`, appending
+`05-15 14:20:00.000  1073  1151 I VCatGrow: RUN=<run-id> seq=<n>` at 0.3 s intervals onto a
+copy of `quiet-live-seed.txt`, with a per-append ledger carrying a millisecond UTC stamp and
+the file's byte length (plan §3.3, using `perl -MTime::HiRes` because macOS `date` has no
+`%N`).
+
+**What works.**
+
+- *Follow file* starts immediately with **no import preview**, which is right for a live
+  source.
+- The tab is named after the file; the status names the mode and the path:
+  `… · /Users/benny/vcat-run/growing2.txt (follow)`.
+- **The quiet heartbeat is excellent and accurate**:
+  `Capturing · 42 lines received · no source lines for 1m 32s`. It counts up correctly and
+  it is the thing that proves the reader is alive and the source is not.
+- **A partial line is not published as a record.** The producer wrote `seq=10` without its
+  newline at `12:01:25.356` and completed it 6 s later at `12:01:31.396`; the record appeared
+  only after completion.
+- **Nothing is lost from the store.** Every run's `raw.log` contained every record.
+
+**What fails.** The analysis view stops refreshing and reports a session total that is
+simply wrong — and the product's own two status lines contradict each other in the same
+window at the same moment:
+
+| Source of truth | Says |
+|---|---|
+| Producer ledger and the file | 40 records written, `done total=40` |
+| `raw.log` in the live session directory | **40** `seq=` records |
+| Status bar | `Capturing · 42 lines received · no source lines for 2m 20s` |
+| Workspace footer | **`32 in view · 33 match the filter · 33 in session`** |
+
+Eight records — 20 % — were ingested, counted by the status bar, written to the store, and
+absent from the view. The footer stayed at 33 for **2 minutes 20 seconds** with the source
+demonstrably idle.
+
+Appending three more lines moved the footer from **33 to 42**: the three new records plus
+six previously stranded ones, still two short of the store. So the stranded records are
+released by *later arrivals* rather than by the passage of time — exactly the shape B-13's
+`Fail if` names ("a pause leaves records stranded in memory").
+
+The first run of this scenario showed the same thing at a different scale: footer `51 in
+session` against a finalized session whose manifest read `parsedEntries 61`, and whose own
+status bar read **`Stopped · 61 entries kept`** — 51 and 61 on screen together. Closing and
+reopening that session showed `61 in view · 61 match the filter · 61 in session · Ready ·
+61 entries`, confirming the store was always right and only the live view was wrong.
+
+### 2.21 B-16 / I-07 — CSV export, encoding, line endings, and desktop/CLI equivalence
+
+**Verdict: PASS on equivalence, with a default mismatch ([F-20](#f-20)).**
+
+The desktop *Export* dialog states its scope and its inputs plainly:
+
+```
+Choose exactly which timed entries to write. Counts and output use the same frozen session snapshot.
+All timed entries in session — 1,000 timed rows
+Every parsed entry on the timeline; workspace filters are ignored.
+1,000 timed rows · Europe/Bratislava · No filters
+Row order:  Source order          Encoding:  UTF-8 with byte-order mark
+A successful export remembers these two choices as the new defaults.
+```
+
+Exported with its defaults, then compared byte for byte against the CLI:
+
+```shell
+$ shasum -a 256 desktop-export.csv small-source.csv small.csv
+f7176e4088969d4bfd66f6d5d86da3669a39d9b37634e99d21f74f3501bf376b  desktop-export.csv
+f7176e4088969d4bfd66f6d5d86da3669a39d9b37634e99d21f74f3501bf376b  small-source.csv   ← vcat export --order source
+c81f3de7a2bc60a0c50c5adbff08ea2235b3a6764d64d720c134101c45cf4d20  small.csv          ← vcat export (default)
+```
+
+**The desktop export is byte-identical to the CLI's `--order source`.** It differs from the
+CLI's *default* at line 243, because the two surfaces default to different row orders —
+[F-20](#f-20).
+
+Encoding and line endings, measured rather than assumed (`tr -dc '\r' | wc -c`, never a
+`grep` pattern built from a shell escape — the trap plan §3.1 warns about):
+
+| Export | Bytes | CR | LF | First 3 bytes |
+|---|---|---|---|---|
+| `csv` | 106 428 | **0** | 1 001 | `efbbbf` (UTF-8 BOM) |
+| `raw` | 90 356 | 0 | 1 000 | `30352d` (no BOM — byte-faithful) |
+| `templates-md` | 5 702 | 0 | 52 | `efbbbf` |
+| `templates-csv` | 5 326 | 0 | 51 | `efbbbf` |
+| `stats-md` | 296 | 0 | 14 | `efbbbf` |
+| `stats-csv` | 271 | 0 | 15 | `efbbbf` |
+
+LF on every text type, on macOS, matching `CLI.md`'s promise that "text output uses a single
+line feed on every platform, chosen rather than inherited from the host". The raw export
+carries no BOM, which is correct — it is the source bytes.
+
+CSV header: `timestamp_utc,level,pid,tid,buffer,tag,template_id,message`, instants as
+ISO-8601 with offset (`2026-05-15T12:13:37.0000000+00:00`).
+
+**`--newline` is documented but does not exist in this release** — see [F-19](#f-19):
+
+```shell
+$ vcat export small.vcat out.csv --type csv --newline crlf
+error: 'export' does not take '--newline'. Run 'vcat export --help' to see what it does take.
+```
+
+### 2.22 P-01 / P-02 — network, and what the process actually holds open
+
+**Verdict: PASS.**
+
+With a session open and a capture finished, the desktop process holds **no network endpoint
+of any kind**:
+
+```shell
+$ lsof -a -p <pid> -i -nP        # -a, because lsof ORs -p and -i without it
+(no rows)
+$ lsof -a -p <pid> -iTCP -sTCP:LISTEN -nP
+(no rows)
+```
+
+File-descriptor census: 212 regular files, 6 pipes, 2 unix sockets, 2 kqueues, 1 directory.
+Everything open lies inside the extraction directory, the declared data root, macOS system
+paths, the per-user `TMPDIR`, and the log file the user opened. Nothing else.
+
+The two unix sockets are the .NET runtime's diagnostics endpoint, which the plan asks to be
+recorded:
+
+```
+srw------- /var/folders/zy/…/T/dotnet-diagnostic-79033-1789386234-socket
+drwx------ /var/folders/zy/…/T/            ← the containing directory
+```
+
+Mode `0600` inside a `0700` per-user directory, so it is not reachable by another account —
+but it does let **any process running as this user** attach a debugger or profiler to
+VisualCat, which is worth one sentence in [`PRIVACY.md`](PRIVACY.md) alongside the
+"no telemetry" claim. Also noted for P-18: **stale sockets from exited processes remain** —
+four of them from earlier runs, including one from a process killed during this run. That is
+.NET runtime behaviour rather than product code, but it is residue the product leaves
+behind and should be listed in the removal accounting.
+
+### 2.23 P-16.1 — the Recent captures deletion flow
+
+Not a finding, but a usability observation worth recording because it cost this run time.
+The dialog has **two independent selection models** in one list:
+
+- a **checkbox** per row, which drives the footer count
+  (`1 of 2 available captures selected · about 191.44 KiB`) and the **Delete captures…**
+  button; and
+- a **row highlight**, which is what enables **Open**.
+
+Checking a capture's box leaves *Open* disabled; selecting the row enables it. Nothing on
+screen explains the split, and the checkbox is the more visually prominent of the two. The
+separation is defensible — delete is a multi-selection operation and open is not — but it
+would be clearer if *Open* acted on a single checked capture, or if the buttons were grouped
+under headings that named which selection each one uses. Filed as part of
+[F-21](#f-21).
+
 ---
 
 ## 3. Findings
+
+### F-18 · Major · Following a growing file leaves the newest records out of the view, and the two counters on screen disagree
+
+**Severity** Major — this is the *Follow a growing file* feature working incorrectly on its
+main assertion, on a product whose proposition is watching a log as it happens. Nothing is
+lost from disk, which keeps it out of Blocker territory; what the user sees is wrong, and
+nothing tells them so.
+
+**Where** Live-view refresh for a followed source: the workspace's snapshot query does not
+keep pace with the coordinator's ingest, and stops advancing when the source goes idle.
+
+**What happens.** Reproduced twice, with different producers.
+
+*Run 2* (no partial line, 40 records at 0.3 s). In the same window at the same moment:
+
+```
+status bar :  Capturing · 42 lines received · no source lines for 2m 20s · …/growing2.txt (follow)
+footer     :  32 in view  ·  33 match the filter  ·  33 in session
+raw.log    :  40 records   (grep -c 'seq=')
+```
+
+The status bar had counted every line. The store held every record. The footer said 33 and
+held that value for 2 minutes 20 seconds while the source sat idle — so this is not "the
+view is waiting for more", it is "the view stopped".
+
+Appending three more lines moved the footer **33 → 42**: three new plus six released
+stranded ones, still two behind the store. So a later arrival is what flushes the backlog.
+
+*Run 1* (with a partial line, 60 records) finished worse, because it also survived a Stop:
+
+```
+footer      : 51 in view · 51 match the filter · 51 in session
+status bar  : Stopped · 61 entries kept
+manifest    : "parsedEntries": 61, "sourceLines": 62, "unknownLines": 0
+```
+
+**51 and 61 on screen together**, after the capture had stopped and the session had been
+finalized. Closing the tab and reopening the same session from *Recent* gave
+`61 in view · 61 match the filter · 61 in session · Ready · 61 entries`. The data was never
+in doubt; only the live view was.
+
+**Expected.** B-13: "The final record sequence matches the ledger exactly… a pause leaves
+records stranded in memory" is a `Fail if`. Plan §4 also requires that visible counts and
+the plot agree.
+
+**Suggested fix.**
+
+1. **Make the idle transition flush.** Whatever publishes a batch — a size threshold, a
+   `batchLatencyMilliseconds` timer (the manifest records `250`), or a channel of capacity
+   `8` — something is holding the tail until the next arrival displaces it. The source going
+   quiet must be a *publish trigger*, not a reason to wait: the same code that already
+   detects "no source lines for 1m 32s" for the heartbeat should, on its first tick after
+   arrivals stop, force a final flush and a view refresh.
+2. **Flush on stop, unconditionally.** Run 1 shows the stale count surviving *Stop* and
+   finalization. Finalizing a session must re-query the view from the finalized manifest, so
+   the footer and the status bar cannot end up quoting different totals.
+3. **Never let the two totals diverge silently.** `<n> in session` in the footer and
+   `<n> entries kept` in the status bar are the same quantity from two paths. Compute both
+   from one source, and add a debug-build assertion that they match — this defect is exactly
+   the kind that a single shared accessor makes impossible.
+4. **Add the regression test the plan's oracle implies.** A headless follow test that writes
+   N records, waits past the batch latency with the writer idle, and asserts the *view's*
+   entry count equals N — not the store's. The existing tests evidently assert the store,
+   which is why this survived.
+5. While fixing it, check the `in view` / `match the filter` pair too: with no filters
+   active the footer reported `32 in view · 33 match the filter`, a consistent off-by-one
+   against its own unfiltered total.
+
+**Appendix-B trap checks.** Not a filter artifact — the chip bar read `No filters · showing
+everything in view` throughout. Not a time-window artifact — the footer's own span
+(`05-15 14:13:37.496 — 05-15 14:20:00.000`) covers every record, and every record shares one
+timestamp by construction. Not a producer artifact — the ledger records every append with a
+millisecond stamp and the file's byte length, and `grep -c 'seq='` on the file and on the
+session's `raw.log` both return the full count. Not specific to the partial-line variant —
+reproduced with a plain appender. Not a display-sleep artifact — `caffeinate -dimsu` held
+the display awake throughout.
+
+---
+
+### F-19 · Minor · The shipped README links documentation from `main`, so a release's users read features their build does not have
+
+**Severity** Minor, but it is a documentation defect that regenerates itself after every
+release and affects every platform.
+
+**Where** The `README.txt` emitted into every release archive.
+
+**What happens.** The shipped `README.txt` ends with:
+
+```
+  Release notes   https://github.com/benny-cz/VisualCat/blob/main/docs/RELEASE-NOTES.md
+  CLI reference   https://github.com/benny-cz/VisualCat/blob/main/docs/CLI.md
+  Support matrix  https://github.com/benny-cz/VisualCat/blob/main/docs/SUPPORT.md
+```
+
+All three point at **`main`**, not at the release tag. So a 2.0.13 user follows the link
+their own archive gives them and reads documentation for code they do not have. Concretely,
+today:
+
+```shell
+$ vcat export small.vcat out.csv --type csv --newline crlf
+error: 'export' does not take '--newline'. Run 'vcat export --help' to see what it does take.
+```
+
+`main`'s `docs/CLI.md` documents `--newline lf|crlf` twice — in the conventions section and
+in the `export` synopsis — and `main`'s `Program.cs:452` implements it. The **v2.0.13 tag's**
+`docs/CLI.md` mentions `newline` zero times, so the tagged documentation is correct and
+consistent; only the link is wrong. The option was added on `main` in `c061c6e "Close the
+Linux run's parser and command-line findings"`, i.e. *because of* a previous live run — so
+the better the testing gets, the wider this gap grows.
+
+The same mechanism makes [F-05](#f-05) worse: a user reading `main`'s `SUPPORT.md` sees
+whatever it says today, not what was true for their build.
+
+**Suggested fix.**
+
+1. Emit the tag, not the branch, in the packaging template:
+   ```
+   Release notes   https://github.com/benny-cz/VisualCat/blob/v2.0.13/docs/RELEASE-NOTES.md
+   CLI reference   https://github.com/benny-cz/VisualCat/blob/v2.0.13/docs/CLI.md
+   Support matrix  https://github.com/benny-cz/VisualCat/blob/v2.0.13/docs/SUPPORT.md
+   ```
+   The version string is already interpolated into the README's first line, so this is the
+   same substitution applied three more times.
+2. Do the same for any in-app documentation link, and for the release announcement.
+3. Add a release-workflow check that every URL in a generated `README.txt` contains the tag
+   rather than `blob/main`.
+4. Independently: `vcat export --help` should list every option the command accepts; today
+   it is the authority a user falls back to when the website disagrees with their binary,
+   and in this case it was right.
+
+**Appendix-B trap checks.** The README text was read from the extracted archive, not from
+the repository. The `--newline` rejection was produced by the shipped `osx-arm64` binary.
+The tag-versus-`main` difference was confirmed with `git show v2.0.13:docs/CLI.md`.
+
+---
+
+### F-20 · Minor · The desktop and the CLI default to different CSV row orders, and only one of them says so
+
+**Severity** Minor — both orders are correct and both are selectable. The cost is a
+comparison that fails for no visible reason.
+
+**Where** Desktop *Export CSV* dialog default versus `vcat export` default.
+
+**What happens.**
+
+| Surface | Default row order | Documented? |
+|---|---|---|
+| `vcat export` | **chronological** | yes — `CLI.md`: "`--order chronological` is the default; `--order source` preserves source sequence" |
+| Desktop *Export CSV* | **Source order** | only as the dialog's current value |
+
+The two exports of the same 1 000-entry session are byte-identical when the order matches
+and differ from line 243 when it does not:
+
+```shell
+$ cmp desktop-export.csv small.csv
+desktop-export.csv small.csv differ: char 25872, line 243
+```
+
+A user or a script that exports the same session from both surfaces with default options
+gets two different files and no explanation. The desktop dialog also states *"A successful
+export remembers these two choices as the new defaults"*, so after one deliberate change the
+desktop default is whatever that user last chose — which makes "the desktop default" a
+per-user value that no document can describe.
+
+**Suggested fix.**
+
+1. Pick one default and use it on both surfaces. **Chronological** is the better choice: it
+   is what the CLI already documents, it is what the timeline shows, and it is what a reader
+   expects from a log export.
+2. Show the effective order in the export result line, so a remembered preference is never
+   invisible: `Exported 1,000 timed rows · chronological order · all timed entries in
+   session · desktop-export.csv`.
+3. Record the order in the CSV itself — a leading comment row is awkward in CSV, so instead
+   name it in the export dialog's summary line beside the row count and time zone, where
+   `1,000 timed rows · Europe/Bratislava · No filters` already lives.
+4. Document the desktop defaults, and the fact that they are remembered, wherever the export
+   is described for end users.
+
+**Appendix-B trap checks.** Both files were produced on the same host from the same session
+minutes apart, so nothing about locale, time zone or tooling differs between them. The
+equality with `--order source` was proved by SHA-256, not by eye.
+
+---
+
+### F-21 · Polish · Small UI frictions worth one pass each
+
+Grouped because each is a few lines and none is severe.
+
+**1. *Recent captures* has two selection models and explains neither.** The checkbox column
+drives the footer count and *Delete captures…*; the row highlight drives *Open*. Checking a
+capture leaves *Open* disabled, which reads as a broken button. Suggested: let *Open* act on
+a single checked capture as well as on a highlighted row, and label the two button groups
+("Selected captures: Delete…" / "Highlighted capture: Open").
+
+**2. The initial view after an import is not fitted, so a quarter of the heat map is empty.**
+Importing `small.txt` (span 1.501 s) opened at `2 s · 753 µs/px`, leaving ~0.5 s — about 25 %
+of the plot width — blank on the left, while the minimap below it was correctly fitted to
+the session. Pressing *Fit* gives `1.501 s · 565.1 µs/px` and fills the width. The rounded
+2 s window is presumably deliberate, but the first thing a user sees after opening a log is
+a quarter-empty canvas that looks like a quiet period in their data. Suggested: fit on
+first paint, and keep the round-number rounding for zoom steps where it helps.
+
+**3. The desktop export's result line names the file but not the folder.**
+`Exported 1,000 timed rows · all timed entries in session · desktop-export.csv` — on macOS,
+where the save panel may have been redirected by ⇧⌘G or by a remembered location, the
+absolute path is the useful part. The CLI prints it; the desktop should too, or should offer
+*Show in Finder*.
+
+**Appendix-B trap checks.** All three were observed on the running 2.0.13 build with
+evidence captured (`p161-recent.png`, `b06-session.png` versus `b06-fit.png`), and the
+*Recent captures* behaviour was confirmed by reading `AXEnabled` on the *Open* button
+before and after each kind of selection.
+
+---
 
 ### F-14 · Major · VisualCat aborts inside Avalonia's macOS accessibility bridge while announcing a live-region change
 
