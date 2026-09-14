@@ -506,6 +506,269 @@ own recipes are wrong on this host.
 | §3.1: `chmod a-w -- *.txt` | **fails**: `chmod: --: No such file or directory`. BSD `chmod` has no `--` end-of-options marker and treats it as a file name | Drop the `--` for `chmod` (keep it for `tar`, `rm`, `shasum`, which do support it). `xattr -c -- *.txt` *does* work |
 | §2.2: `system_profiler SPDisplaysDataType` to record "the *looks like* scaled resolution" | macOS 26 prints only `Resolution: 2560 x 1600 Retina` and **no `UI Looks like:` line**, so a scaled mode is invisible to it | Measure instead: `osascript -e 'tell application "Finder" to get bounds of window of desktop'` gives the point size, and the pixel size of a full-screen `screencapture` gives the framebuffer. Their ratio is the backing scale; framebuffer ≠ panel means a scaled mode |
 
+### 2.10 B-11 / I-05 — host ADB discovery and capture against a physical phone
+
+**Verdict: PASS**, with exact marker reconciliation.
+
+Device under test: **Samsung `SM-G990B` (Galaxy S21 FE), serial `RFCRC0A9GND`, Android 16
+(API 36), `arm64-v8a`**, fingerprint
+`samsung/r9qxeea/r9q:16/BP2A.250605.031.A3/G990BXXSKIZF1:user/release-keys`, attached to the
+**Mac's own USB bus** (`ioreg -p IOUSB` → `USB Product Name = SAMSUNG_Android`,
+`USB Serial Number = RFCRC0A9GND`).
+
+`adb` used: `/opt/homebrew/bin/adb` → `…/Caskroom/android-platform-tools/37.0.1/platform-tools/adb`,
+SHA-256 `1811e253b21b12cbfda7201ebaf86c10e7ddcb5c606a7a81f7c82b4c429c2d3b`,
+`Android Debug Bridge version 1.0.41 / 37.0.1-15733141`, **universal binary**
+(`lipo -archs` → `x86_64 arm64`), installed for this run with
+`brew install --cask android-platform-tools`.
+
+**The `unauthorized` state is real and was met head-on.** The device first appeared as
+`RFCRC0A9GND  unauthorized usb:1048576X transport_id:1` and stayed that way through a full
+`adb kill-server` / `start-server` cycle with the phone unlocked — macOS's new ADB key had
+been generated that minute and the phone never raised its dialog. Clearing
+*Developer options → Revoke USB debugging authorizations* and re-plugging produced the
+prompt. Worth recording as a genuine first-contact trap: the product's own message for
+this state is correct (see [§2.12](#212-a-16--adb-device-state-matrix)), and the failure
+was entirely on the device side.
+
+**Desktop capture (the B-11 row).** *ADB live* → the dialog listed the device as
+`RFCRC0A9GND · SM_G990B · Device` with the status line
+`1 device detected. Unauthorized devices must be approved on the device.` — an accurate,
+platform-neutral sentence that names **no Linux mechanism**, which is B-11's macOS-specific
+`Fail if`. Default buffers `main`, `system`, `crash` checked; `events`, `radio` unchecked.
+Capture ran **11:00:23 → 11:08:35 UTC (8 min 12 s)**.
+
+Live status line samples, read out of the accessibility tree while it ran:
+
+```
+Capturing ·    858 lines received · 190/s · ADB device RFCRC0A9GND
+Capturing · 14,851 lines received · 157/s · ADB device RFCRC0A9GND
+Capturing · 21,270 lines received ·  50/s · ADB device RFCRC0A9GND
+Capturing · 34,712 lines received · 169/s · ADB device RFCRC0A9GND
+Capturing · 45,814 lines received · 210/s · ADB device RFCRC0A9GND
+```
+
+Tab name `ADB RFCRC0A9GND 13h00m23`; timeline, minimap, facets and the entry list all drew
+live; `3,262 in view · 18,618 match the filter` mid-run. Process cost during capture:
+**37.3 % CPU / 308 MB RSS** at peak, **15.5 % / 345 MB** between bursts (first observation,
+on a machine with the owner's normal applications resident).
+
+**Marker reconciliation (plan §3.4).** Two bursts of 300 `log -p i -t VCATTEST` records at
+0.2 s, each bracketed by BEGIN/END markers:
+
+| Measure | Value |
+|---|---|
+| Records emitted on the device | 600 (2 × 300) |
+| `vcat search <session> "RUN=<run-id> steady"` | **602** — 600 records + the 2 `adbd` echo lines that quote the loop command |
+| `RUN=<run-id> BEGIN` / `END` matches | 4 / 4 (one marker + one `adbd` echo per burst) |
+| `chattyDeclaredDrops` in the manifest | **0** |
+| `chatty` lines in the device's own buffer | **0** |
+| `reconnectGaps` / `reconnectDuplicates` | 0 / 0 |
+
+**600 of 600 delivered, nothing lost, nothing declared.**
+
+Full accounting in the finalized session: `sourceLines 50839 = parsedEntries 49012 +
+metaRecords 1827`, with `unknownLines 0`, `rejectedCandidates 0`, `continuations 0`.
+`outOfOrderEntries 166` — expected for a multi-buffer merge, and counted rather than hidden.
+
+**What the manifest records about the capture** — this is A-17 and A-18's "records what it
+settled on" assertion, and it is complete:
+
+```json
+"captureSettings": {
+  "requestedBuffers": ["main","system","crash"],
+  "preRollSeconds": 0, "includesBufferHistory": false,
+  "durationLimitSeconds": null, "byteLimit": null,
+  "negotiatedFormat": "threadtime,year,UTC,usec", "logTimeZoneId": "UTC",
+  "adbVersion": "Android Debug Bridge version 1.0.41",
+  "deviceModel": "SM_G990B",
+  "deviceFingerprint": "samsung/r9qxeea/r9q:16/BP2A.250605.031.A3/G990BXXSKIZF1:user/release-keys"
+}
+```
+
+Note `logTimeZoneId: "UTC"` — a *captured* session correctly records UTC because the
+negotiated format carries it. A *file import* on the same host records
+`Europe/Bratislava` ([F-07](#f-07)); the two paths do not share the defect.
+
+**CLI leg (I-05).** An 80 s `vcat capture-adb --serial RFCRC0A9GND --buffers main
+--pre-roll-seconds 0` run against 300 markers gave the same exact result: 8 148 entries,
+`vcat search "RUN=<run-id> steady"` → **301** (300 records + 1 `adbd` echo), matching the
+device's own `adb logcat -d | grep -c` of 301 exactly. `vcat verify` → `"isValid": true`,
+`"issues": []`. Desktop and CLI discovery agree: both list
+`RFCRC0A9GND / Device / SM_G990B / r9qxeea / transport 2`.
+
+**One behaviour worth knowing about `vcat search`:** it matches **message text only, not the
+tag**. `search "VCATTEST"` returns 3 (the `adbd` lines that mention the tag in their
+message), while `search "steady" --tags VCATTEST` returns 302. That is defensible design —
+there is a dedicated `--tags` filter — but a user who types a tag name into the box and
+gets 3 hits instead of 302 will conclude the capture is broken. See
+[F-12](#f-12).
+
+### 2.11 B-12 — stop is answered, sticky, and complete
+
+**Verdict: PASS.**
+
+*Stop capture* pressed **once**, at 11:08:35 UTC after 8 min 12 s and 49 012 entries.
+Within the first sample (**≤ 9.8 s**, and the true latency is below that — the sampler's own
+accessibility walk costs seconds) the status read:
+
+```
+Stopped · 49,012 entries kept
+```
+
+and stayed there across seven consecutive samples spanning 113 s. It never reverted to
+`Capturing`. The *Stop capture* button disappeared from the accessibility tree; *Save* and
+*Save portable*, disabled before, became enabled.
+
+| Assertion | Result |
+|---|---|
+| Acknowledged within budget | yes |
+| Control never springs back to *Stop* | yes — 7/7 samples `Stopped` |
+| Status never returns to *Capturing* | yes |
+| `vcat verify` on the finalized session | `"isValid": true`, `"issues": []`, 49 012 entries / 50 839 source records |
+| No `adb` child outlives the capture | yes — `pgrep -P <visualcat-pid>` empty; only the shared `adb` **server** (pid 5097, parent `1`) remains, which VisualCat did not start and must not kill |
+
+**Not established:** B-12 also asks that the status "leads with a visibly advancing elapsed
+clock and names the stage — draining, compacting, writing the index, reopening". On a
+49 000-entry session the finalize completed between two samples, so **no intermediate stage
+was ever observed**. This is recorded as not-established rather than passed; it needs a
+much larger capture (X-05) or a sub-second sampler to settle.
+
+### 2.12 A-16 — ADB device-state matrix
+
+Driven with purpose-built `adb` stubs that emit realistic space-padded `adb devices -l`
+output, so each state is reached deliberately rather than waited for. **Messages from the
+shipped 2.0.13 CLI:**
+
+| Device state | Product response |
+|---|---|
+| `device` | lists `serial / Device / SM_G990B`, capture proceeds |
+| `unauthorized` | `Device 'RFCRC0A9GND' has not authorized this computer. Accept the USB debugging prompt on the device and retry.` |
+| `offline` | `Device 'RFCRC0A9GND' is offline. Reconnect it or restart the ADB server, then retry.` |
+| `no permissions` | `Device 'RFCRC0A9GND' is not ready for capture (state: Unknown).` — parsed as `Unknown`, see below |
+| two devices attached | both listed with distinct serials and models; capture binds to the named serial |
+| serial not present | `Device 'NOSUCHSERIAL' was not found (connected devices: RFCRC0A9GND). Connect the device and enable USB debugging.` — **returned immediately**, so pre-flight rejects a missing serial before spawning `logcat`, exactly as A-16 requires |
+
+Every message is platform-neutral. **No macOS message names `udev`, a `plugdev` group, or a
+rules reload** — verified twice: by running the states above, and by searching the shipped
+assemblies, where `udev` and `plugdev` appear **zero** times (`No devices detected` and
+`Unauthorized devices must be approved` are both present as UTF-16 strings, so the search
+method is sound).
+
+**Checked ahead for `main`, and it is correct too.** `main` adds `UsbDeviceAccess` with a
+`udev`/`plugdev` remedy for the Linux-only case where ADB hides a device whose USB node the
+account cannot read. Reading the call sites: `UsbDeviceAccess.UnopenableAdbDevices()`
+returns `[]` when `!OperatingSystem.IsLinux()`, so `MissingDeviceExplanation()` is `null` off
+Linux and both `AdbCaptureDialog.SetNormalDeviceStatus()` and `AdbLogSource.NotFoundMessage()`
+take their plain branch; `NoPermissionsMessage()` gates its remedy behind
+`OperatingSystem.IsLinux()` explicitly. The macOS text stays generic. **No finding** — recorded
+because B-11's macOS `Fail if` targets exactly this, and a reader should know it was checked
+rather than assumed.
+
+`no permissions` being parsed as `Unknown` is a 2.0.13-only gap; `main` has
+`AdbDeviceState.NoPermissions`. It matters little on macOS, where USB access is not
+group-gated — the macOS analogue is the *Allow accessory to connect* prompt on Apple-silicon
+laptops, which the product names nowhere. See [F-12](#f-12).
+
+### 2.13 A-15 / I-05 — ADB locator precedence on macOS
+
+Every route was exercised with `PATH` stripped to `/usr/bin:/bin:/usr/sbin:/sbin` so a
+fallback cannot mask a failure.
+
+| Route | Probed? | Result |
+|---|---|---|
+| `--adb <valid path>` | yes | device listed |
+| `ANDROID_SDK_ROOT/platform-tools/adb` | yes | device listed |
+| `ANDROID_HOME/platform-tools/adb` | **yes** — though `CLI.md` and the error message never mention it | device listed |
+| `<LocalApplicationData>/Android/Sdk/platform-tools/adb`, i.e. `~/Library/Application Support/Android/Sdk/…` | yes | device listed |
+| the same path spelled `…/Android/sdk/…` | yes **on this case-insensitive volume** | device listed — would fail on a case-sensitive APFS volume |
+| each `PATH` entry in order | yes | device listed |
+| **`~/Library/Android/sdk/platform-tools/adb`** — where Android Studio installs the SDK on macOS | **no** | `error: ADB was not found.` See [F-11](#f-11) |
+
+Negative paths for an explicit `--adb`:
+
+| `--adb` value | Behaviour | Correct? |
+|---|---|---|
+| a file that is not executable (`0644`) | `error: An error occurred trying to start process '/tmp/noexec-adb' … Permission denied`, exit 1 | acceptable — late, but specific |
+| a dangling symlink | `… No such file or directory`, exit 1 | yes |
+| an executable that exits non-zero | `error: ADB device discovery failed: FAKE-ADB-WAS-RUN`, exit 1 | yes |
+| **a directory (`/tmp`)** | **silently ignored — falls through to `PATH`, lists the device, exit 0** | **no** — [F-10](#f-10) |
+| **a path that does not exist** | **silently ignored — falls through to `PATH`, lists the device, exit 0** | **no** — [F-10](#f-10) |
+
+### 2.14 B-14 / P-22 — saving, and the file modes that come with it
+
+*Save* and *Save portable* both work through a **native macOS save sheet** (`sheet 1` of the
+main window, not a free-floating panel — the correct platform presentation), and both
+produced sessions that `vcat verify` accepts:
+
+| Save | `isValid` | entries | source records |
+|---|---|---|---|
+| standard | true | 49 012 | 50 839 |
+| portable | true | 49 012 | 50 839 |
+
+No extended attributes were attached to either (`xattr -lr` empty), so nothing about the
+save is quarantined or Finder-tagged.
+
+**But the modes violate the published privacy contract — see [F-08](#f-08).**
+[`PRIVACY.md`](PRIVACY.md) promises session directories `700` and a portable `raw.log`
+`600`, *"wherever the session is written"*, and says explicitly that VisualCat "does not
+leave it to the account's `umask`". With this Mac's `umask 022`, every single object is
+world-readable:
+
+```
+drwxr-xr-x  <saved>.vcat
+-rw-r--r--  <saved>.vcat/raw.log          6 716 288 bytes of this phone's log
+-rw-r--r--  <saved>.vcat/manifest.json
+-rw-r--r--  <saved>.vcat/source-order/records.bin
+drwxr-xr-x  <portable>.vcat
+-rw-r--r--  <portable>.vcat/raw.log       ← PRIVACY.md says 600
+```
+
+**One more macOS-shaped observation, filed as an improvement rather than a defect.** A
+`.vcat` session is a plain directory, and macOS has a first-class concept for
+"a directory the user should treat as one document" — a *package*. Because VisualCat ships
+no `.app` bundle and declares no exported UTI, Finder shows a session as an ordinary folder
+and the **save panel lets you navigate into one**. That is not hypothetical: during this run
+a portable save landed *inside* `cli-capture.vcat/`, producing a session nested in a
+session. Both still verified (`verify` ignores unknown subdirectories), so nothing was
+corrupted — but a user can do this by accident, and on macOS a session is also the thing
+they will drag between machines. See [F-13](#f-13).
+
+### 2.15 U-07 / U-08 — the accessibility tree is genuinely good
+
+Recorded deliberately as a **strength**, because a first impression suggested the opposite.
+A depth-9 walk of the main window returns nothing but unnamed `AXGroup`s, which looks like a
+catastrophic accessibility failure. It is not — the content simply sits **11 to 25 levels
+deep**, and a walker that stops early sees nothing. At full depth the tree is rich and
+correctly labelled:
+
+```
+AXButton :: [＋  Open log]                                     d=11
+AXButton :: [●  ADB live]                                      d=11
+AXButton :: [Open session] / [Recent] / [Follow file] …        d=11
+AXButton :: [Show in progress session ADB RFCRC0A9GND 13h00m23] d=15
+AXButton :: [Close session ADB RFCRC0A9GND 13h00m23]           d=15
+AXCheckBox:: [Regex] / [Case-sensitive]                        d=18
+AXButton :: [Apply the query]                                  d=18
+AXButton :: [Fatal level] … [Verbose level] / [Unknown level]  d=19
+AXButton :: [Zoom out] / [Fit the complete session] / [Zoom in] d=18
+AXButton :: [Follow: on] / [Stop capture]                      d=18
+AXButton :: [Show the full message of the selected entry]      d=22
+AXRadioButton :: [Templates] / [Facets] / [Views] / [Session]  d=23
+AXButton :: [Filter to selected template] / [Mute …] / [Copy …] d=25
+```
+
+The names are *descriptive of the action*, not just the visible glyph —
+`Show the full message of the selected entry`, `Fit the complete session`,
+`Close session ADB RFCRC0A9GND 13h00m23` — which is what a screen-reader user actually
+needs. The ADB dialog is equally well covered: `AXPopUpButton "Android device"` carrying
+`RFCRC0A9GND · SM_G990B · Device`, five named `AXCheckBox` buffers, three named
+`AXIncrementor`s, and `Refresh devices` / `Cancel` / `Start capture`.
+
+The remaining gap is **depth**, not labelling: 25 levels of nesting is a lot of `VO-→` for a
+VoiceOver user to traverse, and the intermediate containers carry no `AXTitle`, so there are
+no landmarks to jump between. A full VoiceOver pass is still outstanding.
+
 ---
 
 ## 3. Findings
@@ -1001,6 +1264,464 @@ log produces the same `timeZoneId` on every platform.
 set, and setting it explicitly produces the correct id, which is the control. Not a
 tzdata-version artifact — both files come from the same `Jul 15 23:50` tzdata drop. Not a
 corpus artifact — reproduced on two different generated corpora.
+
+---
+
+### F-08 · Major · Every saved session on macOS is world-readable, contradicting `PRIVACY.md` in the exact words it uses to promise otherwise
+
+**Severity** Major — a published privacy guarantee is false on the shipped release, and the
+data it fails to protect is other people's log content, which is the premise of the
+guarantee.
+
+**Where** Session, portable-session, lease and settings creation. The fix exists on `main`
+(`src/VisualCat.Core/Store/SessionFileModes.cs`, `OwnerOnlyDirectory` = `700`,
+`OwnerOnlyFile` = `600`) and in `src/VisualCat.Domain/ProductDataRoot.cs`. **Neither is in
+2.0.13.**
+
+**Status** Same root cause as `LINUX-LIVE-TEST-REPORT.md` [F-27], which that run closed on
+`main`. Reproduced here against the shipped `osx-arm64` 2.0.13 candidate, on the artifact
+`PRIVACY.md` names by name.
+
+**What `PRIVACY.md` promises** (lines 121–127, quoted in full because the wording is the
+finding):
+
+> **Session file modes.** A session is, by construction, log content that is often not the
+> operator's own, so VisualCat **does not leave it to the account's `umask`**: session
+> directories are created `700` and a portable session's embedded `raw.log` is `600`,
+> **wherever the session is written**. On a shared machine that is what stops another local
+> account reading a capture saved to `/tmp` or to a group-writable project directory.
+
+**What actually happens**, with this Mac's `umask 022` — the macOS default, unchanged:
+
+```shell
+$ stat -f '%Sp %z %N' "<saved>.vcat" "<saved>.vcat/raw.log"
+drwxr-xr-x   288      <saved>.vcat
+-rw-r--r--   6716288  <saved>.vcat/raw.log
+
+$ stat -f '%Sp %N' "<portable>.vcat/raw.log"
+-rw-r--r--   <portable>.vcat/raw.log
+
+$ stat -f '%Sp %N' "$HOME/Library/Application Support/VisualCat"/*
+drwxr-xr-x  …/Diagnostics
+drwxr-xr-x  …/SessionAccess-v1
+drwxr-xr-x  …/Sessions
+-rw-r--r--  …/settings.json
+```
+
+Every directory `0755`, every file `0644` — including the 6.7 MB `raw.log` holding this
+phone's captured traffic (process names, package names, a device fingerprint, redacted and
+unredacted system messages), every lease file, the diagnostics `.jsonl`, and `settings.json`.
+The value is exactly `umask`-derived, which is the one thing the document says it is not.
+
+**Why it is not hidden by `~/Library`.** On a single-user Mac the parent directory happens
+to be `drwx------`, so nothing leaks today. That is the desktop's protection, not the
+product's, and `PRIVACY.md`'s own scenario is the one where it does not apply: a session
+saved to `/tmp`, to `/Users/Shared`, or to a project directory — which is where a user
+saves a session they intend to send to a colleague. This run's own saves went to
+`~/vcat-run/evidence/…`, a `0755` path, and are readable by every account on the Mac.
+
+**Suggested fix.** The code is written; the gap is that it has never shipped.
+
+1. **Release it.** `SessionFileModes` and `ProductDataRoot`'s `700` creation are on `main`
+   and covered by the Linux run's verification. Cut 2.0.14 — together with
+   [F-06](#f-06), which is the other already-fixed, never-released defect, and which is the
+   stronger of the two reasons.
+2. **Make the promise testable on macOS, not only Linux.** The Linux run proved the fix with
+   a second local account. Add a unit assertion that runs on every platform where
+   `File.SetUnixFileMode` is available:
+   ```csharp
+   // PRIVACY.md promises 700/600 regardless of umask. Prove it under the permissive one.
+   [Theory] [InlineData(0)] [InlineData(0b000_010_010)]   // umask 000 and 022
+   public void SessionModesIgnoreUmask(int umask) { … assert 0700 dir, 0600 raw.log … }
+   ```
+   `umask 022` is the *default* on macOS while many Linux distributions use `002` or `077`,
+   so a test that only ever runs under one umask can pass while the promise is broken.
+3. **Cover the whole set, not just the session.** `settings.json` (`0644`) can contain custom
+   session-directory paths and ADB paths; `Diagnostics/*.jsonl` is precisely the artifact a
+   user would not expect to be world-readable; the `SessionAccess-v1` lease files are
+   world-**readable** cross-process state. Apply `OwnerOnlyFile` to all three.
+4. **Say what happens on a filesystem that has no POSIX modes.** A session written to exFAT,
+   FAT, or an SMB share cannot carry `700`. `PRIVACY.md` currently promises it "wherever the
+   session is written"; it should instead promise `700`/`600` on a mode-capable volume and
+   say plainly that a volume without modes cannot be protected this way. Better still, warn
+   in the UI at save time — that is a two-line check (`File.GetUnixFileMode` after write,
+   compare, notice if it did not stick) and it turns a silent broken promise into an
+   informed choice.
+
+**Appendix-B trap checks.** Not a `umask` artifact of the test harness — `022` is this
+account's untouched default and is what a stock macOS gives every user. Not an extraction
+artifact — these files were created by the running product, not unpacked. Not specific to
+the evidence directory — the same `0755`/`0644` appears under
+`~/Library/Application Support/VisualCat`, which the product creates itself. Not a
+Finder-metadata artifact — `xattr -lr` on the saved sessions is empty.
+
+---
+
+### F-09 · Major · A click on the modally-blocked main window is queued and replayed after the dialog closes
+
+**Severity** Major — it breaks the one invariant a modal dialog exists to provide, and it
+fires the deferred action against a *different* application state from the one the user was
+looking at when they clicked.
+
+**Where** Avalonia modal-window handling on macOS (`ShowDialog` on the parent window).
+Observed on the shipped 2.0.13 `osx-arm64` desktop.
+
+**What happens.** Reproduced live during [§2.10](#210-b-11--i-05--host-adb-discovery-and-capture-against-a-physical-phone):
+
+1. *ADB live* opened the modal **Live ADB capture** dialog (a separate top-level window at
+   `420, 121`, size `600 × 438`).
+2. With the dialog open, the parent window's **Open log** button was clicked once.
+   **Nothing happened** — no file chooser, no notice, and `get name of every window` returned
+   only the two existing windows for the next 5 s. The parent is correctly blocked at the
+   input level.
+3. *Start capture* was pressed. The dialog closed and the ADB capture started normally.
+4. **The file chooser then opened by itself**, on top of the running capture — the native
+   sheet titled `Open Android logcat file` — and the status bar showed a progress notice
+   reading `Opening log…` with a *Cancel* button.
+
+So the click was neither delivered nor discarded: it was **held and replayed** once the modal
+window went away. Evidence: `b11-capturing-early.png` shows the chooser sheet and
+`Opening log…` over a live capture reporting `Capturing · 858 lines received · 190/s`.
+
+**Why it matters.** The user's mental model when they clicked was "empty app, no session".
+The action ran against "a live ADB capture in progress". Three concrete consequences:
+
+- A user who clicks the blocked window a few times — which is exactly what people do when a
+  window does not respond — gets a **burst of unexpected actions** after the dialog closes.
+- The deferred action can be destructive in its own right. *Close session*, *Recent
+  captures* deletion and *Export* are all on the same blocked surface.
+- On macOS the convention is unambiguous and users rely on it: clicking a window blocked by a
+  modal makes the modal **bounce**, and the click is dropped. Nothing is remembered.
+
+**Expected.** A click on a window blocked by an application-modal dialog is discarded, and
+the dialog signals that it is the thing wanting attention.
+
+**Suggested fix.**
+
+1. **Discard, do not queue.** Whatever the current path is (Avalonia disables the parent's
+   input but the platform still enqueues the event, and it is drained on re-enable), the
+   parent's input queue must be **flushed** when the modal closes. In the macOS backend, the
+   modal session should be run with the parent's `NSWindow` genuinely disabled for mouse
+   events rather than merely ignoring them, so AppKit never records them.
+2. **Give the click somewhere to go.** macOS's own affordance costs nothing and tells the
+   user precisely what is wrong: bounce the modal window when a blocked window is clicked.
+   Avalonia does not do this automatically for a non-sheet dialog, so add it in the dialog
+   host — on receiving a blocked-parent click, activate the dialog and run a short
+   shake/bounce.
+3. **Present these dialogs as sheets.** The native file chooser in this same app *is* a sheet
+   (`sheet 1 of window 1`, confirmed live), and it behaves perfectly. The product's own
+   dialogs are free-floating `AXStandardWindow`s with their own traffic lights, which is why
+   this class of bug is reachable at all. A sheet is attached to its parent, cannot be
+   separated from it, cannot be minimised away from it, and gets the bounce behaviour for
+   free. This also fixes the two smaller problems found beside this one: the dialog reports
+   **`AXModal = false`** to assistive technology (so a screen reader is not told it is
+   modal), and it carries an **enabled minimise button**, which lets a user minimise a modal
+   dialog and leave the application with a blocked main window and no visible way back.
+4. Add a regression test at the harness level: open a modal, synthesise a click on the
+   parent, close the modal, assert no command executed.
+
+**Appendix-B trap checks.** Not a synthetic-input artifact: `System Events`' `click at`
+posts a real `CGEvent` to the window under the cursor, which is what a physical click is;
+the same click *did* execute, just later, so it was plainly delivered to the application.
+Not a slow-chooser artifact — the window list was polled for 5 s before *Start capture* and
+showed no chooser, and the chooser appeared only after the modal closed. Not a
+screen-lock artifact — the sequence completed before the display slept, and the chooser was
+still on screen after the display was woken.
+
+---
+
+### F-10 · Major · `--adb` pointing at a missing path or a directory is silently ignored, and a different `adb` is used instead
+
+**Severity** Major for scripted use — the flag whose entire purpose is to pin a specific
+tool is advisory, and when it is wrong the run **succeeds** with a different tool and exit
+code 0. On a machine with several `adb` builds (Android Studio's, Homebrew's, a vendored
+one — the normal state of a Mac Android developer's machine) the user is never told which
+one ran.
+
+**Where** `src/VisualCat.Infrastructure/Adb/AdbLocator.cs`, `Find`.
+
+**What happens.**
+
+```csharp
+public static string? Find(string? explicitPath = null)
+{
+    if (!string.IsNullOrWhiteSpace(explicitPath) && File.Exists(explicitPath))
+    {
+        return Path.GetFullPath(explicitPath);
+    }
+    // …falls through to ANDROID_SDK_ROOT, ANDROID_HOME, the default SDK dir, then PATH
+```
+
+When `explicitPath` is supplied but `File.Exists` is false — a typo, a moved SDK, or a
+**directory**, for which `File.Exists` is false by definition — the `if` is skipped and the
+method continues to the ambient probes. Measured live:
+
+| Command | Exit | Device listed? |
+|---|---|---|
+| `vcat adb-devices --adb /tmp` (a directory) | **0** | **yes** — via `PATH` |
+| `vcat adb-devices --adb /tmp/definitely-not-here` | **0** | **yes** — via `PATH` |
+| `vcat capture-adb --serial RFCRC0A9GND --adb /tmp/definitely-not-here --duration-seconds 2` | **0** | **captured a full 2 s session** |
+| the same two with `PATH` stripped | 2 | `error: ADB was not found. Set --adb, ANDROID_SDK_ROOT, or PATH.` |
+
+That last row is the sharpest part: with no fallback available the product reports that ADB
+was not found and lists the places to set it — **without ever saying that the `--adb` value
+the user passed on the command line was rejected**. The user reads "set `--adb`" while
+looking at the `--adb` they just set.
+
+For contrast, the paths that *do* fail, fail well: a non-executable file gives
+`Permission denied` and a dangling symlink gives `No such file or directory`, both exit 1 —
+because those reach `Process.Start` rather than being dropped by `File.Exists`.
+
+**Expected.** Plan §2.11 and A-15: an explicitly configured path is authoritative. It either
+works or it fails with its own specific reason; it never silently becomes a different
+binary.
+
+**Suggested fix.**
+
+```csharp
+public static string? Find(string? explicitPath = null)
+{
+    if (!string.IsNullOrWhiteSpace(explicitPath))
+    {
+        // An explicit path is a decision, not a hint: if it is wrong, say so. Falling back
+        // to PATH here runs a different adb than the caller pinned, and reports success.
+        if (Directory.Exists(explicitPath))
+            throw new AdbLocatorException($"The configured ADB path '{explicitPath}' is a directory, not the adb executable.");
+        if (!File.Exists(explicitPath))
+            throw new AdbLocatorException($"The configured ADB path '{explicitPath}' does not exist.");
+        if (!OperatingSystem.IsWindows() &&
+            !File.GetUnixFileMode(explicitPath).HasFlag(UnixFileMode.UserExecute))
+            throw new AdbLocatorException($"The configured ADB path '{explicitPath}' is not executable. Run 'chmod +x {explicitPath}'.");
+        return Path.GetFullPath(explicitPath);
+    }
+    …
+}
+```
+
+Three further points that make the fix complete:
+
+1. Apply the same rule to the **desktop's configured ADB path** setting. `MainView.cs` already
+   has the better message for that case — *"Correct it in Appearance & timeline, install
+   Android platform-tools, or set `ANDROID_SDK_ROOT`"* — so the two surfaces should share it.
+2. **Say which `adb` was chosen.** Record the resolved absolute path and version in the
+   session manifest beside the `adbVersion` that is already there, and show it in the ADB
+   dialog's status line. A user with three `adb` installations currently has no way to know
+   which one produced a capture.
+3. Check the executable bit up front rather than at `Process.Start`. It turns a .NET
+   exception message that quotes a working directory into one sentence naming the remedy.
+
+**Appendix-B trap checks.** Not a quoting artifact — the same values were passed through a
+shell function that quotes every argument, and the failing and succeeding cases differ only
+in the path. Not a `PATH` artifact — the control run with `PATH` stripped proves the
+fallback is what produced the success. Reproduced on both `adb-devices` and `capture-adb`.
+
+---
+
+### F-11 · Minor · The one SDK location an Android developer's Mac actually has is the one the product never looks in
+
+**Severity** Minor — first-run friction on precisely the machine most likely to run this
+product.
+
+**Where** `src/VisualCat.Infrastructure/Adb/AdbLocator.cs`, `AndroidSdkRoots`.
+
+**What happens.** After the two environment variables, the only default probed is
+
+```csharp
+var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+var defaultPath = Path.Combine(local, "Android", "Sdk");
+```
+
+On macOS `LocalApplicationData` resolves to `~/Library/Application Support`, so the product
+probes **`~/Library/Application Support/Android/Sdk/platform-tools/adb`**. Verified live:
+place an `adb` there and it is found.
+
+That path is the **Windows** Android Studio convention (`%LOCALAPPDATA%\Android\Sdk`)
+transplanted to macOS. Android Studio on macOS installs the SDK at
+**`~/Library/Android/sdk`**, and Homebrew installs `adb` at `/opt/homebrew/bin/adb` on Apple
+silicon or `/usr/local/bin/adb` on Intel. Verified live: with `PATH` stripped and a real
+`adb` present at `~/Library/Android/sdk/platform-tools/adb`, the product reports
+`error: ADB was not found.`
+
+Homebrew's location is reached today only because Homebrew puts it on `PATH` — and plan §2.7
+records why that is thin ice on macOS: a process launched from Finder or from a wrapper
+inherits the **login session's** environment, not a shell's, so a `PATH` entry that
+`.zprofile` adds is invisible to it. A Mac user who installs platform-tools with Homebrew and
+launches VisualCat by double-clicking will find no devices, while the same build run from
+Terminal finds them immediately.
+
+**Also observed, and worth one line:** the probe's `Sdk` differs from Android Studio's `sdk`
+**only in case**. On this case-insensitive APFS volume both spellings resolve; on a
+case-sensitive APFS volume only `Sdk` would. A path that works on one Mac and not another
+for that reason is the hardest kind of bug to report.
+
+**Suggested fix.**
+
+1. Make the default roots platform-specific and include the real ones:
+   ```csharp
+   private static IEnumerable<string> AndroidSdkRoots()
+   {
+       foreach (var name in new[] { "ANDROID_SDK_ROOT", "ANDROID_HOME" }) { … }
+
+       var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+       if (OperatingSystem.IsMacOS())
+       {
+           // Android Studio's macOS location, and where `brew install --cask
+           // android-platform-tools` links adb. LocalApplicationData/Android/Sdk is the
+           // Windows convention and exists on no ordinary Mac.
+           yield return Path.Combine(home, "Library", "Android", "sdk");
+           yield return "/opt/homebrew/share/android-platform-tools";   // Apple silicon
+           yield return "/usr/local/share/android-platform-tools";      // Intel
+       }
+       else if (OperatingSystem.IsLinux())
+       {
+           yield return Path.Combine(home, "Android", "Sdk");
+           yield return Path.Combine(home, ".local", "share", "Android", "Sdk");
+       }
+       var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+       …keep the existing probe last, for compatibility…
+   }
+   ```
+   and additionally probe the bare `/opt/homebrew/bin/adb` and `/usr/local/bin/adb`, since
+   Homebrew links the executable rather than shipping a `platform-tools` tree the product
+   would recognise.
+2. Compare the SDK directory name **case-insensitively on macOS and Windows, exactly** on
+   Linux, or simply probe both spellings. One extra `yield return` removes a whole class of
+   "works on my Mac".
+3. Update [`CLI.md`](CLI.md), which documents the locator as "`--adb`, `ANDROID_SDK_ROOT`, or
+   `PATH`" — it omits `ANDROID_HOME` and the default SDK directory, both of which work
+   today. See [F-12](#f-12) for the message that repeats the same omission.
+
+**Appendix-B trap checks.** Each route was proved in isolation with `PATH` stripped to
+`/usr/bin:/bin:/usr/sbin:/sbin`, so no probe could be satisfied by a fallback. The `adb`
+placed at each location was a symlink to the same real binary, so a positive and a negative
+result differ only in the path searched.
+
+---
+
+### F-12 · Polish · Three small ADB messages that each send the reader one step in the wrong direction
+
+**Severity** Polish — no data is lost and nothing is wrong on screen; each one just costs a
+user minutes.
+
+**Where** `src/VisualCat.Cli/Program.cs:541,554`; `docs/CLI.md`; the desktop search box.
+
+**1. The "ADB was not found" message under-reports what works and offers macOS nothing.**
+
+```
+error: ADB was not found. Set --adb, ANDROID_SDK_ROOT, or PATH.
+```
+
+`ANDROID_HOME` works and is not mentioned. The default SDK directory works and is not
+mentioned. And on the platform where the message is most likely to appear — a Mac with no
+Android tooling — it names no way to *get* `adb`. Suggested:
+
+```
+error: ADB was not found. Pass --adb <path>, set ANDROID_SDK_ROOT or ANDROID_HOME to an SDK
+       directory, or put adb on PATH.
+       macOS: brew install --cask android-platform-tools
+       Android Studio installs it at ~/Library/Android/sdk/platform-tools (macOS).
+```
+
+Build the list from the locator's own probe order so the message cannot drift from the code
+again — the same list, rendered, is also the right content for the desktop's equivalent
+notice.
+
+**2. `vcat search` matches the message but not the tag, and says nothing about it.**
+Searching a capture for `VCATTEST` returns **3** matches — the `adbd` lines that happen to
+quote the tag in their message text — while the 301 records actually *tagged* `VCATTEST` are
+not matched. `search "steady" --tags VCATTEST` finds all 302. The behaviour is defensible;
+the silence is not. Suggested: when a text search returns few or no matches and the query
+exactly equals a known tag or process name in the session, add one line —
+`No message matched "VCATTEST". 301 entries carry that tag — search with --tags VCATTEST.`
+In the desktop, offer it as a clickable chip in the empty-result state. This is the highest
+value-per-line item in this finding.
+
+**3. On macOS, nothing names the macOS-specific device remedy.** The state messages are
+correct and platform-neutral ([§2.12](#212-a-16--adb-device-state-matrix)), and `main`
+correctly gates its `udev` advice behind `OperatingSystem.IsLinux()`. But macOS has its own
+equivalent of "the device is attached and ADB still cannot see it": on Apple-silicon
+laptops the **first** USB connection of a new device raises an *Allow accessory to connect*
+prompt, and until it is answered the device is absent from `adb devices` — indistinguishable
+from a dead cable. Suggested, in the same `OperatingSystem` switch that already carries the
+Linux branch:
+
+```csharp
+else if (OperatingSystem.IsMacOS())
+{
+    message += " On macOS, check that the device was allowed to connect — an Apple silicon " +
+               "Mac asks once per new device, and until that is answered ADB does not list it " +
+               "at all. System Settings › Privacy & Security › Allow accessories to connect.";
+}
+```
+
+Also worth adding on macOS: `adb kill-server` after a `brew upgrade` of platform-tools, for
+the same reason the Linux branch mentions it — a running server keeps the credentials and
+the binary it started with.
+
+**Appendix-B trap checks.** All three were read off the shipped 2.0.13 binaries, not from
+the repository: the "ADB was not found" text was produced live with `PATH` stripped, the
+search counts come from `vcat search` on a real 49 012-entry capture, and the absence of
+macOS remedy text was confirmed by searching the shipped assemblies as well as by running
+the states.
+
+---
+
+### F-13 · Polish · A `.vcat` session is a folder on macOS, so the save panel lets you save a session inside another session
+
+**Severity** Polish — nothing was corrupted, and the trigger needs a user to navigate into a
+session directory. It is filed because on macOS the platform has a purpose-built answer and
+the product is not using it.
+
+**Where** Session-on-disk format, plus the absence of any macOS document-type declaration.
+
+**What happens.** A `.vcat` session is a directory (`manifest.json`, `raw.log`,
+`segments-final-*/`, `source-order/`, `templates-final.jsonl`, `view.json`, `diagnostics/`).
+macOS has a first-class concept for "a directory the user should treat as one document" — a
+**package** — and Finder, the open panel and the save panel all honour it. VisualCat declares
+none, because it ships as a bare executable with no `.app` bundle and therefore no
+`UTExportedTypeDeclarations`. Consequences, all observed:
+
+- Finder shows a session as an ordinary folder of eight-ish opaque items. A user copying a
+  session to a colleague must know to take the whole folder.
+- The **save panel navigates into sessions**. During this run a *Save portable* landed at
+  `…/cli-capture.vcat/ADB RFCRC0A9GND 13h00m23-portable-20260914-131517.vcat` — a session
+  nested inside another session. Both still verified afterwards (`vcat verify` reported
+  `"isValid": true` for each, and the outer session's entry count was unchanged at 8 148), so
+  the store tolerates it; but the outer session now silently carries 7 MB of unrelated data
+  that its own manifest does not describe, and a later cache-retention sweep of the outer
+  session would take the inner one with it.
+- The open panel has the same property in reverse: *Open session* must be pointed at a
+  directory, which is unusual enough on macOS that it is worth a word in the README.
+
+**Suggested fix**, cheapest first:
+
+1. **Refuse the nesting.** At save time, walk up from the chosen destination and refuse if any
+   ancestor contains a `manifest.json` that parses as a session:
+   `"That location is inside the session '<name>'. Choose a directory outside it."`
+   This is a few lines, needs no platform work, and is also the right guard on Windows and
+   Linux.
+2. **Declare the package type.** If a `.app` bundle is ever shipped (it is the natural fix for
+   [F-03](#f-03) too, since a bundle is also what gives the app a name, an icon and a Dock
+   identity), add to `Info.plist`:
+   ```xml
+   <key>UTExportedTypeDeclarations</key>
+   <array><dict>
+     <key>UTTypeIdentifier</key><string>com.barebit.visualcat.session</string>
+     <key>UTTypeConformsTo</key><array><string>com.apple.package</string></array>
+     <key>UTTypeTagSpecification</key>
+     <dict><key>public.filename-extension</key><array><string>vcat</string></array></dict>
+   </dict></array>
+   ```
+   Finder then shows a session as one document, the save panel stops descending into it, and
+   double-clicking one opens VisualCat.
+3. Until then, say so in the macOS `README.txt`: *"A saved session is a directory, not a
+   single file. Copy or zip the whole `.vcat` directory. Use `Save portable` and then
+   `Export → portable-zip` for a single-file hand-off."*
+
+**Appendix-B trap checks.** Not a harness artifact in the part that matters: whatever put the
+save panel inside `cli-capture.vcat`, the product accepted the destination and wrote a
+complete session there without a word. The package-declaration half is a static fact about
+the shipped artifact, confirmed by the absence of any `Info.plist` in the tarball.
 
 ---
 
