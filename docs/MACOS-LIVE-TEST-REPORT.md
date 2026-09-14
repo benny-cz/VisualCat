@@ -28,9 +28,9 @@ line there. Findings are appended to [§3](#3-findings) the moment they are obse
 |---|---|
 | Run ID | `20260914-macos-arm64-m1` |
 | Status | **PASS 1 COMPLETE** — cleanup done and the Mac handed back ([§5](#5-mutation-ledger-and-hand-back)) |
-| Last completed | §2.26 — B-19 window state, U-01 minimum size, U-05 full screen, U-10 appearance, settings inventory |
+| Last completed | §2.29 — S6/S7 corrected, the I-13 exit-code matrix, and the first macOS 1M-line performance baseline |
 | Next step | [§4.5](#45-where-the-next-pass-should-start) — the Q6/Q7 consent pass from iTerm2, then a human keyboard-and-mouse pass, then a VoiceOver soak aimed at [F-14](#f-14) |
-| Findings | **22** (F-01 … F-22): **6 Major**, 11 Minor, 5 Polish |
+| Findings | **23** (F-01 … F-23): **7 Major**, 11 Minor, 5 Polish |
 
 ### Findings at a glance
 
@@ -58,14 +58,23 @@ line there. Findings are appended to [§3](#3-findings) the moment they are obse
 | [F-20](#f-20) | Minor | Desktop and CLI default to different CSV row orders |
 | [F-21](#f-21) | Polish | Recent captures' two selection models; unfitted first paint; export path not shown |
 | [F-22](#f-22) | Minor | Native full screen draws the toolbar under the window's own title bar |
+| [F-23](#f-23) | **Major** | The desktop head will not start while the display is asleep or the screen is locked |
 
-**The release recommendation this run produces.** Two of the six Major findings —
+**The release recommendation this run produces.** Two of the seven Major findings —
 [F-06](#f-06) and [F-08](#f-08) — are defects that `main` has already fixed and that 2.0.13
 still ships: silent loss of two thirds of a `logcat -v long` file, and a stated privacy
 guarantee that is false. Neither needs new code; both need a release. Cutting **2.0.14** is
 the single highest-value action arising from this run, and [F-19](#f-19) makes it more
 urgent, because every 2.0.13 user reading the documentation their own archive links to is
 already reading about the fixed behaviour.
+
+**If only three things are fixed for macOS specifically**, they are [F-03](#f-03) (the
+product calls itself "Avalonia Application" everywhere macOS shows an application's name,
+including in its own crash dialog), [F-23](#f-23) (it will not start while the display is
+asleep, and says so with a stack trace and a raw CoreVideo number), and [F-18](#f-18)
+(following a growing file shows a stale count that contradicts the product's own status
+bar). The first is the platform's first impression, the second is a hard stop, and the
+third is a headline feature reporting the wrong number.
 
 **To resume.**
 
@@ -305,9 +314,16 @@ VisualCat v2 — See the shape of your log, 1440, 795, 0, 30
 
 stdout and stderr were **empty**. macOS grants window-server access on console
 ownership, not on an environment variable, so a `Background` session owned by the console
-user is a perfectly good graphical context. The Linux-shaped S7 hazard does not exist
-here, and the row should be re-scoped for macOS: the real negative case is an SSH session
-whose account does **not** own `/dev/console`.
+user is a perfectly good graphical context. The Linux-shaped S7 hazard — a missing
+`DISPLAY`, a missing `libX11` — does not exist here.
+
+> **Amended after §2.27.** This paragraph originally concluded that "there is no failure to
+> explain" on macOS. That is wrong. There *is* a startup failure, and it is a good deal
+> easier to hit than the Linux one: **with the display asleep or the screen locked, the
+> desktop head does not start at all**, and it says so with an unhandled .NET exception and
+> a raw CoreVideo error code. See [§2.27](#227-s6--s7-corrected--the-desktop-does-not-start-while-the-display-is-asleep)
+> and [F-23](#f-23). What the S7 launch above actually proves is narrower than it first
+> appeared: console ownership is sufficient, *provided a display is awake*.
 
 One real observation did fall out of it: the window opened **behind** the frontmost
 application (Safari) and was never brought forward. For a user that is correct
@@ -1251,6 +1267,132 @@ the "local-first · no telemetry" claim. `exportOrder: "SourceSequence"` is
 [F-20](#f-20)'s remembered desktop default. `openSessionPaths` and `openSessionIndex` are
 [F-17](#f-17)'s written-but-never-read workspace. The file is mode `0644`
 ([F-08](#f-08)).
+
+### 2.27 S6 / S7 corrected — the desktop does not start while the display is asleep
+
+**Verdict: FAIL — [F-23](#f-23).** Found by accident and then proved deliberately with a
+control, which is why it is recorded as its own section rather than folded into
+[§2.2](#22-s7--the-desktop-launches-from-a-background-ssh-session).
+
+It surfaced when the hand-back cleanup killed `caffeinate`: every subsequent launch — five
+different argument forms in a row — died before drawing anything. The control matrix:
+
+| Condition | `osx-arm64` desktop | `osx-x64` desktop | `vcat` CLI |
+|---|---|---|---|
+| display awake | **starts** | *(not retested)* | `rc=0` |
+| display asleep (`pmset displaysleepnow`) | **fails** | **fails, identically** | `rc=0`, indexes 1 000 entries, `stats` returns `"totalMatching": 1000` |
+| display woken again (`caffeinate -u -t 1`) | **starts** | — | — |
+
+The failure, in full, printed **twice** — once bare and once again under
+`Unhandled exception.`:
+
+```
+System.InvalidOperationException: Avalonia.Native was not able to start the RenderTimer.
+Native error code is: -6661
+   at Avalonia.Native.AvaloniaNativeRenderTimer.EnsureRegistered()
+   at Avalonia.Native.AvaloniaNativeRenderTimer.set_Tick(Action`1 value)
+   …
+   at Avalonia.Native.AvaloniaNativePlatform.Initialize(AvaloniaNativePlatformOptions options)
+   at Avalonia.AppBuilder.SetupUnsafe()
+   at VisualCat.Desktop.Program.Main(String[] args) in /_/src/VisualCat.Desktop/Program.cs:line 13
+```
+
+`-6661` is CoreVideo's display-link failure: `CVDisplayLinkStart` has no active display to
+attach to. **An already-running instance is unaffected** — earlier in this run the
+8-minute ADB capture continued through a display sleep and a screen lock without losing a
+record ([§2.10](#210-b-11--i-05--host-adb-discovery-and-capture-against-a-physical-phone)).
+The problem is starting, not running.
+
+**B-17 · startup argument dispatch — not established.** The measurement that uncovered this
+was itself the argument-dispatch matrix, so its results are void. What was seen before the
+display slept: a bare path opened the log in a tab, and `--log <path>` did too on a second
+attempt but not within 9 s on the first, so the row needs re-running with a generous poll —
+it is on the [§4](#4-standing-list--what-is-still-untested) list. The one solid observation
+is that **`--bogus-flag` starts the desktop silently**, while the CLI refuses an unknown
+option with exit 2; whether the desktop should refuse, warn, or ignore is a product
+decision worth making explicitly.
+
+### 2.28 I-13 — exit codes, and the two documented contracts that are not in this release
+
+Exit-code matrix against [`CLI.md`](CLI.md)'s stated contract (`0` ok, `2` invalid input,
+`3` corruption or a bounded search timeout, `4` `verify --require-raw` that could not check,
+`130` cancellation, `1` otherwise):
+
+| Invocation | Exit | stderr | Verdict |
+|---|---|---|---|
+| `index small.txt --output …` | 0 | 0 B | ok |
+| `index /nope/missing.txt` | 1 | 33 B | ok — "otherwise" |
+| `index small.txt --bogus 1` | **2** | 90 B | ok — invalid input |
+| `frobnicate` | **2** | 37 B | ok |
+| `info /etc/hosts` | 0 | 0 B | ok — reports `primaryFormat: Unknown, confidence: 0` honestly rather than failing |
+| `verify <good session>` | 0 | 0 B | ok |
+| `stats /tmp/nosuch.vcat` | 1 | 39 B | ok |
+| `search … "[" --regex` | 1 | 61 B | ok |
+| `export … --type bogus` | **2** | 40 B | ok |
+| `generate-test-log --output /System/x.txt` | 1 | 84 B | ok — a destination failure, and no file was created |
+
+Every code matches. Errors go to stderr and never contaminate the structured document on
+stdout.
+
+**Two documented contracts are absent from 2.0.13**, both for the same reason as
+[F-19](#f-19) — they exist on `main` and the shipped README links `main`'s documentation:
+
+```shell
+$ vcat export small.vcat out.csv --type csv --newline crlf
+error: 'export' does not take '--newline'. …
+
+$ vcat index --output /tmp/x.vcat -- ./-leading-dash.txt
+error: 'index' does not take '--'. …
+```
+
+The second is the sharper one. `main`'s `CLI.md` says *"A bare `--` ends option parsing, as
+it does in every POSIX tool: everything after it is a file name, so a log whose name begins
+with `-` has a safe spelling"*, and `main` implements it (`Program.cs:942-946`). In 2.0.13
+there is **no safe spelling** for such a file. The v2.0.13 tag's own `CLI.md` correctly
+promises neither, so the code and the tagged docs agree; only the link a user is given is
+wrong.
+
+### 2.29 X-01 (CLI leg) — the first macOS performance numbers this project has
+
+**No verdict — there is no macOS baseline to compare against.** These are first
+observations, taken on the owner's daily Mac with its usual applications resident, and they
+establish the baseline rather than test against one.
+
+Corpus: `large.txt`, **1 000 001 lines / 90 017 930 bytes**, `--lines 1000000 --seed 42
+--format threadtime`, LF only.
+
+| Build | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| `osx-arm64` native — wall | **4.81 s** | **4.35 s** | **4.05 s** |
+| `osx-arm64` — product's own `elapsedSeconds` | 4.673 | 4.291 | 3.994 |
+| `osx-x64` under Rosetta 2 — wall | **9.28 s** | **11.65 s** | — |
+
+So roughly **230 000 entries/s** and **22 MB/s** natively on an M1, and **2.2–2.9× slower
+translated**. `vcat verify` on the result took **2.59 s**.
+
+**Architecture parity holds at scale.** Both builds produced byte-identical counters:
+
+```json
+{"sourceBytes": 90017930, "sourceLines": 1000001, "parsedEntries": 999885,
+ "timedEntries": 999885, "metaRecords": 1, "unknownLines": 115,
+ "rejectedCandidates": 0, "continuations": 0, "untimedEntries": 0,
+ "ignoredBlanks": 0, "templates": 77}
+```
+
+`999 885 + 1 + 115 = 1 000 001` — every source line accounted for exactly once, with 115
+lines honestly reported as unknown rather than folded into continuations. This is the same
+accounting discipline [§2.8](#28-corpus-and-oracle-plan-31) found on `outcomes.txt`, at a
+thousand times the scale, and it is the sharpest available contrast with
+[F-06](#f-06), where the same counters read zero while two thirds of the file vanished.
+
+**Storage.** The finalized session is **167 MB on disk for a 90 MB source** — a 1.86×
+expansion, because the session embeds a byte-faithful `raw.log` alongside its indexes. Worth
+knowing before an X-tier soak: an overnight capture needs roughly twice the disk of the
+traffic it records.
+
+The desktop half of X-01 — import, first paint, interactive pan and zoom on a million
+entries — was not run; it is on the [§4](#4-standing-list--what-is-still-untested) list, and
+`large.txt` is left in the corpus directory ready for it.
 
 ---
 
@@ -2793,6 +2935,97 @@ clicking the green button and by setting `AXFullScreen` directly.
 
 ---
 
+<a id="f-23"></a>
+
+### F-23 · Major · The desktop head will not start while the display is asleep or the screen is locked
+
+**Severity** Major — an ordinary, frequent machine state stops the application from
+launching at all, and the diagnosis offered is an unhandled .NET stack trace and a raw
+CoreVideo error number.
+
+**Where** `Avalonia.Native.AvaloniaNativeRenderTimer.EnsureRegistered()`, reached from
+`AvaloniaNativePlatform.Initialize` during `AppBuilder.Setup()` —
+`src/VisualCat.Desktop/Program.cs:13`. Avalonia **12.1.1**.
+
+**What happens.** With the display asleep, every launch of the desktop head dies before
+drawing anything:
+
+```
+System.InvalidOperationException: Avalonia.Native was not able to start the RenderTimer.
+Native error code is: -6661
+   at Avalonia.Native.AvaloniaNativeRenderTimer.EnsureRegistered()
+   …
+   at VisualCat.Desktop.Program.Main(String[] args) in /_/src/VisualCat.Desktop/Program.cs:line 13
+```
+
+printed **twice** — once bare, then again under `Unhandled exception.` — and the process
+exits. `-6661` is CoreVideo's display-link failure: `CVDisplayLinkStart` has no active
+display to attach to.
+
+Proved with a control ([§2.27](#227-s6--s7-corrected--the-desktop-does-not-start-while-the-display-is-asleep)):
+display awake → starts; `pmset displaysleepnow` → fails; `caffeinate -u -t 1` → starts
+again. **Both architectures fail identically.** The **CLI is completely unaffected** —
+with the display asleep `vcat --version`, `vcat index` and `vcat stats` all return 0 and
+correct results — so this is squarely the desktop head's graphics initialisation.
+
+**An already-running instance is fine.** Earlier in this run the 8-minute ADB capture ran
+through a display sleep and a screen lock and lost nothing. The defect is in starting.
+
+**Why this is not an exotic state.** The display sleeps on idle (10 minutes on this Mac,
+the stock default) and the screen locks 300 s later. Every one of these is a real user
+launching VisualCat into that state: a `launchd` job or scheduled capture that fires
+overnight; an SSH or Remote Desktop session onto an unattended Mac — which is exactly how
+a CI or lab machine is used; a user who clicks the icon as the screen locks; a laptop
+woken with the lid still closed and no external display attached. The plan's own §2.7 S6
+asks for display sleep and lock to be tested for this reason.
+
+**Expected.** Either the head starts and renders when a display becomes available, or it
+refuses with a sentence a user can act on. Not an unhandled exception.
+
+**Suggested fix.**
+
+1. **Do not let a render-timer failure be fatal at start-up.** A display-link that cannot
+   start is a recoverable condition — the display comes back. Catch it in
+   `AvaloniaNativeRenderTimer.EnsureRegistered`, fall back to a timer-driven render loop,
+   and retry the display link when `NSApplication` reports a screen-parameters change.
+   This is the upstream half and belongs on the same Avalonia list as [F-14](#f-14).
+2. **In the product, fail with a sentence rather than a stack trace.** The desktop already
+   has a startup-failure explanation path; give it a macOS branch:
+   ```csharp
+   // CoreVideo -6661: CVDisplayLinkStart found no active display. The Mac's display is
+   // asleep or the screen is locked; the window server has nothing to attach to.
+   catch (InvalidOperationException ex) when (OperatingSystem.IsMacOS() && ex.Message.Contains("-6661"))
+   {
+       Console.Error.WriteLine(
+           "VisualCat could not start because this Mac has no active display - the screen " +
+           "is asleep or locked. Wake the display and try again. To capture on an unattended " +
+           "Mac, use the vcat command line, which needs no display.");
+       return 3;
+   }
+   ```
+   Naming `vcat` in that message is the important half: the product *has* a working answer
+   for the unattended case and the user has no way to know it.
+3. **Stop printing the trace twice.** The same exception appears bare and then again under
+   `Unhandled exception.`, which doubles the noise in exactly the situation where a reader
+   is trying to find one useful line. The Linux run recorded the same doubling
+   (`LINUX-LIVE-TEST-REPORT.md` F-02), so this is a cross-platform start-up-diagnostics
+   defect rather than a macOS one.
+4. **Say it in [`SUPPORT.md`](SUPPORT.md).** One line — *"the desktop head needs an awake
+   display; use the CLI for unattended or headless capture"* — turns a mystifying crash
+   into a documented limit, and it is worth writing even after the code is fixed.
+
+**Appendix-B trap checks.** Not a TCC or automation artifact — the failures came from
+plain `./VisualCat` invocations with output redirected to a file, with no accessibility
+client involved. Not a quarantine or signature artifact — the same binary, from the same
+extraction, started successfully minutes before and minutes after. Not a resource
+artifact — 797 GiB free, 16 GiB RAM, no other VisualCat process running. Not specific to
+the SSH launch path in the sense that matters: the failing condition is the display's
+state, and it was toggled deliberately in both directions, twice, with the launch
+repeated each time. Not architecture-specific — `osx-arm64` and `osx-x64` produce the
+identical exception.
+
+---
+
 ## 4. Standing list — what is still untested
 
 This is the honest inventory of what one pass did not reach. Nothing here is a pass or a
@@ -2807,6 +3040,7 @@ fail; each row is a gap with the reason it stayed open.
 | **[F-14](#f-14) reproduction** | One abort with a definitive native stack; ~15 targeted attempts failed to trigger it again. Needs a VoiceOver-on soak |
 | **U-07 VoiceOver end-to-end** | The tree and the focus order were measured through the accessibility API ([§2.15](#215-u-07--u-08--the-accessibility-tree-is-genuinely-good), [§2.18](#218-u-06--the-keyboard-contract)). No screen reader was actually driven, so speech order, verbosity and the 25-level nesting cost are unmeasured |
 | **U-25 dynamic announcements** | The live-region path is where [F-14](#f-14) crashed; what it *says* is untested |
+| **B-17 startup argument dispatch** | The measurement that would have settled it is the one that uncovered [F-23](#f-23), so its numbers are void ([§2.27](#227-s6--s7-corrected--the-desktop-does-not-start-while-the-display-is-asleep)). Re-run `--log`, `--session`, a bare path, a missing path and a bad flag against a poll that waits 60 s, with the display held awake |
 
 ### 4.2 Q6 — the consent pass this Mac could not produce
 
@@ -2867,7 +3101,7 @@ Per plan §2.9 and §13.5. Everything this run changed on the Mac, and its state
 | Android device `RFCRC0A9GND` USB-debugging authorization for this Mac | unauthorized | authorized by the owner ("Always allow") | **left authorized** — revoke in Developer options › Revoke USB debugging authorizations |
 | `adb` server | not running | started on `tcp:5037` (loopback) | **stopped at hand-back** (`adb kill-server`) |
 | System appearance | Dark | Light for ~10 s during U-10 | **restored to Dark** |
-| Display sleep | `displaysleep 10`, unchanged | held awake with `caffeinate -dimsu` | **caffeinate killed at hand-back**; `pmset` never modified |
+| Display sleep | `displaysleep 10`, unchanged | held awake with `caffeinate -dimsu`; slept deliberately twice with `pmset displaysleepnow` to prove [F-23](#f-23), and woken again with `caffeinate -u -t 1` each time | **caffeinate killed at hand-back**; `pmset` settings themselves were never modified |
 | Screen lock | 300 s, unchanged | not modified | n/a — the screen did lock once mid-run and the owner unlocked it |
 | `~/Desktop`, `~/Documents`, `~/Downloads` | — | one 90 KB `vcat-b05-small.txt` in each, plus `café-nfc.txt` on the Desktop | **deleted at hand-back** |
 | `~/vcat-run/` | absent | run root: candidates, corpus, evidence, helper scripts | **left in place** — it is the evidence, and §0 depends on it |
