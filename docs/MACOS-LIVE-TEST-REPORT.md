@@ -1257,6 +1257,8 @@ the "local-first · no telemetry" claim. `exportOrder: "SourceSequence"` is
 ## 3. Findings
 ## 3. Findings
 
+<a id="f-01"></a>
+
 ### F-01 · Minor · The shipped macOS `README.txt` tells the user to run a command macOS did not have until macOS 26
 
 **Severity** Minor — a documentation defect in the *release artifact itself*, on the one
@@ -1323,6 +1325,8 @@ directly out of the extracted tree, not from the repository.
 
 ---
 
+<a id="f-02"></a>
+
 ### F-02 · Minor · The macOS tarballs have no wrapper directory, so a normal extraction scatters 240 files
 
 **Severity** Minor — first-run friction and a cleanup hazard, on the platform where the
@@ -1377,6 +1381,8 @@ artifact: the archive's members are owned by `runner staff` and carry Unix modes
 was produced on the macOS workflow runner.
 
 ---
+
+<a id="f-03"></a>
 
 ### F-03 · Major · On macOS the product identifies itself as "Avalonia Application" in the menu bar, the About box, Hide, and Force Quit — and ships no menus at all
 
@@ -1479,6 +1485,8 @@ what started it; confirmed again after activating the app through the Dock.
 
 ---
 
+<a id="f-04"></a>
+
 ### F-04 · Minor · The macOS data root is created world-readable (0755)
 
 **Severity** Minor — provisionally filed; the full P-22 assertion needs session content,
@@ -1529,6 +1537,8 @@ untouched default. Not an extraction artifact — these directories were created
 running product on first launch, verified by their absence beforehand.
 
 ---
+
+<a id="f-05"></a>
 
 ### F-05 · Minor · `SUPPORT.md` states no macOS version floor, while the binaries declare one
 
@@ -1588,6 +1598,8 @@ binary, not from a local build. Not an architecture artifact — both `osx-arm64
 `osx-x64` apphosts report `minos 12.0`.
 
 ---
+
+<a id="f-06"></a>
 
 ### F-06 · Major · `logcat -v long` silently loses two thirds of its records on macOS too — the release still ships the bug
 
@@ -1661,6 +1673,8 @@ line-ending artifact — `tr -dc '\r' < fmt-long.txt | wc -c` is 0. Not a genera
 output.
 
 ---
+
+<a id="f-07"></a>
 
 ### F-07 · Minor · On macOS the session records a time zone the user never set (`Europe/Bratislava` for a Mac set to `Europe/Prague`)
 
@@ -1758,6 +1772,8 @@ corpus artifact — reproduced on two different generated corpora.
 
 ---
 
+<a id="f-08"></a>
+
 ### F-08 · Major · Every saved session on macOS is world-readable, contradicting `PRIVACY.md` in the exact words it uses to promise otherwise
 
 **Severity** Major — a published privacy guarantee is false on the shipped release, and the
@@ -1848,6 +1864,8 @@ Finder-metadata artifact — `xattr -lr` on the saved sessions is empty.
 
 ---
 
+<a id="f-09"></a>
+
 ### F-09 · Major · A click on the modally-blocked main window is queued and replayed after the dialog closes
 
 **Severity** Major — it breaks the one invariant a modal dialog exists to provide, and it
@@ -1920,6 +1938,8 @@ screen-lock artifact — the sequence completed before the display slept, and th
 still on screen after the display was woken.
 
 ---
+
+<a id="f-10"></a>
 
 ### F-10 · Major · `--adb` pointing at a missing path or a directory is silently ignored, and a different `adb` is used instead
 
@@ -2008,6 +2028,8 @@ fallback is what produced the success. Reproduced on both `adb-devices` and `cap
 
 ---
 
+<a id="f-11"></a>
+
 ### F-11 · Minor · The one SDK location an Android developer's Mac actually has is the one the product never looks in
 
 **Severity** Minor — first-run friction on precisely the machine most likely to run this
@@ -2089,6 +2111,8 @@ result differ only in the path searched.
 
 ---
 
+<a id="f-12"></a>
+
 ### F-12 · Polish · Three small ADB messages that each send the reader one step in the wrong direction
 
 **Severity** Polish — no data is lost and nothing is wrong on screen; each one just costs a
@@ -2157,6 +2181,8 @@ the states.
 
 ---
 
+<a id="f-13"></a>
+
 ### F-13 · Polish · A `.vcat` session is a folder on macOS, so the save panel lets you save a session inside another session
 
 **Severity** Polish — nothing was corrupted, and the trigger needs a user to navigate into a
@@ -2215,6 +2241,8 @@ complete session there without a word. The package-declaration half is a static 
 the shipped artifact, confirmed by the absence of any `Info.plist` in the tarball.
 
 ---
+
+<a id="f-14"></a>
 
 ### F-14 · Major · VisualCat aborts inside Avalonia's macOS accessibility bridge while announcing a live-region change
 
@@ -2329,6 +2357,8 @@ aborted itself. Not a display-sleep or screen-lock artifact — the display was 
 
 ---
 
+<a id="f-15"></a>
+
 ### F-15 · Minor · Two dialogs reserve roughly half their height for nothing
 
 **Severity** Minor — pure layout waste, but on a 1440 × 900-point desktop it pushes the
@@ -2373,6 +2403,8 @@ the text renders at the expected size and is not clipped.
 
 ---
 
+<a id="f-16"></a>
+
 ### F-16 · Polish · The search field has no accessible name, and the selected-entry legend collides with the status bar
 
 **Severity** Polish — two small blemishes on an otherwise strong accessibility and layout
@@ -2408,6 +2440,8 @@ The overlap is visible in two independent captures taken minutes apart, at the s
 size, and is not a capture-timing artifact.
 
 ---
+
+<a id="f-17"></a>
 
 ### F-17 · Minor · After a crash the sessions come back but the workspace does not, and nothing says where to look
 
@@ -2471,6 +2505,8 @@ diagnostics file, not inferred. The sessions' survival was verified by reopening
 comparing its entry count with the pre-crash value.
 
 ---
+
+<a id="f-18"></a>
 
 ### F-18 · Major · Following a growing file leaves the newest records out of the view, and the two counters on screen disagree
 
@@ -2562,6 +2598,8 @@ the display awake throughout.
 
 ---
 
+<a id="f-19"></a>
+
 ### F-19 · Minor · The shipped README links documentation from `main`, so a release's users read features their build does not have
 
 **Severity** Minor, but it is a documentation defect that regenerates itself after every
@@ -2619,6 +2657,8 @@ The tag-versus-`main` difference was confirmed with `git show v2.0.13:docs/CLI.m
 
 ---
 
+<a id="f-20"></a>
+
 ### F-20 · Minor · The desktop and the CLI default to different CSV row orders, and only one of them says so
 
 **Severity** Minor — both orders are correct and both are selectable. The cost is a
@@ -2667,6 +2707,8 @@ equality with `--order source` was proved by SHA-256, not by eye.
 
 ---
 
+<a id="f-21"></a>
+
 ### F-21 · Polish · Small UI frictions worth one pass each
 
 Grouped because each is a few lines and none is severe.
@@ -2697,6 +2739,8 @@ evidence captured (`p161-recent.png`, `b06-session.png` versus `b06-fit.png`), a
 before and after each kind of selection.
 
 ---
+
+<a id="f-22"></a>
 
 ### F-22 · Minor · Native full screen draws the toolbar underneath the window's own title bar
 
