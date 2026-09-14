@@ -2971,6 +2971,21 @@ correct results — so this is squarely the desktop head's graphics initialisati
 **An already-running instance is fine.** Earlier in this run the 8-minute ADB capture ran
 through a display sleep and a screen lock and lost nothing. The defect is in starting.
 
+**Every failed launch is recorded by macOS as a crash.** `~/Library/Logs/DiagnosticReports/`
+gained **seven** `VisualCat-*.ips` files during this section — one per attempt, all
+`EXC_CRASH / SIGABRT / Abort trap: 6` — on top of the one from [F-14](#f-14):
+
+```
+VisualCat-2026-09-14-142746.ips   VisualCat-2026-09-14-143302.ips   VisualCat-2026-09-14-143734.ips
+VisualCat-2026-09-14-142829.ips   VisualCat-2026-09-14-143518.ips   VisualCat-2026-09-14-144054.ips
+VisualCat-2026-09-14-143046.ips
+```
+
+So a scheduled job that retries on failure quietly fills the user's crash-report folder, and
+an interactive user gets the *"Avalonia Application quit unexpectedly"* dialog
+([F-03](#f-03)) once per attempt, naming a framework they have never heard of. An
+unhandled exception at start-up is not a private matter on macOS.
+
 **Why this is not an exotic state.** The display sleeps on idle (10 minutes on this Mac,
 the stock default) and the screen locks 300 s later. Every one of these is a real user
 launching VisualCat into that state: a `launchd` job or scheduled capture that fires
@@ -3106,7 +3121,7 @@ Per plan §2.9 and §13.5. Everything this run changed on the Mac, and its state
 | `~/Desktop`, `~/Documents`, `~/Downloads` | — | one 90 KB `vcat-b05-small.txt` in each, plus `café-nfc.txt` on the Desktop | **deleted at hand-back** |
 | `~/vcat-run/` | absent | run root: candidates, corpus, evidence, helper scripts | **left in place** — it is the evidence, and §0 depends on it |
 | `~/Library/Application Support/VisualCat/` | absent | created by the product: settings, 4 sessions (~18 MB), lease dir, diagnostics | **left in place** — it is evidence for [F-08](#f-08) and [F-17](#f-17). Delete with `rm -rf "$HOME/Library/Application Support/VisualCat"` |
-| `~/Library/Logs/DiagnosticReports/VisualCat-2026-09-14-134131.ips` | — | written by macOS | **left in place** — it is [F-14](#f-14)'s evidence |
+| `~/Library/Logs/DiagnosticReports/VisualCat-*.ips` × 8 | — | written by macOS: one for [F-14](#f-14) (`…134131`) and seven for [F-23](#f-23) (`…142746` … `…144054`) | **left in place** — they are the evidence for both findings |
 | `/tmp/stub*`, `/tmp/fakeadb`, `/tmp/noexec-adb`, `/tmp/dangling-adb`, `/tmp/*.vcat` | — | ADB stubs and scratch sessions | **deleted at hand-back** |
 | `~/Library/Application Support/Android/`, `~/Library/Android/` | absent | created and removed during the A-15 locator matrix | **already removed during the run** |
 | `~/.android/adbkey`, `adbkey.pub` | absent | created by `adb` on first start | **left in place** — deleting them would revoke the device authorization |
