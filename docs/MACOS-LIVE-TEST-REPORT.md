@@ -28,9 +28,9 @@ line there. Findings are appended to [§3](#3-findings) the moment they are obse
 |---|---|
 | Run ID | `20260914-macos-arm64-m1` |
 | Status | **IN PROGRESS** |
-| Last completed | §2.9 — artifact/signature/Rosetta, self-containment, CLI identity, format matrix, corpus + oracle |
-| Next step | B-05 file import through the macOS chooser; ADB rows once the phone authorizes |
-| Findings | 7 open (F-01 … F-07): 2 Major, 5 Minor |
+| Last completed | §2.19 — B-05 import + TCC, B-06 byte-exact source context, B-07 filters, B-08 search, U-06 focus order, crash recovery |
+| Next step | B-16 CSV export and line endings; B-13 follow a growing file; B-19 window state; P-01 network |
+| Findings | 17 open (F-01 … F-17): **5 Major**, 8 Minor, 4 Polish |
 
 **To resume.**
 
@@ -769,9 +769,466 @@ The remaining gap is **depth**, not labelling: 25 levels of nesting is a lot of 
 VoiceOver user to traverse, and the intermediate containers carry no `AXTitle`, so there are
 no landmarks to jump between. A full VoiceOver pass is still outstanding.
 
+### 2.16 B-05 — importing through the macOS file chooser, and what TCC actually did
+
+**Verdict: PASS for the import; the Q6 consent story came out differently from the plan's
+expectation, and that difference is the result.**
+
+`Open log` → the native chooser appeared as a **sheet attached to the main window**
+(`sheet 1 of window 1` — the correct macOS presentation, and notably *not* how the
+product's own dialogs are presented, see [F-09](#f-09)). ⇧⌘G accepted a typed path.
+Time from click to chooser: **3.32 s** — slow enough to notice, recorded as a first
+observation with no baseline.
+
+The file opened was `~/Desktop/vcat-b05-small.txt`, a copy of the 1 000-entry `small.txt`.
+
+**No privacy prompt appeared, for any of the three protected folders.** That is not a
+product defect; it is the §2.6 note playing out exactly as written, and it is worth stating
+precisely because a tester could easily record it as "TCC works":
+
+```
+kTCCServiceSystemPolicyAllFiles | /usr/libexec/sshd-keygen-wrapper | 2   ← Full Disk Access
+kTCCServiceSystemPolicyAllFiles | com.apple.Terminal                | 0   ← denied
+kTCCServiceSystemPolicyDesktopFolder   | com.apple.Terminal | 2
+kTCCServiceSystemPolicyDocumentsFolder | com.apple.Terminal | 2
+kTCCServiceSystemPolicyDownloadsFolder | com.apple.Terminal | 2
+```
+
+VisualCat was launched from an SSH shell, so its responsible process is
+`sshd-keygen-wrapper`, which holds **Full Disk Access** on this Mac. VisualCat therefore
+inherited unrestricted access to every protected folder without a single prompt, and
+nothing on screen ever named VisualCat. Launching from Terminal.app instead would inherit
+Desktop/Documents/Downloads but not Full Disk Access. **On this host there is no launch
+path that produces a prompt naming the product**, because a bare executable has no identity
+of its own to prompt about.
+
+A true Q6 pass needs a launching terminal with no grants at all. iTerm2 was installed
+during this run for that purpose; the pass itself is **still outstanding** and is on the
+[§4](#4-standing-list--what-is-still-untested) list.
+
+**Import preview.** The review appeared even though detection was at 100 % confidence:
+
+```
+vcat-b05-small.txt
+Preview of up to the first 200 lines · 200 complete lines · 17.7 KiB retained
+Detected sample format: Thread time (100 % confidence)
+Parsing preview with auto-detection
+199 parsed · 0 unknown · 0 rejected
+Sample time span: 2026-05-15 14:13:37.000000 +02:00 — 2026-05-15 14:13:37.305000 +02:00 · Europe/Bratislava
+Year follows source reference date 2026-09-14
+No preview warnings.
+```
+
+B-05 expects that "a confidently detected file is not interrupted by the review". It was.
+Whether *Open log* is meant to always preview — with *Open log with options…* existing for
+the same purpose — is a question for the product owner rather than an obvious defect, so it
+is recorded as an observation, not filed. The dialog's own layout is a finding
+([F-15](#f-15)). `Europe/Bratislava` appears here too, wrapped across two lines
+([F-07](#f-07)).
+
+Import completed in **< 1.9 s** including dismissing the dialog. The tab took the file's
+name, and the status read **`Ready · 1,000 entries`**.
+
+### 2.17 B-06 / B-07 / B-08 — the analysis path, checked against an oracle the product did not produce
+
+Every number below was predicted by an `awk` pass over the corpus **before** the product was
+asked, so the product is never its own oracle.
+
+**Independent oracle** (`awk` on the threadtime header shape, no product code):
+
+```
+meta=1  headers=1000  blank=0  other=0
+level V=188  D=145  I=164  W=182  E=165  F=156
+tags: Camera=161 Network=155 AndroidRuntime=147 SurfaceFlinger=145 ActivityManager=135
+      chatty=130 VisualCat=127   (7 distinct)
+first: 05-15 14:13:37.000000   last: 05-15 14:13:38.501000
+```
+
+**B-06 · heat map to exact source bytes — PASS, byte-exact.**
+
+The six severity rows read `F 156 · E 165 · W 182 · I 164 · D 145 · V 188`, and the footer
+`1,000 in view · 1,000 match the filter · 1,000 in session · 05-15 14:13:37.000 — 05-15
+14:13:38.501`. Every one matches the oracle.
+
+Selecting the entry `Warn ActivityManager at 05-15 14:13:37.001: FATAL EXCEPTION: main` and
+opening **SOURCE CONTEXT** produced a gutter that starts at line 1, carries a per-line
+disposition code with a legend (`en entry · mt marker · .. continuation · e? untimed ·
+?? unknown · !! rejected`), and marks the selected line with `▶`:
+
+```
+ 1 mt │ --------- beginning of main
+ 2 en │ 05-15 14:13:37.000000 10503  5136 D Camera          : Rendering surface 0x000043D5
+ 3 en │ 05-15 14:13:37.001000  6472 11490 D VisualCat       : Started process 81413 for package com.example.app
+▶4 en │ 05-15 14:13:37.001000 14132 24503 W ActivityManager : FATAL EXCEPTION: main
+ 5 en │ 05-15 14:13:37.003000   926  9315 W Camera          : Started process 53572 for package com.example.app
+…
+```
+
+Verified against the file with a byte-oriented reader, not a line tool. An independent
+scan put line 4 at **offset 215, length 75**:
+
+```shell
+$ dd if=~/Desktop/vcat-b05-small.txt bs=1 skip=215 count=75 | xxd
+00000000: 3035 2d31 3520 3134 3a31 333a 3337 2e30  05-15 14:13:37.0
+00000010: 3031 3030 3020 3134 3133 3220 3234 3530  01000 14132 2450
+00000020: 3320 5720 4163 7469 7669 7479 4d61 6e61  3 W ActivityMana
+00000030: 6765 7220 3a20 4641 5441 4c20 4558 4345  ger : FATAL EXCE
+00000040: 5054 494f 4e3a 206d 6169 6e              PTION: main
+```
+
+Byte for byte what the product displayed. The inspector header
+(`W ActivityManager · 05-15 14:13:37.001 · 14132:24503 · main · tpl 3`) names the same
+record. Gutter numbering agrees with an independent line count.
+
+**B-07 · severity filters and clear semantics — PASS, exactly.**
+
+| Action | Product | Oracle |
+|---|---|---|
+| baseline | 1 000 | 1 000 |
+| hide **F** | 844 | 1 000 − 156 = 844 |
+| hide **F, E** | 679 | − 165 = 679 |
+| hide **F, E, W** | 497 | − 182 = 497 = I 164 + D 145 + V 188 |
+
+Every active filter is named in the chip bar (`levels: hiding F,E,W`, with a
+`Remove filter levels: hiding F,E,W` button beside `Clear all`). The time span narrowed
+correctly while filtered (`…38.500` instead of `…38.501`, because the last Fatal entry was
+hidden) and returned to `…38.501` on clear. After **Clear all**: 1 000 in view, chip bar
+back to `No filters · showing everything in view`, **no residual filter buttons in the
+accessibility tree**, and all seven level toggles back to `true`. No residue.
+
+**B-08 · text and regex search — PASS, with good failure behaviour.**
+
+| Query | Mode | Product | Independent oracle |
+|---|---|---|---|
+| `FATAL EXCEPTION` | text | 139 | `grep -c` → 139 |
+| `FATAL EXCEPTION` | regex | 139 | 139 |
+| `^Rendering surface` | regex | 155 | `awk` on the message field → 155 |
+| `Connection [0-9]+ to 10\.0\.0\.[0-9]+` | regex | 148 | `grep -cE` → 148 |
+| `(a+)+b` | regex | 1 | correct — matches `…EDAB` case-insensitively, and **returned promptly**; no catastrophic backtracking |
+| `[` | regex | *rejected* | — |
+
+The invalid regex is handled well, and this is worth quoting because it is the behaviour a
+user meets when they mistype:
+
+```
+Not a valid regular expression: a "[" character class was never closed with "]" (position 1).
+```
+
+— precise, positional, and **the previous query stays applied**: the chip bar still read
+`regex = (a+)+b` with an × to remove it, and the view was not destroyed. That is the right
+call.
+
+The search field exposes `AXPlaceholderValue = "Search message text or regex…"` but has no
+`AXTitle` or `AXDescription`. VoiceOver reads a placeholder only while the field is empty,
+so once the user types, the field announces as an unnamed text field. One line to fix; see
+[F-16](#f-16).
+
+### 2.18 U-06 — the keyboard contract
+
+**Focus order: PASS, and better than the plan requires.** Tab cycles **37 stops** and wraps
+cleanly. Every stop carries a descriptive accessible name, including the two custom-drawn
+surfaces:
+
+```
+ 1 ＋  Open log            14 (search field)         27 Zoom in
+ 2 ●  ADB live            15 Regex                  28 Severity by time heat map
+ 3 Open session           16 Case-sensitive          29 Full-session minimap and viewport brush
+ 4 Recent                 17 Apply the query         30 (splitter handle)
+ 5 Follow file            18 Fatal level             31 Hide insights
+ 6 Open archive           19 Error level             32 More entry actions
+ 7 Save                   20 Warn level              33 (entry row, named per entry)
+ 8 Save portable          21 Info level              34 Toggle the selected entry inspector
+ 9 Export                 22 Debug level             35 (splitter handle)
+10 More ▾                 23 Verbose level           36 Templates
+11 Show complete session <name>  24 Unknown level    37 (template row, named per template)
+12 Close session <name>   25 Zoom out
+13 …per open session…     26 Fit the complete session
+```
+
+Row names are full sentences —
+`Debug Camera at 05-15 14:13:37.000: Rendering surface 0x000043D5` and
+`33 entries: Rendering surface <*>, from 05-15 14:13:37.105 to 05-15 14:13:38.496` — which
+is exactly what a screen-reader user needs. Arrow keys move the selection inside a list.
+
+**Not established: the documented shortcuts.** [`KEYBOARD.md`](KEYBOARD.md) documents
+`Ctrl+O`, `Ctrl+Shift+O`, `Ctrl+E`, `Ctrl+F`, `Ctrl+G`, `F3`, and states no macOS mapping.
+Neither `Ctrl+F` nor `⌘F` moved focus to the search field in this harness, and neither
+`Ctrl+O` nor `⌘O` opened a chooser — but the accessibility focus probe also reported
+`no focused element` throughout, so the harness cannot distinguish "the shortcut did
+nothing" from "the app had no keyboard focus to give it to". **This row needs a human at
+the keyboard** and is on the [§4](#4-standing-list--what-is-still-untested) list. What is
+*not* in doubt is the documentation gap: `KEYBOARD.md` has no macOS column, and on macOS the
+primary modifier is ⌘ — see [F-03](#f-03), suggestion 4.
+
+The same caveat applies to mouse selection: synthetic clicks operate buttons reliably
+(every dialog in this report was driven that way) but did **not** change the entry-list
+selection, while setting `AXSelected` through the accessibility API did. That is most likely
+a synthetic-input artifact rather than a product defect, and it is recorded as
+not-established rather than filed.
+
+### 2.19 A-11 / X-28 — what survived the crash
+
+The crash in [F-14](#f-14) is also, accidentally, a real crash-recovery test. On relaunch:
+
+- **Both sessions survived.** *Recent* listed `vcat-b05-small · 2026-09-14 13:24 ·
+  191.44 KiB · complete` and `ADB RFCRC0A9GND 13h00m23 · 2026-09-14 13:08 · 17.25 MiB ·
+  complete` — including the 8-minute ADB capture, which had been finalized but whose tab
+  was open when the process aborted. Reopening `vcat-b05-small` from *Recent* worked and
+  gave back 1 000 entries.
+- **The workspace did not.** The app came back to the empty state with no tabs, although
+  `visualcat-20260914-000.jsonl` records
+  `{"Name":"workspace.persisted","Properties":{"openSessionCount":"2","selectedIndex":"1"}}`
+  written 17 minutes before the crash. So the workspace *is* persisted and simply is not
+  restored after an abnormal exit. Whether that is deliberate is a product decision; either
+  way, a user who loses the app mid-analysis gets their data back but not their place, and
+  is not told that *Recent* is where to look. Filed as [F-17](#f-17).
+- **`Recent captures` itself is well built**: the explanatory line *"These captures are
+  stored in temporary storage. Saving a capture keeps a copy in a location you choose."*,
+  `Select all` / `Clear`, per-capture checkboxes whose accessible names carry name, date and
+  size, a `Capture states` filter, and `Delete captures…` separated from `Close` / `Open`.
+
 ---
 
 ## 3. Findings
+
+### F-14 · Major · VisualCat aborts inside Avalonia's macOS accessibility bridge while announcing a live-region change
+
+**Severity** Major — an unhandled Objective-C exception aborts the process with no product
+message, no managed stack, and no chance to save. It sits on the accessibility path, so the
+users most exposed are the ones least able to recover.
+
+**Where** `libAvaloniaNative.dylib`, `-[AvnAccessibilityElement raiseLiveRegionChanged]`,
+reached from every `AutomationProperties.SetLiveSetting(…)` surface in the product —
+`MainView.Notice.cs:223,451`, `MainView.FileOperations.cs:98`,
+`AdbCaptureDialog.cs:70,71`, `ImportPreviewDialog.cs:123-125`,
+`FacetBrowserDialog.cs:305,306`, `NumberPromptDialog.cs:101`. Avalonia **12.1.1**.
+
+**What happened.** After ~2 h 40 m of ordinary use — an 8-minute ADB capture, a standard
+save, a portable save, a file import, filter and search work — with an accessibility client
+attached, the process died:
+
+```
+Exception Type:  EXC_CRASH (SIGABRT)
+Termination:     SIGNAL 6  Abort trap: 6
+asi:             libsystem_c.dylib: "abort() called"
+Faulting thread: 0  com.apple.main-thread
+```
+
+The last Objective-C exception backtrace names the frame exactly:
+
+```
+  __exceptionPreprocess
+  objc_exception_throw
+  -[__NSPlaceholderDictionary initWithObjects:forKeys:count:]
+  +[NSDictionary dictionaryWithObjects:forKeys:count:]
+  -[AvnAccessibilityElement raiseLiveRegionChanged]       ← libAvaloniaNative.dylib
+  …managed frames…
+```
+
+`+[NSDictionary dictionaryWithObjects:forKeys:count:]` raises `NSInvalidArgumentException`
+when **any key or value is nil**. `raiseLiveRegionChanged` builds the `userInfo` dictionary
+for `NSAccessibilityPostNotificationWithUserInfo` — `NSAccessibilityAnnouncementKey` plus
+`NSAccessibilityPriorityKey`. If the element's accessibility label resolves to `nil` at the
+moment the live region fires, that literal throws, nothing catches it, and the runtime
+aborts. Evidence: `~/Library/Logs/DiagnosticReports/VisualCat-2026-09-14-134131.ips`
+(64 400 bytes), pid 6166, `parentProc launchd`, `translated false`.
+
+**Not reproduced.** Roughly fifteen targeted attempts failed to trigger it again: the exact
+pre-crash keystroke sequence, repeated invalid-regex notices (which *are* an `Assertive`
+live region), filter changes, search, session reopen, and the shortcut matrix. So this is
+**one observed abort with a definitive native stack**, not a recipe. It is filed as Major
+rather than Blocker on that basis, and the [§4](#4-standing-list--what-is-still-untested)
+list carries the reproduction attempt.
+
+**Why it matters more than a one-off crash normally would.**
+
+- The crash is **on the accessibility path**, so it fires for exactly the users who depend
+  on VoiceOver, Switch Control, Voice Control, or Dictation — and for any automation. A
+  sighted user with no assistive technology running may never see it, which is also why it
+  could ship unnoticed.
+- macOS's own crash dialog reads **"Avalonia Application quit unexpectedly."** (captured in
+  `p161-recent.png`). A user cannot tell which application died, cannot search for it, and
+  cannot file a useful report. This is [F-03](#f-03) turning a bad moment into an
+  unreportable one.
+- An abort during a live ADB capture would end the capture with no notice.
+
+**Suggested fix.** Two independent layers, because either alone leaves a gap.
+
+1. **In the product — never let a live region have an empty accessible name.** Every
+   element that carries `AutomationLiveSetting` should be given a non-empty
+   `AutomationProperties.Name` *before* the live setting is attached, and should never be
+   allowed to fall back to empty. The clearest instance is
+   `MainView.FileOperations.cs`, where the announcement element is constructed with no text
+   and no name, given a live setting at line 98, and only named at line 221 — **after** the
+   `Text` assignment at line 220 that raises the change:
+   ```csharp
+   // Name first: setting Text raises the live region, and on macOS a live region whose
+   // accessible name is nil aborts the process inside NSDictionary (F-14).
+   if (!string.Equals(stage, _fileOperationAnnouncement.Text, StringComparison.Ordinal))
+   {
+       AutomationProperties.SetName(_fileOperationAnnouncement, stage);
+       _fileOperationAnnouncement.Text = stage;
+   }
+   ```
+   and give it a non-empty name at construction. Apply the same ordering wherever a live
+   region's text and name are set together, and add an assertion in a debug build that a
+   live-region element's effective name is never null or empty.
+2. **Upstream — the framework must not build a dictionary that can throw.** The correct
+   shape is to bail out rather than post an announcement with no text:
+   ```objc
+   NSString* announcement = [self accessibilityLabel];
+   if (announcement.length == 0) { return; }   // nothing to say; never throw
+   NSAccessibilityPostNotificationWithUserInfo(
+       self, NSAccessibilityAnnouncementRequestedNotification,
+       @{ NSAccessibilityAnnouncementKey : announcement,
+          NSAccessibilityPriorityKey     : @(priority) });
+   ```
+   This repository already tracks upstream Avalonia findings (`99e3947 Re-check the two
+   upstream findings against the newest Avalonia`), so this belongs on that list with the
+   `.ips` attached — it is a one-line guard with a clear crash report behind it.
+3. **Make the crash reportable.** Whatever the cause, a user should be able to say *what*
+   crashed. Fixing the application name ([F-03](#f-03)) changes the dialog from
+   "Avalonia Application quit unexpectedly" to "VisualCat quit unexpectedly", and the
+   `.ips` from `procName VisualCat` with `app_version ""` to one carrying the real version —
+   note that `app_version` and `build_version` are both **empty strings** in this report,
+   because a bare executable has no `Info.plist`. Add a mention of
+   `~/Library/Logs/DiagnosticReports/` to [`SUPPORT.md`](SUPPORT.md)'s bug-reporting
+   section so a macOS user knows where the evidence is.
+
+**Appendix-B trap checks.** Not a translated-execution artifact — `translated: false`, this
+was the native `osx-arm64` build. Not an out-of-memory or jetsam kill — the termination is
+`SIGNAL 6 Abort trap` from `abort()` after an uncaught ObjC exception, not `EXC_RESOURCE` or
+a jetsam event. Not a forced kill — `byProc: VisualCat`, `byPid: 6166`, i.e. the process
+aborted itself. Not a display-sleep or screen-lock artifact — the display was held awake by
+`caffeinate -dimsu` from 11:1x onward, and the crash is at 11:41:31 UTC.
+
+---
+
+### F-15 · Minor · Two dialogs reserve roughly half their height for nothing
+
+**Severity** Minor — pure layout waste, but on a 1440 × 900-point desktop it pushes the
+buttons a long way from the content the user is reading, and it makes both dialogs look
+broken.
+
+**Where** `ImportPreviewDialog`, `AdbCaptureDialog`.
+
+**What happens.**
+
+| Dialog | Size | Content ends at | Empty |
+|---|---|---|---|
+| `Import preview — vcat-b05-small.txt` | 720 × 688 pt | ~250 pt | **~64 %** |
+| `Live ADB capture` | 600 × 438 pt | ~300 pt | **~31 %** |
+
+Evidence: `b05-import-preview.png`, `b11-adb-dialog.png`. In the import preview the eight
+lines of summary sit at the top, the collapsed *Import options* disclosure sits under them,
+and then there are roughly 430 points of nothing before *Cancel* and *Import* in the bottom
+right corner. The user reads at the top and clicks 430 points lower.
+
+The height is presumably reserved for *Import options* when expanded. Reserving it while
+collapsed is the defect: the dialog should size to its current content and grow when the
+disclosure opens, which is what every macOS disclosure does.
+
+**Suggested fix.**
+
+1. Let both dialogs size to content (`SizeToContent="WidthAndHeight"` with a sensible
+   `MaxHeight`), and let the disclosure's expansion resize the window. If a jump on expand
+   is unwanted, animate the height change rather than pre-reserving it.
+2. Put the action buttons directly under the content rather than anchored to the window
+   bottom, so they stay with what they act on at every size.
+3. While here: both dialogs are free-floating windows with their own traffic lights, and
+   the *Live ADB capture* dialog has an **enabled minimise button** while it is modal. See
+   [F-09](#f-09) suggestion 3 — presenting them as sheets fixes the sizing, the ownership
+   and the minimise trap in one change, and matches the native file chooser this same
+   application already presents correctly.
+
+**Appendix-B trap checks.** Not a scaled-resolution artifact — the measurements are in
+points from the accessibility API (`AXSize`), not pixels from the screenshot, so the
+display's 1440 × 900 scaled mode does not enter into them. Not a font-fallback artifact —
+the text renders at the expected size and is not clipped.
+
+---
+
+### F-16 · Polish · The search field has no accessible name, and the selected-entry legend collides with the status bar
+
+**Severity** Polish — two small blemishes on an otherwise strong accessibility and layout
+story, grouped because each is a one-line fix.
+
+**1. The search field announces as an unnamed text field once it has content.**
+The field exposes `AXPlaceholderValue = "Search message text or regex…"` but no `AXTitle`
+and no `AXDescription`. VoiceOver reads a placeholder only while the field is empty, so a
+user who types a query and tabs away and back hears "text field" with no name. Every other
+control in the window is named; this is the one gap. Fix:
+
+```csharp
+AutomationProperties.SetName(_searchBox, "Search message text or regex");
+AutomationProperties.SetHelpText(_searchBox,
+    "Matches message text. Use the Regex checkbox for a regular expression, and Tags to match a tag.");
+```
+
+The help text also carries the answer to [F-12](#f-12)'s second point, where a user expects
+a tag search and gets none.
+
+**2. The selected-entry legend is drawn under the status bar.** With the *SELECTED ENTRY*
+inspector open on a 795-point-tall window, the legend line
+`en entry · mt marker · .. continuation · e? untimed · ?? unknown · !! rejected` is painted
+in the same band as `Ready · 1,000 entries`, and the two overlap (visible in
+`b06-selected.png` and `b06-sel4.png`). Nothing is lost — the legend is also reachable by
+scrolling — but the overlap makes both unreadable at the one window size this Mac's default
+scaled resolution gives a maximised window. Fix: put the legend inside the inspector's own
+scroller rather than letting it extend past the pane's bottom edge, and give the status bar
+a real row in the layout grid so nothing can be painted over it.
+
+**Appendix-B trap checks.** The AX attributes were read from the live process, not inferred.
+The overlap is visible in two independent captures taken minutes apart, at the same window
+size, and is not a capture-timing artifact.
+
+---
+
+### F-17 · Minor · After a crash the sessions come back but the workspace does not, and nothing says where to look
+
+**Severity** Minor — no data is lost, which is the important part. The cost is that a user
+whose app died mid-analysis is shown an empty start page and has to work out for themselves
+that their work is under *Recent*.
+
+**Where** Workspace restoration on start-up.
+
+**What happens.** The crash in [F-14](#f-14) killed a process with two open tabs. The
+diagnostics log shows the workspace *was* persisted:
+
+```json
+{"TimestampUtc":"2026-09-14T11:24:11.817623+00:00","Subsystem":"main-view",
+ "Name":"workspace.persisted","Properties":{"openSessionCount":"2","selectedIndex":"1"}}
+```
+
+On relaunch the app showed the **empty state** — headline, chips, and three text actions.
+Both sessions were intact and reachable through *Recent captures* (`vcat-b05-small ·
+191.44 KiB · complete` and `ADB RFCRC0A9GND 13h00m23 · 17.25 MiB · complete`), and
+reopening one restored all 1 000 entries. So recovery works; only the handoff is missing.
+
+**Expected.** Either the workspace is restored, or the user is told in one sentence that the
+previous session ended unexpectedly and where their captures are.
+
+**Suggested fix**, in increasing order of ambition:
+
+1. **Say it.** On a start-up that follows a persisted workspace which was never closed
+   cleanly, show a notice on the empty state:
+   *"VisualCat closed unexpectedly. Your 2 captures are safe — open them from Recent."*
+   with *Recent* as the action. One notice, one button, and the user never has to guess.
+   Set a "clean shutdown" marker beside the persisted workspace and clear it on an orderly
+   exit; its absence is the trigger.
+2. **Offer the restore.** Add *Restore previous session* beside it, reopening the tabs that
+   `workspace.persisted` recorded. Keep it an offer rather than automatic — reopening a
+   17 MB capture unasked is its own annoyance.
+3. Record the crash in the product's own diagnostics on the *next* start, so a diagnostic
+   bundle collected afterwards contains the fact that a crash happened. Today the
+   `.jsonl` simply stops, and the only trace is the macOS `.ips` the user does not know
+   about.
+
+**Appendix-B trap checks.** The persisted-workspace line was read from the product's own
+diagnostics file, not inferred. The sessions' survival was verified by reopening one and
+comparing its entry count with the pre-crash value.
+
+---
 
 ### F-01 · Minor · The shipped macOS `README.txt` tells the user to run a command macOS did not have until macOS 26
 
