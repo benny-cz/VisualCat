@@ -701,7 +701,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         // the untimed population is named beside the number that includes it instead of being
         // the unexplained difference between two others.
         var untimed = counters?.UntimedEntries ?? 0;
-        var unknown = counters?.UnknownLines ?? 0;
+
+        // The same population the off-timeline chip counts — unknown lines, rejected candidates
+        // and continuations — because both call it "unparsed lines". The footer used the
+        // unknown lines alone, so a crash log showed "1 unparsed lines" beside a chip reading
+        // "1 untimed record and 5 unparsed lines", the same words over two different sets.
+        var unknown = _viewModel.UnparsedLineCount;
         var sessionPart = sessionTotal is { } total
             ? untimed > 0 || unknown > 0
                 ? $"{total:N0} timed in session"
@@ -714,7 +719,7 @@ public sealed partial class SessionWorkspaceView : UserControl
         // crash corpus reported "600 entries" on every surface while the 1,200 frames a person
         // actually reads went unmentioned (V2-14). They are kept, byte for byte, and reachable;
         // this is where the reader is told they exist.
-        var unknownPart = unknown > 0 ? $"{unknown:N0} unparsed lines" : null;
+        var unknownPart = unknown > 0 ? Counted.Of(unknown, "unparsed line", "unparsed lines") : null;
         var full = string.Join(
             "  ·  ",
             new[]

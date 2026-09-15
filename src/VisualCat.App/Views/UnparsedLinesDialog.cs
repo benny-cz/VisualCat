@@ -87,7 +87,14 @@ internal sealed class UnparsedLinesDialog : DialogBody<bool>
         var rejected = counters?.RejectedCandidates ?? 0;
         var untimed = counters?.UntimedEntries ?? 0;
         var continuations = tab.Snapshot?.Descriptor.Defects.Continuations ?? 0;
-        _expected = unknown + rejected + untimed;
+
+        // Continuations belong in the total because this dialog lists them: the header above
+        // already names them as one of the four populations, and the source-ordered listing
+        // shows each one with its `..` gutter code. Leaving them out of the denominator alone
+        // made the footer read "6 of 3 shown" on a file with one unknown line, one rejected
+        // candidate, one untimed record and three continuations — a denominator smaller than
+        // the number of rows above it, which is exactly the invented count B-21 forbids.
+        _expected = unknown + rejected + untimed + continuations;
         _sourceLines = counters?.SourceLines ?? 0;
 
         var explanation = new TextBlock

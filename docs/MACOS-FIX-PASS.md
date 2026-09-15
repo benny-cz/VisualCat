@@ -18,7 +18,7 @@ without needing a fact that exists only in a previous session.
 | Status | **COMPLETE** — every finding implemented and live-verified; the Mac and the phone handed back ([§5](#5-hand-back)) |
 | Tree | branch `main`, working from `1338921` (the commit that closed pass 1) |
 | Candidate under test | a **build of this tree**, not a release tarball — `2.0.13-dev+<commit>` |
-| Last completed | §7 — pass 1's standing list worked through; everything a machine can settle is settled |
+| Last completed | §8 — I-15, I-16 and B-21 closed; everything in pass 1's standing list that a machine can settle is settled |
 | Findings closed | all 23. F-09 as far as the product can (AXModal is upstream); F-13.2 needs a .app bundle this product does not ship |
 | Tests | 1,092 pass (47 Domain, 151 Core, 194 Application, 700 App) |
 | Next step | a release ([§6](#6-the-release-this-pass-argues-for)), and the four rows in [§7.3](#73-what-still-needs-a-person) that need a person at the Mac |
@@ -1013,6 +1013,9 @@ because they were found by *testing*, not by reading the report — and three of
 
 | Row | Result |
 |---|---|
+| **I-15 cross-platform byte parity** | **Closed.** See [§8.2](#82-i-15--cross-platform-byte-parity-windows-against-macos) |
+| **I-16 architecture parity, in full** | **Closed.** See [§8.1](#81-i-16--architecture-parity-in-full) |
+| **B-21 off-timeline evidence** | **Closed — and it found two defects.** See [§8.3](#83-b-21--off-timeline-evidence-and-the-two-counts-that-disagreed) |
 | **U-06 documented shortcuts** | **Closed — and it found three defects.** See [§7.2](#72-the-keyboard-matrix-and-the-three-defects-it-found) |
 | **B-17 startup argument dispatch** | **Closed.** All six launch shapes start and hold a window: no arguments, `--log`, `--session`, a bare path, a missing path, a bad flag. `--log`, `--session` and a bare path each open the session (`Ready · 500 entries`, 7–9 s). A missing path starts the shell and says **`Startup source not found: /tmp/p3-does-not-exist.txt`**. Pass 1's numbers for this row were void because the measurement that produced them uncovered [F-23](MACOS-LIVE-TEST-REPORT.md#f-23) |
 | **I-16 architecture parity** | **Closed, and it mattered** — this pass added two P/Invoke paths. The `osx-x64` build under Rosetta 2 gets the same seven-item menu bar, the same corrected application menu, the same `--adb` refusal, the same `Europe/Prague`, and the same F-23 answer (**exit 69, 7 lines, no crash report**). *Hide VisualCat* from the menu — the `objc_msgSend` path — hides the application and *Show All* brings it back |
@@ -1084,3 +1087,109 @@ defensible; it is recorded because it is the "enabled and silently does nothing"
 codebase works to remove elsewhere, and because a reader who types `--sessions` for `--session`
 gets a silent no-op. Left alone deliberately: it is outside what pass 1 found, and a launcher that
 refuses to start over a stray flag would be worse.
+
+---
+
+## 8. The parity and evidence rows
+
+Three more of pass 1's untested rows, all machine-checkable, all now closed. Two of them found
+defects.
+
+### 8.1 I-16 — architecture parity, in full
+
+Pass 1 compared a counter. The plan asks for every artifact. One session, indexed once on
+`osx-arm64`, then read by **both** binaries:
+
+| Artifact | arm64 vs x64 |
+|---|---|
+| `export --type csv` | **identical**, 106 428 bytes |
+| `export --type raw` | **identical**, 90 356 bytes |
+| `export --type templates-md` | **identical**, 5 702 bytes |
+| `export --type stats-csv` | **identical**, 271 bytes |
+| `stats` JSON | **identical**, 5 367 bytes |
+| `templates` JSON | **identical**, 14 653 bytes |
+| `search` JSON | **identical**, 7 102 bytes |
+| `query` NDJSON | **identical**, 26 607 bytes |
+| `info` JSON | **identical**, 4 051 bytes |
+| `verify` JSON | **identical**, 179 bytes |
+
+Ten of ten. The plan's other I-16 assertion — "a session written by one opens in the other,
+verifies there, and reports the same figures" — is the same run: the `osx-x64` binary read a
+session the `osx-arm64` binary wrote, and its `info` and `verify` output match byte for byte.
+
+**A method note worth keeping.** Indexing *separately* on each architecture makes three of the
+ten differ — at `char 37, line 3`, which is the `sessionId` GUID and the snapshot generation.
+Those are per-import identities, not architecture differences. A parity comparison that indexes
+on both sides is measuring the wrong thing; index once, read twice.
+
+### 8.2 I-15 — cross-platform byte parity, Windows against macOS
+
+The same corpus (`small.txt`, SHA-256 `26472b46…`, identical on both hosts), the same options,
+`--timezone UTC` pinned:
+
+| Artifact | Windows vs macOS |
+|---|---|
+| `export --type csv` | **identical** `f63ee113…` |
+| `export --type raw` | **identical** `22d1c305…` |
+| `export --type templates-csv` | **identical** `538c536d…` |
+| `export --type templates-md` | **identical** `e7d105f3…` |
+| `export --type stats-csv` | **identical** `ae6455fc…` |
+| `templates` JSON | **identical** `09333955…` |
+| `stats` JSON | differs on **one line** — the `sessionId` GUID |
+| `query` NDJSON | **identical once the session GUID is normalised** |
+
+That is the strongest form of the assertion the plan asks for: no newline difference, no path
+separator, no culture-formatted number, no case-folded identifier — the four things it names as
+never permitted. The only difference anywhere is a per-import GUID.
+
+**And the host time zone, which [F-07](MACOS-LIVE-TEST-REPORT.md#f-07) asked to be measured.**
+Unpinned, on the same corpus:
+
+```
+Windows :  "timeZoneId": "Central Europe Standard Time"
+macOS   :  "timeZoneId": "Europe/Prague"
+```
+
+Both name the same zone correctly — the macOS one only since this pass; it said
+`Europe/Bratislava` before. The identifiers are shaped by the platform's own database, so
+`timeZoneId` is a field an I-15 comparison must normalise, exactly as that finding's third
+suggestion says. It is now measured rather than assumed.
+
+### 8.3 B-21 — off-timeline evidence, and the two counts that disagreed
+
+**The accounting is exact.** With the explicit `threadtime` override the plan specifies:
+
+| | `outcomes.txt` | `crashy.txt` |
+|---|---|---|
+| source lines | 9 | 1 011 |
+| parsed (timed + untimed) | 3 (2 + 1) | 1 004 (1 003 + 1) |
+| meta records | 1 | 2 |
+| continuations | 2 | 3 |
+| rejected candidates | 1 | 1 |
+| unknown lines | 1 | 1 |
+| **accounted** | **8 + 1 blank = 9** ✓ | **1 011** ✓ |
+
+`outcomes.txt` reproduces pass 1's §3.1 oracle exactly, including its 1 rejected candidate and
+1 unknown line. (Left to auto-detection instead of the override it detects `LongFormat` at 0.255
+confidence and files those two lines as message body — correct for that format, and the reason
+the desktop shows an import review below 0.6.)
+
+Opened five times on the same file, the card gave the same figures every time: no drift.
+
+**Two defects, both fixed.**
+
+1. **The card's own footer read `6 of 3 shown`.** Its header names four populations —
+   `1 unknown · 3 continuation · 1 rejected · 1 untimed` — and its listing shows all six lines,
+   with the three continuations carrying their `..` gutter code. The denominator left
+   continuations out, so it was smaller than its own numerator and smaller than the header
+   above it. B-21 fails a count that is invented, and a total below the number of rows it
+   claims to total is invented. It now reads **`6 of 6 shown · every line off the timeline has
+   been listed.`**
+2. **The count line and the chip used the same words for different sets.** The workspace footer
+   said **`1 unparsed lines`** — mis-pluralised, and counting unknown lines alone — beside a chip
+   reading **`1 untimed record and 5 unparsed lines are not on the timeline`**, which counts
+   unknown lines, rejected candidates and continuations. Two numbers under one phrase, on screen
+   together. The footer now reads **`5 unparsed lines`**, from the same accessor the chip uses,
+   through the shared pluralisation helper. This is the plan's R-22 row — *"the number equals the
+   chip and the summary line"* — which could not have been checked before this pass, because
+   B-21 had never been run.

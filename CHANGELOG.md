@@ -348,6 +348,14 @@ Avalonia's to fix rather than this product's.
   written" without saying that a volume with no POSIX modes cannot carry it. `KEYBOARD.md`
   has a macOS column. `CLI.md` documents all five routes the ADB locator takes, where it
   documented three.
+- **"Lines not on the timeline" stops contradicting itself.** Its header names four
+  populations and its listing shows all of them, continuations included — but the
+  denominator beneath left continuations out, so a crash log read `6 of 3 shown`: a total
+  smaller than the number of rows above it. It now reads `6 of 6 shown`.
+- **The count line and the off-timeline chip agree.** Both say "unparsed lines" and they
+  were counting different sets: the count line showed `1 unparsed lines` — the unknown
+  lines alone, and mis-pluralised — beside a chip reading `1 untimed record and 5 unparsed
+  lines are not on the timeline`. One accessor now answers both.
 - **Alt+2, Alt+3 and Alt+4 focus the panes they name.** Three of the four documented pane
   shortcuts were inert on every platform: `ListBox.Focus()` answers false, because in
   Avalonia a list is not itself focusable — only its rows are — so only Alt+1, which
