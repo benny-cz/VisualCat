@@ -39,6 +39,14 @@ public static class SessionSaveService
             throw new IOException("The destination cannot be inside the source session.");
         }
 
+        if (EnclosingSession(destinationRoot) is { } enclosing)
+        {
+            throw new IOException(
+                $"That location is inside the session '{Path.GetFileName(enclosing)}'. Choose a directory outside it. " +
+                "A session is a directory, so a save panel will navigate into one, and a session nested inside " +
+                "another is carried along by the outer session's cache retention without its manifest describing it.");
+        }
+
         var parent = Path.GetDirectoryName(destinationRoot) ?? ".";
         Directory.CreateDirectory(parent);
         var temporary = Path.Combine(parent, $".{Path.GetFileName(destinationRoot)}.tmp-{Guid.NewGuid():N}");
@@ -101,6 +109,48 @@ public static class SessionSaveService
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// The nearest ancestor of <paramref name="destination"/> that is itself a session, or null.
+    /// </summary>
+    /// <remarks>
+    /// A session is a directory, so every platform's save panel navigates into one as readily as
+    /// into any folder — and during the macOS run a Save portable landed at
+    /// <c>cli-capture.vcat/ADB RFCRC0A9GND …-portable-….vcat</c>. Both sessions still verified,
+    /// so nothing was corrupted; what the outer session gained was seven megabytes its own
+    /// manifest does not describe, and a later cache-retention sweep of the outer session would
+    /// take the inner one with it (finding F-13). The guard is cheap, needs no platform work,
+    /// and is equally right on Windows and Linux.
+    /// </remarks>
+    private static string? EnclosingSession(string destination)
+    {
+        // Bounded rather than walking to the filesystem root: a session is never nested more
+        // than a handful of levels below one, and an unbounded walk on a deep path costs a
+        // stat per level on every save.
+        const int MaximumAncestors = 24;
+        var directory = Path.GetDirectoryName(destination);
+        for (var depth = 0; depth < MaximumAncestors && !string.IsNullOrEmpty(directory); depth++)
+        {
+            try
+            {
+                if (File.Exists(Path.Combine(directory, "manifest.json")) &&
+                    Directory.Exists(Path.Combine(directory, "segments")))
+                {
+                    return directory;
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // An ancestor this account cannot inspect is not evidence of a session, and is
+                // certainly not a reason to refuse a save.
+                return null;
+            }
+
+            directory = Path.GetDirectoryName(directory);
+        }
+
+        return null;
     }
 
     private static async Task CopyDirectoryAsync(

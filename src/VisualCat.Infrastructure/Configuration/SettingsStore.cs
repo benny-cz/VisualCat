@@ -18,7 +18,10 @@ public sealed record ApplicationSettings(
     double TimelineMinimumUsPerPixel = 1,
     bool TimelinePixelSnap = true,
     double TimelineMinimumBarWidth = 5,
-    string ExportOrder = "SourceSequence",
+    // Chronological, the same default the CLI documents and uses. The desktop defaulted to
+    // source order, so exporting the same session from the two surfaces with default options
+    // produced two different files and nothing said why (finding F-20).
+    string ExportOrder = "Chronological",
     string ExportEncoding = "utf-8-bom",
 
     // Deliberately not the host's newline. The same session exported on Linux and on Windows
@@ -32,6 +35,14 @@ public sealed record ApplicationSettings(
     long? TemporaryRetentionMaximumBytes = null,
     double? WindowWidth = null,
     double? WindowHeight = null,
+
+    // Where the window was, not just how large. Only the size was stored, so a window moved to
+    // a second display or to a corner of a large screen came back at the top-left corner every
+    // launch (finding F-22). The frame origin is validated against the current display
+    // arrangement before it is used, because a monitor that is no longer attached would
+    // otherwise place the window somewhere the reader cannot reach it.
+    double? WindowLeft = null,
+    double? WindowTop = null,
     bool WindowMaximized = false,
 
     // Whether the reader has already been told what an on-device capture does before any

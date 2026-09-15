@@ -10,6 +10,7 @@ using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
 using VisualCat.Infrastructure.Adb;
 using VisualCat.Infrastructure.Files;
+using VisualCat.Infrastructure.Configuration;
 
 namespace VisualCat.Application.Tests;
 
@@ -510,4 +511,56 @@ public sealed class LinuxLiveTestRemediationTests
         Assert.False(CarriageReturnFraming.IsCarriageReturnFramed([Bytes($"{Record}\r")]));
         Assert.False(CarriageReturnFraming.IsCarriageReturnFramed([]));
     }
+
+    /// <summary>
+    /// F-08 — <c>settings.json</c> is owner-only, whatever the account's <c>umask</c> says.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>PRIVACY.md</c> promises that VisualCat "does not leave it to the account's umask", and
+    /// the sessions honoured that. <c>settings.json</c> did not: it was <c>0644</c> on a stock
+    /// macOS, and it holds the configured session directory, the configured ADB path, and a list
+    /// of every recently open session's absolute path (finding F-08).
+    /// </para>
+    /// <para>
+    /// Run under two umasks, because <c>022</c> is the macOS default while many Linux
+    /// distributions use <c>002</c> or <c>077</c> — a test that only ever runs under one can
+    /// pass while the promise is broken on the platform that matters. The mode is checked after
+    /// the write, which is the only thing that proves the umask was overridden rather than
+    /// happening to agree.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(0b000_010_010)]   // umask 022, the macOS and Windows-subsystem default
+    [InlineData(0b000_000_010)]   // umask 002, the default on several Linux distributions
+    public async Task SettingsAreOwnerOnlyWhateverTheUmaskIs(int umask)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var previous = Umask(umask);
+        var root = Path.Combine(Path.GetTempPath(), $"vcat-f08-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "settings.json");
+            await new SettingsStore(path).SaveAsync(
+                new ApplicationSettings(AdbPath: "/opt/homebrew/bin/adb"),
+                TestContext.Current.CancellationToken);
+
+            Assert.True(File.Exists(path));
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+        }
+        finally
+        {
+            _ = Umask(previous);
+            try { Directory.Delete(root, true); } catch (IOException) { }
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "umask", SetLastError = true)]
+    private static extern int Umask(int mask);
 }

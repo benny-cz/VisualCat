@@ -1,26 +1,50 @@
 # Keyboard and accessibility
 
 VisualCat keeps its main analysis path operable without a pointer. Shortcuts are
-ignored while typing unless they use Ctrl, Alt, Escape, or a function key.
+ignored while typing unless they use the primary modifier, Alt, Escape, or a
+function key.
+
+**The primary modifier is the platform's own.** Windows and Linux use **Ctrl**;
+macOS uses **⌘**. Written against Ctrl everywhere, ⌘F did nothing on a Mac and a
+reader concluded that search did not exist — and ⌃F is already spoken for on
+macOS, where the system gives it to text fields to move the caret forward
+(finding F-03). macOS therefore answers to ⌘ only, and every macOS shortcut is
+also on the menu bar, which is where a Mac user looks for it.
 
 ## Global shortcuts
 
-| Shortcut | Action |
-|---|---|
-| Ctrl+O | Open a log file |
-| Ctrl+Shift+O | Open a `.vcat` session |
-| Ctrl+E | Export the selected session |
-| Ctrl+F | Focus and select the search field |
-| F3 or N | Select the next search match |
-| Shift+F3 or Shift+N | Select the previous search match |
-| Ctrl+G | Open **Go to match** and select a match by number |
-| Alt+Home | Select the first search match |
-| Alt+End | Select the last search match |
-| Escape | Close mobile filters, clear focused search, clear a selected timeline scope, or clear filters (in that order); ignored when there is nothing to dismiss |
-| Alt+1 | Focus the timeline |
-| Alt+2 | Focus the entry list |
-| Alt+3 | Focus the template list |
-| Alt+4 | Focus the first facet control |
+| Windows / Linux | macOS | Action |
+|---|---|---|
+| Ctrl+O | ⌘O | Open a log file |
+| — | ⌥⌘O | Open a log with import options |
+| Ctrl+Shift+O | ⇧⌘O | Open a `.vcat` session |
+| — | ⇧⌘R | Recent captures |
+| — | ⇧⌘L | Live ADB capture |
+| — | ⌘S | Save the session |
+| — | ⇧⌘S | Save a portable session |
+| Ctrl+E | ⌘E | Export the selected session |
+| Ctrl+F | ⌘F | Focus and select the search field |
+| F3 or N | F3, N or ⌘G | Select the next search match |
+| Shift+F3 or Shift+N | ⇧F3, ⇧N or ⇧⌘G | Select the previous search match |
+| Ctrl+G | — | Open **Go to match** and select a match by number |
+| Alt+Home | ⌥Home | Select the first search match |
+| Alt+End | ⌥End | Select the last search match |
+| Escape | Escape | Close mobile filters, clear focused search, clear a selected timeline scope, or clear filters (in that order); ignored when there is nothing to dismiss |
+| Alt+1 | ⌥1 | Focus the timeline |
+| Alt+2 | ⌥2 | Focus the entry list |
+| Alt+3 | ⌥3 | Focus the template list |
+| Alt+4 | ⌥4 | Focus the first facet control |
+| — | ⌘0 | Fit the whole session in the plot |
+| — | ⌘= / ⌘− | Zoom the plot in / out |
+| — | ⌘, | Settings |
+| — | ⌘W | Close the window |
+| — | ⌘M | Minimise |
+
+macOS also gets the platform's own Edit menu — ⌘X, ⌘C, ⌘V, ⌘A — and whatever the
+system adds to it (Writing Tools, Dictation, Emoji & Symbols), plus
+**⌃⌘F** for full screen from the View menu. **Hide Others is ⌥⌘H**, the macOS
+standard; the stock Avalonia menu bound it to ⌥⌘Q, one modifier away from Quit.
+
 
 Search navigation selects an exact record, not a position on the plot. The
 counter reads `k / N` over **every** match in the session, and `– / N` when no

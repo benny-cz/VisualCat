@@ -499,6 +499,11 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             {
                 WindowWidth = window.Bounds.Width,
                 WindowHeight = window.Bounds.Height,
+
+                // The origin as well as the size. Without it a window moved to a second display
+                // or to a corner of a large screen came back at 0, 30 every launch (F-22).
+                WindowLeft = window.Position.X,
+                WindowTop = window.Position.Y,
             };
         }
 
@@ -2499,8 +2504,18 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
                         $"The frozen export count changed from {decision.Scope.TimedRows:N0} to {written:N0} rows.");
                 }
 
+                // The order, because the desktop remembers whichever the reader last chose, so
+                // "the desktop default" is a per-user value no document can describe — and a
+                // CSV that differs from the CLI's for that reason looks like a defect. And the
+                // folder, because on macOS the save panel may have been redirected by ⇧⌘G or by
+                // a remembered location, which makes the absolute path the useful half of the
+                // answer (finding F-20, finding F-21).
+                var order = decision.Order == VisualCat.Domain.Queries.EntryOrder.Chronological
+                    ? "chronological order"
+                    : "source order";
+                var whereTo = destination.LocalPath is { Length: > 0 } fullPath ? fullPath : name;
                 ShowNotice(
-                    $"Exported {Counted.TimedRows(written)} · {decision.Scope.SentenceLabel} · {name}",
+                    $"Exported {Counted.TimedRows(written)} · {decision.Scope.SentenceLabel} · {order} · {whereTo}",
                     NoticeKind.Completion);
 
                 _settings = _settings with
@@ -3670,6 +3685,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             // Restore first, then anything the launch intent carried: a file the reader has
             // just tapped in another app belongs in front of the workspace they left behind.
             await RestoreWorkspaceAsync();
+            await OfferWorkspaceRestoreAsync();
             await OpenStartupPathsAsync();
 
             // Restore before cleanup so the retention pass can protect every open tab. An
@@ -3748,7 +3764,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
     private Task OpenRecentAsync() => OpenRecentWithDeletionAsync();
 
-    /// <summary>The product.s own about box, for the macOS application menu.</summary>
+    /// <summary>The product's own about box, for the macOS application menu.</summary>
     private async Task ShowAboutAsync() => await ShowDialogAsync(new AboutDialog());
 
     private async Task ShowAppearanceAsync()
@@ -3978,9 +3994,50 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             window.Height = Math.Max(window.MinHeight, height);
         }
 
+        RestoreWindowPosition(window);
+
         if (_settings.WindowMaximized)
         {
             window.WindowState = WindowState.Maximized;
+        }
+    }
+
+    /// <summary>
+    /// Puts the window back where it was, if that place still exists.
+    /// </summary>
+    /// <remarks>
+    /// A stored origin is a fact about a display arrangement, and arrangements change: a laptop
+    /// undocked from a monitor that was to its left holds a negative x that now names nothing,
+    /// and a window placed there is invisible with no way to reach it. So the saved frame has to
+    /// intersect a screen that is attached <em>now</em>, by enough of itself to be grabbed —
+    /// otherwise the platform's own placement is used, which is what happened every launch
+    /// before this (finding F-22).
+    /// </remarks>
+    private void RestoreWindowPosition(Window window)
+    {
+        if (_settings is not { WindowLeft: { } left, WindowTop: { } top })
+        {
+            return;
+        }
+
+        var frame = new PixelRect(
+            (int)Math.Round(left),
+            (int)Math.Round(top),
+            (int)Math.Round(Math.Max(window.MinWidth, window.Width)),
+            (int)Math.Round(Math.Max(window.MinHeight, window.Height)));
+
+        // Enough of the title bar to grab: a sliver on screen is not a restored window.
+        const int GrabbableWidth = 120;
+        const int GrabbableHeight = 40;
+        foreach (var screen in window.Screens?.All ?? [])
+        {
+            var overlap = screen.WorkingArea.Intersect(frame);
+            if (overlap.Width >= GrabbableWidth && overlap.Height >= GrabbableHeight)
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Position = frame.Position;
+                return;
+            }
         }
     }
 
@@ -4023,7 +4080,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     {
         _ = sender;
 
-        // The platform.s own shortcut modifier: Command on macOS, Control elsewhere. Written
+        // The platform's own shortcut modifier: Command on macOS, Control elsewhere. Written
         // against Control everywhere, ⌘O did nothing on a Mac and ⌃O was a key the platform
         // has its own use for (finding F-03).
         var control = Platform.PlatformShortcuts.HasPrimary(eventArgs.KeyModifiers);

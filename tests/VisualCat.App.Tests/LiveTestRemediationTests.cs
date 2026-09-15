@@ -99,8 +99,14 @@ public sealed partial class LiveTestRemediationTests
 
         var viewport = fixture.Tab.Viewport;
         Assert.NotNull(viewport);
+
+        // Ten milliseconds, not two seconds. The two floors were one number, so the widening
+        // that keeps a degenerate session drawable also opened every short import zoomed out
+        // past its own data, with the data pinned to the right-hand edge (finding F-21). Ten
+        // milliseconds across a 2,600-pixel plot is 3.8 µs per pixel — still far from claiming
+        // the microsecond precision this test exists to prevent.
         Assert.True(
-            viewport.Value.DurationUs >= 2_000_000,
+            viewport.Value.DurationUs >= SessionTabViewModel.MinimumFitViewportUs,
             $"a one-entry session opened at {viewport.Value.DurationUs} µs");
 
         var session = fixture.Tab.Snapshot?.TimedRange;
@@ -126,6 +132,33 @@ public sealed partial class LiveTestRemediationTests
         Assert.NotNull(viewport);
         Assert.NotNull(session);
         Assert.Equal(session.Value, viewport.Value);
+    }
+
+    /// <summary>
+    /// F-21 — a session too short to draw is centred in the widened window, not pinned to its
+    /// right-hand edge.
+    /// </summary>
+    /// <remarks>
+    /// Padding only the left is what left about a quarter of the plot blank in front of the
+    /// data, which a reader reads as a quiet period in their log rather than as empty canvas.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task AShortSessionIsCentredInTheFittedWindow()
+    {
+        await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(OneEntryLog);
+        Dispatcher.UIThread.RunJobs();
+
+        var viewport = fixture.Tab.Viewport;
+        var session = fixture.Tab.Snapshot?.TimedRange;
+        Assert.NotNull(viewport);
+        Assert.NotNull(session);
+
+        var before = session.Value.StartInclusive.Value - viewport.Value.StartInclusive.Value;
+        var after = viewport.Value.EndExclusive.Value - session.Value.EndExclusive.Value;
+        Assert.True(before > 0, $"the session starts at the viewport edge: {before} µs of room before it");
+        Assert.True(
+            Math.Abs(before - after) <= 1,
+            $"the session is off-centre: {before} µs before, {after} µs after");
     }
 
     // --------------------------------------------------------------- F-04 ---

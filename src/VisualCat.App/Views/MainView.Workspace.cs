@@ -1,6 +1,7 @@
 using Avalonia.Threading;
 using VisualCat.App.Presentation;
 using VisualCat.Application.Ports;
+using VisualCat.Domain;
 using VisualCat.Infrastructure.Configuration;
 
 namespace VisualCat.App.Views;
@@ -247,11 +248,18 @@ public sealed partial class MainView
     /// </summary>
     private async Task RestoreWorkspaceAsync()
     {
+        // Android restores without being asked; every other platform is offered the choice by
+        // OfferWorkspaceRestoreAsync, which calls the overload below with the paths it checked.
         if (!OperatingSystem.IsAndroid() || _settings.OpenSessionPaths is not { Length: > 0 } remembered)
         {
             return;
         }
 
+        await RestoreWorkspaceAsync(remembered);
+    }
+
+    private async Task RestoreWorkspaceAsync(string[] remembered)
+    {
         var paths = remembered
             .Where(static path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -380,4 +388,122 @@ public sealed partial class MainView
 
     private static bool SequenceEqual(string[]? left, string[] right) =>
         (left ?? []).SequenceEqual(right, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The file whose presence means the last run of this product did not end cleanly.
+    /// </summary>
+    /// <remarks>
+    /// Written when the workspace is first persisted and removed on an orderly exit, so its
+    /// presence at start-up is exactly "the previous process died without closing". It carries
+    /// no content: what was open is already in <c>settings.json</c>, and a marker that holds
+    /// data is a marker that can disagree with it.
+    /// </remarks>
+    private static string CleanExitMarkerPath => System.IO.Path.Combine(ProductDataRoot.Path, "workspace-open.marker");
+
+    /// <summary>
+    /// Offers to reopen the workspace the previous run left behind, and says so plainly when
+    /// that run ended in a crash.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The desktop wrote <c>openSessionPaths</c> on every exit and never read it back: after a
+    /// crash — and, it turned out, after an ordinary ⌘Q with three tabs open — the next launch
+    /// showed the empty start page, with nothing saying that the captures were safe or where
+    /// they were (finding F-17). The sessions were always intact and always reachable through
+    /// <em>Recent captures</em>; only the handoff was missing.
+    /// </para>
+    /// <para>
+    /// An offer rather than an automatic restore, because reopening a 17 MB capture unasked is
+    /// its own annoyance, and because a reader whose last session ended in a crash may want to
+    /// start somewhere else entirely. Android keeps restoring automatically: one stray Back
+    /// press finishes the activity there, so the workspace goes away by accident rather than by
+    /// decision, and re-assembling it costs several taps per tab.
+    /// </para>
+    /// </remarks>
+    private async Task OfferWorkspaceRestoreAsync()
+    {
+        if (OperatingSystem.IsAndroid())
+        {
+            return;
+        }
+
+        var crashed = MarkWorkspaceOpen();
+        if (_settings.OpenSessionPaths is not { Length: > 0 } remembered)
+        {
+            return;
+        }
+
+        var available = remembered
+            .Where(static path =>
+                !string.IsNullOrWhiteSpace(path) &&
+                Directory.Exists(path) &&
+                File.Exists(System.IO.Path.Combine(path, "manifest.json")))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(12)
+            .ToArray();
+        if (available.Length == 0)
+        {
+            return;
+        }
+
+        var count = Counted.Of(available.Length, "capture", "captures");
+        ShowNotice(
+            crashed
+                ? $"VisualCat closed unexpectedly. Your {count} are safe — reopen them, or find them under Recent captures."
+                : $"{count} were open when you last closed VisualCat.",
+            NoticeKind.Information,
+            new NoticeAction(
+                "Reopen",
+                async () =>
+                {
+                    ShowNotice(string.Empty);
+                    await RestoreWorkspaceAsync(available);
+                }));
+
+        await WriteMainViewDiagnosticAsync(
+            "workspace.restore.offered",
+            crashed ? "warning" : "information",
+            new Dictionary<string, string>
+            {
+                ["rememberedCount"] = remembered.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["availableCount"] = available.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["previousExitWasClean"] = crashed ? "false" : "true",
+            });
+    }
+
+    /// <summary>
+    /// Records that a workspace is open, and reports whether the previous run left one behind.
+    /// </summary>
+    /// <returns><see langword="true"/> when the last run ended without an orderly exit.</returns>
+    private static bool MarkWorkspaceOpen()
+    {
+        try
+        {
+            var path = CleanExitMarkerPath;
+            var crashed = File.Exists(path);
+            File.WriteAllBytes(path, []);
+            Core.Store.SessionFileModes.MakeFileOwnerOnly(path);
+            return crashed;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ProductDataRootException)
+        {
+            // A marker that cannot be written is a missing nicety, never a reason to refuse a
+            // launch: the offer below still works, it simply cannot say "unexpectedly".
+            return false;
+        }
+    }
+
+    /// <summary>Records an orderly exit, so the next launch does not report a crash.</summary>
+    internal static void MarkWorkspaceClosed()
+    {
+        try
+        {
+            File.Delete(CleanExitMarkerPath);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ProductDataRootException)
+        {
+        }
+    }
 }

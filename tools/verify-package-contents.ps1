@@ -103,15 +103,28 @@ foreach ($entry in $entries) {
     }
 }
 
-# Files must sit at the archive root so extracting gives a usable directory
-# directly, without hunting through a wrapper folder.
+# Exactly one top-level entry, and it is the directory the archive is named after.
+#
+# This used to assert the opposite — that the executable sat at the archive root — so `tar -xzf`,
+# the command the README's own first instruction implies, dropped 240 generically-named .NET
+# assemblies into whatever directory the user was standing in, mixed with everything already
+# there (finding F-02). One root makes extraction self-contained, reversible with a single
+# `rm -rf`, and `tar -tzf | head -1` a useful sanity check before trusting a download.
+$archiveRootName = [System.IO.Path]::GetFileName($archivePath) -replace '\.zip$', '' -replace '\.tar\.gz$', ''
 $topLevel = @($entries |
     ForEach-Object { ($_ -replace '\\', '/') -replace '^\./', '' } |
     Where-Object { $_ } |
     ForEach-Object { ($_ -split '/')[0] } |
     Sort-Object -Unique)
-if ($topLevel -notcontains $executableName) {
-    throw "Archive '$archivePath' does not contain '$executableName' at its root. Top-level entries: $($topLevel -join ', ')"
+if ($topLevel.Count -ne 1) {
+    throw "Archive '$archivePath' must contain exactly one top-level directory; it has $($topLevel.Count): $($topLevel -join ', ')"
+}
+if ($topLevel[0] -ne $archiveRootName) {
+    throw "Archive '$archivePath' has top-level entry '$($topLevel[0])'; it must be named '$archiveRootName', after the archive itself."
+}
+if (@($entries | Where-Object { (($_ -replace '\\', '/') -replace '^\./', '') -eq $archiveRootName }).Count -eq 0 -and
+    @($entries | Where-Object { (($_ -replace '\\', '/') -replace '^\./', '').StartsWith("$archiveRootName/") }).Count -eq 0) {
+    throw "Archive '$archivePath' has no members under '$archiveRootName/'."
 }
 
 # --- extracted contents --------------------------------------------------
@@ -134,6 +147,12 @@ try {
         }
     }
 
+    # Everything now lands one level down, inside the archive's own directory.
+    $extractRoot = Join-Path $extractRoot $archiveRootName
+    if (-not (Test-Path -LiteralPath $extractRoot -PathType Container)) {
+        throw "Extracting '$(Split-Path -Leaf $archivePath)' did not produce a '$archiveRootName' directory."
+    }
+
     foreach ($required in @($executableName, 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'README.txt')) {
         $path = Join-Path $extractRoot $required
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -147,6 +166,20 @@ try {
     $readme = Get-Content -Raw -LiteralPath (Join-Path $extractRoot 'README.txt')
     if ($readme -notmatch [regex]::Escape($Version)) {
         throw "README.txt in '$(Split-Path -Leaf $archivePath)' does not mention version $Version."
+    }
+
+    # Every documentation link points at this release's tag. Linking `main` shipped users
+    # documentation for code they do not have, and the gap widens with every release
+    # (finding F-19).
+    $branchLinks = @([regex]::Matches($readme, 'https://github\.com/\S+/blob/main/\S+') | ForEach-Object { $_.Value })
+    if ($branchLinks.Count -gt 0) {
+        throw "README.txt in '$(Split-Path -Leaf $archivePath)' links documentation from main rather than from v$Version`: $($branchLinks -join ', ')"
+    }
+
+    # macOS has no `sha256sum` before macOS 26, and the verify line is the one instruction whose
+    # whole purpose is to run before the binary does (finding F-01).
+    if (-not $isWindowsRuntime -and $readme -match '(?m)^\s*sha256sum\b') {
+        throw "README.txt in '$(Split-Path -Leaf $archivePath)' tells a Unix user to run 'sha256sum', which macOS did not have until macOS 26. Use 'shasum -a 256'."
     }
 
     $executablePath = Join-Path $extractRoot $executableName

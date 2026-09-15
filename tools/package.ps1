@@ -121,10 +121,25 @@ foreach ($rid in $Runtime) {
         $label = if ($component.Name -eq 'Desktop') { 'Desktop' } else { 'CLI' }
         $baseName = "VisualCat-$label-$rid-v$Version"
 
+        # Every member goes under one directory named after the archive. Packing the publish
+        # directory's contents directly made every member "./<name>", so `tar -xzf` — the very
+        # command the README's first instruction implies — dropped 240 files into whatever
+        # directory the user was in, mixed with everything already there, under generic .NET
+        # assembly names that are near-impossible to undo by hand (finding F-02). One root also
+        # makes extraction reversible with a single `rm -rf` and `tar -tzf | head -1` a useful
+        # sanity check.
         if ($rid -eq 'win-x64') {
             $archivePath = Join-Path $packages "$baseName.zip"
             Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
-            Compress-Archive -Path (Join-Path $destination '*') -DestinationPath $archivePath
+            $staging = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString('N'))
+            $root = Join-Path $staging $baseName
+            New-Item -ItemType Directory -Path $root -Force | Out-Null
+            try {
+                Copy-Item -Path (Join-Path $destination '*') -Destination $root -Recurse -Force
+                Compress-Archive -Path $root -DestinationPath $archivePath
+            } finally {
+                Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+            }
         } else {
             $archivePath = Join-Path $packages "$baseName.tar.gz"
             Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
@@ -132,9 +147,26 @@ foreach ($rid in $Runtime) {
             # Windows drive-qualified -f path as a remote host:path target.
             Push-Location $packages
             try {
-                & $tarCommand -C $destination -czf ([System.IO.Path]::GetFileName($archivePath)) .
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Archiving failed for $($component.Name) / $rid."
+                # -C the publish directory's *parent*, with the directory itself as the member,
+                # so the archive carries one root without copying 240 files to a staging tree.
+                $parent = Split-Path -Parent $destination
+                $leaf = Split-Path -Leaf $destination
+                $renamed = Join-Path $parent $baseName
+                $restore = $false
+                if ($leaf -ne $baseName) {
+                    Remove-Item -LiteralPath $renamed -Recurse -Force -ErrorAction SilentlyContinue
+                    Rename-Item -LiteralPath $destination -NewName $baseName
+                    $restore = $true
+                }
+                try {
+                    & $tarCommand -C $parent -czf ([System.IO.Path]::GetFileName($archivePath)) $baseName
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Archiving failed for $($component.Name) / $rid."
+                    }
+                } finally {
+                    if ($restore) {
+                        Rename-Item -LiteralPath $renamed -NewName $leaf
+                    }
                 }
             } finally {
                 Pop-Location

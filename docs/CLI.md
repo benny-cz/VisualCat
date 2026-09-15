@@ -281,13 +281,37 @@ vcat generate-test-log --output fmt-brief.txt --lines 5000 --seed 42 --format br
 vcat adb-devices [--adb <path>]
 ```
 
-Locates ADB from `--adb`, `ANDROID_SDK_ROOT`, or `PATH`, then prints a JSON array
-of devices. Each item contains `serial`, `state`, optional `model`, `product`,
-and `transportId`, plus parsed ADB `properties`.
+Prints a JSON array of devices. Each item contains `serial`, `state`, optional
+`model`, `product`, and `transportId`, plus parsed ADB `properties`.
 
 ```shell
 vcat adb-devices
 ```
+
+### Where ADB is looked for
+
+In this order, and the first one that exists wins:
+
+1. `--adb <path>`, or the desktop's **ADB executable** setting.
+2. `ANDROID_SDK_ROOT`, then `ANDROID_HOME`, each expected to name an SDK directory
+   containing `platform-tools/adb`.
+3. The default SDK locations for this platform:
+   `~/Library/Android/sdk` on macOS, `~/Android/Sdk` and `~/.local/share/Android/Sdk` on Linux,
+   `%LOCALAPPDATA%\Android\Sdk` on Windows. Both letter cases of the last segment are probed,
+   because `Sdk` and `sdk` resolve to the same directory on a case-insensitive volume and to
+   different ones on a case-sensitive volume.
+4. `/opt/homebrew/bin/adb` and `/usr/local/bin/adb`, where Homebrew links the executable without
+   laying down a `platform-tools` tree.
+5. `adb` on `PATH`.
+
+**`--adb` is authoritative.** A path that does not exist, names a directory, or is not
+executable is refused by name with the remedy; it is never quietly replaced by a different
+`adb` found somewhere else. That matters on a machine with several installations — Android
+Studio's, Homebrew's, a vendored one — where a silent substitution produces a capture from a
+tool nobody chose and reports success.
+
+When nothing is found, the error lists every location searched and how to install ADB on this
+platform.
 
 ## `capture-adb`
 

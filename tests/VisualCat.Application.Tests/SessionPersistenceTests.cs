@@ -94,6 +94,23 @@ public sealed class SessionPersistenceTests
                 SessionSaveService.SaveAsync(result.Snapshot, standard, portable: false));
             await Assert.ThrowsAsync<IOException>(() =>
                 SessionSaveService.SaveAsync(result.Snapshot, Path.Combine(sourceRoot, "nested.vcat"), portable: false));
+
+            // F-13 — a session is a directory, so a save panel navigates into one. Saving into
+            // *any* session, not only the source, leaves the outer session carrying megabytes
+            // its own manifest does not describe — and a later cache-retention sweep of the
+            // outer session takes the inner one with it.
+            var nestedInAnother = Path.Combine(standard, "nested-inside-another.vcat");
+            var refusal = await Assert.ThrowsAsync<IOException>(() =>
+                SessionSaveService.SaveAsync(result.Snapshot, nestedInAnother, portable: true));
+            Assert.Contains(Path.GetFileName(standard), refusal.Message, StringComparison.Ordinal);
+            Assert.False(Directory.Exists(nestedInAnother));
+
+            // And two levels down, because a save panel can be several clicks inside one.
+            await Assert.ThrowsAsync<IOException>(() =>
+                SessionSaveService.SaveAsync(
+                    result.Snapshot,
+                    Path.Combine(standard, "segments", "deeper.vcat"),
+                    portable: false));
         }
         finally
         {

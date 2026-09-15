@@ -77,7 +77,7 @@ public sealed partial class MainView
         }
 
         // The menu bar itself hangs off the window. It is set before the window is shown,
-        // because the macOS exporter reads a window.s menu as that window becomes key: setting
+        // because the macOS exporter reads a window's menu as that window becomes key: setting
         // it on an already-active window changes a value nothing looks at again.
         var menu = new NativeMenu();
         menu.Add(BuildFileMenu());

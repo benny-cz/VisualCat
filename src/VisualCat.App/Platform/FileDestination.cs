@@ -28,6 +28,17 @@ internal abstract class FileDestination : IDisposable
     internal abstract string Name { get; }
 
     /// <summary>
+    /// The destination's full local path when it has one, for the completion notice.
+    /// </summary>
+    /// <remarks>
+    /// The desktop reported only the file name, and on macOS the save panel may have been
+    /// redirected by ⇧⌘G or by a remembered location — so the one fact a reader needs to find
+    /// the file again was the one the notice left out (finding F-21). Null on a provider that
+    /// has no path, such as an Android document tree.
+    /// </remarks>
+    internal virtual string? LocalPath => null;
+
+    /// <summary>
     /// Whether writing publishes straight to a local path, in which case the producer's own
     /// atomic staging is the commit and no provider stream is involved.
     /// </summary>
@@ -50,6 +61,8 @@ internal abstract class FileDestination : IDisposable
     private sealed class StorageFileDestination(IStorageFile file) : FileDestination
     {
         internal override string Name => file.Name;
+
+        internal override string? LocalPath => file.TryGetLocalPath();
 
         internal override bool UsesDirectLocalPath => StorageFileBridge.UsesDirectLocalPath(file);
 

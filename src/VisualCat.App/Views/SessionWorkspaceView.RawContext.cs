@@ -73,7 +73,13 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         // A selected-entry column can be much taller than its tab. On mobile the tab is the
         // viewport, so neither drawing nor hit testing may escape it while the column scrolls.
-        var content = new Grid { ClipToBounds = _mobile };
+        //
+        // On the desktop it went the other way: nothing clipped the pane, so with the inspector
+        // open on a 795-point-tall window the outcome legend was painted in the same band as
+        // the status line and the two overlapped into each other (finding F-16). Clipping alone
+        // would hide the legend, so the pane gets its own scroller, which is where content that
+        // does not fit belongs.
+        var content = new Grid { ClipToBounds = true };
         if (_mobile)
         {
             _inspectScroll = new ScrollViewer
@@ -189,7 +195,19 @@ public sealed partial class SessionWorkspaceView : UserControl
         else
         {
             _rawEmptyState = _rawPlaceholder;
-            content.Children.Add(inspector);
+
+            // The desktop inspector.s own scroller. Its sections cap their own heights, but the
+            // fixed rows between them — the identity line, the message actions, the outcome
+            // legend — can still add up to more than the pane has, and an unclipped Grid simply
+            // painted the overflow across the status bar below it (finding F-16).
+            _inspectScroll = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = inspector,
+                ClipToBounds = true,
+            };
+            content.Children.Add(_inspectScroll);
             content.Children.Add(_rawPlaceholder);
         }
 
@@ -199,7 +217,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             CornerRadius = new CornerRadius(4),
             Padding = _mobile ? new Thickness(0) : new Thickness(8, 6),
             Child = content,
-            ClipToBounds = _mobile,
+            ClipToBounds = true,
         };
 
         if (_mobile)

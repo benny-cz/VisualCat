@@ -93,7 +93,10 @@ public sealed class SearchNavigationTests
         Assert.Equal(2, selected!.Ordinal);
         var viewport = fixture.Tab.Viewport!.Value;
         Assert.False(viewport.IsEmpty);
-        Assert.True(viewport.DurationUs >= SessionTabViewModel.MinimumViewportUs);
+        // The fit floor, not the live-tail floor: those were one number and had to stop being
+        // one, because a 1.5-second import opened at a two-second window pinned to its end and
+        // left a quarter of the plot blank (finding F-21).
+        Assert.True(viewport.DurationUs >= SessionTabViewModel.MinimumFitViewportUs);
     }
 
     /// <summary>The arrival viewport is pure arithmetic, so its edges are testable directly.</summary>

@@ -286,4 +286,125 @@ public sealed class AdbTests
             return ValueTask.CompletedTask;
         }
     }
+
+    /// <summary>
+    /// F-10 — a configured ADB path is a decision, not a hint.
+    /// </summary>
+    /// <remarks>
+    /// A path that was wrong used to be dropped by <c>File.Exists</c> and the search continued to
+    /// <c>ANDROID_SDK_ROOT</c> and <c>PATH</c>, so `--adb /tmp` and `--adb /tmp/not-here` both
+    /// exited 0 and captured from whatever <c>adb</c> happened to be installed. On a machine with
+    /// several — Android Studio's, Homebrew's, a vendored one, the normal state of an Android
+    /// developer's laptop — the operator had no way to learn which produced a capture.
+    /// </remarks>
+    [Fact]
+    public void AnExplicitAdbPathIsRefusedByNameRatherThanReplaced()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-adb-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var missing = Path.Combine(root, "definitely-not-here");
+            var directory = Path.Combine(root, "a-directory");
+            Directory.CreateDirectory(directory);
+
+            var forMissing = AdbLocator.Resolve(missing);
+            Assert.False(forMissing.Found);
+            Assert.True(forMissing.PinnedPathRejected);
+            Assert.Contains(missing, forMissing.Problem!, StringComparison.Ordinal);
+            Assert.Contains("does not exist", forMissing.Problem!, StringComparison.OrdinalIgnoreCase);
+
+            var forDirectory = AdbLocator.Resolve(directory);
+            Assert.False(forDirectory.Found);
+            Assert.True(forDirectory.PinnedPathRejected);
+            Assert.Contains("is a directory", forDirectory.Problem!, StringComparison.OrdinalIgnoreCase);
+
+            // Both used to throw and both used to be refused as exceptions; the shell needs the
+            // sentence without composing it out of one, which is what the repository's
+            // "no view composes user text from a framework exception" guard requires.
+            Assert.Throws<AdbLocatorException>(() => AdbLocator.Find(missing));
+            Assert.Throws<AdbLocatorException>(() => AdbLocator.Find(directory));
+
+            // A real file is accepted and returned absolute.
+            var real = Path.Combine(root, OperatingSystem.IsWindows() ? "adb.exe" : "adb");
+            File.WriteAllText(real, "#!/bin/sh\n");
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(
+                    real,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+
+            var accepted = AdbLocator.Resolve(real);
+            Assert.True(accepted.Found);
+            Assert.Equal(Path.GetFullPath(real), accepted.ExecutablePath);
+            Assert.Null(accepted.Problem);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// F-10 — a file without an execute bit is refused with the <c>chmod</c> that fixes it,
+    /// rather than reaching <c>Process.Start</c> and returning a .NET sentence that quotes the
+    /// working directory.
+    /// </summary>
+    [Fact]
+    public void AnAdbPathWithoutTheExecuteBitNamesTheChmodThatFixesIt()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-adb-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "adb");
+            File.WriteAllText(path, "#!/bin/sh\n");
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+            var resolution = AdbLocator.Resolve(path);
+            Assert.False(resolution.Found);
+            Assert.True(resolution.PinnedPathRejected);
+            Assert.Contains($"chmod +x {path}", resolution.Problem!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// F-11, F-12 — the places the product looks are the places real machines put ADB, and the
+    /// message that lists them is generated from the search itself.
+    /// </summary>
+    [Fact]
+    public void TheSearchSummaryNamesEveryRouteThatWorks()
+    {
+        var summary = AdbLocator.SearchLocationSummary();
+        var joined = string.Join(" | ", summary);
+
+        Assert.Contains("--adb", joined, StringComparison.Ordinal);
+        Assert.Contains("ANDROID_SDK_ROOT", joined, StringComparison.Ordinal);
+
+        // ANDROID_HOME and the default SDK directory both work and neither was mentioned, so a
+        // reader was told two of the four routes that exist (finding F-12).
+        Assert.Contains("ANDROID_HOME", joined, StringComparison.Ordinal);
+        Assert.Contains("on PATH", joined, StringComparison.Ordinal);
+
+        if (OperatingSystem.IsMacOS())
+        {
+            // The Windows LOCALAPPDATA convention transplanted to macOS resolves to
+            // ~/Library/Application Support/Android/Sdk, which exists on no ordinary Mac.
+            // Android Studio installs to ~/Library/Android/sdk, and Homebrew links the
+            // executable without laying down a platform-tools tree at all (finding F-11).
+            Assert.Contains(Path.Combine("Library", "Android", "sdk"), joined, StringComparison.Ordinal);
+            Assert.Contains("/opt/homebrew/bin/adb", joined, StringComparison.Ordinal);
+            Assert.Contains("brew install", AdbLocator.InstallHint(), StringComparison.Ordinal);
+        }
+    }
 }

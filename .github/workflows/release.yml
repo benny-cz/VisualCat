@@ -165,14 +165,42 @@ jobs:
           $desktop = "VisualCat-Desktop-${{ matrix.rid }}-v$env:RELEASE_VERSION"
           $cli = "VisualCat-CLI-${{ matrix.rid }}-v$env:RELEASE_VERSION"
           New-Item -ItemType Directory -Path packages -Force | Out-Null
+
+          # One top-level directory per archive, named after the archive. Packing the publish
+          # directory's contents directly gave every member the name "./<file>", so the
+          # extraction the README implies scattered 240 generically-named .NET assemblies into
+          # whatever directory the user happened to be in (finding F-02).
+          Rename-Item -LiteralPath artifacts/desktop -NewName $desktop
+          Rename-Item -LiteralPath artifacts/cli -NewName $cli
           if ('${{ matrix.archive }}' -eq 'zip') {
-            Compress-Archive -Path 'artifacts/desktop/*' -DestinationPath "packages/$desktop.zip"
-            Compress-Archive -Path 'artifacts/cli/*' -DestinationPath "packages/$cli.zip"
+            Compress-Archive -Path "artifacts/$desktop" -DestinationPath "packages/$desktop.zip"
+            Compress-Archive -Path "artifacts/$cli" -DestinationPath "packages/$cli.zip"
           } else {
-            tar -C artifacts/desktop -czf "packages/$desktop.tar.gz" .
+            tar -C artifacts -czf "packages/$desktop.tar.gz" $desktop
             if ($LASTEXITCODE -ne 0) { throw 'Desktop archive failed.' }
-            tar -C artifacts/cli -czf "packages/$cli.tar.gz" .
+            tar -C artifacts -czf "packages/$cli.tar.gz" $cli
             if ($LASTEXITCODE -ne 0) { throw 'CLI archive failed.' }
+          }
+          Rename-Item -LiteralPath "artifacts/$desktop" -NewName desktop
+          Rename-Item -LiteralPath "artifacts/$cli" -NewName cli
+
+          # Two assertions that make this class unable to regress: exactly one top-level entry
+          # per archive, and it is a directory.
+          foreach ($archive in Get-ChildItem packages) {
+            $roots = if ($archive.Extension -eq '.zip') {
+              (Expand-Archive -LiteralPath $archive.FullName -DestinationPath (Join-Path $env:RUNNER_TEMP $archive.BaseName) -Force
+               Get-ChildItem (Join-Path $env:RUNNER_TEMP $archive.BaseName) | ForEach-Object { $_.Name + $(if ($_.PSIsContainer) { '/' } else { '' }) })
+            } else {
+              (tar -tzf $archive.FullName | ForEach-Object { ($_ -split '/')[0] + '/' } | Sort-Object -Unique)
+            }
+            $roots = @($roots | Sort-Object -Unique)
+            if ($roots.Count -ne 1) {
+              throw "$($archive.Name) has $($roots.Count) top-level entries: $($roots -join ', '). Release archives must contain exactly one directory."
+            }
+            if (-not $roots[0].EndsWith('/')) {
+              throw "$($archive.Name)'s single top-level entry '$($roots[0])' is a file, not a directory."
+            }
+            "$($archive.Name) → $($roots[0])" >> $env:GITHUB_STEP_SUMMARY
           }
       - name: Verify the archives that will be uploaded
         shell: pwsh

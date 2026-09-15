@@ -52,13 +52,27 @@ Copy-Item -LiteralPath (Join-Path $repository 'LICENSE') -Destination (Join-Path
 Copy-Item -LiteralPath (Join-Path $repository 'docs/THIRD-PARTY-NOTICES.md') -Destination (Join-Path $destination 'THIRD-PARTY-NOTICES.md') -Force
 
 $targetIsWindows = $Runtime -eq 'win-x64'
+
+# The archive's single top-level directory, and the command that produces it. The README used to
+# open with "./VisualCat" and say nothing about extracting, so a user following the terminal path
+# it implies dropped 240 files into ~/Downloads (finding F-02). Naming the directory is also what
+# makes the extraction reversible with one `rm -rf`.
+$archiveRoot = "VisualCat-$(if ($Component -eq 'Desktop') { 'Desktop' } else { 'CLI' })-$Runtime-v$Version"
+$extract = if ($targetIsWindows) {
+    "Expand-Archive $archiveRoot.zip -DestinationPath ."
+} else {
+    "tar -xzf $archiveRoot.tar.gz"
+}
+
 if ($Component -eq 'Desktop') {
     $executable = if ($targetIsWindows) { 'VisualCat.exe' } else { 'VisualCat' }
     $launch = if ($targetIsWindows) { ".\$executable" } else { "./$executable" }
     $firstRun = @"
-Launch
-------
+Extract and launch
+------------------
 
+  $extract
+  cd $archiveRoot
   $launch
 
 Open a log from the start page, or pass one directly:
@@ -69,9 +83,11 @@ Open a log from the start page, or pass one directly:
     $executable = if ($targetIsWindows) { 'vcat.exe' } else { 'vcat' }
     $launch = if ($targetIsWindows) { ".\$executable" } else { "./$executable" }
     $firstRun = @"
-Launch
-------
+Extract and launch
+------------------
 
+  $extract
+  cd $archiveRoot
   $launch --version
   $launch help
 
@@ -97,10 +113,20 @@ macOS notes
 
 This build is not signed or notarized. After verifying the checksum above,
 clear the downloaded-file quarantine. This archive contains a terminal-launched
-executable, not a Finder .app bundle:
+executable, not a Finder .app bundle, so there is no Dock icon, no Launch
+Services registration and no file association:
 
   xattr -dr com.apple.quarantine .
   chmod +x $executable
+
+The desktop head needs a display that is awake. For an unattended or scheduled
+capture on a Mac whose screen sleeps or locks, use the vcat command line, which
+needs none; it is in the VisualCat-CLI archive beside this one.
+
+A saved session is a directory, not a single file. Copy or zip the whole .vcat
+directory to move one, and point Open session at the directory rather than at a
+file inside it. For a single-file hand-off, use Save portable and then
+Export to a portable zip.
 "@
 } else {
     @"
@@ -117,11 +143,27 @@ Restore the executable bit if your extraction tool dropped it:
 "@
 }
 
+# macOS ships no `sha256sum`: the BSD userland provides `shasum`, and the Darwin
+# re-implementation of `sha256sum` only appeared in macOS 26. On macOS 15 and earlier the
+# instruction whose whole purpose is to let a user verify a download before executing it
+# answered `zsh: command not found` (finding F-01). `shasum -a 256` is present on every
+# supported macOS and on every mainstream Linux, so both Unix artifacts use it and there is
+# one fewer branch to keep correct.
+#
+# --ignore-missing, because a release page carries a dozen assets and a user downloads one:
+# without it both tools print `FAILED open or read` for the eleven that are not there, which
+# reads as a failed verification to anyone who has not seen it before.
 $verify = if ($targetIsWindows) {
     '  (Get-FileHash -Algorithm SHA256 <archive>).Hash'
 } else {
-    '  sha256sum -c SHA256SUMS'
+    '  shasum -a 256 --ignore-missing -c SHA256SUMS      (run it beside the archives)'
 }
+
+# The tag, not the branch. Every link in a shipped README pointed at `main`, so a 2.0.13 user
+# who followed the link their own archive gave them read documentation for code they do not
+# have — and the better the live testing gets, the wider that gap grows, because each run adds
+# features to `main` that the released binary refuses (finding F-19).
+$docsRef = "v$Version"
 
 $title = "VisualCat $(if ($Component -eq 'Desktop') { 'Desktop' } else { 'CLI' }) $Version ($Runtime)"
 $readme = @"
@@ -151,11 +193,11 @@ to the source commit and workflow that produced them:
 That command prints nothing at all when it succeeds and stdout is not a terminal,
 which is indistinguishable from doing nothing, so ask it for the answer instead:
 
-  gh attestation verify <archive> --repo benny-cz/VisualCat --format json | jq     '.[0].verificationResult.signature.certificate
+  gh attestation verify <archive> --repo benny-cz/VisualCat --format json | jq '.[0].verificationResult.signature.certificate
      | {sourceRepositoryURI, buildSignerURI, sourceRepositoryDigest}'
 
 sourceRepositoryDigest is the commit this build came from; it matches the version
-VisualCat shows in Session info and that `vcat --version` prints.
+VisualCat shows in Session info and that "vcat --version" prints.
 
 $platformNotes
 
@@ -163,9 +205,9 @@ Documentation and support
 -------------------------
 
   Project         https://github.com/benny-cz/VisualCat
-  Release notes   https://github.com/benny-cz/VisualCat/blob/main/docs/RELEASE-NOTES.md
-  CLI reference   https://github.com/benny-cz/VisualCat/blob/main/docs/CLI.md
-  Support matrix  https://github.com/benny-cz/VisualCat/blob/main/docs/SUPPORT.md
+  Release notes   https://github.com/benny-cz/VisualCat/blob/$docsRef/docs/RELEASE-NOTES.md
+  CLI reference   https://github.com/benny-cz/VisualCat/blob/$docsRef/docs/CLI.md
+  Support matrix  https://github.com/benny-cz/VisualCat/blob/$docsRef/docs/SUPPORT.md
   Report a bug    https://github.com/benny-cz/VisualCat/issues
 
 Report a security vulnerability privately, never as a public issue:

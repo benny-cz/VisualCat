@@ -121,10 +121,17 @@ VisualCat's own state.
 **Session file modes.** A session is, by construction, log content that is often
 not the operator's own, so VisualCat does not leave it to the account's `umask`:
 session directories are created `700` and a portable session's embedded
-`raw.log` is `600`, wherever the session is written. On a shared machine that is
-what stops another local account reading a capture saved to `/tmp` or to a group
--writable project directory. On Windows the directory inherits its parent's ACL,
-which is the equivalent mechanism.
+`raw.log` is `600` on any volume that can express POSIX modes. On a shared machine
+that is what stops another local account reading a capture saved to `/tmp` or to a
+group-writable project directory. `settings.json` and the diagnostics directory are
+narrowed the same way, and an existing data root created by an older build is
+narrowed to `700` on the next launch. On Windows the directory inherits its
+parent's ACL, which is the equivalent mechanism.
+
+A volume with no POSIX modes — exFAT, FAT, and many SMB shares — cannot carry this
+guarantee, and VisualCat cannot create one where the filesystem has none. A session
+written to such a volume is readable by anyone who can read the volume. If that
+matters, write the session to a mode-capable filesystem and copy it from there.
 
 **Lease markers.** `SessionAccess-v1/` holds three files per session that
 cooperating processes lock to serialize access. The lock is the open handle, not

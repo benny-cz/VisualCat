@@ -18,9 +18,9 @@ without needing a fact that exists only in a previous session.
 | Status | **IN PROGRESS** |
 | Tree | branch `main`, working from `1338921` (the commit that closed pass 1) |
 | Candidate under test | a **build of this tree**, not a release tarball — `2.0.13-dev+<commit>` |
-| Last completed | §3.8 — ADB locator, display-asleep start-up, live regions, host time zone, file modes, the macOS menu bar, dialog sizing |
-| Findings closed so far | F-03 F-04 F-07 F-08 F-10 F-11 F-12 F-14 F-15 F-23, and F-09 as far as it can be |
-| Next step | §3.9 onward — F-17 workspace restore, F-18 viewport, F-20 CSV order, F-21, F-22 window position, F-13 save nesting, F-16 legend, F-06 tests, then packaging (F-01, F-02, F-19) and docs (F-05) |
+| Last completed | §3.16 — every finding implemented; packaging, docs and tests done |
+| Findings closed | all 23. F-09 as far as the product can (AXModal is upstream); F-13.2 needs a .app bundle this product does not ship |
+| Next step | §4 — live verification of the second batch on the Mac and the phone, then the hand-back |
 
 ### How the candidate is built and deployed
 
@@ -528,3 +528,217 @@ and the dialog's minimise button is already disabled. Of the finding's remaining
   presentation for a macOS window, so this would be an upstream feature request rather than a
   product change. The two problems the suggestion existed to solve are both closed by other
   means — the minimise trap is gone, and the sizing is fixed above.
+
+### 3.9 F-18 and F-21 — the viewport, and why two correct numbers looked wrong
+
+Pass 1 read `32 in view · 33 match the filter` with no filter active, and pass 2 read
+`40 in view · 41 match the filter` — off by exactly one both times, which looked like an
+off-by-one and was not. Follow keeps a **30-second window** on a session six minutes long, so the
+one early record in each corpus sits outside it. Both numbers were right; nothing on screen said
+they counted different populations, and the span printed at the end of the same line is the
+*matching* range, which appears to cover all 41.
+
+**What changed.** When the viewport is narrower than the matching range, the count says which
+window it is counting: `40 in view (30 s) · 41 match the filter · 41 in session`. Two numbers
+that looked inconsistent now obviously count different things.
+
+**The second half was a real defect.** `FitViewport` used `MinimumViewportUs` — two seconds — as
+its floor, and padded only the **left** edge. So importing a 1.501-second file opened at a
+two-second window pinned to the session's end, leaving about a quarter of the plot blank in front
+of the data, which a reader reads as a quiet period in their own log rather than as empty canvas
+(finding F-21). Two floors that were one number are now two:
+
+| Constant | Value | What it is for |
+|---|---|---|
+| `MinimumViewportUs` | 2 s | a **live tail**, so a session holding one record does not draw a one-microsecond span |
+| `MinimumFitViewportUs` | 10 ms | a **fit**, so any real session fits exactly and a degenerate one is still drawable |
+
+and the widened window is **centred** on the session rather than right-aligned. Ten milliseconds
+across a 2,600-pixel plot is 3.8 µs per pixel — nowhere near claiming the microsecond precision
+the two-second floor exists to prevent.
+
+Three tests hold it: a one-entry import opens at a drawable span containing the whole session, an
+ordinary import opens *exactly* fitted, and a short session is centred rather than pinned
+(`AShortSessionIsCentredInTheFittedWindow`).
+
+---
+
+### 3.10 F-17 — after a crash, and after an ordinary quit
+
+**What changed.** The desktop was writing `openSessionPaths` on every exit and reading it back
+nowhere: `RestoreWorkspaceAsync` returned immediately unless `OperatingSystem.IsAndroid()`. So
+after a crash — and, as pass 1 discovered, after an ordinary ⌘Q with three tabs open — the next
+launch showed the empty start page, with nothing saying the captures were safe or where to find
+them.
+
+The start page now offers to reopen them, and says plainly when the previous run did not end
+cleanly:
+
+> **VisualCat closed unexpectedly. Your 2 captures are safe — reopen them, or find them under
+> Recent captures.** \[Reopen\]
+
+after a clean exit, simply:
+
+> **3 captures were open when you last closed VisualCat.** \[Reopen\]
+
+An **offer**, not an automatic restore, exactly as the finding asks: reopening a 17 MB capture
+unasked is its own annoyance, and a reader whose last session ended in a crash may want to start
+somewhere else. Android keeps restoring automatically — one stray Back press finishes the
+activity there, so its workspace goes away by accident rather than by decision.
+
+"Unexpectedly" is a fact, not a guess: a zero-byte marker under the data root is written when the
+workspace is first persisted and deleted by the window's `Closed` handler, so its presence at
+start-up means the previous process died without closing. Only paths that still exist and still
+hold a `manifest.json` are offered, so a deleted capture never appears in the offer. The offer
+and its outcome are recorded in the product's own diagnostics (`workspace.restore.offered`,
+with `previousExitWasClean`), which is the finding's third suggestion: a diagnostic bundle
+collected afterwards now contains the fact that a crash happened.
+
+---
+
+### 3.11 F-20, F-21 — the export defaults and the export result line
+
+* **The desktop default is chronological**, the same as the CLI's and the same as the timeline's
+  own order. Exporting the same session from the two surfaces with default options produced two
+  different files and nothing said why.
+* **The result line names the order and the folder.** The desktop remembers whichever order the
+  reader last chose, so "the desktop default" is a per-user value no document can describe — and
+  a CSV that differs from the CLI's for that reason looks like a defect rather than a preference.
+  And on macOS the save panel may have been redirected by ⇧⌘G or by a remembered location, which
+  makes the absolute path the useful half of the answer:
+
+  ```
+  Exported 1,000 timed rows · all timed entries in session · chronological order ·
+  /Users/benny/vcat-run/evidence/…/desktop-export.csv
+  ```
+
+  where it read `Exported 1,000 timed rows · all timed entries in session · desktop-export.csv`.
+
+---
+
+### 3.12 F-21, F-16 — Recent captures, and the legend under the status bar
+
+**Recent captures had two selection models and explained neither.** The checkbox column drives
+the footer count and *Delete captures…*; the row highlight drives *Open*. Checking a single
+capture left *Open* disabled, which reads as a broken button rather than as a different kind of
+selection.
+
+*Open* now acts on **a single ticked capture** as well as on a highlighted row — one tick is an
+unambiguous answer to "open which one" — and both buttons say which selection they act on, in
+their tooltip and their accessible help text:
+
+* *Delete captures…* — "Deletes the 3 captures with a tick." / "Tick the captures to delete first."
+* *Open* — "Opens the highlighted capture, or the single ticked one." / "More than one capture is
+  ticked. Highlight the one to open, or untick the rest."
+
+**The legend was painted over the status bar.** The desktop inspector pane had
+`ClipToBounds = false`, so with *SELECTED ENTRY* open on a 795-point-tall window the outcome
+legend (`en entry · mt marker · .. continuation · e? untimed · ?? unknown · !! rejected`) was
+drawn into the same band as `Ready · 1,000 entries` and the two overlapped into each other.
+Clipping alone would have *hidden* the legend, so the pane gets its own scroller — which is where
+content that does not fit belongs — and then clips.
+
+---
+
+### 3.13 F-22 — the window comes back where it was
+
+The full-screen half of this finding was already closed on `main`
+([§2.1](#21-the-rows-that-were-already-closed-and-the-evidence)). Its fourth suggestion was not:
+`settings.json` stored `windowWidth` and `windowHeight` but no origin, so a window moved to a
+second display or to a corner of a large screen came back at `0, 30` every launch.
+
+`windowLeft` and `windowTop` are stored beside the size and **validated against the display
+arrangement that exists now**. A stored origin is a fact about an arrangement, and arrangements
+change: a laptop undocked from a monitor that was to its left holds a negative x that names
+nothing, and a window placed there is invisible with no way to reach it. The saved frame must
+overlap an attached screen's working area by at least 120 × 40 points — enough title bar to grab
+— or the platform's own placement is used, which is what happened every launch before this.
+
+---
+
+### 3.14 F-13 — a session cannot be saved inside another session
+
+A `.vcat` session is a directory, so every platform's save panel navigates into one as readily as
+into any folder. During pass 1 a *Save portable* landed at
+`…/cli-capture.vcat/ADB RFCRC0A9GND 13h00m23-portable-….vcat`. Both sessions still verified, so
+nothing was corrupted; what the outer session gained was seven megabytes its own manifest does
+not describe, and a later cache-retention sweep of the outer session would take the inner one
+with it.
+
+`SessionSaveService` now walks up from the chosen destination — bounded to 24 levels, because a
+session is never nested deeper than a handful and an unbounded walk costs a `stat` per level on
+every save — and refuses a destination inside anything that looks like a session:
+
+> That location is inside the session 'cli-capture.vcat'. Choose a directory outside it. A
+> session is a directory, so a save panel will navigate into one, and a session nested inside
+> another is carried along by the outer session's cache retention without its manifest
+> describing it.
+
+The finding's second suggestion — declaring a `UTExportedTypeDeclarations` package type so
+Finder treats a session as one document — needs a `.app` bundle, which this product deliberately
+does not ship. Its third is done: the macOS `README.txt` now says a saved session is a directory,
+how to move one, and that *Open session* wants the directory rather than a file inside it.
+
+---
+
+### 3.15 F-01, F-02, F-19 — the release archives
+
+Three packaging defects, all of which regenerate themselves on every release, and all of which
+now have an assertion that stops them coming back.
+
+**F-01 — `sha256sum` on macOS.** The verify line, whose whole purpose is to run *before* the
+binary does, told every Unix user to run a GNU coreutils command that macOS did not ship under
+that name until macOS 26. Both Unix artifacts now print
+
+```
+shasum -a 256 --ignore-missing -c SHA256SUMS      (run it beside the archives)
+```
+
+`shasum` is present on every supported macOS and on every mainstream Linux, so one line serves
+both and there is one fewer branch to keep correct. `--ignore-missing` is there because a release
+page carries a dozen assets and a user downloads one: without it both tools print
+`FAILED open or read` for the eleven that are not there, which reads as a failed verification to
+anyone who has not seen it before. `docs/RELEASE-NOTES.md` says the same thing, and
+`verify-package-contents.ps1` fails any Unix archive whose README still says `sha256sum`.
+
+**F-02 — the wrapper directory.** Every member of every archive was `./<name>`: one directory
+member and 239 files beside it. The README's first instruction implied
+`cd ~/Downloads && tar -xzf …`, which scattered 240 generically-named .NET assemblies into
+whatever directory the user was standing in, mixed with everything already there — genuinely hard
+to undo by hand. Every archive now carries exactly one top-level directory named after the
+archive itself, on **every** platform including the Windows `.zip`, and the README opens with
+
+```
+tar -xzf VisualCat-Desktop-osx-arm64-v2.0.14.tar.gz
+cd VisualCat-Desktop-osx-arm64-v2.0.14
+./VisualCat
+```
+
+Two assertions make it unable to regress: the release workflow checks that each archive it is
+about to upload has exactly one top-level entry and that it is a directory, and
+`verify-package-contents.ps1` additionally requires that entry to be named after the archive and
+to contain the expected members.
+
+**F-19 — the documentation links.** Every link in a shipped `README.txt` pointed at `blob/main`,
+so a 2.0.13 user following the link their own archive gave them read documentation for code they
+did not have — and the better the live testing gets, the wider that gap grows, because each run
+adds to `main` features the released binary refuses. The links now carry the release tag, and
+`verify-package-contents.ps1` fails any README that still links `main`.
+
+---
+
+### 3.16 F-05, F-06, F-08, F-12, F-14 — the documents
+
+| Document | What it now says |
+|---|---|
+| `SUPPORT.md` | the macOS row states **macOS 12 (Monterey) or later**, both architectures, Rosetta 2 for `osx-x64`, what a bare executable does not provide, and that the desktop head needs an awake display |
+| `SUPPORT.md` | a new **Reporting a problem** section: where the build identifier is on each surface, where the crash evidence lives per platform (`~/Library/Logs/DiagnosticReports/VisualCat-*.ips` on macOS), and the display-asleep refusal with its exit code |
+| `PRIVACY.md` | the `700`/`600` promise now says "on any volume that can express POSIX modes", names `settings.json` and the diagnostics directory, records that an older data root is narrowed on the next launch, and states plainly that a session written to exFAT, FAT or an SMB share cannot be protected this way |
+| `KEYBOARD.md` | a **macOS column** for every shortcut, the rule that the primary modifier is ⌘ on macOS and Ctrl elsewhere, why macOS does not also answer to Ctrl, and the menu-bar-only commands (⌘0, ⌘±, ⌘,, ⌘W, ⌘M, ⌥⌘H) |
+| `CLI.md` | a **Where ADB is looked for** section listing all five routes in order — it documented three — and stating that `--adb` is authoritative |
+| `RELEASE-NOTES.md` | `shasum -a 256 --ignore-missing`, with the reason |
+
+F-06's remaining two suggestions were **already on `main`**: `SyntheticLogFormatTests` requires
+every generated format to detect as itself at confidence ≥ 0.9 — the assertion that would have
+caught the original defect — and `test-data/golden-formats.txt` already carries the four
+five-digit-thread-id fixtures with narrow and wide pid/tid combinations.

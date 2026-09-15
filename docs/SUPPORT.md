@@ -1,10 +1,10 @@
-# Platform and source support
+| macOS desktop | Shared Avalonia/Skia application; CI build/test; **macOS 12 (Monterey) or later**; `osx-arm64` and `osx-x64` tarballs, and `osx-x64` runs on Apple silicon under Rosetta 2; bare executable rather than a `.app` bundle, so there is no Dock icon, no Launch Services registration and no file association; **the desktop head needs a display that is awake** — use the CLI for unattended or headless capture |# Platform and source support
 
 | Surface | Support |
 |---|---|
 | Windows desktop | Primary release and profiling target |
 | Linux desktop | Shared Avalonia/Skia application; CI build/test; x64 tarball only |
-| macOS desktop | Shared Avalonia/Skia application; CI build/test; bare executable rather than a `.app` bundle |
+| macOS desktop | Shared Avalonia/Skia application; CI build/test; **macOS 12 (Monterey) or later**; `osx-arm64` and `osx-x64` tarballs, and `osx-x64` runs on Apple silicon under Rosetta 2; bare executable rather than a `.app` bundle, so there is no Dock icon, no Launch Services registration and no file association; **the desktop head needs a display that is awake** — use the CLI for unattended or headless capture |
 | Android companion | Android 12+ (API 31) to API 36, `arm64-v8a` and `x86_64`; reduced single-session UI, local Wireless-debugging full-device capture, app-private fallback, and explicit portable-session share sheet |
 | Captured files | Finite import with source-change detection |
 | Growing files | Explicit follow mode; truncation/rotation stops visibly |
@@ -140,6 +140,44 @@ button, and then only your browser. If no browser handler is configured, the
 product prints the address rather than failing quietly.
 
 See `PRIVACY.md` for exactly what the Play check does and does not send.
+
+
+## Reporting a problem
+
+Open an issue at <https://github.com/benny-cz/VisualCat/issues>, and include the build
+identifier the product shows so a report can be tied to exact bytes:
+
+* **Desktop (macOS)** — the application menu's **About VisualCat** shows the full version and
+  commit, and the string is selectable so it can be pasted straight into a report.
+* **Desktop and CLI (everywhere)** — the start page's footer, `vcat --version`, and any session's
+  **Session info** all report the same version.
+
+### Where the evidence is after a crash
+
+| Platform | Location |
+|---|---|
+| macOS | `~/Library/Logs/DiagnosticReports/VisualCat-*.ips` — one file per crash, written by the system. Attach the newest one. |
+| Linux | whatever the distribution's crash handler collects (`apport`, `systemd-coredump`), plus the terminal output |
+| Windows | Event Viewer → Windows Logs → Application, plus the terminal output |
+
+VisualCat's own diagnostics live under the product data root — on macOS
+`~/Library/Application Support/VisualCat/Diagnostics/` — and the desktop can collect them into a
+bundle from **More → Diagnostic bundle**. They are owner-readable only, and nothing is sent
+anywhere unless you attach it yourself.
+
+### macOS: the desktop will not start while the display is asleep
+
+The desktop head needs a display the window server can draw on, so a launch while the screen is
+asleep or locked refuses with
+
+```
+VisualCat could not start because this Mac has no display it can draw on:
+  the screen is asleep, locked, or no display is attached.
+```
+
+and exits `69`. It waits a few seconds first, so waking the screen during that window lets the
+launch succeed. For a scheduled or unattended capture on a Mac whose screen sleeps, use the
+`vcat` command line, which needs no display at all.
 
 ## Desktop distribution limits
 

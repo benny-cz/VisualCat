@@ -2914,12 +2914,40 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     /// returned window — and the newest instant is the anchor because that is the edge a live
     /// capture grows from.
     /// </remarks>
-    private static TimeRange FitViewport(TimeRange sessionRange) =>
-        sessionRange.DurationUs >= MinimumViewportUs
-            ? sessionRange
-            : new TimeRange(
-                new InstantUs(checked(sessionRange.EndExclusive.Value - MinimumViewportUs)),
-                sessionRange.EndExclusive);
+    /// <summary>
+    /// The narrowest window a <em>fit</em> is given, in microseconds.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="MinimumViewportUs"/>, which is a live tail's floor and is
+    /// deliberately two seconds. Fitting used the same number, so importing a 1.501-second file
+    /// opened at a two-second window pinned to the session's <em>end</em> — about a quarter of
+    /// the plot blank on the left, which reads as a quiet period in the reader's data rather
+    /// than as empty canvas (finding F-21). Ten milliseconds still refuses to claim microsecond
+    /// precision for a session whose records all share one timestamp, and is far below any span
+    /// a real log has.
+    /// </remarks>
+    internal const long MinimumFitViewportUs = 10_000;
+
+    /// <summary>
+    /// The window that shows the whole of <paramref name="sessionRange"/>, widened and
+    /// <em>centred</em> when the session is too short to draw honestly.
+    /// </summary>
+    /// <remarks>
+    /// Centred rather than right-aligned: padding only the left edge is what put the data in
+    /// the right three quarters of the plot with nothing in the first quarter.
+    /// </remarks>
+    private static TimeRange FitViewport(TimeRange sessionRange)
+    {
+        if (sessionRange.DurationUs >= MinimumFitViewportUs)
+        {
+            return sessionRange;
+        }
+
+        var slack = MinimumFitViewportUs - sessionRange.DurationUs;
+        var before = Math.Min(slack / 2, sessionRange.StartInclusive.Value);
+        var start = checked(sessionRange.StartInclusive.Value - before);
+        return new TimeRange(new InstantUs(start), new InstantUs(checked(start + MinimumFitViewportUs)));
+    }
 
     private static TimeRange? ClampViewport(TimeRange? saved, TimeRange? session)
     {

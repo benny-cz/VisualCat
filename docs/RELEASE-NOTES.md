@@ -9,8 +9,12 @@ APK when Android release signing is enabled. Verify the download against
 `SHA256SUMS` before running it.
 
 ```shell
-sha256sum -c SHA256SUMS
+shasum -a 256 --ignore-missing -c SHA256SUMS
 ```
+
+`shasum` is present on macOS and on every mainstream Linux; `sha256sum` is GNU coreutils and
+macOS did not ship a command by that name until macOS 26. `--ignore-missing` checks only the
+assets you actually downloaded, instead of reporting the rest as failures.
 
 In PowerShell:
 

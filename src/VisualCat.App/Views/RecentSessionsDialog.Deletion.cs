@@ -729,7 +729,25 @@ internal sealed class RecentCapturePanel : UserControl
                 : _mobile ? $"Delete {selected.Length:N0}…" : $"Delete {Counted.Captures(selected.Length)}…";
             AutomationProperties.SetName(_delete, selected.Length == 0 ? "Delete captures" : $"Delete {Counted.Captures(selected.Length)}");
             _delete.IsEnabled = selected.Length > 0 && !_busy && available;
-            _open.IsEnabled = _list.SelectedItem is CaptureRow highlighted && _rows.Contains(highlighted) && !_busy;
+            _open.IsEnabled = OpenTarget() is not null;
+
+            // Which selection each button acts on, said on the buttons rather than left for the
+            // reader to infer from which one greys out. The list has two selection models and
+            // explained neither (finding F-21).
+            AutomationProperties.SetHelpText(
+                _delete,
+                selected.Length > 0
+                    ? $"Deletes the {Counted.Captures(selected.Length)} with a tick."
+                    : "Tick the captures to delete first.");
+            AutomationProperties.SetHelpText(
+                _open,
+                _open.IsEnabled
+                    ? "Opens the highlighted capture, or the single ticked one."
+                    : _rows.Count(static row => row.Checked) > 1
+                        ? "More than one capture is ticked. Highlight the one to open, or untick the rest."
+                        : "Highlight a capture, or tick exactly one.");
+            ToolTip.SetTip(_open, AutomationProperties.GetHelpText(_open));
+            ToolTip.SetTip(_delete, AutomationProperties.GetHelpText(_delete));
             _clear.IsEnabled = selected.Length > 0 && !_busy;
             _select.Content = _selecting ? "Done" : "Select";
             foreach (var button in new[] { _select, _close, _refresh, _cleanup, _capture })
@@ -938,9 +956,37 @@ internal sealed class RecentCapturePanel : UserControl
         Update();
     }
 
+    /// <summary>
+    /// Opens the capture the reader has indicated, by either of the two ways this list lets
+    /// them indicate one.
+    /// </summary>
+    /// <remarks>
+    /// The list carries two selection models: the checkbox column drives the footer count and
+    /// Delete, the row highlight drives Open. Checking a single capture therefore left Open
+    /// disabled, which reads as a broken button rather than as a different kind of selection
+    /// (finding F-21). One checked capture is an unambiguous answer to "open which one", so it
+    /// is accepted; two or more is not, and Open stays disabled with the button group labels
+    /// saying which selection each side acts on.
+    /// </remarks>
+    private CaptureRow? OpenTarget()
+    {
+        if (_busy || _nested || (_mobile && _selecting))
+        {
+            return null;
+        }
+
+        if (_list.SelectedItem is CaptureRow highlighted && _rows.Contains(highlighted))
+        {
+            return highlighted;
+        }
+
+        var checkedRows = _rows.Where(static row => row.Checked).Take(2).ToArray();
+        return checkedRows.Length == 1 ? checkedRows[0] : null;
+    }
+
     private void OpenSelected()
     {
-        if (!_busy && !_nested && (!_mobile || !_selecting) && _list.SelectedItem is CaptureRow row && _rows.Contains(row))
+        if (OpenTarget() is { } row)
         {
             _complete(row.Session.Path);
         }

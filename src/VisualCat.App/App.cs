@@ -106,8 +106,8 @@ public sealed class MainWindow : Window
         view.AttachHostWindow(this);
         Platform.FullRepaintOnResize.Attach(this);
 
-        // The macOS menu bar, before the window is shown. Avalonia.s macOS exporter reads a
-        // window.s menu as the window becomes key, so a menu set afterwards is a value nothing
+        // The macOS menu bar, before the window is shown. Avalonia's macOS exporter reads a
+        // window's menu as the window becomes key, so a menu set afterwards is a value nothing
         // looks at again and the stock two-item bar stays (finding F-03).
         view.InstallMacMenuBar(this);
 
@@ -149,6 +149,10 @@ public sealed class MainWindow : Window
         {
             await view.PersistWindowStateAsync();
             await view.DisposeAsync();
+
+            // The last thing an orderly exit does. Its absence on the next launch is what lets
+            // the start page say "VisualCat closed unexpectedly" rather than guess (F-17).
+            MainView.MarkWorkspaceClosed();
         };
     }
 }

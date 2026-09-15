@@ -620,6 +620,20 @@ public sealed partial class SessionWorkspaceView : UserControl
         var inView = _viewModel.MatchesInView ?? 0;
         var scoped = _viewModel.DetailRange is not null;
         var scope = scoped ? "in this bar" : "in view";
+
+        // "40 in view · 41 match the filter" with no filter active reads as a contradiction, and
+        // the span printed at the end of this line — which is the *matching* range — makes it
+        // worse by appearing to cover all 41. Both numbers were right: Follow keeps a 30-second
+        // window on a session six minutes long, so one early record sits outside it (finding
+        // F-18). Naming the window is what turns two numbers that look inconsistent into two
+        // numbers that obviously count different things.
+        if (!scoped &&
+            _viewModel.Viewport is { } window &&
+            stats is { FirstInstant: { } matchFirst, LastInstant: { } matchLast } &&
+            (window.StartInclusive.Value > matchFirst.Value || window.EndExclusive.Value <= matchLast.Value))
+        {
+            scope = $"in view ({FormatSpan(window.DurationUs)})";
+        }
         var counters = _viewModel.Snapshot?.Descriptor.Counters;
         var sessionTotal = counters?.TimedEntries;
 
