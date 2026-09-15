@@ -427,8 +427,20 @@ internal static class VisualCatCli
             options.Has("--regex"),
             options.Has("--case-sensitive"),
             TimeSpan.FromMilliseconds(options.GetInt("--timeout-ms", 250, 1, 60_000)));
-        var result = await SessionQueryEngine.SearchAsync(snapshot, search, Filter(options), 1, null, 20_000, cancellationToken).ConfigureAwait(false);
+        var filter = Filter(options);
+        var result = await SessionQueryEngine.SearchAsync(snapshot, search, filter, 1, null, 20_000, cancellationToken).ConfigureAwait(false);
         Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+
+        // Text search matches a record's message, not its tag. That is defensible and was
+        // silent: searching a real capture for VCATTEST returned the three adbd lines that
+        // quote it and none of the 301 records actually tagged with it (finding F-12). On
+        // stderr, so a script redirecting stdout still gets clean JSON.
+        if (SearchAlternatives.Find(snapshot, filter, query, result.Matches, search.IsRegex, cancellationToken)
+            is { } alternative)
+        {
+            Console.Error.WriteLine(SearchAlternatives.Describe(alternative, query, forCommandLine: true));
+        }
+
         return 0;
     }
 

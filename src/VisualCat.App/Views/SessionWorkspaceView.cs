@@ -115,8 +115,10 @@ public sealed partial class SessionWorkspaceView : UserControl
     }
 
     private const string SearchProblemName = "Search problem";
-    private readonly ListBox _entries = new();
-    private readonly ListBox _templates = new();
+    // Focusable, so Alt+2 and Alt+3 have somewhere to land even when the list is empty. A
+    // ListBox is not focusable by default in Avalonia — only its items are (see FocusList).
+    private readonly ListBox _entries = new() { Focusable = true };
+    private readonly ListBox _templates = new() { Focusable = true };
     private readonly ComboBox _order = new()
     {
         ItemsSource = new[] { "Chronological", "Source order" },
@@ -236,11 +238,18 @@ public sealed partial class SessionWorkspaceView : UserControl
     private static readonly IBrush IncludeActive = new SolidColorBrush(Color.Parse("#1E6FA8"));
     private static readonly IBrush ExcludeActive = new SolidColorBrush(Color.Parse("#8A3B4A"));
     private readonly StackPanel _facets = new() { Spacing = 2, Margin = new Thickness(6) };
+
+    /// <summary>The desktop analysis tabs, so Alt+4 can select Facets before focusing one.</summary>
+    private TabControl? _analysisTabs;
     private ScrollViewer? _facetScroll;
     private readonly Button _fitMatches = new() { Content = "Fit to matches", Margin = new Thickness(0, 0, 6, 0), IsVisible = false };
     private Border? _emptyResultsCard;
     private TextBlock? _emptyResultsTitle;
     private TextBlock? _emptyResultsDetail;
+    private Button? _emptyResultsFacet;
+
+    /// <summary>The tag or process the current search text names exactly, when it found little.</summary>
+    private VisualCat.Core.Query.SearchAlternative? _offeredSearchAlternative;
     private Button? _emptyResultsWiden;
     private Button? _emptyResultsClear;
     private readonly Button _clearScope = new() { Content = "Clear cell", Margin = new Thickness(0, 0, 6, 0), IsVisible = false };
@@ -945,20 +954,24 @@ public sealed partial class SessionWorkspaceView : UserControl
             return true;
         }
 
-        if (alt && !control)
+        if (alt && !control && eventArgs.Key is
+                Key.D1 or Key.D2 or Key.D3 or Key.D4 or
+                Key.NumPad1 or Key.NumPad2 or Key.NumPad3 or Key.NumPad4)
         {
-            var focused = eventArgs.Key switch
+            // Claimed whether or not the focus move succeeds, and the character this key would
+            // have produced is swallowed. On macOS ⌥1 through ⌥4 are ¡ ™ £ ¢, and handling the
+            // key press does not stop the text input that follows it: pressing the documented
+            // pane shortcut while the search field had focus moved the focus *and* appended a
+            // currency sign to the query, so the reader's search quietly became "¢™".
+            SwallowNextTextInput();
+            _ = eventArgs.Key switch
             {
                 Key.D1 or Key.NumPad1 => _timeline.Focus(),
-                Key.D2 or Key.NumPad2 => _entries.Focus(),
-                Key.D3 or Key.NumPad3 => _templates.Focus(),
-                Key.D4 or Key.NumPad4 => FocusFirstFacet(),
-                _ => false,
+                Key.D2 or Key.NumPad2 => FocusList(_entries),
+                Key.D3 or Key.NumPad3 => FocusList(_templates),
+                _ => FocusFirstFacet(),
             };
-            if (focused)
-            {
-                return true;
-            }
+            return true;
         }
 
         return false;
@@ -1161,8 +1174,106 @@ public sealed partial class SessionWorkspaceView : UserControl
             direction >= 0 ? SearchMatchRequestKind.Next : SearchMatchRequestKind.Previous).ConfigureAwait(false);
     }
 
-    private bool FocusFirstFacet() =>
-        _facets.GetLogicalDescendants().OfType<Button>().FirstOrDefault()?.Focus() == true;
+    /// <summary>
+    /// Discards the one text-input event a just-handled key press would still produce.
+    /// </summary>
+    /// <remarks>
+    /// Marking a <c>KeyDown</c> handled does not suppress the <c>TextInput</c> that follows it,
+    /// and on macOS ⌥1 through ⌥4 are ¡, ™, £ and ¢ — so the documented pane shortcuts moved
+    /// focus and appended a currency sign to whatever text field had it. Armed for one event
+    /// and one dispatcher turn, so a genuine keystroke a moment later is never eaten.
+    /// </remarks>
+    private void SwallowNextTextInput()
+    {
+        if (TopLevel.GetTopLevel(this) is not { } root)
+        {
+            return;
+        }
+
+        EventHandler<TextInputEventArgs>? handler = null;
+        handler = (_, args) =>
+        {
+            args.Handled = true;
+            if (handler is not null)
+            {
+                root.RemoveHandler(InputElement.TextInputEvent, handler);
+                handler = null;
+            }
+        };
+        root.AddHandler(InputElement.TextInputEvent, handler, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+
+        // Disarmed on the next turn even when no text arrives, so a key that produces nothing
+        // — every Alt+digit on Windows and Linux — leaves no handler behind.
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                if (handler is not null)
+                {
+                    root.RemoveHandler(InputElement.TextInputEvent, handler);
+                    handler = null;
+                }
+            },
+            DispatcherPriority.Input);
+    }
+
+    /// <summary>
+    /// Puts the keyboard inside a list, on the row the reader is already looking at.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A bare <c>ListBox.Focus()</c> answers false and does nothing: in Avalonia a
+    /// <see cref="ListBox"/> is not itself focusable — its items are — so <c>Alt+2</c>,
+    /// <c>Alt+3</c> and <c>Alt+4</c> were inert on every platform while <c>Alt+1</c>, which
+    /// targets a custom control that <em>is</em> focusable, worked. The three are documented in
+    /// KEYBOARD.md as the keyboard route into the analysis panes, so a reader working without a
+    /// pointer had one pane of four.
+    /// </para>
+    /// <para>
+    /// Measured rather than reasoned: pass 1 could not tell a dead shortcut from a window with
+    /// no focus, because its probe reported "no focused element" throughout. With ⌘ shortcuts
+    /// working the probe finally answers, and Alt+numpad-1 moved focus while Alt+numpad-2, 3
+    /// and 4 left it exactly where it was.
+    /// </para>
+    /// <para>
+    /// The selected row first, so arrow keys and J/K continue from where the reader is rather
+    /// than jumping to the top of a list they have already scrolled.
+    /// </para>
+    /// </remarks>
+    private static bool FocusList(ListBox list)
+    {
+        var container = list.ContainerFromIndex(Math.Max(0, list.SelectedIndex));
+        if (container is null && list.ItemCount > 0)
+        {
+            list.ScrollIntoView(0);
+            container = list.ContainerFromIndex(0);
+        }
+
+        // The list itself is the fallback for an empty one, so the shortcut is never silently
+        // inert — an empty list still takes focus and announces itself.
+        return container?.Focus() == true || list.Focus();
+    }
+
+    /// <summary>Brings the facets forward and puts the keyboard on the first one.</summary>
+    /// <remarks>
+    /// Selecting the tab is half the command. With Templates, Views or Session showing, the
+    /// facet pane has no visible control at all, so the shortcut focused nothing and reported
+    /// nothing — measured live, where Alt+4 left focus in the search field every time.
+    /// </remarks>
+    private bool FocusFirstFacet()
+    {
+        if (_analysisTabs is { } tabs && tabs.SelectedIndex != FacetsTabIndex)
+        {
+            tabs.SelectedIndex = FacetsTabIndex;
+            tabs.UpdateLayout();
+        }
+
+        var first = _facets.GetLogicalDescendants()
+            .OfType<Button>()
+            .FirstOrDefault(static button => button.IsEffectivelyVisible && button.IsEffectivelyEnabled);
+        return first?.Focus() == true || _facetScroll?.Focus() == true;
+    }
+
+    private const int FacetsTabIndex = 1;
 
     /// <summary>
     /// Closes the innermost thing the reader has opened — the filter drawer, an active query,
@@ -1429,13 +1540,33 @@ public sealed partial class SessionWorkspaceView : UserControl
             UpdateLevelChecks();
         };
 
+        // "You searched for a tag." Text search matches a message, not a tag, which is
+        // defensible and was silent: a reader searching for VCATTEST got the three adbd lines
+        // that quote it and none of the 301 records carrying it (finding F-12). Offered as an
+        // action rather than as prose, because the reader's next move is to run that search.
+        var byFacet = _emptyResultsFacet = new Button
+        {
+            MinHeight = TouchTarget.For(_mobile),
+            IsVisible = false,
+        };
+        byFacet.Click += async (_, _) =>
+        {
+            if (_offeredSearchAlternative is not { } offer)
+            {
+                return;
+            }
+
+            _search.Text = string.Empty;
+            await RunUiActionAsync(() => _viewModel.ApplyFacetSearchAsync(offer.Dimension, offer.Value));
+        };
+
         var actions = new WrapPanel
         {
             Orientation = Orientation.Horizontal,
             ItemSpacing = 8,
             LineSpacing = 8,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Children = { widen, clear },
+            Children = { byFacet, widen, clear },
         };
 
         var card = _emptyResultsCard = new Border
@@ -2191,17 +2322,23 @@ public sealed partial class SessionWorkspaceView : UserControl
 
         // A pane that overruns its cell paints over the band below it, which on a short
         // viewport put entry rows through the status line (audit 2, D9).
+        // Clipped on every platform, not only on a phone. The status bar has its own row in the
+        // root grid — it always had — but an Avalonia Grid does not clip its children, so an
+        // analysis pane that wanted more height than its row simply painted past it: with the
+        // selected-entry inspector open and SOURCE CONTEXT expanded on a 797-point window, the
+        // source dump and "Ready · 500 entries" were drawn through each other (finding F-16).
+        // A row is only a boundary if something enforces it.
         var analysis = _analysisGrid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions(_mobile ? "*" : "3*,6,2*"),
             Margin = new Thickness(10, 5),
-            ClipToBounds = _mobile,
+            ClipToBounds = true,
         };
         ConfigureEntryList();
         var entryPanel = new Grid
         {
             RowDefinitions = new RowDefinitions(_mobile ? "Auto,*,Auto" : "Auto,Auto,*,Auto"),
-            ClipToBounds = _mobile,
+            ClipToBounds = true,
         };
         var entryHeader = _entryHeader = new Grid
         {

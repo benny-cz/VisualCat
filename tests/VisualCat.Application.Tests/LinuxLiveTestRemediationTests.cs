@@ -10,6 +10,7 @@ using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
 using VisualCat.Infrastructure.Adb;
 using VisualCat.Infrastructure.Files;
+using VisualCat.Core.Query;
 using VisualCat.Infrastructure.Configuration;
 
 namespace VisualCat.Application.Tests;
@@ -563,4 +564,70 @@ public sealed class LinuxLiveTestRemediationTests
 
     [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "umask", SetLastError = true)]
     private static extern int Umask(int mask);
+
+    /// <summary>
+    /// F-12 — a search whose text is a tag rather than message content says so, and offers the
+    /// search the reader meant.
+    /// </summary>
+    /// <remarks>
+    /// Text search matches a record's message, not its tag. Searching a real capture for
+    /// <c>VCATTEST</c> returned the three <c>adbd</c> lines that quote it in their own text and
+    /// none of the 301 records actually carrying it, and nothing on screen said the difference
+    /// existed. The offer is deliberately narrow: an exact facet spelling, a search that found
+    /// almost nothing, and never for a regular expression.
+    /// </remarks>
+    [Fact]
+    public async Task ASearchThatNamesATagIsOfferedThatTagInstead()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"vcat-f12-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var log = Path.Combine(root, "tagged.txt");
+            await File.WriteAllTextAsync(
+                log,
+                "05-15 14:13:37.000  1073  1151 I Camera: took a picture\n" +
+                "05-15 14:13:37.001  1073  1151 I Camera: took another\n" +
+                "05-15 14:13:37.002  1073  1151 I Network: sent a packet\n",
+                TestContext.Current.CancellationToken);
+
+            var session = Path.Combine(root, "tagged.vcat");
+            await using (var source = new FileLogSource(log))
+            {
+                var result = await SessionCoordinator.ImportAsync(
+                    source,
+                    session,
+                    new IngestSettings(
+                        null,
+                        "utf-8",
+                        new TimestampPolicy(2026, "UTC", DateTimeOffset.UtcNow),
+                        new TemplateSettings()),
+                    cancellationToken: TestContext.Current.CancellationToken);
+                result.Snapshot.Dispose();
+            }
+
+            using var snapshot = await SessionStore.OpenAsync(session, TestContext.Current.CancellationToken);
+
+            // "Camera" is a tag here and appears in no message, so the text search finds nothing.
+            var offer = SearchAlternatives.Find(snapshot, FilterSpec.All, "Camera", textMatches: 0);
+            Assert.NotNull(offer);
+            Assert.Equal(FacetQueryDimension.Tag, offer.Dimension);
+            Assert.Equal("Camera", offer.Value);
+            Assert.Equal(2, offer.Count);
+            Assert.Contains("--tags Camera", SearchAlternatives.Describe(offer, "Camera", forCommandLine: true), StringComparison.Ordinal);
+
+            // A search that found plenty is left alone: a hint beside good results is noise.
+            Assert.Null(SearchAlternatives.Find(snapshot, FilterSpec.All, "Camera", textMatches: 400));
+
+            // A regular expression that happens to equal a tag is a coincidence, not an intent.
+            Assert.Null(SearchAlternatives.Find(snapshot, FilterSpec.All, "Camera", textMatches: 0, isRegex: true));
+
+            // And a query that names nothing gets nothing.
+            Assert.Null(SearchAlternatives.Find(snapshot, FilterSpec.All, "zzzznotathing", textMatches: 0));
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch (IOException) { }
+        }
+    }
 }

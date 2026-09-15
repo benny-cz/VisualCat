@@ -348,6 +348,28 @@ Avalonia's to fix rather than this product's.
   written" without saying that a volume with no POSIX modes cannot carry it. `KEYBOARD.md`
   has a macOS column. `CLI.md` documents all five routes the ADB locator takes, where it
   documented three.
+- **Alt+2, Alt+3 and Alt+4 focus the panes they name.** Three of the four documented pane
+  shortcuts were inert on every platform: `ListBox.Focus()` answers false, because in
+  Avalonia a list is not itself focusable — only its rows are — so only Alt+1, which
+  targets a custom control, ever worked. A reader working without a pointer had one pane
+  of four. They now focus the row the reader is already on, and Alt+4 brings the Facets
+  tab forward first, since with another tab showing there was no facet control to focus.
+- **A pane shortcut no longer types into the search box.** On macOS Alt+1 through Alt+4
+  are `¡ ™ £ ¢`, and marking a key press handled does not suppress the text input that
+  follows it — so using the documented shortcut while the search field had focus moved the
+  focus *and* appended a currency sign to the query. Four presses left the field reading
+  `¢™jj`.
+- **Searching for a tag says so.** Text search matches a record's message, not its tag,
+  which is defensible and was silent: searching a capture for `VCATTEST` returned the three
+  `adbd` lines that quote it and none of the 301 records carrying it. When a search finds
+  almost nothing and the text names a tag or a process exactly, the command line prints
+  `No message text matched "Camera". 64 entries carry that tag — search it with --tags
+  Camera` on stderr, leaving stdout clean JSON, and the desktop's empty-result card offers
+  **Search the tag "Camera" instead** as one click.
+- **The analysis panes stay inside their row.** The status bar always had a row of its own,
+  but an Avalonia grid does not clip its children, so with the selected-entry inspector
+  open on a short window the source dump and `Ready · 500 entries` were drawn through each
+  other. A row is only a boundary if something enforces it.
 
 ## [2.0.13] - 2026-09-09
 

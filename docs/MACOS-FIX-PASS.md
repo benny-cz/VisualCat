@@ -18,10 +18,10 @@ without needing a fact that exists only in a previous session.
 | Status | **COMPLETE** — every finding implemented and live-verified; the Mac and the phone handed back ([§5](#5-hand-back)) |
 | Tree | branch `main`, working from `1338921` (the commit that closed pass 1) |
 | Candidate under test | a **build of this tree**, not a release tarball — `2.0.13-dev+<commit>` |
-| Last completed | §5 — hand-back. The phone is locked, the adb server stopped, the harness shut down |
+| Last completed | §7 — pass 1's standing list worked through; everything a machine can settle is settled |
 | Findings closed | all 23. F-09 as far as the product can (AXModal is upstream); F-13.2 needs a .app bundle this product does not ship |
-| Tests | 1,090 pass (47 Domain, 151 Core, 193 Application, 699 App) |
-| Next step | a release ([§6](#6-the-release-this-pass-argues-for)), then pass 1's untested rows: the Q6/Q7 consent pass, a human keyboard pass, and a VoiceOver soak |
+| Tests | 1,092 pass (47 Domain, 151 Core, 194 Application, 700 App) |
+| Next step | a release ([§6](#6-the-release-this-pass-argues-for)), and the four rows in [§7.3](#73-what-still-needs-a-person) that need a person at the Mac |
 
 ### How the candidate is built and deployed
 
@@ -996,3 +996,90 @@ than those two fixes:
 
 Two of those — the archive layout and the README — only reach users through a release, because
 they are properties of the artifact rather than of the code.
+
+---
+
+## 7. The standing list — what pass 2 closed, and what still needs a person
+
+Pass 1's [§4](MACOS-LIVE-TEST-REPORT.md#4-standing-list--what-is-still-untested) is the honest
+inventory of what one pass did not reach. Everything in it that a machine can settle has now been
+settled; the rows that genuinely need a human are named in [§7.3](#73-what-still-needs-a-person).
+
+Four of these checks found defects. They are recorded here rather than in [§3](#3-what-this-pass-changes)
+because they were found by *testing*, not by reading the report — and three of them were fixed.
+
+### 7.1 Closed by this pass
+
+| Row | Result |
+|---|---|
+| **U-06 documented shortcuts** | **Closed — and it found three defects.** See [§7.2](#72-the-keyboard-matrix-and-the-three-defects-it-found) |
+| **B-17 startup argument dispatch** | **Closed.** All six launch shapes start and hold a window: no arguments, `--log`, `--session`, a bare path, a missing path, a bad flag. `--log`, `--session` and a bare path each open the session (`Ready · 500 entries`, 7–9 s). A missing path starts the shell and says **`Startup source not found: /tmp/p3-does-not-exist.txt`**. Pass 1's numbers for this row were void because the measurement that produced them uncovered [F-23](MACOS-LIVE-TEST-REPORT.md#f-23) |
+| **I-16 architecture parity** | **Closed, and it mattered** — this pass added two P/Invoke paths. The `osx-x64` build under Rosetta 2 gets the same seven-item menu bar, the same corrected application menu, the same `--adb` refusal, the same `Europe/Prague`, and the same F-23 answer (**exit 69, 7 lines, no crash report**). *Hide VisualCat* from the menu — the `objc_msgSend` path — hides the application and *Show All* brings it back |
+| **A-08 adversarial corpus sweep** | **Closed.** Every file in pass 1's corpus indexes and verifies: `MixedCase.txt`, `café-nfc`/`café-nfd`, `log-🐱-cat.txt`, `log with space.txt`, `log:with:colon.txt`, `crashy.txt` (1 004 parsed, 1 unknown, 1 rejected), `mixed-formats.txt` (20 000), `medium.txt` (99 992 + 8 unknown), `large.txt` (999 885 + 115 unknown). A file literally named `--` is refused with a product sentence rather than parsed as an option. **Notably, `main` now accepts `outcomes.txt`, which 2.0.13 refuses outright** with *"No supported logcat format could be detected in this file"* — the detection collapse [F-06](MACOS-LIVE-TEST-REPORT.md#f-06) describes |
+| **B-15 `.vcat.zip` round trip** | **Closed.** `vcat export … --type portable-zip` writes the archive **`0600`**, and the desktop's *Open archive* opens it as a second tab with all 1 000 entries and a fitted plot |
+| **X-01 desktop leg** | **Closed — the first macOS desktop import baseline this project has.** 90 MB, 1 000 001 lines, imported in about **23 seconds**; the plot opens **exactly fitted** at `24.98 min · 564.27 ms/px`, and the footer reads `999,885 in view · 999,885 match the filter · 999,885 timed in session · 115 unparsed lines` — every number agreeing with the CLI's, and the 115 unparsed lines surfaced rather than hidden |
+| **Mouse selection of a log row** | **Not reproducible as a defect, and not provable either.** Real `CGEvent` clicks were posted into the entry table with `cliclick`. In the state under test the selected-entry inspector had taken the table's height, so the clicks landed on the inspector rather than on a row — which is what the screenshot shows. Selection itself demonstrably works: F3 moved it through 78 matches and the inspector followed each one. What is still unproven is specifically *pointer* selection, and a person with a trackpad settles it in five seconds |
+
+### 7.2 The keyboard matrix, and the three defects it found
+
+Pass 1 could not tell a dead shortcut from a window with no keyboard focus, because its probe
+answered `no focused element` throughout. With ⌘ shortcuts working ([F-03](MACOS-LIVE-TEST-REPORT.md#f-03))
+the probe finally answers, and the matrix could be run properly.
+
+| Shortcut | Result |
+|---|---|
+| ⌘F | focus moves to `AXTextField "Search message text or regex"` |
+| ⌘0 / ⌘= / ⌘− | `780.001 ms` (already fitted) → `390 ms` → `702 ms` |
+| ⌘, | opens *Appearance & timeline* |
+| ⌘E | opens *Export CSV* |
+| F3 / ⇧F3 | `– / 78` → `40 / 78` → `41 / 78` → `40 / 78` |
+| ⌥1 | the heat map |
+| ⌥2 | an entry row, with its full spoken description |
+| ⌥3 | a template row |
+| ⌥4 | the *Find tags* button, after bringing the Facets tab forward |
+
+The last three only read that way **after** this pass fixed them. As found:
+
+1. **⌥2, ⌥3 and ⌥4 were inert on every platform.** `ListBox.Focus()` answers `false` — in Avalonia
+   a `ListBox` is not itself focusable, only its items are — so three of the four documented pane
+   shortcuts did nothing, while ⌥1, which targets a custom control that *is* focusable, worked.
+   Proved with the numpad variants (`⌥-numpad-1` moved focus, `⌥-numpad-2/3/4` did not), which
+   rules out a macOS key-mapping quirk. Fixed: the shortcut focuses the list's **selected** row —
+   so arrow keys and J/K continue from where the reader is — and falls back to the first row, then
+   to the list itself for an empty one.
+2. **⌥4 could never work from another tab.** With Templates, Views or Session showing, the facet
+   pane has no visible control at all. It now selects the Facets tab first.
+3. **An Alt+digit typed its alternate character into whatever text field had focus.** On macOS
+   ⌥1–⌥4 are `¡ ™ £ ¢`, and marking a `KeyDown` handled does not suppress the `TextInput` that
+   follows it — so pressing the documented pane shortcut while the search box had focus moved the
+   focus *and* appended a currency sign to the query. Measured: after four shortcuts the search
+   field read **`¢™jj`**. Fixed by discarding the one text-input event that follows a claimed
+   Alt+digit, armed for a single event and a single dispatcher turn.
+
+After the fix, pressing ⌘F and then ⌥1, ⌥2, ⌥3, ⌥4 in sequence leaves the search field **empty**
+and the chip bar reading `No filters · showing everything in view`.
+
+### 7.3 What still needs a person
+
+These four cannot be driven from here. Each is one short sitting.
+
+| Row | Why a person, and what it takes |
+|---|---|
+| **Q6 / Q7 — the consent pass** | A TCC prompt is drawn by a system process and deliberately cannot be clicked by synthetic events. iTerm2 is installed for exactly this. It needs: a first launch of the desktop from iTerm2, then *Open log* from `~/Desktop`, `~/Documents`, `~/Downloads`, an external volume and a network share — recording which prompt appears, **what application name it names** (a bare executable has no bundle name, so this is the open question), and what the product says when the prompt is **denied**. Pass 1 calls this "the most important macOS-only consequence of shipping an unbundled executable" |
+| **[F-14](MACOS-LIVE-TEST-REPORT.md#f-14) reproduction, U-07, U-25** | Enabling VoiceOver takes over the Mac's speech and is disruptive on the owner's daily machine, so it was not switched on unasked. The product's half of F-14 is fixed and cannot be demonstrated by reproduction anyway — the crash was seen once in pass 1 and never reproduced in about fifteen attempts. What a VoiceOver soak would still add is **speech order, verbosity, and the cost of the 25-level nesting**, none of which the accessibility API can answer |
+| **Physical pointer selection of a log row** | Synthetic `CGEvent` clicks operate every button in the product, and selection works through every other route. One trackpad click on a row settles the last doubt |
+| **`sudo` rows and a second local account** | P-10 (`fs_usage` temporary-file boundary), X-16 (`memory_pressure`), X-15 (low disk), a dedicated case-sensitive APFS volume (M4), P-17 (multi-user isolation) and P-09 (the ACL boundary) all need an administrator password or a second account on the owner's Mac |
+
+Unchanged from pass 1 and not reachable on this hardware at all: S2/S3/U-03/U-04 (one built-in
+60 Hz display), S5 (`MacBookPro17,1` has no camera housing), U-15 (no Touch Bar), M9 (not an
+MDM-managed Mac), and A-29/M2/D3 (an upgrade from a genuine 2.0.12 data set, which this account
+never had).
+
+### 7.4 One observation, not a finding
+
+A desktop launched with an **unrecognised flag** — `./VisualCat --nonsense` — starts normally and
+says nothing. Nothing is lost and the flag is skipped rather than misread as a path, which is
+defensible; it is recorded because it is the "enabled and silently does nothing" shape this
+codebase works to remove elsewhere, and because a reader who types `--sessions` for `--session`
+gets a silent no-op. Left alone deliberately: it is outside what pass 1 found, and a launcher that
+refuses to start over a stray flag would be worse.

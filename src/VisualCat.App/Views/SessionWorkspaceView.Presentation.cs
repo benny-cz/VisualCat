@@ -438,12 +438,64 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// The list is left in the tree and named with the count, so the screen reader hears the
     /// same thing the screen says.
     /// </remarks>
+    /// <summary>
+    /// Offers the facet the search text names, when searching message text found nothing.
+    /// </summary>
+    /// <remarks>
+    /// Text search matches a message, not a tag. A reader searching for a tag therefore gets
+    /// an empty list and, before this, no hint that the records they are looking for exist and
+    /// are one click away (finding F-12). The check runs only on the empty-result path, only
+    /// when the query is not a regular expression, and only on an exact facet spelling, so it
+    /// costs nothing on an ordinary search and never guesses.
+    /// </remarks>
+    private void OfferFacetSearch(Button byFacet, TextBlock detail, long matching)
+    {
+        _offeredSearchAlternative = null;
+        byFacet.IsVisible = false;
+
+        var query = _viewModel.AppliedFilter.Search?.Query;
+        if (_viewModel.Snapshot is not { } snapshot || string.IsNullOrWhiteSpace(query))
+        {
+            return;
+        }
+
+        try
+        {
+            _offeredSearchAlternative = VisualCat.Core.Query.SearchAlternatives.Find(
+                snapshot,
+                _viewModel.AppliedFilter with { Search = null },
+                query,
+                matching,
+                _viewModel.AppliedFilter.Search?.IsRegex ?? false);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or ObjectDisposedException)
+        {
+            // A hint is never worth failing the empty state for.
+            return;
+        }
+
+        if (_offeredSearchAlternative is not { } offer)
+        {
+            return;
+        }
+
+        byFacet.Content = $"Search the {offer.DimensionLabel} \"{offer.Value}\" instead";
+        byFacet.IsVisible = true;
+        AutomationProperties.SetName(
+            byFacet,
+            $"Filter to the {offer.DimensionLabel} {offer.Value}, which {Counted.Entries(offer.Count)} carry");
+        detail.Text =
+            $"{VisualCat.Core.Query.SearchAlternatives.Describe(offer, query, forCommandLine: false)} " +
+            detail.Text;
+    }
+
     private void UpdateEmptyResults()
     {
         if (_emptyResultsCard is not { } card ||
             _emptyResultsTitle is not { } title ||
             _emptyResultsDetail is not { } detail ||
             _emptyResultsWiden is not { } widen ||
+            _emptyResultsFacet is not { } byFacet ||
             _emptyResultsClear is not { } clear)
         {
             return;
@@ -459,6 +511,8 @@ public sealed partial class SessionWorkspaceView : UserControl
         _entries.IsVisible = !empty;
         if (!empty)
         {
+            _offeredSearchAlternative = null;
+            byFacet.IsVisible = false;
             AutomationProperties.SetName(_entries, "Filtered log entries");
             return;
         }
@@ -495,6 +549,8 @@ public sealed partial class SessionWorkspaceView : UserControl
             widen.IsVisible = false;
             clear.IsVisible = filtered;
         }
+
+        OfferFacetSearch(byFacet, detail, matching);
 
         // The empty list keeps its place in the accessibility tree so the announcement and
         // the screen agree; naming it with the reason is what it was missing.

@@ -1736,4 +1736,59 @@ public sealed partial class LiveTestRemediationTests
         Assert.NotNull(point);
         return point.Value;
     }
+
+    private static readonly string[] ExpectedPanes = ["timeline", "entries", "templates", "facets"];
+
+    /// <summary>
+    /// The four documented pane shortcuts move the keyboard into the pane they name.
+    /// </summary>
+    /// <remarks>
+    /// Three of the four were inert on every platform: <c>ListBox.Focus()</c> answers false,
+    /// because in Avalonia a list is not focusable — only its rows are — so a reader working
+    /// without a pointer reached one analysis pane of four, while KEYBOARD.md documented all
+    /// four. Alt+1 worked only because the timeline is a custom control that is focusable.
+    /// Measured live on macOS with the numpad variants, which rules out a key-mapping quirk.
+    /// </remarks>
+    [AvaloniaFact]
+    public async Task EveryPaneShortcutMovesTheKeyboardIntoItsPane()
+    {
+        await using var fixture = await LiveTestWorkspaceFixture.CreateAsync(FourEntryLog);
+        Dispatcher.UIThread.RunJobs();
+
+        var reached = new List<string>();
+        foreach (var (key, physical, pane) in new[]
+                 {
+                     (Key.D1, PhysicalKey.Digit1, "timeline"),
+                     (Key.D2, PhysicalKey.Digit2, "entries"),
+                     (Key.D3, PhysicalKey.Digit3, "templates"),
+                     (Key.D4, PhysicalKey.Digit4, "facets"),
+                 })
+        {
+            // Start each one from the search field, so a shortcut that does nothing leaves
+            // focus there and is distinguishable from one that works.
+            _ = physical;
+            fixture.View.FocusSearch();
+            Dispatcher.UIThread.RunJobs();
+            var before = fixture.Window.FocusManager?.GetFocusedElement();
+
+            // Straight at the workspace's shortcut table, which is what the shell's tunnel
+            // handler calls. A headless window has no MainView above it to route through.
+            var handled = fixture.View.TryHandleShortcut(new KeyEventArgs
+            {
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = key,
+                KeyModifiers = KeyModifiers.Alt,
+                Source = before,
+            });
+            Dispatcher.UIThread.RunJobs();
+
+            var after = fixture.Window.FocusManager?.GetFocusedElement();
+            if (handled && !ReferenceEquals(before, after))
+            {
+                reached.Add(pane);
+            }
+        }
+
+        Assert.Equal(ExpectedPanes, reached);
+    }
 }

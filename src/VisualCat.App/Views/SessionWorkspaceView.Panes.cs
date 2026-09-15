@@ -283,7 +283,10 @@ public sealed partial class SessionWorkspaceView : UserControl
             return mobilePane;
         }
 
-        return new TabControl
+        // Held, because Alt+4 has to be able to bring the facets forward before it can focus
+        // one: with another tab selected the pane has no visible control and the shortcut was
+        // inert, which is the shape KEYBOARD.md documents as "focus the first facet control".
+        var tabs = new TabControl
         {
             Items =
             {
@@ -293,6 +296,8 @@ public sealed partial class SessionWorkspaceView : UserControl
                 new TabItem { Header = "Session", Content = panes[3] },
             },
         };
+        _analysisTabs = tabs;
+        return tabs;
     }
 
     /// <summary>

@@ -1922,6 +1922,25 @@ public sealed class SessionTabViewModel : INotifyPropertyChanged, IAsyncDisposab
     public Task ToggleFacetAsync(FacetDimension dimension, FacetKey value, bool exclude) =>
         UpdateFilterAsync(Apply(Filter, dimension, value, exclude));
 
+    /// <summary>
+    /// Drops the text search and filters to one facet value instead — the move a reader makes
+    /// on learning that what they typed is a tag rather than message text.
+    /// </summary>
+    /// <remarks>
+    /// One update rather than two, so the entry list, the plot and the counts are re-queried
+    /// once: clearing the search and then adding the facet would show an unfiltered session in
+    /// between, which on a large capture is a visible and pointless full requery (finding F-12).
+    /// </remarks>
+    public Task ApplyFacetSearchAsync(VisualCat.Domain.Queries.FacetQueryDimension dimension, string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        var facet = dimension == VisualCat.Domain.Queries.FacetQueryDimension.Process
+            ? FacetDimension.Process
+            : FacetDimension.Tag;
+        SearchText = string.Empty;
+        return UpdateFilterAsync(Apply(Filter with { Search = null }, facet, FacetKey.OfText(value), exclude: false));
+    }
+
     public FacetState StateOf(FacetDimension dimension, FacetKey value) => StateOf(Filter, dimension, value);
 
     /// <summary>Clears one or both directions of a facet dimension.</summary>
