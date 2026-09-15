@@ -15,13 +15,13 @@ without needing a fact that exists only in a previous session.
 | Field | Value |
 |---|---|
 | Run ID | `20260914-macos-fix-pass` |
-| Status | **IN PROGRESS** |
+| Status | **COMPLETE** — every finding implemented and live-verified; the Mac and the phone handed back ([§5](#5-hand-back)) |
 | Tree | branch `main`, working from `1338921` (the commit that closed pass 1) |
 | Candidate under test | a **build of this tree**, not a release tarball — `2.0.13-dev+<commit>` |
-| Last completed | §4.9 — every fix live-verified on the Mac and the phone |
+| Last completed | §5 — hand-back. The phone is locked, the adb server stopped, the harness shut down |
 | Findings closed | all 23. F-09 as far as the product can (AXModal is upstream); F-13.2 needs a .app bundle this product does not ship |
 | Tests | 1,090 pass (47 Domain, 151 Core, 193 Application, 699 App) |
-| Next step | §5 — hand-back |
+| Next step | a release ([§6](#6-the-release-this-pass-argues-for)), then pass 1's untested rows: the Q6/Q7 consent pass, a human keyboard pass, and a VoiceOver soak |
 
 ### How the candidate is built and deployed
 
@@ -919,3 +919,80 @@ Live testing earned its place three more times after the code was written:
 4. **"1 capture were open."** Fixed to "was"/"is" for the singular.
 
 None of these is visible to a unit test; all four came from driving the real application.
+
+---
+
+## 5. Hand-back
+
+### 5.1 What this pass changed on the Mac, and its state now
+
+| What | State at hand-back |
+|---|---|
+| `~/vcat-run/candidates/desktop-main`, `cli-main` | **left in place** — builds of this tree, and what [§0](#0-restore-point--resume-here) resumes with. Delete with `rm -rf ~/vcat-run/candidates/{desktop,cli}-main` |
+| `~/vcat-run/env.sh` | two lines appended: `VCATM`, `VCLIM` |
+| `~/vcat-run/` helper scripts | three added — `press.applescript`, `axpos.applescript`, `axbtn.applescript`, `axtext.applescript`. They are how the AX assertions in [§4](#4-live-verification) were made |
+| `~/vcat-run/evidence/20260914-macos-arm64-m1/p2/` | this pass's screenshots and the export it checked; mirrored to the Windows host at `artifacts/live-test/20260914-macos-fix-pass/` |
+| `/tmp/p2-*` — corpora, sessions, ADB stubs, scratch CSVs | **deleted** |
+| `~/Library/Android/sdk/platform-tools/adb` (an F-11 probe) | **deleted**, including the `~/Library/Android` tree it needed |
+| `/opt/homebrew/bin/adb` | moved aside during an F-12 control and **restored**; it is the Caskroom symlink it always was |
+| `~/Library/Application Support/VisualCat/` | **left in place** — now `drwx------` where it was `drwxr-xr-x`, with `settings.json` at `0600`. It is the evidence for [F-04 and F-08](#35-f-04-and-f-08--the-modes-that-were-still-wide) |
+| `~/Library/Logs/DiagnosticReports/VisualCat-*.ips` | **10**, unchanged since the `main` baseline run. Two were added by that baseline — the deliberate display-asleep crash and the `pkill` before it — and **none by any build of this tree** |
+| Display sleep | held awake with `caffeinate -dimsu`, slept twice with `pmset displaysleepnow` to test F-23, woken each time. `caffeinate` **killed**; `pmset` settings were never modified |
+| The screenshot daemon and its Terminal window | **stopped and closed** |
+| `adb` server | **stopped** (`adb kill-server`) |
+| Android phone `RFCRC0A9GND` | **screen locked** — `mWakefulness=Dozing`, `mDreamingLockscreen=true`. Its USB-debugging authorization is left as pass 1 left it |
+| macOS version, SIP, Gatekeeper, firewall, `umask`, `ulimit`, appearance, locale, display resolution, TCC grants | **never modified** |
+
+### 5.2 What was deliberately not done
+
+| Row | Why |
+|---|---|
+| **`AXModal` on the product's dialogs** (F-09) | Avalonia's macOS backend maps no modal accessibility state for an owned `ShowDialog` window. `AutomationProperties.SetAccessibilityView` was tried live and changed nothing. Upstream, like its AT-SPI equivalent in `LINUX-LIVE-TEST-REPORT` F-11 |
+| **Presenting dialogs as sheets** (F-09, suggestion 3) | Avalonia exposes no sheet presentation for a macOS window. The two problems the suggestion existed to solve are closed by other means — the minimise trap was already gone on `main`, and the sizing is fixed in [§3.7](#37-f-15--the-two-half-empty-dialogs) |
+| **`UTExportedTypeDeclarations` for `.vcat`** (F-13, suggestion 2) | needs a `.app` bundle, which this product deliberately does not ship. The cheap half — refusing the nesting — is done, on every surface |
+| **Guarding the live-region name in `libAvaloniaNative`** (F-14, suggestion 2) | upstream. The product's half — never letting a live region announce under an empty name — is enforced in one place now |
+| **Cutting 2.0.14** (F-06, F-08, suggestion 1) | a release is the maintainer's decision, not a code change. Everything it would carry is on `main`, and [§6](#6-the-release-this-pass-argues-for) states the case |
+
+### 5.3 To resume, or to re-run any of this
+
+```shell
+# from Windows
+ssh -i %USERPROFILE%\.ssh\windows_claude_ed25519 benny@192.168.0.199
+# on the Mac
+. ~/vcat-run/env.sh          # adds VCATM and VCLIM to pass 1's tokens
+pkill -f shotd.sh
+osascript -e 'tell application "Terminal" to do script "exec $HOME/vcat-run/shotd.sh"'
+osascript -e 'tell application "System Events" to set visible of process "Terminal" to false'
+caffeinate -dimsu &          # only while testing; kill it at hand-back
+```
+
+and from Windows, to rebuild and redeploy after any change:
+
+```shell
+dotnet publish src/VisualCat.Desktop/VisualCat.Desktop.csproj -c Release -r osx-arm64 \
+    --self-contained true -o artifacts/mac-build/desktop
+# then tar | scp | untar into ~/vcat-run/candidates/desktop-main
+```
+
+---
+
+## 6. The release this pass argues for
+
+Pass 1's recommendation was to cut **2.0.14**, because two Major findings — the `logcat -v long`
+data loss and the world-readable sessions — were already fixed on `main` and still shipping in
+2.0.13. That recommendation is now much stronger, because `main` has gained a great deal more
+than those two fixes:
+
+* the product has a **macOS menu bar** and an about box, where 2.0.13 calls itself "Avalonia
+  Application" and offers two menu items;
+* it **starts, or explains itself, when the display is asleep**, where 2.0.13 aborts and files a
+  crash report per attempt;
+* `--adb` **means what it says**, where 2.0.13 silently runs a different tool and reports success;
+* the archives **extract into a directory**, the README's verify line **works on macOS**, and its
+  links point at the release rather than at `main`;
+* a session records the **time zone the user actually chose**;
+* `settings.json` and the diagnostics bundle are **owner-only**;
+* the desktop and the CLI export **byte-identical CSVs** by default.
+
+Two of those — the archive layout and the README — only reach users through a release, because
+they are properties of the artifact rather than of the code.

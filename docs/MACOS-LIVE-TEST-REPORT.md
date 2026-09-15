@@ -31,34 +31,35 @@ line there. Findings are appended to [§3](#3-findings) the moment they are obse
 | Last completed | §2.29 — S6/S7 corrected, the I-13 exit-code matrix, and the first macOS 1M-line performance baseline |
 | Next step | [§4.5](#45-where-the-next-pass-should-start) — the Q6/Q7 consent pass from iTerm2, then a human keyboard-and-mouse pass, then a VoiceOver soak aimed at [F-14](#f-14) |
 | Findings | **23** (F-01 … F-23): **7 Major**, 11 Minor, 5 Polish |
+| **What happened to them** | **All 23 are implemented and live-verified** in [`MACOS-FIX-PASS.md`](MACOS-FIX-PASS.md), which re-tested each one against `main` first and records what was already closed, what was fixed, and the two parts that cannot be fixed from this repository |
 
 ### Findings at a glance
 
-| # | Sev | What |
-|---|---|---|
-| [F-01](#f-01) | Minor | The shipped macOS `README.txt` tells the user to run `sha256sum`, absent before macOS 26 |
-| [F-02](#f-02) | Minor | The macOS tarballs have no wrapper directory — `tar -xzf` scatters 240 files |
-| [F-03](#f-03) | **Major** | The macOS menu bar calls the product **"Avalonia Application"**, and there are no menus at all |
-| [F-04](#f-04) | Minor | The data root is created world-readable (0755) — superseded in detail by F-08 |
-| [F-05](#f-05) | Minor | `SUPPORT.md` publishes no macOS floor; the binaries declare `minos 12.0` |
-| [F-06](#f-06) | **Major** | 2.0.13 still ships the `logcat -v long` silent data loss that `main` has fixed |
-| [F-07](#f-07) | Minor | Sessions record `Europe/Bratislava` on a Mac set to `Europe/Prague` |
-| [F-08](#f-08) | **Major** | Every saved session is world-readable, contradicting `PRIVACY.md` in its own words |
-| [F-09](#f-09) | **Major** | A click on a modally-blocked window is queued and replayed after the dialog closes |
-| [F-10](#f-10) | **Major** | `--adb` pointing at a missing path or a directory is silently ignored in favour of `PATH` |
-| [F-11](#f-11) | Minor | `~/Library/Android/sdk` — the macOS SDK location — is never probed |
-| [F-12](#f-12) | Polish | Three ADB messages that each send the reader one step the wrong way |
-| [F-13](#f-13) | Polish | A `.vcat` session is a folder, so the save panel lets you save a session inside one |
-| [F-14](#f-14) | **Major** | Abort inside `-[AvnAccessibilityElement raiseLiveRegionChanged]` — an accessibility crash |
-| [F-15](#f-15) | Minor | Two dialogs reserve roughly half their height for nothing |
-| [F-16](#f-16) | Polish | The search field has no accessible name; the entry legend collides with the status bar |
-| [F-17](#f-17) | Minor | `openSessionPaths` is written on every exit and never read back |
-| [F-18](#f-18) | **Major** | Follow leaves the newest records out of the view; two counters on screen disagree |
-| [F-19](#f-19) | Minor | The shipped README links docs from `main`, so users read post-release features |
-| [F-20](#f-20) | Minor | Desktop and CLI default to different CSV row orders |
-| [F-21](#f-21) | Polish | Recent captures' two selection models; unfitted first paint; export path not shown |
-| [F-22](#f-22) | Minor | Native full screen draws the toolbar under the window's own title bar |
-| [F-23](#f-23) | **Major** | The desktop head will not start while the display is asleep or the screen is locked |
+| # | Sev | What | Now |
+|---|---|---|---|
+| [F-01](#f-01) | Minor | The shipped macOS `README.txt` tells the user to run `sha256sum`, absent before macOS 26 | Fixed — `shasum -a 256 --ignore-missing`, asserted by the package verifier |
+| [F-02](#f-02) | Minor | The macOS tarballs have no wrapper directory — `tar -xzf` scatters 240 files | Fixed — one root directory per archive on every platform, asserted twice |
+| [F-03](#f-03) | **Major** | The macOS menu bar calls the product **"Avalonia Application"**, and there are no menus at all | Fixed — 7 menu-bar items, ⌥⌘H, an About box, and ⌘ shortcuts that work |
+| [F-04](#f-04) | Minor | The data root is created world-readable (0755) — superseded in detail by F-08 | Fixed — an existing 0755 root is narrowed on launch |
+| [F-05](#f-05) | Minor | `SUPPORT.md` publishes no macOS floor; the binaries declare `minos 12.0` | Fixed — macOS 12, both architectures, Rosetta, and the awake-display limit |
+| [F-06](#f-06) | **Major** | 2.0.13 still ships the `logcat -v long` silent data loss that `main` has fixed | Already fixed on `main`; the assertion and the fixture were there too |
+| [F-07](#f-07) | Minor | Sessions record `Europe/Bratislava` on a Mac set to `Europe/Prague` | Fixed — `/etc/localtime`'s link target, verified as `Europe/Prague` |
+| [F-08](#f-08) | **Major** | Every saved session is world-readable, contradicting `PRIVACY.md` in its own words | Fixed — `settings.json`, diagnostics and the root are owner-only; PRIVACY.md is honest about volumes without modes |
+| [F-09](#f-09) | **Major** | A click on a modally-blocked window is queued and replayed after the dialog closes | Not reproducible on `main`; the minimise trap is closed. `AXModal` is upstream |
+| [F-10](#f-10) | **Major** | `--adb` pointing at a missing path or a directory is silently ignored in favour of `PATH` | Fixed — a pinned `--adb` is refused by name, never replaced |
+| [F-11](#f-11) | Minor | `~/Library/Android/sdk` — the macOS SDK location — is never probed | Fixed — `~/Library/Android/sdk` and Homebrew's linked `adb` are probed |
+| [F-12](#f-12) | Polish | Three ADB messages that each send the reader one step the wrong way | Fixed — the search list is generated from the search; the macOS accessory remedy is named |
+| [F-13](#f-13) | Polish | A `.vcat` session is a folder, so the save panel lets you save a session inside one | Fixed — a session cannot be saved or written inside another session |
+| [F-14](#f-14) | **Major** | Abort inside `-[AvnAccessibilityElement raiseLiveRegionChanged]` — an accessibility crash | Fixed — every live region is named before it can announce |
+| [F-15](#f-15) | Minor | Two dialogs reserve roughly half their height for nothing | Fixed — 600×375, 720×328, 460×195 where heights were fixed |
+| [F-16](#f-16) | Polish | The search field has no accessible name; the entry legend collides with the status bar | Fixed — the inspector scrolls and clips; the search field was already named |
+| [F-17](#f-17) | Minor | `openSessionPaths` is written on every exit and never read back | Fixed — the start page offers a restore and says when the last exit was unclean |
+| [F-18](#f-18) | **Major** | Follow leaves the newest records out of the view; two counters on screen disagree | Snapshots already fixed on `main`; the count now names the window it counts |
+| [F-19](#f-19) | Minor | The shipped README links docs from `main`, so users read post-release features | Fixed — links carry the release tag, asserted by the package verifier |
+| [F-20](#f-20) | Minor | Desktop and CLI default to different CSV row orders | Fixed — the two surfaces' default exports are byte-identical |
+| [F-21](#f-21) | Polish | Recent captures' two selection models; unfitted first paint; export path not shown | Fixed — Open takes a single tick, the import fits, the export names its folder |
+| [F-22](#f-22) | Minor | Native full screen draws the toolbar under the window's own title bar | Full screen already fixed on `main`; the window position is now restored |
+| [F-23](#f-23) | **Major** | The desktop head will not start while the display is asleep or the screen is locked | Fixed — exit 69 and one sentence, after waiting six seconds for a display |
 
 **The release recommendation this run produces.** Two of the seven Major findings —
 [F-06](#f-06) and [F-08](#f-08) — are defects that `main` has already fixed and that 2.0.13
@@ -169,7 +170,7 @@ nothing).
 Extracted executables:
 
 | File | SHA-256 | Mode |
-|---|---|---|
+|---|---|---|---|
 | `desktop-osx-arm64/VisualCat` | `3fe3360ea5cc34f7a98d25184de73c5f2728be6a66892b37872f5f20b82551e7` | `0755` |
 | `cli-osx-arm64/vcat` | `ac3034a7cef1e46bca49f029f58c38ff09c86a1516585a48994b9a448b3a14c4` | `0755` |
 
@@ -222,7 +223,7 @@ three Files-and-Folders grants a log import would need.
 ### 1.6 Deviations from the plan
 
 | Plan requirement | What was actually used | Effect on the evidence |
-|---|---|---|
+|---|---|---|---|
 | "An ordinary non-administrator account for the primary run" (§2.1) | `benny`, an **administrator** | Elevation was never used or needed; but this run cannot prove that a non-admin account behaves identically |
 | A quiet machine | The owner's daily Mac, with Safari, Claude, Visual Studio and others resident | Absolute timings are upper bounds and are labelled as such; no timing here is a clean-room benchmark |
 | **S0** — default scaling as the visual baseline | **S1** — "looks like 1440 × 900" scaled mode | Every screenshot is a 2× render of a scaled mode. Noted per assertion where it matters |
@@ -265,7 +266,7 @@ archive, 207 for the CLI) directly into it. See [F-02](#f-02).
 **Code signature** (`codesign -dv --verbose=4`):
 
 | Field | `VisualCat` | `vcat` |
-|---|---|---|
+|---|---|---|---|
 | `Identifier` | **`apphost`** | **`apphost`** |
 | `Format` | `Mach-O thin (arm64)` | `Mach-O thin (arm64)` |
 | `CodeDirectory` | `v=20400 size=1152 flags=0x2(adhoc) hashes=31+2` | same shape |
@@ -455,7 +456,7 @@ has never run it.
 `vcat --version`):
 
 | Run | `osx-x64` under Rosetta | `osx-arm64` native |
-|---|---|---|
+|---|---|---|---|
 | 1st ever (cold, AOT translation) | **4.83** | 0.09 |
 | 2nd | 0.17 | 0.08 |
 | 3rd | 0.08 | 0.02 |
@@ -506,7 +507,7 @@ Built on the Mac with the candidate CLI, `~/vcat-run/build-corpus.sh`, hashes in
 `xattr -c`.
 
 | Corpus | Bytes | Lines |
-|---|---|---|
+|---|---|---|---|
 | `small.txt` | 90 384 | 1 001 |
 | `medium.txt` | 8 998 984 | 100 001 |
 | `fmt-threadtime.txt` | 451 040 | 5 001 |
@@ -552,7 +553,7 @@ The plan asks for discrepancies to be recorded rather than silently fixed. Three
 own recipes are wrong on this host.
 
 | Plan text | What actually happens on macOS 26.6.2 | Suggested plan edit |
-|---|---|---|
+|---|---|---|---|
 | §2.1, §3: "`sha256sum` … **not** present unless GNU coreutils has been installed" | `/sbin/sha256sum` **exists** — `sha256sum (Darwin) 1.0`, one of six hard links to `/sbin/md5`, and its `-c` mode works against `SHA256SUMS` | Say "absent before macOS 26; present as a Darwin re-implementation from macOS 26". It does not change the README finding ([F-01](#f-01)), which is about macOS 15 and earlier |
 | §3.1: `chmod a-w -- *.txt` | **fails**: `chmod: --: No such file or directory`. BSD `chmod` has no `--` end-of-options marker and treats it as a file name | Drop the `--` for `chmod` (keep it for `tar`, `rm`, `shasum`, which do support it). `xattr -c -- *.txt` *does* work |
 | §2.2: `system_profiler SPDisplaysDataType` to record "the *looks like* scaled resolution" | macOS 26 prints only `Resolution: 2560 x 1600 Retina` and **no `UI Looks like:` line**, so a scaled mode is invisible to it | Measure instead: `osascript -e 'tell application "Finder" to get bounds of window of desktop'` gives the point size, and the pixel size of a full-screen `screencapture` gives the framebuffer. Their ratio is the backing scale; framebuffer ≠ panel means a scaled mode |
@@ -727,7 +728,7 @@ Every route was exercised with `PATH` stripped to `/usr/bin:/bin:/usr/sbin:/sbin
 fallback cannot mask a failure.
 
 | Route | Probed? | Result |
-|---|---|---|
+|---|---|---|---|
 | `--adb <valid path>` | yes | device listed |
 | `ANDROID_SDK_ROOT/platform-tools/adb` | yes | device listed |
 | `ANDROID_HOME/platform-tools/adb` | **yes** — though `CLI.md` and the error message never mention it | device listed |
@@ -739,7 +740,7 @@ fallback cannot mask a failure.
 Negative paths for an explicit `--adb`:
 
 | `--adb` value | Behaviour | Correct? |
-|---|---|---|
+|---|---|---|---|
 | a file that is not executable (`0644`) | `error: An error occurred trying to start process '/tmp/noexec-adb' … Permission denied`, exit 1 | acceptable — late, but specific |
 | a dangling symlink | `… No such file or directory`, exit 1 | yes |
 | an executable that exits non-zero | `error: ADB device discovery failed: FAKE-ADB-WAS-RUN`, exit 1 | yes |
@@ -934,7 +935,7 @@ record. Gutter numbering agrees with an independent line count.
 **B-07 · severity filters and clear semantics — PASS, exactly.**
 
 | Action | Product | Oracle |
-|---|---|---|
+|---|---|---|---|
 | baseline | 1 000 | 1 000 |
 | hide **F** | 844 | 1 000 − 156 = 844 |
 | hide **F, E** | 679 | − 165 = 679 |
@@ -2109,7 +2110,7 @@ When `explicitPath` is supplied but `File.Exists` is false — a typo, a moved S
 method continues to the ambient probes. Measured live:
 
 | Command | Exit | Device listed? |
-|---|---|---|
+|---|---|---|---|
 | `vcat adb-devices --adb /tmp` (a directory) | **0** | **yes** — via `PATH` |
 | `vcat adb-devices --adb /tmp/definitely-not-here` | **0** | **yes** — via `PATH` |
 | `vcat capture-adb --serial RFCRC0A9GND --adb /tmp/definitely-not-here --duration-seconds 2` | **0** | **captured a full 2 s session** |
@@ -2810,7 +2811,7 @@ comparison that fails for no visible reason.
 **What happens.**
 
 | Surface | Default row order | Documented? |
-|---|---|---|
+|---|---|---|---|
 | `vcat export` | **chronological** | yes — `CLI.md`: "`--order chronological` is the default; `--order source` preserves source sequence" |
 | Desktop *Export CSV* | **Source order** | only as the dialog's current value |
 
