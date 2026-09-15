@@ -227,6 +227,128 @@ run, §20 records this remediation, and §21–§25 the passes that followed it.
   `errors.ndjson` the reference's own example writes could not be parsed a line at a time.
   Every other command still prints one indented document.
 
+#### From the macOS live test
+
+The first macOS run in the project's history drove the shipped `osx-arm64` and `osx-x64`
+2.0.13 tarballs through a real Aqua session on an Apple M1, with a physical phone on the
+Mac's own USB bus, and found 23 defects. Every one is now implemented and re-verified on
+the same Mac against a build of this tree.
+[`docs/MACOS-LIVE-TEST-REPORT.md`](docs/MACOS-LIVE-TEST-REPORT.md) records the run and
+[`docs/MACOS-FIX-PASS.md`](docs/MACOS-FIX-PASS.md) the remediation, including the six
+findings that turned out to be already closed on `main` and the four rows that are
+Avalonia's to fix rather than this product's.
+
+- **VisualCat has a macOS menu bar.** It had two items — the Apple menu and a stock
+  application menu Avalonia synthesises — so there was no File, Edit, View, Window or Help,
+  and with them no ⌘W, ⌘M, ⌘,, ⌘O, ⌘S, no window list, no searchable help, and no Edit menu
+  for assistive technology to enumerate. There are seven now. File is generated from the same
+  command descriptors the toolbar and the *More* menu are built from, with the same
+  enablement, so the three presentations cannot disagree about what exists or what can run.
+- **The application menu names the product.** *About Avalonia* opened the framework's about
+  box, leaving the version string a bug report needs unreachable from the menu bar; there is
+  a real About VisualCat now, with the full informational version, selectable. *Settings…* is
+  at ⌘, where macOS users look for it.
+- **Hide Others is ⌥⌘H**, the macOS standard. The stock menu bound it to ⌥⌘Q — one modifier
+  away from Quit, on a command people reach for in a hurry.
+- **Shortcuts use the platform's own modifier**, ⌘ on macOS and Ctrl elsewhere. Written
+  against Ctrl everywhere, ⌘F did nothing on a Mac and a reader concluded search did not
+  exist — while ⌃F is already spoken for there, moving the caret inside a text field.
+- **The desktop no longer aborts when the Mac's display is asleep.** Avalonia's CoreVideo
+  display link has nothing to attach to then, and the failure arrived as an unhandled
+  exception carrying the raw number `-6661`, printed twice, followed by `SIGABRT` and a
+  system crash report per attempt — for a state every laptop reaches after ten idle minutes.
+  It now asks CoreGraphics first, waits six seconds for a screen (so a launch as the display
+  goes dark simply succeeds), and otherwise exits `69` with one sentence naming `vcat`, which
+  needs no display at all.
+- **An unhandled start-up failure is reported once.** A catch-all printed the exception and
+  then rethrew it, so every such failure reached the reader twice — 38 lines of identical
+  trace in exactly the situation where they are hunting for one useful one.
+- **`--adb` and the desktop's ADB path setting are authoritative.** A path that did not
+  exist, named a directory, or was not executable was dropped and the search continued to
+  `PATH`, so the run succeeded with a different `adb` and exit code 0 — on a machine with
+  several installations, with nothing saying which one produced the capture. Each is now
+  refused by name with the remedy.
+- **ADB is looked for where machines actually keep it**: `~/Library/Android/sdk` on macOS,
+  `~/Android/Sdk` on Linux, both letter cases of the last segment, and Homebrew's linked
+  executable, which ships no `platform-tools` tree for the old probe to find. The only
+  default probed before was the Windows `%LOCALAPPDATA%` convention, which on macOS resolves
+  to a path no ordinary Mac has.
+- **"ADB was not found" lists where it looked**, generated from the search itself so the two
+  cannot drift apart, and ends with how to install it on this platform. A device that is
+  attached but missing from `adb devices` now gets the macOS remedy beside the Linux `udev`
+  one: an Apple silicon Mac asks once per accessory, and until that is answered the device is
+  not listed at all.
+- **A live region can no longer announce under an empty accessible name.** VisualCat aborted
+  once inside Avalonia's macOS accessibility bridge, which builds an `NSDictionary` from that
+  name — no product message, no managed stack, no chance to save, on the path the users least
+  able to recover depend on. Every live region in the product now goes through one seam that
+  names it before it can fire.
+- **A session records the time zone the host is actually set to.** macOS keeps every zone as
+  its own file rather than as symlinked aliases, so .NET's content match returned the first
+  alphabetical neighbour: a Mac set to `Europe/Prague` wrote `Europe/Bratislava` into every
+  session it created. The same aliasing hits Oslo for Stockholm, Toronto for Nassau, Kuala
+  Lumpur for Singapore.
+- **`settings.json`, the diagnostics directory and an inherited data root are owner-only.**
+  Sessions already were; these were not, and `settings.json` holds the configured session
+  directory, the configured ADB path and a list of recently open session paths. A data root
+  created by an older build is narrowed on the next launch rather than keeping its `0755`
+  for ever.
+- **A session cannot be saved or written inside another session.** A `.vcat` session is a
+  directory, so a save panel navigates into one as readily as into any folder — and the outer
+  session then carries data its own manifest does not describe, which its cache retention
+  later deletes. Refused on every surface, the command line included.
+- **The start page says what happened to the workspace.** The desktop wrote the list of open
+  sessions on every exit and read it back nowhere, so a crash — or an ordinary ⌘Q with three
+  tabs open — was followed by an empty start page with nothing saying the captures were safe.
+  It now offers to reopen them, and distinguishes "closed unexpectedly" from a clean quit by
+  a marker rather than by guessing.
+- **The window comes back where it was.** Only its size was stored, so a window moved to a
+  second display or to a corner of a large screen returned to the top-left corner every
+  launch. The origin is stored too, and validated against the display arrangement that exists
+  now — a frame that no longer overlaps an attached screen falls back to the platform's own
+  placement rather than putting the window somewhere unreachable.
+- **A short import fills the plot.** Fitting used the live tail's two-second floor and padded
+  only the left edge, so a 1.5-second file opened at a two-second window pinned to its end
+  with about a quarter of the plot blank in front of the data — which reads as a quiet period
+  in the reader's log rather than as empty canvas.
+- **The count line names the window it counts.** `40 in view · 41 match the filter` with no
+  filter active read as a contradiction; both numbers were right, because Follow keeps a
+  30-second window on a session minutes long. It says `40 in view (30 s)` now.
+- **The desktop and the CLI export the same bytes by default.** The desktop defaulted to
+  source order and the CLI to chronological, so the same session exported from both surfaces
+  with default options produced two different files and nothing said why. The export result
+  line also names the order and the absolute folder — the desktop remembers whichever order
+  the reader last chose, and a macOS save panel may have been redirected.
+- **Recent captures explains its two selections.** The tick column drives Delete and the row
+  highlight drives Open, so ticking one capture left Open disabled, which reads as a broken
+  button. Open now takes a single ticked capture as well as a highlighted row, and both
+  buttons say which selection they act on.
+- **Two dialogs stop reserving half their height for nothing.** *Live ADB capture* measured
+  600 × 438 with its content ending near 300; the import review reserved room for a
+  disclosure that was collapsed. They size to content now, with the declared height as a cap.
+- **The entry inspector stays inside its pane.** Nothing clipped it, so with the inspector
+  open on a short window the outcome legend was painted into the same band as the status line
+  and the two overlapped. It has its own scroller now.
+- **Release archives contain one directory.** Every member was `./<name>`, so `tar -xzf` —
+  the command the README's own first instruction implies — dropped 240 generically-named .NET
+  assemblies into whatever directory the user was standing in. Every archive now carries one
+  top-level directory named after itself, on every platform, and two assertions stop it
+  regressing.
+- **The macOS README's verify line works on macOS.** It said `sha256sum`, which is GNU
+  coreutils; macOS shipped no command by that name until macOS 26, so the one instruction
+  whose purpose is to run before the binary answered `command not found`. Both Unix artifacts
+  now use `shasum -a 256 --ignore-missing`.
+- **A shipped README links its own release.** Every documentation link pointed at `main`, so
+  a user following the link their own archive gave them read documentation for code they did
+  not have — a gap that widens with every release. It also said `vcat --version` through a
+  PowerShell backtick, which the template turned into a vertical tab.
+- **`SUPPORT.md` states the macOS floor** — macOS 12 (Monterey), both architectures, Rosetta 2
+  for `osx-x64` — and a new *Reporting a problem* section says where the crash evidence lives
+  on each platform. `PRIVACY.md` no longer promises `700`/`600` "wherever the session is
+  written" without saying that a volume with no POSIX modes cannot carry it. `KEYBOARD.md`
+  has a macOS column. `CLI.md` documents all five routes the ADB locator takes, where it
+  documented three.
+
 ## [2.0.13] - 2026-09-09
 
 ### Added
