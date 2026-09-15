@@ -477,10 +477,47 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(window);
         _hostWindow = window;
+
+        // The frame is remembered while the window is alive, not read back when it closes.
+        // On macOS the window is already torn down by the time Closed runs, so asking it where
+        // it was answered 0, 0 and every launch restored the top-left corner — the very defect
+        // this is meant to fix (finding F-22). Only the normal state is worth keeping: a
+        // maximized or full-screen frame is the display's size, not a place the reader chose.
+        // The position comes from the event, not from Window.Position: Avalonia's macOS backend
+        // answers 0, 0 for that property even while the window is plainly elsewhere on screen,
+        // so reading it back stored the top-left corner however the reader had arranged things.
+        window.PositionChanged += (_, args) => RememberWindowFrame(window, args.Point);
+        window.PropertyChanged += (_, change) =>
+        {
+            if (change.Property == Window.WindowStateProperty || change.Property == Visual.BoundsProperty)
+            {
+                RememberWindowFrame(window, null);
+            }
+        };
+
         if (_settingsLoaded)
         {
             ApplyWindowSettings(window);
         }
+    }
+
+    /// <summary>The window frame the reader last chose, or null while it is maximized.</summary>
+    private (double Left, double Top, double Width, double Height)? _normalWindowFrame;
+
+    private void RememberWindowFrame(Window window, PixelPoint? reportedPosition)
+    {
+        if (window.WindowState != WindowState.Normal ||
+            window.Bounds.Width < window.MinWidth ||
+            window.Bounds.Height < window.MinHeight)
+        {
+            return;
+        }
+
+        var position = reportedPosition ?? window.Position;
+        var left = position.X == 0 && position.Y == 0 && _normalWindowFrame is { } previous
+            ? (previous.Left, previous.Top)
+            : ((double)position.X, (double)position.Y);
+        _normalWindowFrame = (left.Item1, left.Item2, window.Bounds.Width, window.Bounds.Height);
     }
 
     public async Task PersistWindowStateAsync(CancellationToken cancellationToken = default)
@@ -490,20 +527,19 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
+        RememberWindowFrame(window, null);
         var updated = _settings with { WindowMaximized = window.WindowState == WindowState.Maximized };
-        if (window.WindowState == WindowState.Normal &&
-            window.Bounds.Width >= window.MinWidth &&
-            window.Bounds.Height >= window.MinHeight)
+        if (_normalWindowFrame is { } frame)
         {
             updated = updated with
             {
-                WindowWidth = window.Bounds.Width,
-                WindowHeight = window.Bounds.Height,
+                WindowWidth = frame.Width,
+                WindowHeight = frame.Height,
 
                 // The origin as well as the size. Without it a window moved to a second display
                 // or to a corner of a large screen came back at 0, 30 every launch (F-22).
-                WindowLeft = window.Position.X,
-                WindowTop = window.Position.Y,
+                WindowLeft = frame.Left,
+                WindowTop = frame.Top,
             };
         }
 

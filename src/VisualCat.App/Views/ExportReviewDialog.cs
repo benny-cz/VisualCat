@@ -56,8 +56,14 @@ internal sealed class ExportReviewDialog : DialogBody<ExportDecision>, IDisposab
         // encoding read "UTF-8 with byte-or", which is the same defect as a value clipped in the
         // settings dialog (finding F-14).
         PreferredSize = new Size(720, 560);
-        MinimumSize = _mobile ? new Size(300, 340) : new Size(430, 390);
+        MinimumSize = _mobile ? new Size(300, 340) : new Size(430, 300);
         ScrollsInternally = true;
+
+        // The three chooser rows and a short summary end around 300 points, so a fixed 560 left
+        // the decision row roughly 250 points below the last thing the reader read (finding
+        // F-15). 560 is the cap now; the scope list grows the window when a session offers
+        // several scopes, and the body still scrolls beyond that.
+        SizesToContent = !_mobile;
         var mobile = _mobile;
         var scopeOptions = _scopeOptions;
         var buttons = _buttons;

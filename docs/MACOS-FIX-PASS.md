@@ -18,9 +18,10 @@ without needing a fact that exists only in a previous session.
 | Status | **IN PROGRESS** |
 | Tree | branch `main`, working from `1338921` (the commit that closed pass 1) |
 | Candidate under test | a **build of this tree**, not a release tarball — `2.0.13-dev+<commit>` |
-| Last completed | §3.16 — every finding implemented; packaging, docs and tests done |
+| Last completed | §4.9 — every fix live-verified on the Mac and the phone |
 | Findings closed | all 23. F-09 as far as the product can (AXModal is upstream); F-13.2 needs a .app bundle this product does not ship |
-| Next step | §4 — live verification of the second batch on the Mac and the phone, then the hand-back |
+| Tests | 1,090 pass (47 Domain, 151 Core, 193 Application, 699 App) |
+| Next step | §5 — hand-back |
 
 ### How the candidate is built and deployed
 
@@ -742,3 +743,179 @@ F-06's remaining two suggestions were **already on `main`**: `SyntheticLogFormat
 every generated format to detect as itself at confidence ≥ 0.9 — the assertion that would have
 caught the original defect — and `test-data/golden-formats.txt` already carries the four
 five-digit-thread-id fixtures with narrow and wide pid/tid combinations.
+
+---
+
+## 4. Live verification
+
+Every row below was executed on the Mac against a build of this tree, with the phone attached.
+Nothing here is inferred from the source.
+
+### 4.1 The command line
+
+| Finding | Command | Result |
+|---|---|---|
+| F-10 | `vcat adb-devices --adb /tmp` | `error: The configured ADB path '/tmp' is a directory, not the adb executable. Point it at the file, usually '/tmp/platform-tools/adb'.` · **exit 2** (was exit 0, listing the phone) |
+| F-10 | `vcat adb-devices --adb /tmp/definitely-not-here` | `…does not exist. Correct it, or clear it to search the Android SDK locations and PATH instead.` · **exit 2** |
+| F-10 | `--adb` at a file with mode 644 | `…is not executable. Run 'chmod +x /tmp/p2-noexec-adb'.` · **exit 2** |
+| F-10 | `--adb /opt/homebrew/bin/adb` | the phone, **exit 0** — a correct pin still works |
+| F-11 | `adb` at `~/Library/Android/sdk/platform-tools/adb`, `PATH` stripped to `/usr/bin:/bin:/usr/sbin:/sbin` | the phone is listed |
+| F-11 | only `/opt/homebrew/bin/adb`, no SDK, `PATH` stripped | the phone is listed |
+| F-12 | nothing findable | the eight-line list of every location searched, ending with `brew install --cask android-platform-tools` |
+| F-12 | `capture-adb --serial NOSUCHDEVICE` | `…On macOS, check that the device was allowed to connect: an Apple silicon Mac asks once per new accessory, and until that is answered ADB does not list the device at all. The setting is System Settings › Privacy & Security › Allow accessories to connect.` |
+| F-13 | `vcat index … --output /tmp/p2-outer.vcat/inner.vcat` | `error: That output path is inside the session 'p2-outer.vcat'…` · **exit 2** |
+| F-13 | `vcat capture-adb … --output /tmp/p2-outer.vcat/cap.vcat` | the same refusal; a normal output path still exits 0 |
+| F-07 | `readlink /etc/localtime` → `…/Europe/Prague`; `vcat index` then `vcat info` | `"timeZoneId": "Europe/Prague"` — was `Europe/Bratislava` on 2.0.13 **and** on `main` |
+| — | a real 10-second ADB capture from `RFCRC0A9GND` | 1 112 source lines, 1 059 parsed entries, `ThreadTime`, session directory `drwx------` |
+
+### 4.2 Starting with no display (F-23)
+
+```shell
+$ pmset displaysleepnow && sleep 3 && ./VisualCat ; echo $?
+```
+
+| | `main` | this tree |
+|---|---|---|
+| exit code | **134** (`SIGABRT`) | **69** (`EX_UNAVAILABLE`) |
+| stderr | 38 lines, the same stack trace twice | **7 lines**, naming `vcat` |
+| new `~/Library/Logs/DiagnosticReports/VisualCat-*.ips` | **+1 per attempt** | **+0** (10 before, 10 after) |
+
+and the launch that now succeeds where it used to crash — asleep at launch, woken two seconds
+into the six-second wait:
+
+```shell
+$ pmset displaysleepnow && sleep 3 && nohup ./VisualCat >/tmp/f23c.log 2>&1 &
+$ sleep 2 && caffeinate -u -t 3
+$ pgrep -fl VisualCat   → 4400 …/desktop-main/VisualCat
+$ cat /tmp/f23c.log     → (empty)
+$ osascript … get name of every window → VisualCat v2 — See the shape of your log
+```
+
+### 4.3 The macOS menu bar (F-03)
+
+```shell
+$ osascript -e 'tell application "System Events" to tell process "VisualCat" \
+    to get name of every menu bar item of menu bar 1'
+Apple, VisualCat, File, Edit, View, Window, Help          # was: Apple, VisualCat
+```
+
+Read off the live process, with accelerators and enablement:
+
+```
+VisualCat  About VisualCat · Settings… ⌘, · Services · Hide ⌘H · Hide Others ⌥⌘H
+           · Show All · Quit ⌘Q
+File       Open log… ⌘O · ADB live… ⇧⌘L · Open log with options… ⌥⌘O
+           · Open session… ⇧⌘O · Recent captures… ⇧⌘R · Follow growing file…
+           · Open portable archive… ·· Save session… ⌘S [disabled]
+           · Save portable… ⇧⌘S [disabled] · Export CSV… ⌘E [disabled]
+           · Lines not on the timeline… [disabled] ·· Close Window ⌘W
+Edit       Cut ⌘X · Copy ⌘C · Paste ⌘V · Select All ⌘A ·· Find… ⌘F
+           · Find Next ⌘G · Find Previous ⇧⌘G
+           ·· Writing Tools · AutoFill · Start Dictation… · Emoji & Symbols   ← macOS adds these
+View       Fit Session ⌘0 · Zoom In ⌘= · Zoom Out ⌘−
+           ·· Enter Full Screen ⌃⌘F                                          ← macOS adds this
+Window     Minimize ⌘M · Zoom
+Help       VisualCat Help · Keyboard Shortcuts · Release Notes ·· Report a Bug
+```
+
+The four disabled File items were disabled because no session was open, which is the point:
+enablement comes from the same predicates the toolbar uses.
+
+**They work, not merely exist.**
+
+| Command | Before | After |
+|---|---|---|
+| **About VisualCat** | — | the product's about box, with `2.0.13-dev+307cc8cb54a7b9ac8971ac623591561fd65acf8f` selectable (`f03-about.png`) |
+| **View → Fit Session** | — | `30 s · 11.3 ms/px` → `6.38 min · 144.02 ms/px`, and the count `40 in view (30 s)` → `41 in view` |
+| **View → Zoom In** | — | `6.38 min` → `3.19 min · 72.01 ms/px` |
+| **Edit → Find…** | — | focus moves to `AXTextField "Search message text or regex"` |
+| **⌘F** | nothing at all | the same field takes focus |
+
+### 4.4 The workspace, the window and the counts
+
+| Finding | Evidence |
+|---|---|
+| F-17 | after a `pkill`: **"VisualCat closed unexpectedly. Your 1 capture is safe — reopen it, or find it under Recent captures."** with a **Reopen** button on the start page. After ⌘Q: **"1 capture was open when you last closed VisualCat."** |
+| F-17 | the clean-exit marker is deleted by ⌘Q and absent on the next launch, so "unexpectedly" is a fact rather than a guess |
+| F-18 | 41 lines in the file → `40 in view (30 s) · 41 match the filter · 41 in session`, beside `Capturing · 41 lines received`, held through 60 s of idle; *Fit Session* then reads `41 in view` |
+| F-21 | a 1.501-second import opens at **`1.501 s · 565.1 µs/px`**, filling the plot. Pass 1: `2 s · 753 µs/px` with a quarter of it blank |
+| F-22 | window moved to `300, 200` at `1100 × 700`, ⌘Q, relaunch → **`300, 200, 1100, 700`**. Before: `0, 30` every time |
+| F-16 | with *SELECTED ENTRY* open on a 1440 × 795 window, the inspector ends above `Stopped · 41 entries kept`, which has its own row (`f16-full.png`). Pass 1: the two overlapped into each other |
+| F-04, F-08 | the data root was deliberately widened to `0755`; the next launch narrowed it to `drwx------`. After a clean quit: `settings.json` `-rw-------`, `Diagnostics` `drwx------`. Pass 1 and `main`: `drwxr-xr-x` and `-rw-r--r--` |
+| F-07 | the plot header reads **`Europe/Prague`** (`f16-full.png`) where every earlier build read `Europe/Bratislava` |
+
+### 4.5 Export (F-20, F-21)
+
+The decisive test, because it is the one a script would notice:
+
+```shell
+$ shasum -a 256 <desktop default export> <cli default export>
+c81f3de7a2bc60a0c50c5adbff08ea2235b3a6764d64d720c134101c45cf4d20  …/export-check.csv
+c81f3de7a2bc60a0c50c5adbff08ea2235b3a6764d64d720c134101c45cf4d20  /tmp/p2-cli-default.csv
+```
+
+**Byte-identical.** Pass 1 recorded the same two exports differing from line 243. The dialog's
+*Row order* now opens on **Chronological**, and the result line names the order and the folder:
+
+```
+Exported 1,000 timed rows · all timed entries in session · chronological order ·
+/Users/benny/vcat-run/evidence/20260914-macos-arm64-m1/p2/export-check.csv
+```
+
+### 4.6 Recent captures (F-21)
+
+Read from the live *Open* button as the ticks changed:
+
+| State | `enabled` | `AXHelp` |
+|---|---|---|
+| nothing ticked, nothing highlighted | `false` | "Highlight a capture, or tick exactly one." |
+| **one ticked** | **`true`** | "Opens the highlighted capture, or the single ticked one." |
+| two ticked | `false` | "More than one capture is ticked. Highlight the one to open, or untick the rest." |
+| *Delete captures…* with none ticked | `false` | "Tick the captures to delete first." |
+
+Pressing *Open* with a single tick opened the capture. Before this change, ticking a capture left
+*Open* disabled with nothing on screen explaining why.
+
+### 4.7 Dialog sizing (F-15)
+
+Measured through the accessibility API, in points:
+
+| Dialog | pass 1 | now |
+|---|---|---|
+| *Live ADB capture* | 600 × **438** | 600 × **375** |
+| *Export CSV* | 720 × **560** | 720 × **328** |
+| *About VisualCat* | — | 460 × **195** |
+
+### 4.8 Packaging (F-01, F-02, F-19)
+
+A real `osx-arm64` package built by `tools/package.ps1 -Archive`, verified by
+`verify-package-contents.ps1`:
+
+```shell
+$ tar -tzf VisualCat-Desktop-osx-arm64-v2.0.13.tar.gz | awk -F/ '{print $1}' | sort -u
+VisualCat-Desktop-osx-arm64-v2.0.13          # one root, 240 members beneath it
+$ tar -tzf VisualCat-CLI-osx-arm64-v2.0.13.tar.gz | awk -F/ '{print $1}' | sort -u
+VisualCat-CLI-osx-arm64-v2.0.13              # one root, 208 members
+```
+
+and the README the same run produced opens with `tar -xzf … && cd …`, verifies with
+`shasum -a 256 --ignore-missing -c SHA256SUMS`, and links `blob/v2.0.13/docs/…`.
+
+### 4.9 Four defects found by testing the fixes, and fixed
+
+Live testing earned its place three more times after the code was written:
+
+1. **The About dialog crashed on open.** Composing the layout added the content stack to the
+   window and *then* moved it into a row beside the icon, which Avalonia refuses — and the
+   refusal reached the reader as "The control StackPanel already has a visual parent DockPanel".
+   Composed once now.
+2. **The clean-exit marker survived ⌘Q.** It was deleted after two `await`s in the window's
+   `Closed` handler, and the process was gone before the continuation ran — so every launch after
+   a normal quit would have reported a crash that never happened. It is deleted first, and
+   synchronously.
+3. **`Window.Position` answers `0, 0` on macOS.** Reading it back at close time stored the
+   top-left corner however the reader had arranged the window, which is the defect F-22 is about.
+   The frame is now remembered from the `PositionChanged` event while the window is alive.
+4. **"1 capture were open."** Fixed to "was"/"is" for the singular.
+
+None of these is visible to a unit test; all four came from driving the real application.

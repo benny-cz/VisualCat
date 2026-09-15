@@ -56,7 +56,8 @@ internal sealed class NumberPromptDialog : DialogBody<long?>, IDisposable
         ArgumentNullException.ThrowIfNull(model);
         _model = model;
         PreferredSize = new Size(420, 280);
-        MinimumSize = new Size(340, 240);
+        MinimumSize = new Size(340, 150);
+        SizesToContent = !DialogComposition.Mobile;
         var mobile = DialogComposition.Mobile;
 
         // Deliberately unbounded at the control: the bounds move while a capture grows, and

@@ -147,12 +147,15 @@ public sealed class MainWindow : Window
         };
         Closed += async (_, _) =>
         {
+            // First, and synchronously. This is what the next launch reads to decide whether to
+            // say "VisualCat closed unexpectedly" (F-17), and the two awaits below are enough
+            // for the process to be gone before a continuation runs: ⌘Q on macOS left the
+            // marker behind and every subsequent launch reported a crash that never happened.
+            // The window is closing either way, so recording the exit here rather than at the
+            // very end costs nothing and is the only placement that actually runs.
+            MainView.MarkWorkspaceClosed();
             await view.PersistWindowStateAsync();
             await view.DisposeAsync();
-
-            // The last thing an orderly exit does. Its absence on the next launch is what lets
-            // the start page say "VisualCat closed unexpectedly" rather than guess (F-17).
-            MainView.MarkWorkspaceClosed();
         };
     }
 }

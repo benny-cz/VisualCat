@@ -123,7 +123,7 @@ public static class SessionSaveService
     /// take the inner one with it (finding F-13). The guard is cheap, needs no platform work,
     /// and is equally right on Windows and Linux.
     /// </remarks>
-    private static string? EnclosingSession(string destination)
+    public static string? EnclosingSession(string destination)
     {
         // Bounded rather than walking to the filesystem root: a session is never nested more
         // than a handful of levels below one, and an unbounded walk on a deep path costs a

@@ -447,10 +447,13 @@ public sealed partial class MainView
         }
 
         var count = Counted.Of(available.Length, "capture", "captures");
+        var one = available.Length == 1;
         ShowNotice(
             crashed
-                ? $"VisualCat closed unexpectedly. Your {count} are safe — reopen them, or find them under Recent captures."
-                : $"{count} were open when you last closed VisualCat.",
+                ? one
+                    ? $"VisualCat closed unexpectedly. Your {count} is safe — reopen it, or find it under Recent captures."
+                    : $"VisualCat closed unexpectedly. Your {count} are safe — reopen them, or find them under Recent captures."
+                : $"{count} {(one ? "was" : "were")} open when you last closed VisualCat.",
             NoticeKind.Information,
             new NoticeAction(
                 "Reopen",
