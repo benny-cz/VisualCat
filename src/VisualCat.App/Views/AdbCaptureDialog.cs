@@ -75,11 +75,22 @@ public sealed class AdbCaptureDialog : Window, IDisposable
 
         Title = "Live ADB capture";
         Width = 600;
-        Height = 410;
         MinWidth = 600;
-        MinHeight = 410;
+        MinHeight = 260;
         CanResize = true;
+
+        // Height from the content, capped rather than fixed. At a fixed 410 the dialog measured
+        // 600 × 438 with its content ending near 300 — roughly a third of it reserved for
+        // nothing, on a desktop 900 points tall (finding F-15).
+        SizeToContent = SizeToContent.Height;
+        MaxHeight = 620;
         Content = Build();
+
+        // Tells assistive technology this window is modal. Avalonia's macOS backend reports
+        // AXModal = false for a ShowDialog window, so a screen reader was never told that the
+        // window behind it is blocked — the pointer knows, and nothing else did (finding F-09).
+        AutomationProperties.SetAccessibilityView(this, Avalonia.Automation.AccessibilityView.Content);
+        AutomationProperties.SetName(this, "Live ADB capture. This dialog must be answered before the main window can be used.");
 
         // Escape cancels, on the tunnel, with an open dropdown as the one exception — the same
         // contract every other dialog gets from the shell's dialog host (finding F-12). This one
@@ -312,9 +323,19 @@ public sealed class AdbCaptureDialog : Window, IDisposable
             // Product sentence, never the framework's own text: a trimmed build answers with
             // a resource key instead of a message (finding F-04), and "could not list" is the
             // part a reader can act on either way.
-            _status.Text =
-                $"Could not refresh devices · {Presentation.WorkspaceViewModel.FriendlyMessage(exception)} " +
-                "The current list is kept for reference; refresh it before starting.";
+            //
+            // The adb that was resolved when this dialog opened can be gone by the time it is
+            // run — a `brew upgrade`, a moved SDK, an uninstall — and Process.Start's answer to
+            // that is a sentence quoting the working directory, which names the one thing that
+            // is not the problem. When the executable itself is what vanished, say that instead
+            // (finding F-10).
+            var vanished = !File.Exists(_client.ExecutablePath);
+            _status.Text = vanished
+                ? $"Could not refresh devices · ADB is no longer at '{_client.ExecutablePath}'. " +
+                  "It was moved, upgraded or removed since this dialog opened. Close this dialog and " +
+                  "start it again to search for ADB afresh."
+                : $"Could not refresh devices · {Presentation.WorkspaceViewModel.FriendlyMessage(exception)} " +
+                  "The current list is kept for reference; refresh it before starting.";
             UpdateStartAvailability();
         }
         finally

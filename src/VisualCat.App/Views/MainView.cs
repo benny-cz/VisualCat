@@ -1640,6 +1640,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
         }
 
         _toolbar.SizeChanged += (_, args) => ReflowToolbar(args.NewSize.Width);
+
         UpdateSessionActionAvailability();
         return _toolbar;
     }
@@ -1735,6 +1736,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
     private void UpdateSessionActionAvailability()
     {
+        UpdateMacMenuAvailability();
         var reason = UnavailableCommandReason();
         foreach (var (item, canRun, ownReason) in _secondaryMenuItems)
         {
@@ -3746,6 +3748,9 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
 
     private Task OpenRecentAsync() => OpenRecentWithDeletionAsync();
 
+    /// <summary>The product.s own about box, for the macOS application menu.</summary>
+    private async Task ShowAboutAsync() => await ShowDialogAsync(new AboutDialog());
+
     private async Task ShowAppearanceAsync()
     {
         var updated = await ShowDialogAsync(new AppearanceDialog(_settings));
@@ -4018,7 +4023,10 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     {
         _ = sender;
 
-        var control = eventArgs.KeyModifiers.HasFlag(KeyModifiers.Control);
+        // The platform.s own shortcut modifier: Command on macOS, Control elsewhere. Written
+        // against Control everywhere, ⌘O did nothing on a Mac and ⌃O was a key the platform
+        // has its own use for (finding F-03).
+        var control = Platform.PlatformShortcuts.HasPrimary(eventArgs.KeyModifiers);
         var shift = eventArgs.KeyModifiers.HasFlag(KeyModifiers.Shift);
         if (control && eventArgs.Key == Key.O)
         {
@@ -4042,7 +4050,7 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
             return;
         }
 
-        if (eventArgs.Key == Key.E && eventArgs.KeyModifiers.HasFlag(KeyModifiers.Control))
+        if (eventArgs.Key == Key.E && control)
         {
             _ = RunAsync(() => ExportAsync());
             eventArgs.Handled = true;

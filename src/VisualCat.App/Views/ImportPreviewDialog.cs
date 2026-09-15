@@ -67,7 +67,12 @@ internal sealed class ImportPreviewDialog : DialogBody<IngestSettings>, IDisposa
         _portableRawRequired = portableRawRequired;
         var mobile = DialogComposition.Mobile;
         PreferredSize = new Size(720, 660);
-        MinimumSize = mobile ? new Size(300, 340) : new Size(390, 400);
+        MinimumSize = mobile ? new Size(300, 340) : new Size(390, 320);
+
+        // The summary is short and Import options is collapsed, so a fixed 660 reserved two
+        // thirds of the dialog for nothing and put the decision row 430 points below the last
+        // thing the reader read (finding F-15). 660 is the cap now, not the height.
+        SizesToContent = !mobile;
         ScrollsInternally = true;
 
         _format.SelectedItem = FormatChoices.FirstOrDefault(choice => choice.Format == initial.FormatOverride) ?? FormatChoices[0];

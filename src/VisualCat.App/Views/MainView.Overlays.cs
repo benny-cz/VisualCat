@@ -841,6 +841,17 @@ public sealed partial class MainView : IDialogHost
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
             };
 
+            if (body.SizesToContent)
+            {
+                // Height from the content, capped at the preferred height so a long form still
+                // scrolls rather than growing past the screen. Without this a dialog is as tall
+                // as its largest state in every state, which is how the import review came to
+                // reserve 64 % of its height for nothing (finding F-15).
+                window.SizeToContent = SizeToContent.Height;
+                window.MaxHeight = body.PreferredSize.Height;
+                window.ClearValue(Window.HeightProperty);
+            }
+
             // Dialogs size themselves to their content, which is exactly the layout pass the
             // XWayland backend presents with a stale damage region (finding F-10).
             Platform.FullRepaintOnResize.Attach(window);

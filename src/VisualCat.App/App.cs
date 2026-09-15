@@ -106,6 +106,11 @@ public sealed class MainWindow : Window
         view.AttachHostWindow(this);
         Platform.FullRepaintOnResize.Attach(this);
 
+        // The macOS menu bar, before the window is shown. Avalonia.s macOS exporter reads a
+        // window.s menu as the window becomes key, so a menu set afterwards is a value nothing
+        // looks at again and the stock two-item bar stays (finding F-03).
+        view.InstallMacMenuBar(this);
+
         // A window with no focused control is one a screen reader reads out whole: Orca
         // announced the frame and then the entire workspace — the notice, the strapline, every
         // count, the template list and the entry list — as a single utterance, because there

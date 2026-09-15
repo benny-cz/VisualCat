@@ -64,6 +64,28 @@ public abstract class DialogBody<TResult> : UserControl
     public Size MinimumSize { get; protected init; } = new(420, 320);
 
     /// <summary>
+    /// Whether the desktop window should take its height from the content instead of from
+    /// <see cref="PreferredSize"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A dialog whose height is a constant has to be tall enough for its <em>largest</em> state,
+    /// and it then looks broken in every smaller one. The import review measured 720 × 688 points
+    /// with its content ending near 250: eight lines of summary at the top, a collapsed
+    /// <em>Import options</em> disclosure under them, then roughly 430 points of nothing before
+    /// Cancel and Import in the bottom-right corner. The reader reads at the top and clicks 430
+    /// points lower, on a 900-point-tall desktop (finding F-15).
+    /// </para>
+    /// <para>
+    /// Sizing to content is also what makes a disclosure behave the way every macOS disclosure
+    /// does: the window grows when it opens rather than reserving the room in advance.
+    /// <see cref="PreferredSize"/>'s height becomes the cap, so a long form still scrolls instead
+    /// of growing past the screen.
+    /// </para>
+    /// </remarks>
+    internal bool SizesToContent { get; init; }
+
+    /// <summary>
     /// Whether this body already scrolls its own content and must not be put inside a second
     /// scroller.
     /// </summary>

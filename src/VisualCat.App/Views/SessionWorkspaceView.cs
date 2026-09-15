@@ -863,9 +863,32 @@ public sealed partial class SessionWorkspaceView : UserControl
         _timeline.SetDisplayOptions(intensityScale, normalization, minimumUsPerPixel, pixelSnap, minimumBarWidth);
 
     /// <summary>Handles the workspace shortcuts shared by the global host and focused panes.</summary>
+    /// <summary>Puts the caret in the search field and selects what is there, as ⌘F/Ctrl+F does.</summary>
+    /// <remarks>
+    /// Exposed so the macOS Edit menu can offer Find as a menu item rather than as a shortcut
+    /// nothing on screen names: a menu is how a command is discovered, and how assistive
+    /// technology enumerates it (finding F-03).
+    /// </remarks>
+    internal void FocusSearch()
+    {
+        _search.Focus();
+        _search.SelectAll();
+    }
+
+    /// <summary>Moves to the next or previous search match.</summary>
+    internal void StepSearchMatch(int direction) =>
+        _ = RunUiActionAsync(() => NavigateSearchMatchAsync(direction));
+
+    /// <summary>Frames the whole session in the plot, as the Fit button does.</summary>
+    internal void FitSession() => _timeline.FitSession();
+
+    /// <summary>Zooms the plot about its centre, by the same factors the +/- buttons use.</summary>
+    internal void ZoomTimeline(bool zoomIn) => _timeline.ZoomAtCenter(zoomIn ? 0.5 : 1.8);
+
     internal bool TryHandleShortcut(KeyEventArgs eventArgs)
     {
-        var control = eventArgs.KeyModifiers.HasFlag(KeyModifiers.Control);
+        // Command on macOS, Control elsewhere — see Platform.PlatformShortcuts (finding F-03).
+        var control = Platform.PlatformShortcuts.HasPrimary(eventArgs.KeyModifiers);
         var shift = eventArgs.KeyModifiers.HasFlag(KeyModifiers.Shift);
         var alt = eventArgs.KeyModifiers.HasFlag(KeyModifiers.Alt);
         var textInputFocused = eventArgs.Source is TextBox;
