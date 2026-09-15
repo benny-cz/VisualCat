@@ -930,9 +930,10 @@ None of these is visible to a unit test; all four came from driving the real app
 |---|---|
 | `~/vcat-run/candidates/desktop-main`, `cli-main` | **left in place** — builds of this tree, and what [§0](#0-restore-point--resume-here) resumes with. Delete with `rm -rf ~/vcat-run/candidates/{desktop,cli}-main` |
 | `~/vcat-run/env.sh` | two lines appended: `VCATM`, `VCLIM` |
-| `~/vcat-run/` helper scripts | three added — `press.applescript`, `axpos.applescript`, `axbtn.applescript`, `axtext.applescript`. They are how the AX assertions in [§4](#4-live-verification) were made |
+| `~/vcat-run/` helper scripts | six added — `press`, `axpos`, `axbtn`, `axtext`, `axrow`, `axbox` `.applescript`. They are how the accessibility assertions in [§4](#4-live-verification) and [§7](#7-the-standing-list--what-pass-2-closed-and-what-still-needs-a-person) were made |
 | `~/vcat-run/evidence/20260914-macos-arm64-m1/p2/` | this pass's screenshots and the export it checked; mirrored to the Windows host at `artifacts/live-test/20260914-macos-fix-pass/` |
-| `/tmp/p2-*` — corpora, sessions, ADB stubs, scratch CSVs | **deleted** |
+| `/tmp/p2-*` and `/tmp/p3-*` — corpora, sessions, ADB stubs, scratch CSVs, the portable zip | **deleted** |
+| `~/vcat-run/candidates/desktop-main-x64`, `cli-main-x64` | **left in place** — the Rosetta 2 candidates §7.1 used. Delete with `rm -rf ~/vcat-run/candidates/*-x64` |
 | `~/Library/Android/sdk/platform-tools/adb` (an F-11 probe) | **deleted**, including the `~/Library/Android` tree it needed |
 | `/opt/homebrew/bin/adb` | moved aside during an F-12 control and **restored**; it is the Caskroom symlink it always was |
 | `~/Library/Application Support/VisualCat/` | **left in place** — now `drwx------` where it was `drwxr-xr-x`, with `settings.json` at `0600`. It is the evidence for [F-04 and F-08](#35-f-04-and-f-08--the-modes-that-were-still-wide) |
