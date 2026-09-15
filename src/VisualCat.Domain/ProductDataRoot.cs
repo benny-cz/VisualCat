@@ -138,10 +138,21 @@ public static class ProductDataRoot
             }
             else
             {
+                const UnixFileMode OwnerOnly =
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(root) ?? ".");
-                Directory.CreateDirectory(
-                    root,
-                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                var existed = Directory.Exists(root);
+                Directory.CreateDirectory(root, OwnerOnly);
+
+                // The mode overload applies only at creation, so a root laid down by an older
+                // build — 2.0.13 created it at the account's umask, 0755 on a stock Mac — kept
+                // its wider mode for ever, with settings.json and the diagnostics bundle inside
+                // it (findings F-04, F-08). Upgrading is the one moment this can be corrected,
+                // and narrowing a directory this product owns is safe to do unasked.
+                if (existed && (File.GetUnixFileMode(root) & ~OwnerOnly) != 0)
+                {
+                    File.SetUnixFileMode(root, OwnerOnly);
+                }
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)

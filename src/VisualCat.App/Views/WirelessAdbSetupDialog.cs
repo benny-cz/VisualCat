@@ -543,8 +543,7 @@ internal sealed class WirelessAdbSetupDialog : DialogBody<bool>, IDisposable
             FontWeight = Avalonia.Media.FontWeight.SemiBold,
             Margin = new Thickness(0, -4, 0, 2),
         };
-        AutomationProperties.SetName(validation, accessibleName);
-        AutomationProperties.SetLiveSetting(validation, AutomationLiveSetting.Assertive);
+        LiveRegion.Attach(validation, accessibleName, AutomationLiveSetting.Assertive);
         return validation;
     }
 

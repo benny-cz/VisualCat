@@ -39,7 +39,7 @@ internal sealed class StatusLine
 
         // A report on work in progress, so a reader who is not looking at it is told when it
         // changes — politely, because a failure raises the notice lane, which is assertive.
-        AutomationProperties.SetLiveSetting(_block, AutomationLiveSetting.Polite);
+        LiveRegion.Attach(_block, "Capture status", AutomationLiveSetting.Polite);
     }
 
     /// <summary>The control to place in the layout.</summary>

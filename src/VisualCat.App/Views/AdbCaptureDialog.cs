@@ -67,8 +67,8 @@ public sealed class AdbCaptureDialog : Window, IDisposable
         AutomationProperties.SetHelpText(
             _includeBufferHistory,
             "Includes the complete existing Android logcat ring buffer. On a busy device this can add hundreds of thousands of older records.");
-        AutomationProperties.SetLiveSetting(_status, AutomationLiveSetting.Polite);
-        AutomationProperties.SetLiveSetting(_validation, AutomationLiveSetting.Polite);
+        LiveRegion.Attach(_status, "Capture status", AutomationLiveSetting.Polite);
+        LiveRegion.Attach(_validation, "Capture validation", AutomationLiveSetting.Polite);
         SheetForm.PrepareSpinButtons(_preRollSeconds, "pre-roll seconds");
         SheetForm.PrepareSpinButtons(_durationMinutes, "stop-after minutes");
         SheetForm.PrepareSpinButtons(_maximumMiB, "stop-after megabytes");

@@ -11,6 +11,7 @@ using Avalonia.Styling;
 using VisualCat.App.Timeline;
 using VisualCat.App.Presentation;
 using VisualCat.Domain;
+using VisualCat.Infrastructure.Adb;
 using VisualCat.Infrastructure.Configuration;
 
 namespace VisualCat.App.Views;
@@ -720,8 +721,7 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         _pixelSnap.IsChecked = settings.TimelinePixelSnap;
         _diagnostics.IsChecked = settings.DiagnosticsEnabled;
         AutomationProperties.SetName(_adbPath, "ADB executable");
-        AutomationProperties.SetName(_adbPathWarning, "ADB executable validation");
-        AutomationProperties.SetLiveSetting(_adbPathWarning, AutomationLiveSetting.Polite);
+        LiveRegion.Attach(_adbPathWarning, "ADB executable validation", AutomationLiveSetting.Polite);
         _adbPath.TextChanged += (_, _) => UpdateAdbPathWarning();
         UpdateAdbPathWarning();
 
@@ -903,19 +903,31 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         Content = SheetForm.Build(form, buttons, new Thickness(16));
     }
 
+    /// <summary>
+    /// Says whether the configured ADB path can be used, in the same words the capture itself
+    /// will use if it is not.
+    /// </summary>
+    /// <remarks>
+    /// This used to promise that "Live ADB will use auto-detection until the path is corrected",
+    /// which was both true and wrong: substituting a different <c>adb</c> for the one the
+    /// operator pinned is what made a capture come from a tool nobody chose, and report success
+    /// (finding F-10). A configured path is now authoritative on both surfaces, so the warning
+    /// says what will actually happen — the capture will refuse — and names the specific reason
+    /// the locator will give: missing, a directory, or not executable.
+    /// </remarks>
     private void UpdateAdbPathWarning()
     {
         var path = NullIfWhiteSpace(_adbPath.Text);
-        var missing = path is not null && !File.Exists(path);
-        _adbPathWarning.IsVisible = missing;
-        _adbPathWarning.Text = missing
-            ? "⚠ ADB was not found at this path. Live ADB will use auto-detection until the path is corrected."
-            : string.Empty;
+        var resolved = path is null ? default : AdbLocator.Resolve(path);
+        var problem = resolved.PinnedPathRejected ? resolved.Problem : null;
+
+        _adbPathWarning.IsVisible = problem is not null;
+        _adbPathWarning.Text = problem is null ? string.Empty : $"⚠ {problem} Live ADB will not start until this is corrected.";
         AutomationProperties.SetHelpText(
             _adbPath,
-            missing
-                ? "ADB was not found at the configured path. Correct the path, or clear it to use auto-detection."
-                : "Leave empty to find ADB from the Android SDK settings or PATH.");
+            problem
+            ?? "Leave empty to find ADB from the Android SDK locations and PATH. A path set here is " +
+               "used exactly as written: if it is wrong, capture refuses rather than quietly running a different adb.");
     }
 
     /// <summary>

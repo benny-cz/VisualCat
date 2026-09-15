@@ -63,7 +63,7 @@ public sealed record SourceMetadata(
     public string ResolveLogTimeZoneId() =>
         Properties?.TryGetValue(LogTimeZoneProperty, out var zone) == true && !string.IsNullOrWhiteSpace(zone)
             ? zone
-            : TimeZoneInfo.Local.Id;
+            : Domain.Time.TimeZoneResolution.HostZoneId();
 }
 
 /// <summary>

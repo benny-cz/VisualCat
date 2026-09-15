@@ -586,6 +586,10 @@ public sealed partial class SessionWorkspaceView : UserControl
         // every time, so focusing the counter reads the current position either way.
         var arrival = selected is { Status: SearchMatchStatus.Found } &&
                       !Nullable.Equals(selected.Key, _announcedMatchKey);
+        // Live setting first, then the name, because the name change is what raises the
+        // announcement and Off is how a non-arrival stays silent. Safe in that order only
+        // because the button is named when it is built: an element that becomes a live region
+        // while its accessible name is unset aborts the process on macOS (finding F-14).
         AutomationProperties.SetLiveSetting(
             position,
             arrival ? AutomationLiveSetting.Polite : AutomationLiveSetting.Off);

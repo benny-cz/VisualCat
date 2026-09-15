@@ -18,6 +18,16 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // macOS aborts inside Avalonia's display-link start-up when every display is asleep,
+        // with an unhandled exception, a doubled stack trace and a system crash report per
+        // attempt (finding F-23). Ask CoreGraphics before the backend does, wait a few seconds
+        // for a screen that is on its way back, and answer with a sentence rather than a trace.
+        if (OperatingSystem.IsMacOS() && !MacDisplayAvailability.WaitForUsableDisplay())
+        {
+            Console.Error.WriteLine(MacDisplayAvailability.Explain());
+            Environment.Exit(GraphicalSessionUnavailable);
+        }
+
         // Every desktop build knows where it came from: a portable archive is by definition not
         // store-installed. Without this the update command was gated off on every desktop, so
         // "Check for updates…" did not exist anywhere outside Android while SUPPORT.md
@@ -45,18 +55,25 @@ internal static class Program
             Console.Error.WriteLine(Explain(exception));
             Environment.Exit(GraphicalSessionUnavailable);
         }
+        catch (Exception exception) when (MacDisplayAvailability.IsNoDisplayStartupFailure(exception))
+        {
+            // The race the pre-flight check above cannot close: the display slept between the
+            // check and the backend's own initialization. Same condition, same sentence.
+            Console.Error.WriteLine(MacDisplayAvailability.Explain());
+            Environment.Exit(GraphicalSessionUnavailable);
+        }
         catch (ProductDataRootException exception)
         {
             // Already a product sentence naming the directory and the cause (F-19).
             Console.Error.WriteLine($"error: {exception.Message}");
             Environment.Exit(GraphicalSessionUnavailable);
         }
-        catch (Exception exception)
-        {
-            // Genuinely unexpected: keep the rethrow so the runtime reports it in full.
-            Console.Error.WriteLine(exception);
-            throw;
-        }
+
+        // There is deliberately no catch-all below. One used to print the exception and rethrow,
+        // so every unhandled start-up failure reached the reader twice — 38 lines of identical
+        // trace in exactly the situation where they are hunting for one useful one (finding F-23,
+        // and LINUX-LIVE-TEST-REPORT F-02). The runtime's own handler already reports an
+        // unhandled exception in full; adding nothing to it is what stops the doubling.
     }
 
     public static AppBuilder BuildAvaloniaApp() =>

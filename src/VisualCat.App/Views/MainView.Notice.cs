@@ -89,6 +89,14 @@ public sealed partial class MainView
     /// </remarks>
     private const double NoticeTextMaximumHeight = 108;
 
+    /// <summary>What the notice lane is called when it has nothing to say.</summary>
+    /// <remarks>
+    /// A live region announces under its accessible name, so the name is normally the message
+    /// itself. This is the value it falls back to when the lane is cleared — never empty,
+    /// because a live region that fires with a nil name aborts the process on macOS (F-14).
+    /// </remarks>
+    private const string NoticeLaneName = "Application status";
+
     private Border BuildNotice()
     {
         var fontSize = TextScale.Of(OperatingSystem.IsAndroid() ? 12.5 : 12);
@@ -201,7 +209,6 @@ public sealed partial class MainView
             Padding = new Thickness(10, 6),
             Child = content,
         };
-        AutomationProperties.SetName(host, "Application status");
 
         // The lane is docked below the workspace, so its height comes out of the workspace's
         // band. Every open workspace is told how much, so the plot can give it up instead of
@@ -220,7 +227,7 @@ public sealed partial class MainView
         // The lane reports the result of something the reader started and then looked away
         // from, so a screen reader has to speak it without being asked. A failure interrupts;
         // a confirmation waits its turn. ShowNotice re-resolves this per message.
-        AutomationProperties.SetLiveSetting(host, AutomationLiveSetting.Polite);
+        LiveRegion.Attach(host, NoticeLaneName, AutomationLiveSetting.Polite);
         ApplyNoticeTheme();
         return host;
     }
@@ -448,6 +455,13 @@ public sealed partial class MainView
         if (_noticeHost is { } host)
         {
             host.IsVisible = OperatingSystem.IsAndroid() && !string.IsNullOrWhiteSpace(text);
+
+            // The lane announces under its own accessible name, so the name has to be the
+            // message rather than the constant "Application status" — otherwise a screen reader
+            // is told something changed and never what. Set before the live setting is
+            // re-resolved, and never left empty, because a live region that fires with a nil
+            // name aborts the process on macOS (finding F-14).
+            AutomationProperties.SetName(host, string.IsNullOrWhiteSpace(text) ? NoticeLaneName : text);
             AutomationProperties.SetLiveSetting(
                 host,
                 kind == NoticeKind.Failure ? AutomationLiveSetting.Assertive : AutomationLiveSetting.Polite);

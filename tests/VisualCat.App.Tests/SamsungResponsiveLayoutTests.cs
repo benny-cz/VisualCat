@@ -232,9 +232,13 @@ public sealed class SamsungResponsiveLayoutTests
             .OfType<TextBlock>()
             .Single(block => AutomationProperties.GetName(block) == "Application status message");
         var scroller = text.GetLogicalAncestors().OfType<ScrollViewer>().Single();
-        var host = view.GetLogicalDescendants()
-            .OfType<Border>()
-            .Single(border => AutomationProperties.GetName(border) == "Application status");
+
+        // Found through the text it wraps rather than by name, because the lane's accessible
+        // name is the message: a live region announces under its own name, so naming it
+        // "Application status" told a screen reader that something had changed and never what
+        // (finding F-14).
+        var host = text.GetLogicalAncestors().OfType<Border>().First();
+        Assert.Equal(message, AutomationProperties.GetName(host));
 
         Assert.Equal(message, text.Text);
         Assert.Equal(0, text.MaxLines);

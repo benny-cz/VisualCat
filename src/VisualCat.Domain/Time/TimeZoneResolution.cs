@@ -51,7 +51,7 @@ public static class TimeZoneResolution
     /// </exception>
     public static string LocalId()
     {
-        var local = TimeZoneInfo.Local.Id;
+        var local = HostZoneId();
         var requested = Environment.GetEnvironmentVariable("TZ");
         if (string.IsNullOrWhiteSpace(requested))
         {
@@ -75,6 +75,64 @@ public static class TimeZoneResolution
         }
 
         throw new TimeZoneUnavailableException(Explain(requested, null));
+    }
+
+    /// <summary>
+    /// The zone this host is configured for, preferring the identifier the user actually chose.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// macOS does not store zoneinfo as symlinked aliases the way Linux does: every zone is its
+    /// own regular file, and neighbouring countries that share a rule set are byte-identical
+    /// copies. .NET's Unix <see cref="TimeZoneInfo.Local"/> reads <c>/etc/localtime</c>'s
+    /// <em>contents</em> and finds a matching id by scanning the zoneinfo tree — it can only take
+    /// the id from the link path when the target lies under the default zoneinfo directory it was
+    /// compiled with, and on macOS <c>/etc/localtime</c> points into <c>/var/db/timezone/zoneinfo</c>
+    /// while that default is <c>/usr/share/zoneinfo</c>. The prefix comparison misses, the content
+    /// scan returns the first alphabetical match, and a Mac set to <c>Europe/Prague</c> writes
+    /// <c>Europe/Bratislava</c> into every session it creates (finding F-07).
+    /// </para>
+    /// <para>
+    /// It is not an exotic pairing. <c>Europe/Oslo</c> wins over <c>Europe/Stockholm</c> and
+    /// <c>Europe/Copenhagen</c>, <c>America/Toronto</c> over <c>America/Nassau</c>,
+    /// <c>Asia/Kuala_Lumpur</c> over <c>Asia/Singapore</c>. The instants are right, because the
+    /// rules are identical; the metadata names a country the user did not choose, and the same
+    /// log indexed on three platforms produces three different manifests, which is what breaks
+    /// the cross-platform parity assertions.
+    /// </para>
+    /// <para>
+    /// The link target carries the identifier the user picked, so it is preferred when it names a
+    /// zone the runtime can actually resolve — that last check is what keeps a path that is not a
+    /// zone from ever reaching a manifest.
+    /// </para>
+    /// </remarks>
+    public static string HostZoneId()
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            try
+            {
+                var target = File.ResolveLinkTarget("/etc/localtime", returnFinalTarget: true)?.FullName;
+                const string Marker = "/zoneinfo/";
+                var index = target?.IndexOf(Marker, StringComparison.Ordinal) ?? -1;
+                if (index >= 0 && target is not null)
+                {
+                    var id = target[(index + Marker.Length)..];
+                    if (id.Length > 0 && TimeZoneInfo.TryFindSystemTimeZoneById(id, out _))
+                    {
+                        return id;
+                    }
+                }
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // Nothing about the host's configuration is worth failing a capture over; the
+                // runtime's own answer is still a correct zone, just occasionally a synonym.
+            }
+        }
+
+        return TimeZoneInfo.Local.Id;
     }
 
     private static string Explain(string timeZoneId, Exception? cause) =>

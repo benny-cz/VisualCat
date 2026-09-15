@@ -302,8 +302,8 @@ internal sealed class FacetBrowserDialog : DialogBody<bool>, IDisposable
         layout.Children.Add(lists);
         Grid.SetRow(footer, 7);
         layout.Children.Add(footer);
-        AutomationProperties.SetLiveSetting(_error, AutomationLiveSetting.Assertive);
-        AutomationProperties.SetLiveSetting(_hint, AutomationLiveSetting.Polite);
+        LiveRegion.Attach(_error, "Facet error", AutomationLiveSetting.Assertive);
+        LiveRegion.Attach(_hint, "Facet hint", AutomationLiveSetting.Polite);
         Content = layout;
     }
 

@@ -37,6 +37,24 @@ public static class UsbDeviceAccess
         "Add a udev rule granting a group your account is in — often plugdev — then replug the " +
         "device, run 'adb kill-server', and refresh.";
 
+    /// <summary>
+    /// macOS's equivalent of "the device is attached and ADB still cannot see it".
+    /// </summary>
+    /// <remarks>
+    /// An Apple silicon Mac asks once per new accessory whether to allow it to connect, and until
+    /// that is answered the device is absent from <c>adb devices</c> entirely — indistinguishable
+    /// from a dead cable, and with nothing on screen naming the prompt that is waiting. The
+    /// server restart is here for the same reason it is in <see cref="ShellRemedy"/>: a running
+    /// daemon keeps the binary and the credentials it started with, so a <c>brew upgrade</c> of
+    /// platform-tools changes nothing until it is restarted (finding F-12).
+    /// </remarks>
+    public const string MacOsRemedy =
+        "On macOS, check that the device was allowed to connect: an Apple silicon Mac asks once " +
+        "per new accessory, and until that is answered ADB does not list the device at all. " +
+        "The setting is System Settings › Privacy & Security › Allow accessories to connect. " +
+        "After upgrading platform-tools, run 'adb kill-server' too, because a running server " +
+        "keeps the binary it started with.";
+
     private const string UsbDevices = "/sys/bus/usb/devices";
     private const string AdbInterfaceClass = "ff";
     private const string AdbInterfaceSubClass = "42";

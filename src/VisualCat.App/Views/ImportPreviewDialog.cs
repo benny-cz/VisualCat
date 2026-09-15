@@ -120,9 +120,9 @@ internal sealed class ImportPreviewDialog : DialogBody<IngestSettings>, IDisposa
         _portableRaw.IsCheckedChanged += (_, _) => QueueEvaluation(immediate: true);
         AutomationProperties.SetHelpText(_year, _yearHelp);
         AutomationProperties.SetHelpText(_timeZone, TimeZoneHelp);
-        AutomationProperties.SetLiveSetting(_yearError, AutomationLiveSetting.Assertive);
-        AutomationProperties.SetLiveSetting(_timeZoneError, AutomationLiveSetting.Assertive);
-        AutomationProperties.SetLiveSetting(_validation, AutomationLiveSetting.Assertive);
+        LiveRegion.Attach(_yearError, "Year validation", AutomationLiveSetting.Assertive);
+        LiveRegion.Attach(_timeZoneError, "Time zone validation", AutomationLiveSetting.Assertive);
+        LiveRegion.Attach(_validation, "Import validation", AutomationLiveSetting.Assertive);
 
         var cancel = new Button { Content = "Cancel", IsCancel = true, MinHeight = mobile ? 48 : 0 };
         cancel.Click += (_, _) => Complete(null);

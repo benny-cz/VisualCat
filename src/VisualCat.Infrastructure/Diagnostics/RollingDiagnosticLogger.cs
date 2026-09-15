@@ -29,7 +29,13 @@ public sealed class RollingDiagnosticLogger : IDiagnosticSink
         }
 
         _directory = Path.GetFullPath(directory);
-        Directory.CreateDirectory(_directory);
+
+        // A diagnostic bundle is the one artifact a user would least expect another local
+        // account to be able to read: it carries paths, device identifiers and the shape of
+        // what was captured. It inherited the account's umask like everything else — 0755 and
+        // 0644 on a stock macOS (finding F-08).
+        VisualCat.Core.Store.SessionFileModes.CreateOwnerOnlyDirectory(_directory);
+        VisualCat.Core.Store.SessionFileModes.MakeDirectoryOwnerOnly(_directory);
         if (File.GetAttributes(_directory).HasFlag(FileAttributes.ReparsePoint))
         {
             throw new IOException("The diagnostics directory cannot be a symbolic link or reparse point.");

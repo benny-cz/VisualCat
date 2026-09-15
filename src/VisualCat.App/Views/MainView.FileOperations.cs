@@ -27,6 +27,9 @@ public sealed partial class MainView
         MinWidth = 80,
         VerticalAlignment = VerticalAlignment.Center,
     };
+    /// <summary>What the file-operation live region is called before it has a stage to report.</summary>
+    private const string FileOperationLaneName = "File operation progress";
+
     /// <summary>Carries the spoken stage only, so counts cannot flood a live region.</summary>
     private readonly TextBlock _fileOperationAnnouncement = new()
     {
@@ -95,7 +98,7 @@ public sealed partial class MainView
         Grid.SetRow(_fileOperationProgress, 1);
         Grid.SetColumnSpan(_fileOperationProgress, 2);
         content.Children.Add(_fileOperationProgress);
-        AutomationProperties.SetLiveSetting(_fileOperationAnnouncement, AutomationLiveSetting.Polite);
+        LiveRegion.Attach(_fileOperationAnnouncement, FileOperationLaneName, AutomationLiveSetting.Polite);
         Grid.SetRow(_fileOperationAnnouncement, 1);
         content.Children.Add(_fileOperationAnnouncement);
 
@@ -214,12 +217,13 @@ public sealed partial class MainView
         // Stages and terminal outcomes are announced; a count moving five times a second is
         // not. The spoken line therefore changes only when the stage does, while the visible
         // text and the accessible progress value stay current for anyone who looks or focuses.
+        // Through LiveRegion, which puts the name in place before the assignment that raises
+        // the change. Written the other way round, the element announced with an empty name
+        // for the duration of the raise — and on macOS a live region whose accessible name is
+        // nil aborts the process inside NSDictionary, with no managed stack and no chance to
+        // save (finding F-14).
         var stage = Describe(operation, withCounts: false);
-        if (!string.Equals(stage, _fileOperationAnnouncement.Text, StringComparison.Ordinal))
-        {
-            _fileOperationAnnouncement.Text = stage;
-            AutomationProperties.SetName(_fileOperationAnnouncement, stage);
-        }
+        LiveRegion.Announce(_fileOperationAnnouncement, stage, FileOperationLaneName);
         _fileOperationCancel.IsEnabled = operation.CanCancel;
         AutomationProperties.SetHelpText(
             _fileOperationCancel,

@@ -3331,33 +3331,27 @@ public sealed partial class MainView : UserControl, IAsyncDisposable
     private async Task StartAdbAsync()
     {
         var configuredPath = string.IsNullOrWhiteSpace(_settings.AdbPath) ? null : _settings.AdbPath.Trim();
-        var executable = AdbLocator.Find(_settings.AdbPath);
-        if (executable is null)
+
+        // A configured path is a decision, not a hint. Substituting a different adb for a wrong
+        // one is how a capture came from a tool the operator never chose and reported success,
+        // while the product told the reader to set the very path they had just set (finding
+        // F-10). The locator hands back the sentence to show, so nothing here composes
+        // reader-facing text out of an exception, and the list of places searched is generated
+        // from the search itself so it cannot drift (finding F-12).
+        var resolved = AdbLocator.Resolve(configuredPath);
+        if (!resolved.Found)
         {
+            _reportedInvalidAdbPath = resolved.PinnedPathRejected ? configuredPath : null;
             ShowNotice(
-                configuredPath is not null && !File.Exists(configuredPath)
-                    ? $"The configured ADB path '{configuredPath}' was not found, and no other ADB installation was detected. " +
-                      "Correct it in Appearance & timeline, install Android platform-tools, or set ANDROID_SDK_ROOT."
-                    : "ADB was not found. Install Android platform-tools or set ANDROID_SDK_ROOT.",
+                resolved.PinnedPathRejected
+                    ? $"{resolved.Problem} Correct or clear the path in Appearance & timeline."
+                    : resolved.Problem ?? AdbLocator.NotFoundSentence(),
                 NoticeKind.Failure);
             return;
         }
 
-        if (configuredPath is not null && !File.Exists(configuredPath))
-        {
-            if (!string.Equals(_reportedInvalidAdbPath, configuredPath, StringComparison.OrdinalIgnoreCase))
-            {
-                _reportedInvalidAdbPath = configuredPath;
-                ShowNotice(
-                    $"The configured ADB path '{configuredPath}' was not found; using '{executable}' from auto-detection. " +
-                    "Correct or clear the path in Appearance & timeline.",
-                    NoticeKind.Information);
-            }
-        }
-        else
-        {
-            _reportedInvalidAdbPath = null;
-        }
+        _reportedInvalidAdbPath = null;
+        var executable = resolved.ExecutablePath!;
 
         if (TopLevel.GetTopLevel(this) is not Window owner)
         {

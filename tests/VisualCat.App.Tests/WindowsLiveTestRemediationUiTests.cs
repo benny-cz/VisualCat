@@ -137,7 +137,13 @@ public sealed class WindowsLiveTestRemediationUiTests
                 .Single(static block => AutomationProperties.GetName(block) == "ADB executable validation");
 
             Assert.True(warning.IsVisible);
-            Assert.Contains("not found", warning.Text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("does not exist", warning.Text, StringComparison.OrdinalIgnoreCase);
+
+            // The point of the warning, not just its presence: a pinned path is authoritative
+            // now, so the sheet has to say the capture will refuse rather than promise the
+            // auto-detection fallback that used to run a different adb and report success
+            // (finding F-10).
+            Assert.Contains("will not start", warning.Text, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("correct", AutomationProperties.GetHelpText(field), StringComparison.OrdinalIgnoreCase);
         }
         finally

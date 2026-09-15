@@ -230,7 +230,10 @@ public sealed class AdbLogSource :
             }
         }
 
-        return TimeZoneInfo.Local.Id;
+        // The host zone the user actually configured, not a byte-identical neighbour: on macOS
+        // the runtime resolves /etc/localtime by content and answers Europe/Bratislava for a Mac
+        // set to Europe/Prague (finding F-07).
+        return VisualCat.Domain.Time.TimeZoneResolution.HostZoneId();
     }
 
     /// <summary>One device property, or null when the device declines to answer in time.</summary>
@@ -828,6 +831,10 @@ public sealed class AdbLogSource :
         {
             message += $" On Linux the fix is a udev rule and a group: {UsbDeviceAccess.ShellRemedy}";
         }
+        else if (OperatingSystem.IsMacOS())
+        {
+            message += $" {UsbDeviceAccess.MacOsRemedy}";
+        }
 
         return message;
     }
@@ -848,9 +855,17 @@ public sealed class AdbLogSource :
             ? "no devices are connected"
             : $"connected devices: {string.Join(", ", devices.Select(static value => value.Serial))}";
         var hidden = UsbDeviceAccess.MissingDeviceExplanation();
-        return hidden is null
-            ? $"Device '{serial}' was not found ({known}). Connect the device and enable USB debugging."
-            : $"Device '{serial}' was not found ({known}). {hidden} To fix it, {UsbDeviceAccess.ShellRemedy}";
+        if (hidden is not null)
+        {
+            return $"Device '{serial}' was not found ({known}). {hidden} To fix it, {UsbDeviceAccess.ShellRemedy}";
+        }
+
+        var message = $"Device '{serial}' was not found ({known}). Connect the device and enable USB debugging.";
+
+        // The macOS equivalent of the Linux branch above: attached, debugging on, and still
+        // absent from the list because a per-accessory consent prompt has not been answered
+        // (finding F-12).
+        return OperatingSystem.IsMacOS() ? $"{message} {UsbDeviceAccess.MacOsRemedy}" : message;
     }
 
     /// <summary>Names a device's state, preferring what the daemon actually printed.</summary>

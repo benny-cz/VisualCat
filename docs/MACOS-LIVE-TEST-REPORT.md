@@ -1397,7 +1397,6 @@ entries — was not run; it is on the [§4](#4-standing-list--what-is-still-unte
 ---
 
 ## 3. Findings
-## 3. Findings
 
 <a id="f-01"></a>
 

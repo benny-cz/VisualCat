@@ -246,7 +246,7 @@ internal sealed class RecentCapturePanel : UserControl
         statusArea.Children.Add(_progress);
         statusArea.Children.Add(_statusActions);
         statusArea.Children.Add(_legend);
-        AutomationProperties.SetLiveSetting(_status, AutomationLiveSetting.Polite);
+        LiveRegion.Attach(_status, "Deletion status", AutomationLiveSetting.Polite);
 
         // A destructive action is not a peer of the decision that ends the dialog, so it sits
         // at the far side of the row where convention puts it. Both halves wrap, and the whole

@@ -1605,11 +1605,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         }
 
         var sentence = invalid.Sentence;
-        _searchProblem.Text = sentence;
         _searchProblem.Foreground = new SolidColorBrush(LevelPalette.InkOf(LogLevel.Error, ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light));
         _searchProblem.IsVisible = true;
-        AutomationProperties.SetLiveSetting(_searchProblem, AutomationLiveSetting.Assertive);
-        AutomationProperties.SetName(_searchProblem, sentence);
+
+        // The live setting is already on the element, set at construction along with its name,
+        // so this only has to put the sentence in place — name first, then text (F-14).
+        LiveRegion.Announce(_searchProblem, sentence, SearchProblemName);
         _search.Classes.Add("invalid");
         _search.BorderBrush = _searchProblem.Foreground;
         AutomationProperties.SetHelpText(_search, sentence);

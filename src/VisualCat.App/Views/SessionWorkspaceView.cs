@@ -94,12 +94,27 @@ public sealed partial class SessionWorkspaceView : UserControl
     /// (finding F-04). It belongs next to the thing the reader can fix, it stays out of the
     /// way until there is something to say, and it is announced when it appears.
     /// </remarks>
-    private readonly TextBlock _searchProblem = new()
+    private readonly TextBlock _searchProblem = NamedSearchProblem();
+
+    /// <summary>The search-problem line, a named live region from the moment it exists.</summary>
+    /// <remarks>
+    /// Named at construction rather than when the first problem appears, because the window
+    /// between "this is a live region" and "this is what it is called" is the window in which a
+    /// change announcement reads a nil name and aborts the process on macOS (finding F-14).
+    /// </remarks>
+    private static TextBlock NamedSearchProblem()
     {
-        IsVisible = false,
-        TextWrapping = TextWrapping.Wrap,
-        FontSize = TextScale.Of(11),
-    };
+        var block = new TextBlock
+        {
+            IsVisible = false,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = TextScale.Of(11),
+        };
+        LiveRegion.Attach(block, SearchProblemName, AutomationLiveSetting.Assertive);
+        return block;
+    }
+
+    private const string SearchProblemName = "Search problem";
     private readonly ListBox _entries = new();
     private readonly ListBox _templates = new();
     private readonly ComboBox _order = new()
@@ -1265,6 +1280,12 @@ public sealed partial class SessionWorkspaceView : UserControl
         };
         position.Click += async (_, _) => await RunUiActionAsync(AskForMatchIndexAsync);
 
+        // Named before it can ever become a live region. UpdateMatchPosition turns the live
+        // setting on and off per arrival, and an element that becomes a live region while its
+        // accessible name is still unset is the exact shape that aborts the process on macOS
+        // (finding F-14).
+        AutomationProperties.SetName(position, "Search match position");
+
         var nav = _markerNav = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -1338,7 +1359,7 @@ public sealed partial class SessionWorkspaceView : UserControl
             BorderThickness = new Thickness(1),
             Child = row,
         };
-        AutomationProperties.SetLiveSetting(banner, AutomationLiveSetting.Polite);
+        LiveRegion.Attach(banner, "Selected entry is off this page", AutomationLiveSetting.Polite);
         return banner;
     }
 
@@ -1409,8 +1430,7 @@ public sealed partial class SessionWorkspaceView : UserControl
                 Children = { title, detail, actions },
             },
         };
-        AutomationProperties.SetName(card, "No matching entries");
-        AutomationProperties.SetLiveSetting(card, AutomationLiveSetting.Polite);
+        LiveRegion.Attach(card, "No matching entries", AutomationLiveSetting.Polite);
         return card;
     }
 

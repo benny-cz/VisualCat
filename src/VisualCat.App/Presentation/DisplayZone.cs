@@ -32,7 +32,7 @@ public static class DisplayZone
         }
 
         return descriptor.SourceKind is SourceKind.Adb or SourceKind.Android
-            ? TimeZoneInfo.Local.Id
+            ? Domain.Time.TimeZoneResolution.HostZoneId()
             : descriptor.TimestampPolicy.TimeZoneId;
     }
 

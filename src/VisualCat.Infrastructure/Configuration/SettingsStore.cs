@@ -1,3 +1,4 @@
+using VisualCat.Core.Store;
 using System.Text.Json;
 
 namespace VisualCat.Infrastructure.Configuration;
@@ -123,6 +124,13 @@ public sealed class SettingsStore(string path)
             }
 
             File.Move(temporary, _path, true);
+
+            // settings.json holds the session directory, the configured ADB path and the list
+            // of recently open session paths, and it sat at the account's umask — 0644 on a
+            // stock macOS, readable by every other local account (finding F-08). It is product
+            // data like everything else under the data root, so it gets the same owner-only
+            // treatment the sessions themselves already have.
+            SessionFileModes.MakeFileOwnerOnly(_path);
         }
         catch
         {

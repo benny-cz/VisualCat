@@ -98,7 +98,7 @@ internal sealed class NumberPromptDialog : DialogBody<long?>, IDisposable
                 ActualThemeVariant != Avalonia.Styling.ThemeVariant.Light)),
             IsVisible = false,
         };
-        AutomationProperties.SetLiveSetting(_validation, AutomationLiveSetting.Assertive);
+        LiveRegion.Attach(_validation, "Validation message", AutomationLiveSetting.Assertive);
 
         var cancel = new Button
         {
