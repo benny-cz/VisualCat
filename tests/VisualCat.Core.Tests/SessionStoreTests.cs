@@ -547,7 +547,8 @@ public sealed class SessionStoreTests
         }
         finally
         {
-            try { Directory.Delete(leases, true); } catch (IOException) { }
+            try { Directory.Delete(leases, true); }
+            catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
     }

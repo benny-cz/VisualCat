@@ -1,5 +1,5 @@
-using VisualCat.Core.Store;
 using System.Text.Json;
+using VisualCat.Core.Store;
 
 namespace VisualCat.Infrastructure.Configuration;
 

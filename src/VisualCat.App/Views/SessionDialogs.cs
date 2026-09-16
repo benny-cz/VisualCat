@@ -6,10 +6,10 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.VisualTree;
 using Avalonia.Styling;
-using VisualCat.App.Timeline;
+using Avalonia.VisualTree;
 using VisualCat.App.Presentation;
+using VisualCat.App.Timeline;
 using VisualCat.Domain;
 using VisualCat.Infrastructure.Adb;
 using VisualCat.Infrastructure.Configuration;
@@ -788,40 +788,40 @@ public sealed class AppearanceDialog : DialogBody<ApplicationSettings>
         // (finding F-14). Gated the same way "Check for updates…" is.
         if (Mobile)
         {
-        form.Children.Add(new TextBlock { Text = "Plot and details split" });
-        var resetMobileSplit = new Button
-        {
-            Content = HasSplitOverride(settings)
-                ? "Reset plot and details split"
-                : "Automatic sizing is active",
-            IsEnabled = HasSplitOverride(settings),
-            MinHeight = Mobile ? 48 : 0,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-        };
-        AutomationProperties.SetName(resetMobileSplit, "Reset plot and details split");
-        AutomationProperties.SetHelpText(
-            resetMobileSplit,
-            HasSplitOverride(settings)
-                ? "Restores automatic phone Split workspace sizing when you apply these settings."
-                : "The phone Split workspace is already using automatic sizing.");
-        resetMobileSplit.Click += (_, _) =>
-        {
-            _resetMobileTimelineShare = true;
-            resetMobileSplit.Content = "Automatic sizing selected";
-            resetMobileSplit.IsEnabled = false;
+            form.Children.Add(new TextBlock { Text = "Plot and details split" });
+            var resetMobileSplit = new Button
+            {
+                Content = HasSplitOverride(settings)
+                    ? "Reset plot and details split"
+                    : "Automatic sizing is active",
+                IsEnabled = HasSplitOverride(settings),
+                MinHeight = Mobile ? 48 : 0,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
+            AutomationProperties.SetName(resetMobileSplit, "Reset plot and details split");
             AutomationProperties.SetHelpText(
                 resetMobileSplit,
-                "Automatic phone Split workspace sizing will be restored when you apply these settings.");
-        };
-        form.Children.Add(resetMobileSplit);
-        form.Children.Add(new TextBlock
-        {
-            Text = "In Split mode, drag the grip between the plot and the tabs to resize them - " +
-                   "downwards in portrait, sideways in landscape. This action returns both to " +
-                   "the responsive default.",
-            TextWrapping = TextWrapping.Wrap,
-            Opacity = 0.72,
-        });
+                HasSplitOverride(settings)
+                    ? "Restores automatic phone Split workspace sizing when you apply these settings."
+                    : "The phone Split workspace is already using automatic sizing.");
+            resetMobileSplit.Click += (_, _) =>
+            {
+                _resetMobileTimelineShare = true;
+                resetMobileSplit.Content = "Automatic sizing selected";
+                resetMobileSplit.IsEnabled = false;
+                AutomationProperties.SetHelpText(
+                    resetMobileSplit,
+                    "Automatic phone Split workspace sizing will be restored when you apply these settings.");
+            };
+            form.Children.Add(resetMobileSplit);
+            form.Children.Add(new TextBlock
+            {
+                Text = "In Split mode, drag the grip between the plot and the tabs to resize them - " +
+                       "downwards in portrait, sideways in landscape. This action returns both to " +
+                       "the responsive default.",
+                TextWrapping = TextWrapping.Wrap,
+                Opacity = 0.72,
+            });
         }
 
         form.Children.Add(new TextBlock { Text = "Default export order" });

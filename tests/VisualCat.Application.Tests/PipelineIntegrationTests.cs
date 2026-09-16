@@ -1507,7 +1507,8 @@ public sealed class PipelineIntegrationTests
         }
         finally
         {
-            try { Directory.Delete(root, true); } catch (IOException) { }
+            try { Directory.Delete(root, true); }
+            catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
     }

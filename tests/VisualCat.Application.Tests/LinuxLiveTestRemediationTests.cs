@@ -2,6 +2,7 @@ using System.Text;
 using VisualCat.Application.Coordination;
 using VisualCat.Application.UseCases;
 using VisualCat.Core.Parsing;
+using VisualCat.Core.Query;
 using VisualCat.Core.Store;
 using VisualCat.Domain;
 using VisualCat.Domain.Filters;
@@ -9,9 +10,8 @@ using VisualCat.Domain.Queries;
 using VisualCat.Domain.Sessions;
 using VisualCat.Domain.Time;
 using VisualCat.Infrastructure.Adb;
-using VisualCat.Infrastructure.Files;
-using VisualCat.Core.Query;
 using VisualCat.Infrastructure.Configuration;
+using VisualCat.Infrastructure.Files;
 
 namespace VisualCat.Application.Tests;
 
@@ -402,7 +402,8 @@ public sealed class LinuxLiveTestRemediationTests
         }
         finally
         {
-            try { Directory.Delete(root, true); } catch (IOException) { }
+            try { Directory.Delete(root, true); }
+            catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
     }

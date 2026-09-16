@@ -2,9 +2,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
-using Avalonia.Platform;
 using VisualCat.App.Views;
 
 namespace VisualCat.App;
