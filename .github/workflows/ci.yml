@@ -25,6 +25,13 @@ jobs:
           fetch-depth: 0
       - name: Verify documentation and version consistency
         run: pwsh ./tools/verify-docs.ps1
+      # A workflow step that does not parse runs none of itself, and the release
+      # workflow's steps are unreachable from a pull request, so their first
+      # execution has always been the tag. One of them shipped with an
+      # unterminated expression and took every desktop job of the v2.0.14 release
+      # down with it. This reads the shell bodies without running them.
+      - name: Verify workflow shell bodies and action pinning
+        run: pwsh ./tools/verify-workflows.ps1
       - name: Scan for secrets
         run: pwsh ./tools/scan-secrets.ps1 -History
 
@@ -74,6 +81,19 @@ jobs:
           dotnet run --project src/VisualCat.Cli --configuration Release --no-build -- verify ci.vcat
           dotnet run --project src/VisualCat.Cli --configuration Release --no-build -- --version
           pwsh ./tools/verify-cli-help.ps1
+      # Recorded on every platform and compared in output-parity below. Every text
+      # export used to carry the host's own newline, so one session exported on
+      # Linux and on Windows differed by 5,001 carriage returns and nothing else —
+      # correct on each machine, undiffable between them. No single runner can see
+      # that, so each one records what it wrote and the comparison is its own job.
+      - name: Record this platform's text output fingerprint
+        shell: pwsh
+        run: pwsh ./tools/verify-output-parity.ps1 -Record "fingerprints/${{ runner.os }}.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: output-fingerprint-${{ runner.os }}
+          path: fingerprints/*.txt
+          if-no-files-found: error
       - name: Create coverage report
         if: runner.os == 'Linux'
         run: |
@@ -95,6 +115,80 @@ jobs:
           name: coverage-report
           path: coverage-report
           if-no-files-found: error
+
+  # The promise that a session exports the same bytes everywhere can only be
+  # checked by something that has seen every platform's output at once.
+  output-parity:
+    needs: desktop-core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: output-fingerprint-*
+          path: fingerprints
+          merge-multiple: true
+      - name: Compare every platform's text output
+        run: pwsh ./tools/verify-output-parity.ps1 -Compare fingerprints
+
+  # The packaging path is otherwise first executed by a tag. That is where the
+  # archives that scattered 240 generically-named assemblies into the user's
+  # working directory lived undetected until a macOS live test found them, and
+  # where the assertion written to stop it recurring turned out not to parse.
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: Directory.Packages.props
+      # -Archive runs tools/verify-package-contents.ps1 over each finished archive
+      # itself, which is where the layout, the notice files, the executable bit and
+      # the single-top-level-directory rule are all asserted.
+      - name: Package and verify the Linux archives
+        run: pwsh ./tools/package.ps1 -Runtime linux-x64 -Archive
+      - name: The desktop says what is wrong instead of dumping core
+        run: |
+          # No DISPLAY, a DISPLAY nothing is listening on, and an absent libX11 all
+          # ended in a bare .NET stack trace printed twice and a SIGABRT — a core
+          # dump of a log viewer for what is an ordinary mistake. The contract is
+          # now exit 69 and one sentence naming vcat, and this is the only gate
+          # that executes the desktop binary at all.
+          dotnet publish src/VisualCat.Desktop/VisualCat.Desktop.csproj \
+            --configuration Release --runtime linux-x64 --self-contained true \
+            --output "$RUNNER_TEMP/headless"
+
+          # A core dump here would be the very thing the fix exists to prevent, so
+          # do not let the runner write one even if this regresses.
+          ulimit -c 0
+          set +e
+          env -u DISPLAY -u WAYLAND_DISPLAY "$RUNNER_TEMP/headless/VisualCat" \
+            > "$RUNNER_TEMP/out.txt" 2> "$RUNNER_TEMP/err.txt"
+          code=$?
+          set -e
+          echo "exit=$code"
+          echo "--- stderr ---"; cat "$RUNNER_TEMP/err.txt"
+
+          if [ "$code" -ne 69 ]; then
+            echo "::error::The desktop exited $code with no display; the documented contract is 69 (EX_UNAVAILABLE). 134 would mean it aborted."
+            exit 1
+          fi
+          if ! grep -q 'vcat' "$RUNNER_TEMP/err.txt"; then
+            echo "::error::The no-display message does not name vcat, which is the thing that needs no display."
+            exit 1
+          fi
+
+          # The trace used to be printed by this product's handler and again by the
+          # runtime's default one: 38 lines of identical trace in exactly the
+          # situation where someone is hunting for one useful line. Match real frame
+          # lines ("    at Namespace.Method(...)") rather than prose containing "at".
+          frames=$(grep -cE '^[[:space:]]+at [A-Za-z_]+\.' "$RUNNER_TEMP/err.txt" || true)
+          if [ "$frames" -ne 0 ]; then
+            echo "::error::A stack trace reached the user for a configuration problem ($frames frame line(s))."
+            exit 1
+          fi
 
   android:
     runs-on: windows-latest

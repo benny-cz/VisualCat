@@ -70,7 +70,8 @@ Reproducible reference measurements live in [docs/PERFORMANCE.md](docs/PERFORMAN
 
 One command runs the same mechanical checks CI does — formatting, Release build,
 tests, CLI help, documentation and version consistency, vulnerable packages,
-packaging, and a secret scan — and tells you which stage failed:
+packaging, workflow shell-body parsing and action pinning, text-output newline
+parity, and a secret scan — and tells you which stage failed:
 
 ```shell
 pwsh ./tools/verify-public-release.ps1

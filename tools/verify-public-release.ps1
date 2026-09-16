@@ -6,7 +6,8 @@
     Composes the checks that already exist rather than reimplementing them:
     formatting, build, tests, CLI help, documentation and version consistency,
     vulnerable packages, packaging with the notice files users receive, a
-    CycloneDX SBOM and license-policy review, and a secret scan.
+    CycloneDX SBOM and license-policy review, workflow shell-body parsing and
+    action pinning, text-output newline parity, and a secret scan.
 
     The script is read-only with respect to the repository: it never tags,
     pushes, publishes, or rewrites anything. Output goes to a scratch directory
@@ -28,7 +29,7 @@ param(
     [switch]$ScanHistory,
 
     # Stages to skip, for iterating quickly on one area.
-    [ValidateSet('Format', 'Build', 'Test', 'Cli', 'Docs', 'Vulnerable', 'Package', 'Sbom', 'Secrets')]
+    [ValidateSet('Format', 'Build', 'Test', 'Cli', 'Workflows', 'Parity', 'Docs', 'Vulnerable', 'Package', 'Sbom', 'Secrets')]
     [string[]]$Skip = @(),
 
     [string]$OutputRoot = (Join-Path $PSScriptRoot '..\artifacts\verify')
@@ -134,6 +135,25 @@ Invoke-Stage 'Cli' {
     }
     Invoke-Native 'verify-cli-help.ps1' {
         & (Join-Path $PSScriptRoot 'verify-cli-help.ps1')
+    }
+}
+
+Invoke-Stage 'Workflows' {
+    # The release workflow's own steps are unreachable from a pull request, so a
+    # syntax error in one of them is discovered by the tag rather than before it.
+    Invoke-Native 'verify-workflows.ps1' {
+        & (Join-Path $PSScriptRoot 'verify-workflows.ps1')
+    }
+}
+
+Invoke-Stage 'Parity' {
+    # One machine cannot see a cross-platform byte difference, but it can see its
+    # own newlines, which is the half of that promise this host can answer for.
+    # The comparison across platforms is CI's output-parity job.
+    Invoke-Native 'verify-output-parity.ps1' {
+        New-Item -ItemType Directory -Path $output -Force | Out-Null
+        & (Join-Path $PSScriptRoot 'verify-output-parity.ps1') `
+            -Record (Join-Path $output 'fingerprints/local.txt')
     }
 }
 

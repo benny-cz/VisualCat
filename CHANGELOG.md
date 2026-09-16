@@ -13,6 +13,66 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Added
+
+#### Gates that close the classes 2.0.14 was found by hand
+
+The Linux and macOS live runs found 60 defects between them, and roughly thirty of
+those were mechanically findable — the rest are what live testing is for. These
+add the guards for the findable ones, each one control-tested by reintroducing the
+original defect and confirming it fails.
+
+- **Every `run:` body in every workflow is parsed by the shell that will actually
+  be given it**, and every `uses:` must be pinned to a commit SHA
+  ([`tools/verify-workflows.ps1`](tools/verify-workflows.ps1)). A step that does
+  not parse runs *none* of itself: the release workflow's archive step held a
+  parenthesised group containing two statements, so the `tar` calls above the two
+  archive assertions never ran either and all four desktop jobs of the v2.0.14
+  release failed at once. Those assertions had been unreachable since the day they
+  were written, because the release workflow does not run on a pull request and its
+  first execution in life was the tag. Shell resolution follows GitHub's own
+  precedence, so a matrix job spanning Windows and Linux has its unmarked bodies
+  checked as PowerShell *and* as bash — both interpreters really do run them.
+- **The parser is swept rather than sampled.** `logcat -v long` prints its identity
+  field as `%5d:%5d`, so a five-digit thread id fills the column and the colon is
+  followed by a digit instead of a space; reading the field by whitespace saw one
+  spelling and filed 472 of 4,000 real records as continuations of the record above.
+  A line-accounting check cannot see that — a reclassified record still balances the
+  books, which is why both counters a reader would check said zero. A round trip can:
+  render a record whose fields are known by construction, parse it back, require
+  every field to survive. 245 width and format combinations, plus probe/parse
+  agreement and detection confidence on a clean corpus of each format.
+- **Any bytes at all produce an outcome rather than an exception.** The session
+  reader has had a corruption fuzzer since §20.8, but the reader consumes what this
+  product wrote and the parser consumes whatever a user opens — which is the side
+  facing untrusted input. Seeded, so a failure is reproducible from its iteration
+  number, and it asserts a message never claims to run past the end of its line.
+- **Every physical line is accounted for by exactly one outcome.** `SourceLines` is
+  counted by the reader as it frames lines; the seven outcome kinds are counted by
+  the parser as it decides what each line was. The two are derived independently and
+  must agree, so a line read and then quietly dropped shows up as a gap neither
+  number reveals alone. It is complementary to the round trip above: one says
+  nothing was lost, the other says nothing was relabelled.
+- **The shipped corpus generator is checked against the shipped parser.** The
+  generator feeds the performance workflow and `vcat generate-test-log`, so a drift
+  between the two would be measured as a performance number and shipped as a
+  command, while looking healthy from either side alone.
+- **Text output is compared across platforms, not just promised.** Every export used
+  to carry the host's own newline, so one session exported on Linux and on Windows
+  differed by 5,001 carriage returns and nothing else — correct on each machine,
+  undiffable between them, and invisible to any single runner.
+  [`tools/verify-output-parity.ps1`](tools/verify-output-parity.ps1) records a
+  fingerprint of six export types on each platform and a new CI job compares them;
+  it also fails locally on a stray carriage return, naming the export.
+- **The packaging path runs on every pull request**, where it used to run first at
+  the tag. That is where archives that scattered 240 generically-named assemblies
+  into the user's working directory lived undetected until a macOS live test.
+- **The desktop binary is launched with no display** — the only gate that executes
+  it at all. No `DISPLAY` once ended in a bare .NET stack trace printed twice and a
+  `SIGABRT`, a core dump of a log viewer for an ordinary mistake. The contract is now
+  exit 69 and one sentence naming `vcat`, and CI asserts the exit code, the sentence,
+  and the absence of a stack trace.
+
 ## [2.0.14] - 2026-09-16
 
 ### Fixed

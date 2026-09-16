@@ -9,7 +9,8 @@ pwsh ./tools/verify-public-release.ps1 -AllRuntimes -ScanHistory
 This answers "is this commit mechanically ready to package?" It composes the
 existing checks — formatting, Release build, tests, CLI help, documentation and
 version consistency, vulnerable packages, packaging with the notice files users
-receive, CycloneDX SBOM generation and license review, and a secret scan — and
+receive, CycloneDX SBOM generation and license review, workflow shell-body
+parsing and action pinning, text-output newline parity, and a secret scan — and
 exits non-zero naming the first failing stage.
 It never tags, pushes, or publishes anything.
 
@@ -29,6 +30,17 @@ be published from an unmerged commit or one that would fail a pull request:
   `Directory.Build.props` version agreement, checked by `tools/verify-docs.ps1`;
 - a secret scan over the working tree and all reachable Git history,
   `tools/scan-secrets.ps1`;
+- every `run:` body in every workflow parsed by the shell that will actually be
+  given it, and every `uses:` pinned to a commit SHA, `tools/verify-workflows.ps1`
+  — a step that does not parse runs none of itself, and the release workflow's
+  steps are unreachable from a pull request, so their first execution used to be
+  the tag;
+- the Linux desktop and CLI archives packaged and verified on every pull request,
+  rather than first at the tag;
+- the desktop binary launched with no display, which must exit 69 with one
+  sentence rather than abort;
+- every text export recorded on Windows, Linux and macOS and compared byte for
+  byte, `tools/verify-output-parity.ps1`;
 - a tag matching `vMAJOR.MINOR.PATCH` with an optional prerelease suffix, and a
   changelog section for the version being released;
 - `LICENSE`, `THIRD-PARTY-NOTICES.md`, and a `README.txt` staged into every
