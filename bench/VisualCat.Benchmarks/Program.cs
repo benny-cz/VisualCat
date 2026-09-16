@@ -95,8 +95,15 @@ try
 
         // The manifest was rewritten in full on every published snapshot, so its size is
         // the number that decided whether a long capture stayed openable.
-        var manifestBytes = FileLength(Path.Combine(root, "manifest.json"));
-        var templateSidecarBytes = FileLength(Path.Combine(root, "templates.jsonl"));
+        var manifestPath = Path.Combine(root, "manifest.json");
+        var manifestBytes = FileLength(manifestPath);
+
+        // Finalization compacts the sidecar under a new name and records it in the manifest,
+        // so the name the writer uses during import is gone by the time the session is read.
+        // Looking for that name reported the sidecar as 0 B on every run, in the same summary
+        // whose manifest ceiling is justified by the table living in the sidecar rather than
+        // the manifest — the one row that shows the split working read as if it had not.
+        var templateSidecarBytes = FileLength(Path.Combine(root, TemplateSidecarName(manifestPath)));
         var searchIterations = Math.Clamp(options.Iterations, 1, 10);
         var literalSearch = await MeasureSearchAsync(
             root,
@@ -211,6 +218,25 @@ finally
 return 0;
 
 static long FileLength(string path) => File.Exists(path) ? new FileInfo(path).Length : 0;
+
+// Resolves the sidecar the session actually carries, the way a reader does. The fallback is
+// the name the writer uses before finalization, spelled here because the store's own constant
+// is internal — the same way this file already spells "manifest.json".
+static string TemplateSidecarName(string manifestPath)
+{
+    const string beforeFinalization = "templates.jsonl";
+    if (!File.Exists(manifestPath))
+    {
+        return beforeFinalization;
+    }
+
+    using var manifest = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
+    return manifest.RootElement.TryGetProperty("templateSidecarName", out var name)
+        && name.ValueKind == JsonValueKind.String
+        && name.GetString() is { Length: > 0 } value
+            ? value
+            : beforeFinalization;
+}
 
 static async Task<string> Sha256Async(string path)
 {

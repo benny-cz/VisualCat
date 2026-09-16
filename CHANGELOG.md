@@ -226,6 +226,19 @@ run, §20 records this remediation, and §21–§25 the passes that followed it.
   any line-oriented reader. It was pretty-printing each entry across 24 lines, so the
   `errors.ndjson` the reference's own example writes could not be parsed a line at a time.
   Every other command still prints one indented document.
+- **`vcat generate-test-log` creates the directory its `--output` names.** Every other command
+  that writes a file does; this one opened the stream straight onto the path, so an output
+  under a directory that does not exist yet failed with *Could not find a part of the path*
+  rather than making it. The weekly performance workflow writes its corpus into the
+  gitignored `.tmp`, which no fresh checkout has, so it died on its first step on every
+  scheduled run it has ever made — seven of them, none of which reached a benchmark, while
+  the only recipe that worked was the one in
+  [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) that says `mkdir -p .tmp` first.
+- **The benchmark measures the template sidecar the session actually carries.** It looked for
+  the name the writer uses during import, which finalization replaces with a compacted one
+  recorded in the manifest, so the published summary reported **0 B** for a file that is about
+  1.6 MB on the high-cardinality corpus — the one row that shows the manifest ceiling being
+  held by keeping the template table out of the manifest read as though it were not.
 
 #### From the macOS live test
 

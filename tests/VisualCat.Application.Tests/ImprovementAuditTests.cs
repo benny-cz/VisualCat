@@ -93,6 +93,46 @@ public sealed class ImprovementAuditTests
         Assert.Equal(expected, SourceMetadata.NameCaptureStartedAt("Capture", startedAt));
     }
 
+    /// <summary>
+    /// An <c>--output</c> under a directory that does not exist yet must be made, not refused.
+    /// Every other command that writes a file does that; this one opened the stream straight
+    /// onto the path and died on "Could not find a part of the path", which is why the weekly
+    /// performance workflow — whose first step writes into the gitignored <c>.tmp</c>, absent
+    /// from every fresh checkout — failed on its first step on every run it ever made.
+    /// </summary>
+    [Fact]
+    public async Task GenerateTestLogCreatesTheOutputDirectoryItWasPointedAt()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"visualcat-generate-{Guid.NewGuid():N}");
+        var destination = Path.Combine(root, "absent", "logcat.txt");
+        var previousOutput = Console.Out;
+        using var output = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
+        Console.SetOut(output);
+        try
+        {
+            Assert.False(Directory.Exists(root));
+            Assert.Equal(
+                0,
+                await VisualCatCli.RunAsync(["generate-test-log", "--output", destination, "--lines", "8"]));
+            // A whole file landed there, not just an opened handle: logcat's own banner and
+            // then the eight entries that were asked for.
+            var written = File.ReadAllLines(destination);
+            Assert.Equal("--------- beginning of main", written[0]);
+            Assert.Equal(8, written.Length - 1);
+
+            // The path it prints is the path it wrote, so a script can read one and open the other.
+            Assert.Equal(Path.GetFullPath(destination), output.ToString().Trim());
+        }
+        finally
+        {
+            Console.SetOut(previousOutput);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
     [Fact]
     public void SettingsTemporaryCleanupNeverReplacesThePrimaryFailure()
     {

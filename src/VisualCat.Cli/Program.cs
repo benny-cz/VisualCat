@@ -535,7 +535,16 @@ internal static class VisualCatCli
     {
         var output = options.GetValue("--output") ?? options.PositionOrDefault(0) ?? "synthetic-logcat.txt";
         var lines = options.GetLong("--lines", 1_000_000, 0);
-        await using var stream = new FileStream(output, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true);
+
+        // Every other command that writes a file makes the directory it was pointed at first.
+        // This one opened the stream straight onto the path, so an --output naming a directory
+        // that does not exist yet died on "Could not find a part of the path" rather than
+        // creating it. That is what the performance workflow asks for on every run: .tmp is
+        // gitignored, so on a fresh checkout the very first step wrote into a directory no
+        // checkout had ever made, and the whole benchmark gate had never once run.
+        var destination = Path.GetFullPath(output);
+        Directory.CreateDirectory(Path.GetDirectoryName(destination) ?? ".");
+        await using var stream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true);
         await SyntheticLogGenerator.GenerateAsync(
             stream,
             new SyntheticLogOptions(
@@ -545,7 +554,7 @@ internal static class VisualCatCli
                 DistinctTags: options.GetInt("--tags", 0, 0),
                 DistinctTemplates: options.GetInt("--templates", 0, 0)),
             cancellationToken).ConfigureAwait(false);
-        Console.WriteLine(Path.GetFullPath(output));
+        Console.WriteLine(destination);
         return 0;
     }
 
