@@ -6,9 +6,9 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.LogicalTree;
+using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
-using Avalonia.Media;
 using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
@@ -118,8 +118,10 @@ public sealed class LinuxLiveTestShellTests
     {
         // An ADB capture negotiates UTC while the plot reads in the host zone, so the review
         // stated the same instants two hours from the plot it was opened from (finding F-16).
+        // Through the product's own host-zone resolution: on macOS the runtime calls UTC
+        // "Universal" while /etc/localtime calls it "UTC", and the two spellings are one zone.
         var adb = Descriptor(SourceKind.Adb, "UTC");
-        Assert.Equal(TimeZoneInfo.Local.Id, DisplayZone.IdFor(adb));
+        Assert.Equal(TimeZoneResolution.HostZoneId(), DisplayZone.IdFor(adb));
 
         // An imported file's naive timestamps mean whatever its policy says, and that does not
         // change.
@@ -167,9 +169,9 @@ public sealed class LinuxLiveTestShellTests
             Assert.NotNull(focused);
             Assert.Same(window, focused!.FindAncestorOfType<Window>(includeSelf: true));
 
-        // And it must not look different to someone who uses a pointer: the focus adorner is
-        // driven by :focus-visible, which keyboard navigation raises and a programmatic focus
-        // does not.
+            // And it must not look different to someone who uses a pointer: the focus adorner is
+            // driven by :focus-visible, which keyboard navigation raises and a programmatic focus
+            // does not.
             Assert.False(
                 ((IPseudoClasses)((StyledElement)focused).Classes).Contains(":focus-visible"),
                 "starting focus must not draw a focus ring for a reader who never touched the keyboard");

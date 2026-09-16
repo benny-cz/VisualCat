@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.LogicalTree;
+using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
 using VisualCat.App.Views;
 using VisualCat.Core.Query;
@@ -198,7 +199,9 @@ public sealed class SearchNavigationTests
             fixture.Window,
             () => fixture.Tab.SelectedSearchMatch?.Ordinal == 1);
 
-        Assert.True(fixture.View.TryHandleShortcut(Key(Avalonia.Input.Key.G, KeyModifiers.Control)));
+        // The platform's own shortcut modifier, not Control everywhere: macOS answers to Command
+        // alone, because Control-F there belongs to the text fields the system gives it to.
+        Assert.True(fixture.View.TryHandleShortcut(Key(Avalonia.Input.Key.G, PlatformShortcuts.Primary)));
         PixelGestureAndTextScaleTests.PumpUntil(
             fixture.Window,
             () => fixture.Tab.SelectedSearchMatch?.Ordinal == 2);
@@ -227,7 +230,7 @@ public sealed class SearchNavigationTests
 
         // The keys are still claimed — they belong to the workspace — but nothing happens,
         // and the reason is already spoken by the controls they stand for.
-        fixture.View.TryHandleShortcut(Key(Avalonia.Input.Key.G, KeyModifiers.Control));
+        fixture.View.TryHandleShortcut(Key(Avalonia.Input.Key.G, PlatformShortcuts.Primary));
         fixture.View.TryHandleShortcut(Key(Avalonia.Input.Key.Home, KeyModifiers.Alt));
         PixelGestureAndTextScaleTests.PumpUntil(fixture.Window, () => true, passes: 10);
 

@@ -6,6 +6,7 @@ using Avalonia.Controls.Documents;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.LogicalTree;
+using VisualCat.App.Platform;
 using VisualCat.App.Presentation;
 using VisualCat.App.Timeline;
 using VisualCat.App.Views;
@@ -215,10 +216,12 @@ public sealed class SessionWorkspaceHeadlessTests
                 var search = view.GetLogicalDescendants()
                     .OfType<TextBox>()
                     .Single(textBox => textBox.PlaceholderText?.Contains("Search", StringComparison.Ordinal) == true);
+                // The platform's own shortcut modifier: macOS answers to Command alone, where
+                // Control-F belongs to the text fields the system gives it to.
                 Assert.True(view.TryHandleShortcut(new KeyEventArgs
                 {
                     Key = Key.F,
-                    KeyModifiers = KeyModifiers.Control,
+                    KeyModifiers = PlatformShortcuts.Primary,
                 }));
                 Assert.True(search.IsFocused);
 
@@ -389,7 +392,11 @@ public sealed class SessionWorkspaceHeadlessTests
             // Parsed in the zone the source declares, read in the reader's own clock.
             Assert.Equal(SourceKind.Android, captured.Snapshot?.Descriptor.SourceKind);
             Assert.Equal("UTC", captured.Snapshot?.Descriptor.TimestampPolicy.TimeZoneId);
-            Assert.Equal(TimeZoneInfo.Local.Id, deviceView.DisplayZoneId());
+
+            // The host zone is asked for the way the product asks for it. On macOS the runtime
+            // calls UTC "Universal" while /etc/localtime calls it "UTC", so comparing against
+            // TimeZoneInfo.Local.Id failed a zone against another name for the same zone.
+            Assert.Equal(TimeZoneResolution.HostZoneId(), deviceView.DisplayZoneId());
 
             // An imported file keeps its policy zone, which is what makes a rendered row
             // agree with the raw line behind it.
