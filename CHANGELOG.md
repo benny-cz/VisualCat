@@ -348,7 +348,12 @@ Avalonia's to fix rather than this product's.
   the command the README's own first instruction implies — dropped 240 generically-named .NET
   assemblies into whatever directory the user was standing in. Every archive now carries one
   top-level directory named after itself, on every platform, and two assertions stop it
-  regressing.
+  regressing — assertions that now parse, so they actually run. They were written as one
+  parenthesised group holding two statements, which PowerShell reads as an unterminated
+  expression, and the release workflow's archive step therefore died before writing its
+  first archive on every platform at once. The release workflow is the only thing that runs
+  that step, and it does not run on a pull request, so nothing could have caught it earlier
+  than the tag.
 - **The macOS README's verify line works on macOS.** It said `sha256sum`, which is GNU
   coreutils; macOS shipped no command by that name until macOS 26, so the one instruction
   whose purpose is to run before the binary answered `command not found`. Both Unix artifacts

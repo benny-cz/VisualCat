@@ -188,10 +188,14 @@ jobs:
           # per archive, and it is a directory.
           foreach ($archive in Get-ChildItem packages) {
             $roots = if ($archive.Extension -eq '.zip') {
-              (Expand-Archive -LiteralPath $archive.FullName -DestinationPath (Join-Path $env:RUNNER_TEMP $archive.BaseName) -Force
-               Get-ChildItem (Join-Path $env:RUNNER_TEMP $archive.BaseName) | ForEach-Object { $_.Name + $(if ($_.PSIsContainer) { '/' } else { '' }) })
+              # Two statements, not one parenthesised group: ( ... ) holds a single pipeline,
+              # so a newline inside it is a parse error and the whole step dies before the
+              # first archive is written.
+              $extracted = Join-Path $env:RUNNER_TEMP $archive.BaseName
+              Expand-Archive -LiteralPath $archive.FullName -DestinationPath $extracted -Force
+              Get-ChildItem $extracted | ForEach-Object { $_.Name + $(if ($_.PSIsContainer) { '/' } else { '' }) }
             } else {
-              (tar -tzf $archive.FullName | ForEach-Object { ($_ -split '/')[0] + '/' } | Sort-Object -Unique)
+              tar -tzf $archive.FullName | ForEach-Object { ($_ -split '/')[0] + '/' } | Sort-Object -Unique
             }
             $roots = @($roots | Sort-Object -Unique)
             if ($roots.Count -ne 1) {
