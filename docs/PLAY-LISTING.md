@@ -268,10 +268,10 @@ with Android Wireless debugging; VisualCat-only capture works without setup.
 Everything is processed on the device.
 ```
 
-Release notes for `2.0.14` (497/500 characters):
+Release notes for `2.0.14` (480/500 characters):
 
 ```text
-VisualCat 2.0.14 is an accuracy release. Records whose thread id needs five digits are no longer dropped from the timeline, the counts and every export, and lines that are not logcat records are counted honestly and listed in full. A large log now finishes showing all of it rather than a prefix, and a followed file releases its tail when the writer goes quiet. Searching text that names a tag offers to search the tag. Exports are byte-identical everywhere; sessions and settings are owner-only.
+VisualCat 2.0.14 is an accuracy release. Records whose thread id needs five digits are no longer dropped from the timeline, the counts and every export, and lines that are not logcat records are counted honestly and listed in full. A large log now finishes showing all of it rather than a prefix, and the count line names the window it counts. Searching text that names a tag offers to search the tag, exports are byte-identical everywhere, and panes stay inside their own bounds.
 ```
 
 Release notes for `2.0.13` (485/500 characters):
