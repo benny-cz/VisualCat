@@ -73,6 +73,43 @@ original defect and confirming it fails.
   exit 69 and one sentence naming `vcat`, and CI asserts the exit code, the sentence,
   and the absence of a stack trace.
 
+### Fixed
+
+#### A long-format line with nothing to continue is no longer filed as a body line
+
+Found by hand on a Galaxy S21 FE during the 2.0.14 Play candidate run
+(`docs/RELEASE-CHECKLIST.md`, the v2.0.14 record).
+
+- **A `long`-format line that continues nothing is an unknown line.**
+  `LogcatParser` decides a line's kind from the line alone, so in `long` format
+  every line that is not a header comes back as a continuation — whether that is
+  true depends on state the parser does not have. A blank separator commits the
+  open record, so a non-header line after one continues nothing; filing it as a
+  continuation asserted it was the message text of an entry it is not part of,
+  and the assembly walk matched no branch for it, so it reached the end of the
+  loop counted as the body of a record that had already been written. `unknown`,
+  `untimed` and rejected-candidate all read zero for it and search could not
+  reach it. The shipped generator emits one such line in every file it writes, so
+  every synthetic corpus was losing its last line this way: a 3,999-record corpus
+  reported `unknown: 0` and now reports `unknown: 1`. A legitimate multi-line
+  message is unaffected and still attaches to its record.
+- **The gate that should have caught it now can.** `SourceAccountingTests`
+  asserts `SourceLines == attributed` with continuations in the sum, so a
+  continuation that had no record to attach to still balanced the books — the
+  same blind spot the 2.0.14 notes describe for the defect that test was written
+  to close, and one the parser round trip cannot see either, because the
+  misclassification is the coordinator's and the parser's answer for that line is
+  correct in every context but the one it is in. The contract is now pinned on
+  exact per-kind counts.
+- **"Lines not on the timeline" no longer says the opposite of what it does.**
+  The panel described everything it lists as a line that "is not a logcat record
+  at all" and is "deliberately not attached to the entry above" — true of a stack
+  frame in a single-line format, false of every `long`-format body, which the
+  coordinator does attach and whose text the timeline is already showing as that
+  entry's message. A reader who opened a healthy `long` capture was told 4,000 of
+  its lines were unreadable. It now distinguishes the four populations and says
+  what a continuation actually is.
+
 ## [2.0.14] - 2026-09-16
 
 ### Fixed

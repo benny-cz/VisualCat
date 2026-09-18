@@ -126,6 +126,79 @@ public sealed class SourceAccountingTests
         }
     }
 
+    /// <summary>
+    /// A long-format line with no open record to continue is an unknown line, not a body.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Core.Parsing.LogcatParser"/> decides a line's kind from the line alone, so in
+    /// long format every line that is not a header comes back as a continuation. Whether that is
+    /// true depends on state the parser does not have: a blank separator commits the open record,
+    /// and a non-header line after one continues nothing. Filing it as a continuation asserts it
+    /// is the message text of an entry it is not part of — the same false assertion the malformed
+    /// header of the original finding made — and the assembly walk in
+    /// <see cref="SessionCoordinator"/> matches no branch for it, so it reached the end of the
+    /// loop counted as a body line of a record that had already been written.
+    /// </para>
+    /// <para>
+    /// Neither existing guard sees this. The partition test above still balances, because the
+    /// line is attributed — to the wrong population. The parser round trip does not reach it,
+    /// because the misclassification is the coordinator's, and the parser's answer for this line
+    /// is correct for every context except the one it is in. So the contract is pinned here, on
+    /// exact counts rather than on a sum.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task ALongFormatLineWithNoOpenRecordIsUnknownRatherThanABody(int workers)
+    {
+        // Two records — the first with a two-line message, so a genuine continuation is present
+        // to tell apart from the orphan — then a line after the separator that continues nothing.
+        const string Corpus =
+            "[ 05-15 14:13:37.001  5521:22751 I/chatty ]\nline-one\nLINE-TWO-CONTINUATION\n\n" +
+            "[ 05-15 14:13:38.002  5521:22752 E/Boom ]\nsecond\n\n" +
+            "ORPHAN-TRAILING-LINE\n";
+
+        var directory = NewSessionPath();
+        try
+        {
+            await using var source = new MemoryLogSource(Encoding.UTF8.GetBytes(Corpus), [4096]);
+            var result = await SessionCoordinator.ImportAsync(
+                source,
+                directory,
+                Settings(LogcatFormat.LongFormat, workers));
+            using var snapshot = result.Snapshot;
+            var counters = snapshot.Descriptor.Counters;
+
+            Assert.Equal(8, counters.SourceLines);
+            Assert.Equal(2, counters.ParsedEntries);
+
+            // The three real body lines, and only those.
+            Assert.Equal(3, counters.Continuations);
+
+            // The orphan. Before the fix this was 0 and Continuations was 4.
+            Assert.Equal(1, counters.UnknownLines);
+
+            Assert.Equal(2, counters.IgnoredBlanks);
+            Assert.Equal(0, counters.RejectedCandidates);
+            Assert.Equal(0, counters.MetaRecords);
+
+            var attributed =
+                counters.ParsedEntries +
+                counters.MetaRecords +
+                counters.Continuations +
+                counters.UnknownLines +
+                counters.RejectedCandidates +
+                counters.IgnoredBlanks;
+            Assert.Equal(counters.SourceLines, attributed);
+        }
+        finally
+        {
+            TryDelete(directory);
+        }
+    }
+
     private static async Task<byte[]> GenerateAsync(LogcatFormat format, int lines)
     {
         using var buffer = new MemoryStream();

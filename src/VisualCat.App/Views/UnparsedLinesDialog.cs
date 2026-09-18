@@ -99,14 +99,24 @@ internal sealed class UnparsedLinesDialog : DialogBody<bool>
 
         var explanation = new TextBlock
         {
+            // The four populations are not one thing, and saying they were made this panel
+            // assert something false about the commonest of them. A continuation was described
+            // here as a line that "is not a logcat record at all" and is "deliberately not
+            // attached to the entry above" — true of a stack frame in a single-line format, and
+            // false of every long-format body, which the coordinator does attach and whose text
+            // the timeline is already showing as that entry's message. A reader who opened a
+            // healthy long capture was told 4,000 of its lines were unreadable.
             Text =
-                "Two kinds of line end up here, and neither can appear on a time axis. Lines " +
-                "that are not logcat records at all — most often the indented frames of a stack " +
-                "trace — are kept byte for byte and deliberately not attached to the entry " +
-                "above: a line the parser could not read is evidence, and hiding it inside a " +
-                "neighbouring message would lose that. Records that parsed but carry no usable " +
-                "timestamp are real entries with nowhere on the plot to be drawn. Both are " +
-                "counted separately from the timed entries every other view shows.",
+                "Four kinds of line end up here, and none of them is a timed entry the plot can " +
+                "draw. A continuation (..) belongs to the record above it — in the long format " +
+                "every record spends a line on its message, so a healthy capture has one per " +
+                "entry and that text is already on the timeline as the entry's message. An " +
+                "unknown line (??) is one no supported grammar could read, and a rejected " +
+                "candidate (!!) looked like a header and failed its own validation; both are " +
+                "kept byte for byte rather than folded into a neighbouring message, because a " +
+                "line the parser could not read is evidence and hiding it would lose that. An " +
+                "untimed record (e?) parsed correctly but carries no usable timestamp, so it is " +
+                "a real entry with nowhere on the plot to be drawn.",
             TextWrapping = TextWrapping.Wrap,
             FontSize = TextScale.Of(12),
             Opacity = 0.85,

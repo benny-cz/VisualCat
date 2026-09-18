@@ -219,6 +219,22 @@ public sealed class SessionCoordinator
                         {
                             current = current with { Kind = ParseOutcomeKind.Continuation, Reason = "long-format body" };
                         }
+                        else if (pendingLong is null && current.Kind == ParseOutcomeKind.Continuation)
+                        {
+                            // The parser decides a line's kind without knowing whether a record is
+                            // open, so in long format every line that is not a header arrives here
+                            // as a continuation. One that reaches this branch has nothing to
+                            // continue — the blank separator before it already committed the record
+                            // — so calling it a continuation asserts it is the message text of an
+                            // entry that does not exist. It is also the one kind the assembly walk
+                            // below matches no branch for, so it used to reach the end of the loop
+                            // having been counted as a body line of a record it is not part of.
+                            current = current with
+                            {
+                                Kind = ParseOutcomeKind.UnknownLine,
+                                Reason = "long-format body with no open record",
+                            };
+                        }
 
                         counters.ObserveOutcome(current);
                         store.AddOutcome(current, current.Fields is null ? null : current.Source.Sequence);
