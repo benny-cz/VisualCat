@@ -199,6 +199,77 @@ public sealed class SourceAccountingTests
         }
     }
 
+    /// <summary>
+    /// Only the long format spends a continuation on every record, and that is deliberate.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A continuation is counted as a defect rather than as a line class, so it reaches
+    /// <c>SessionTabViewModel.UnparsedLineCount</c> and the chip bar. In a single-line format
+    /// that is right: a continuation there is a stack frame or something else the grammar could
+    /// not read. In the long format it is every record's own message, so a healthy capture
+    /// reports one per entry — a 3,999-record file says "4,000 unparsed lines" when exactly one
+    /// of them belongs to no record.
+    /// </para>
+    /// <para>
+    /// That was reviewed against the alternative — excluding attached bodies from the total —
+    /// and keeping the count was chosen, with the wording in <c>UnparsedLinesDialog</c> changed
+    /// instead so the panel stops describing an attached body as a line that "is not a logcat
+    /// record at all". This test exists so that decision is visible and cannot be reversed by
+    /// accident: if the arithmetic changes, the words have to change with it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task OnlyTheLongFormatSpendsAContinuationOnEveryRecord()
+    {
+        const string Long =
+            "[ 05-15 14:13:37.001  5521:22751 I/chatty ]\nfirst\n\n" +
+            "[ 05-15 14:13:38.002  5521:22752 E/Boom ]\nsecond\n\n" +
+            "[ 05-15 14:13:39.003  5521:22753 W/Third ]\nthird\n\n";
+
+        const string ThreadTime =
+            "05-15 14:13:37.001  5521 22751 I chatty  : first\n" +
+            "05-15 14:13:38.002  5521 22752 E Boom    : second\n" +
+            "05-15 14:13:39.003  5521 22753 W Third   : third\n";
+
+        var (longEntries, longContinuations, longUnknown) =
+            await CountAsync(Long, LogcatFormat.LongFormat);
+        var (threadEntries, threadContinuations, threadUnknown) =
+            await CountAsync(ThreadTime, LogcatFormat.ThreadTime);
+
+        Assert.Equal(3, longEntries);
+        Assert.Equal(3, threadEntries);
+
+        // One body line per record, all of them attached to the record above.
+        Assert.Equal(3, longContinuations);
+
+        // Nothing to continue: a threadtime record is one physical line.
+        Assert.Equal(0, threadContinuations);
+
+        // Neither corpus contains an unreadable line.
+        Assert.Equal(0, longUnknown);
+        Assert.Equal(0, threadUnknown);
+    }
+
+    private static async Task<(long Entries, long Continuations, long Unknown)> CountAsync(
+        string corpus,
+        LogcatFormat format)
+    {
+        var directory = NewSessionPath();
+        try
+        {
+            await using var source = new MemoryLogSource(Encoding.UTF8.GetBytes(corpus), [4096]);
+            var result = await SessionCoordinator.ImportAsync(source, directory, Settings(format, 1));
+            using var snapshot = result.Snapshot;
+            var counters = snapshot.Descriptor.Counters;
+            return (counters.ParsedEntries, counters.Continuations, counters.UnknownLines);
+        }
+        finally
+        {
+            TryDelete(directory);
+        }
+    }
+
     private static async Task<byte[]> GenerateAsync(LogcatFormat format, int lines)
     {
         using var buffer = new MemoryStream();
