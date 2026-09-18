@@ -95,3 +95,31 @@ SPAKE2 dependency. VisualCat nevertheless treats the **resolved AAB** as the
 authoritative dependency graph. Any unexpected LGPL/GPL/native dependency is a
 release blocker until its redistribution obligations and product-policy impact
 are reviewed and documented here.
+
+### Resolved inventory — `VisualCat-Android-v2.0.14.aab`, 2026-09-18
+
+Read out of the bundle itself (`base/root/META-INF/*.version`, `base/root/kotlin/`,
+`base/root/META-INF/maven/`), not inferred from the table above. Every component
+here is Apache-2.0 unless noted, so nothing in this candidate carries a
+redistribution obligation the MIT distribution cannot meet, and **no GPL, LGPL or
+other copyleft artifact is present**.
+
+| Group | Components | Version |
+|---|---|---|
+| AndroidX core/UI | `core`, `core-ktx`, `core-viewtree` | 1.17.0, 1.17.0, 1.0.0 |
+| AndroidX app shell | `appcompat`, `appcompat-resources`, `activity`, `fragment` | 1.7.1, 1.7.1, 1.12.4, 1.8.9 |
+| AndroidX lifecycle | `lifecycle-runtime`, `-viewmodel`, `-viewmodel-savedstate`, `-livedata-core`, `-process` | 2.10.0 |
+| AndroidX misc | `savedstate` 1.4.0, `startup-runtime` 1.2.0, `tracing` 1.3.0, `profileinstaller` 1.4.1, `window` 1.5.1, `navigationevent` 1.0.2, `annotation-experimental` 1.5.1, `versionedparcelable` 1.2.1, `arch.core-runtime`, `loader` 1.1.0, `customview` 1.2.0, `cursoradapter` 1.0.0, `drawerlayout`, `interpolator` 1.0.0, `viewpager` 1.1.0, `vectordrawable` 1.2.0, `vectordrawable-animated` 1.2.0, `emoji2` 1.6.0, `emoji2-views-helper` 1.6.0 | as listed |
+| Kotlin | `kotlin-stdlib` built-ins, `kotlinx-coroutines-core`, `kotlinx-coroutines-android` | coroutines 1.10.2 |
+| Guava | `listenablefuture` (stub artifact) | — |
+| Bouncy Castle | `bcprov-jdk15to18`, `bctls-jdk15to18` (MIT) | 1.84 |
+| Wireless ADB | `libadb-android-bc` (Apache-2.0 option of a dual GPL-3.0-or-later / Apache-2.0 licence) | 3.2.0 |
+| Play Core chain | `app-update`, `core-common`, `play-services-basement`, `play-services-tasks` — **proprietary**, see above | 2.1.0 / 2.0.4 |
+| Native | 99 `.so` per ABI, `arm64-v8a` and `x86_64` only | — |
+
+Two observations worth carrying forward. The bundle ships Kotlin Multiplatform
+metadata under `base/root/commonMain/default/linkdata/**`, which no Android
+runtime reads — dead weight, not a licence question. And the hand-maintained
+table above still names only *AndroidX Core*, which is why this gate says the
+resolved AAB is authoritative: the real graph is 33 AndroidX modules plus Kotlin
+and Guava.

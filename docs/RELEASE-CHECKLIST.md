@@ -148,6 +148,113 @@ the screen. Default low and escalate deliberately.
 > candidate must satisfy the manual Wireless ADB gates above and record a new
 > physical-device run before Play publication.
 
+### v2.0.14 — 2026-09-18 — **candidate NOT signed off**
+
+Smoke schedule (§12) on the exact Play candidate. This is the first release
+record since v2.0.8; **2.0.9 through 2.0.13 have none** and are not signed off
+retrospectively by this one.
+
+- **Artifact.** `com.barebit.visualcat` 2.0.14, versionCode `2001400`, minSdk 31,
+  targetSdk 36, ABIs `arm64-v8a` + `x86_64`. The installed APK is byte-identical
+  to `artifacts/android/VisualCat-Android-v2.0.14.apk`
+  (`8e7e7baff2f495af1ea61334b2bc5bd0a0724cc1b539340eddefeab28c82bb73`), signed by
+  the pinned upload certificate `a715b030…6530e184` (RSA 4096, v3 scheme). The
+  manifest carries exactly the five audited permissions plus the generated
+  `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, and **no `READ_LOGS`**. The empty
+  state prints `VisualCat 2.0.14+6cfd2d9`, which is the tagged commit.
+- **Device.** Samsung SM-G990B (Galaxy S21 FE), Android 16 / API 36, serial
+  `RFCRC0A9GND`, three-button navigation, override density 360 (2.25 px/dp →
+  480 × 1040 dp portrait), `font_scale` 1.0, night mode on.
+- **Passed.** B-01 (cold launch 1562 ms, correct hero actions, no desktop
+  commands, no unpainted bars), B-03 (quick import, provider-named tab), B-10
+  (own-app Live: honest `own-app scope` notice, first record reads
+  `scope resolved: fullDevice=False, declined=False`, notification permission
+  requested once and **declined without blocking capture**), B-12 (`Stop capture`
+  pressed once → `Stopped · 122 entries kept`, live-only controls removed, label
+  never sprang back), B-13 (forced process stop + cold relaunch → `Ready · 122
+  entries`, same counts and range). The Live scope chooser carries no
+  normal-Play `READ_LOGS` promise or jargon.
+- **H-06 parity — PARTIAL.** Entry and severity counts agree exactly between the
+  phone and the 2.0.14 CLI on a 3,999-record `long` corpus: 3,999 entries and
+  F 638 / E 659 / W 677 / I 666 / D 675 / V 684 on both. The **unparsed-line
+  count does not agree** — see F-01 below.
+
+- **B-11 Wireless ADB — PASS, both states.** The largest untested cell, and the
+  first real pairing evidence since the 2.0.7 cycle. **W1:** Android's
+  pairing-code panel is cancelled when Settings loses focus, so the first attempt
+  failed — and failed *well*, naming that exact cause and clearing the code field
+  so a stale code is not retried. Split screen (Recents → the card's app icon →
+  *Open in split screen view*) keeps the panel alive; pairing then succeeded and
+  Live ran at `Wireless debugging full-device` scope, **25,951 entries** over
+  ~90 s at 43 lines/s, dense across all six severities where own-app capture had
+  only I 117 / D 5. **W2:** Live offered *Recommended · already paired* with the
+  new-code form hidden and the button changed to **Connect full-device**;
+  reconnect used the saved encrypted identity with no new code and captured
+  **4,292 entries** at 49 lines/s. Stop closed the transport both times, with an
+  explicit notice — *"VisualCat closed its Wireless debugging connection and
+  discarded the decrypted…"* — and an **Open settings** action. Afterwards the ADB
+  TLS port held **zero ESTABLISHED sockets**, one in `TIME_WAIT`, which is the
+  kernel holding the 4-tuple after a clean close. Android listed the pairing as
+  `VisualCat`; it was forgotten at hand-back and the owner's two existing
+  pairings were left untouched.
+- **The pairing code never reaches a VisualCat log.** A grep of the full logcat
+  for the live code returned one hit, and it was `adbd` logging *this harness's
+  own* `input text <code>` shell command — an artifact of typing the code over
+  ADB that a person using the keyboard cannot produce. VisualCat logged nothing.
+  The code is masked as six dots in the field, and both fields stay above the
+  keyboard.
+
+**Findings. Neither is fixed; both are open against this candidate.**
+
+- **F-01 · `long` format counts every record's own message body as an unreadable
+  line. Major. Partly fixed after this run; see the changelog's `[Unreleased]`.** `LogcatParser.cs:115` classifies every non-header, non-blank
+  line in `long` format as `Continuation`, and the chip bar and *Lines not on the
+  timeline* count those outcomes. A file with two records, three body lines and
+  **zero** unattached lines reports `3 unparsed lines`; the 3,999-record corpus
+  reports `4,000 unparsed lines` where the true number of lines belonging to no
+  record is **one**. The dialog then tells the reader these lines "are not logcat
+  records at all" and are "deliberately not attached to the entry above", while
+  the CLI shows them attached as the entry's own message
+  (`'line-one\nLINE-TWO-CONTINUATION'`). `threadtime` is unaffected: 500 records
+  report `500 in session` with no unparsed clause and no chip.
+  The one genuinely orphaned line — a line after a record separator that belongs
+  to no record — is discarded with `unknown`, `untimed` and rejected-candidate
+  all reading 0, and is not reachable from search. The shipped generator emits
+  such a line in every file it writes, so every synthetic corpus loses its last
+  line silently.
+  `SourceAccountingTests` cannot catch this: it asserts
+  `SourceLines == attributed` with `Continuations` in the sum, so a continuation
+  that had no record to attach to still balances the books — the same blind spot
+  the 2.0.14 changelog identifies for the defect it was written to close.
+  **This contradicts the 2.0.14 Play release note**, which claims "lines that are
+  not logcat records are counted honestly and listed in full."
+- **F-02 · Native crash on the render thread. Major.** `2026-09-18 16:30:00`,
+  SIGABRT, `FORTIFY: pthread_mutex_lock called on a destroyed mutex`, backtrace
+  `eglCreateWindowSurfaceImpl → Surface::hook_query → lock_shared → abort` — an
+  EGL window surface created from an already-destroyed Android Surface. The
+  dump's fingerprint is this device and `Process uptime: 158741s` puts process
+  start at `2026-09-16 20:24:19`, matching the candidate's install time exactly,
+  so this is the candidate's own process. `src/VisualCat.Android` contains no
+  surface or EGL code, so the race is in Avalonia.Android 12.1.1. **Not
+  reproduced on demand**: 10 background/trim/screen-off cycles and 12 rotation
+  cycles left the process alive. Evidence: `crash-buffer-full.txt`,
+  `tombstone_20`, dropbox `data_app_native_crash@1789741802038`.
+
+**Not run, and therefore not signed off:** W3–W5 (denial, stale-port and
+reconnect recovery), A-19 upgrade, A-22 Play-delivered install, the four-hour
+soak, the accessibility schedule, and B-04's raw-source-byte assertion. The
+`x86_64` split was not exercised. A-19 was declined deliberately: Play refuses a
+downgrade, so it would have required uninstalling the candidate and erasing a
+pre-existing capture.
+
+**Hand-back.** `font_scale` 1.0, `accelerometer_rotation` 1, `adb_wifi_enabled`
+0, `navigation_mode` 0, night mode on, override density 360 preserved,
+`POST_NOTIFICATIONS` still `granted=false`, no `vc18-*` file or MediaStore row,
+and an empty crash buffer across the whole Wireless run. The leftover
+`com.barebit.visualcat.deletetest` 2.0.12-dev package from 2026-09-05 — a §13.5
+miss from an earlier pass — was removed. Left in place: the captures this run
+created and the pre-existing `foxtrot · 2026-09-05` capture.
+
 ### v2.0.8 — 2026-08-24
 
 - The Google Play upload-key-signed candidate APK was clean-installed on a
