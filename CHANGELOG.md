@@ -7,11 +7,13 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Version numbers correspond to git tags and the GitHub [Releases](https://github.com/benny-cz/VisualCat/releases)
 page.
 
-The current stable release is `2.0.14`. Ongoing work is recorded under
+The current stable release is `2.1.0`. Ongoing work is recorded under
 `[Unreleased]`, and development builds carry a `-dev` version suffix so a
 screenshot says which build it came from.
 
 ## [Unreleased]
+
+## [2.1.0] - 2026-09-19
 
 ### Added
 
@@ -1903,7 +1905,8 @@ Initial public baseline — the greenfield .NET 10 rewrite described in
   archive, a CycloneDX SBOM, build provenance attestations, and the
   `tools/verify-public-release.ps1` one-command local preflight.
 
-[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.0.14...HEAD
+[Unreleased]: https://github.com/benny-cz/VisualCat/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/benny-cz/VisualCat/releases/tag/v2.1.0
 [2.0.14]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.14
 [2.0.13]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.13
 [2.0.12]: https://github.com/benny-cz/VisualCat/releases/tag/v2.0.12
