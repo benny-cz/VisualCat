@@ -181,7 +181,7 @@ launch succeed. For a scheduled or unattended capture on a Mac whose screen slee
 
 ## Desktop distribution limits
 
-Windows packages released after 2.1.0 are Authenticode-signed. Earlier Windows
+Windows packages are Authenticode-signed from 2.1.1 on. Earlier Windows
 packages and every macOS binary are unsigned, and the macOS binaries are not
 notarized. SmartScreen can still ask for a one-time confirmation while a new
 signed release builds reputation, and macOS Gatekeeper asks for one on every

@@ -156,7 +156,7 @@ hibernate, and user switching where supported.
 - File associations, Start-menu shortcuts, MSI/MSIX install/uninstall, automatic
   desktop updating, or Windows Store deployment unless the candidate begins
   shipping one of those capabilities. The current Windows product is a portable
-  ZIP whose program files are Authenticode-signed (releases after 2.1.0);
+  ZIP whose program files are Authenticode-signed (2.1.1 and later);
   absence of installer-created integration is not a defect.
 - Explorer drag-and-drop, shell context-menu verbs, jump lists, taskbar progress,
   toast notifications, and a tray icon are not current product claims. Their

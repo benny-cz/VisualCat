@@ -249,7 +249,7 @@ do not add it to the current API-36 build pre-emptively.
 |---|---|
 | Artifact | `artifacts/android/VisualCat-Android-v<version>.aab` from `tools/package-android.ps1` |
 | Application ID | `com.barebit.visualcat` |
-| versionCode | Derived from the release version and an explicit build counter: `major*1000000 + minor*10000 + patch*100 + build`, so `2.1.0` → `2010000` and a rebuild with `-VisualCatBuildNumber 3` → `2010003`. See `docs/RELEASE-CHECKLIST.md`. |
+| versionCode | Derived from the release version and an explicit build counter: `major*1000000 + minor*10000 + patch*100 + build`, so `2.1.1` → `2010100` and a rebuild with `-VisualCatBuildNumber 3` → `2010103`. See `docs/RELEASE-CHECKLIST.md`. |
 | inAppUpdatePriority | Set per release through the Play Developer API before rollout; it cannot be changed afterwards. See `docs/RELEASE-CHECKLIST.md`. |
 | Target API level | 36 (Android 16), pinned in `src/VisualCat.Android/VisualCat.Android.csproj` |
 | Minimum API level | 31 (Android 12) |
