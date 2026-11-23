@@ -107,8 +107,9 @@ NuGet.org publication is not currently configured. After downloading the
 dotnet tool install --global VisualCat.Cli --version 2.1.0 --add-source ./packages
 ```
 
-Desktop packages are not code-signed or notarized. The
-[release notes](docs/RELEASE-NOTES.md) explain the one-time OS prompts and the
+Windows packages released after 2.1.0 are Authenticode-signed; macOS packages are
+neither signed nor notarized. The
+[release notes](docs/RELEASE-NOTES.md) explain the remaining OS prompts and the
 [support matrix](docs/SUPPORT.md) records current platform limits.
 
 ## What VisualCat gives you

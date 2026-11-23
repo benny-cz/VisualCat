@@ -90,6 +90,11 @@ jobs:
             if (($target.rid -like 'win-*') -ne ($target.archive -eq 'zip')) {
               throw "Release target '$($target.rid)' has inconsistent archive type '$($target.archive)'."
             }
+            # Windows packages are archived only by the signing jobs below, which handle win-x64.
+            # Another Windows target would otherwise ship nothing, so it needs its own signing job first.
+            if ($target.rid -like 'win-*' -and $target.rid -ne 'win-x64') {
+              throw "Release target '$($target.rid)' has no signing job; only win-x64 is signed and packaged."
+            }
           }
 
           $matrix = @{ include = $targets } | ConvertTo-Json -Depth 5 -Compress
@@ -130,6 +135,10 @@ jobs:
       # in the publish job, so adding a RID cannot drift between two lists.
       matrix: ${{ fromJSON(needs.preflight.outputs.desktop-matrix) }}
     runs-on: ${{ matrix.os }}
+    outputs:
+      # Only the win-x64 leg sets this. A matrix job's outputs are combined across
+      # its legs, and a leg that leaves an output unset does not overwrite it.
+      windows-payload-manifest-sha256: ${{ steps.record-windows.outputs.payload-manifest-sha256 }}
     env:
       RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
     steps:
@@ -153,60 +162,39 @@ jobs:
       - name: Stage license, notices, and release README
         shell: pwsh
         run: |
-          ./tools/stage-release-notices.ps1 -Destination artifacts/desktop -Component Desktop -Version $env:RELEASE_VERSION -Runtime '${{ matrix.rid }}'
-          ./tools/stage-release-notices.ps1 -Destination artifacts/cli -Component Cli -Version $env:RELEASE_VERSION -Runtime '${{ matrix.rid }}'
-      - name: Archive packages
+          # A Windows payload is signed after this, by a signing job below: with the release
+          # certificate for a tag, with a throwaway test certificate for a rehearsal. Its README
+          # says which. Every other runtime ignores the parameter.
+          $signature = if ('${{ needs.preflight.outputs.is-tagged-release }}' -eq 'true') { 'Release' } else { 'Rehearsal' }
+          ./tools/stage-release-notices.ps1 -Destination artifacts/desktop -Component Desktop -Version $env:RELEASE_VERSION -Runtime '${{ matrix.rid }}' -WindowsSignature $signature
+          ./tools/stage-release-notices.ps1 -Destination artifacts/cli -Component Cli -Version $env:RELEASE_VERSION -Runtime '${{ matrix.rid }}' -WindowsSignature $signature
+      # Windows: this job never holds a signing credential. It records the unsigned payload
+      # and hands it to a signing job on another machine, which checks it against this record
+      # before signing, then archives and verifies it.
+      - name: Record the unsigned Windows payload
+        id: record-windows
+        if: startsWith(matrix.rid, 'win-')
         shell: pwsh
-        env:
-          # Prevent macOS tar from emitting AppleDouble ._ files for extended
-          # attributes attached to published binaries.
-          COPYFILE_DISABLE: 1
-        run: |
-          $desktop = "VisualCat-Desktop-${{ matrix.rid }}-v$env:RELEASE_VERSION"
-          $cli = "VisualCat-CLI-${{ matrix.rid }}-v$env:RELEASE_VERSION"
-          New-Item -ItemType Directory -Path packages -Force | Out-Null
-
-          # One top-level directory per archive, named after the archive. Packing the publish
-          # directory's contents directly gave every member the name "./<file>", so the
-          # extraction the README implies scattered 240 generically-named .NET assemblies into
-          # whatever directory the user happened to be in (finding F-02).
-          Rename-Item -LiteralPath artifacts/desktop -NewName $desktop
-          Rename-Item -LiteralPath artifacts/cli -NewName $cli
-          if ('${{ matrix.archive }}' -eq 'zip') {
-            Compress-Archive -Path "artifacts/$desktop" -DestinationPath "packages/$desktop.zip"
-            Compress-Archive -Path "artifacts/$cli" -DestinationPath "packages/$cli.zip"
-          } else {
-            tar -C artifacts -czf "packages/$desktop.tar.gz" $desktop
-            if ($LASTEXITCODE -ne 0) { throw 'Desktop archive failed.' }
-            tar -C artifacts -czf "packages/$cli.tar.gz" $cli
-            if ($LASTEXITCODE -ne 0) { throw 'CLI archive failed.' }
-          }
-          Rename-Item -LiteralPath "artifacts/$desktop" -NewName desktop
-          Rename-Item -LiteralPath "artifacts/$cli" -NewName cli
-
-          # Two assertions that make this class unable to regress: exactly one top-level entry
-          # per archive, and it is a directory.
-          foreach ($archive in Get-ChildItem packages) {
-            $roots = if ($archive.Extension -eq '.zip') {
-              # Two statements, not one parenthesised group: ( ... ) holds a single pipeline,
-              # so a newline inside it is a parse error and the whole step dies before the
-              # first archive is written.
-              $extracted = Join-Path $env:RUNNER_TEMP $archive.BaseName
-              Expand-Archive -LiteralPath $archive.FullName -DestinationPath $extracted -Force
-              Get-ChildItem $extracted | ForEach-Object { $_.Name + $(if ($_.PSIsContainer) { '/' } else { '' }) }
-            } else {
-              tar -tzf $archive.FullName | ForEach-Object { ($_ -split '/')[0] + '/' } | Sort-Object -Unique
-            }
-            $roots = @($roots | Sort-Object -Unique)
-            if ($roots.Count -ne 1) {
-              throw "$($archive.Name) has $($roots.Count) top-level entries: $($roots -join ', '). Release archives must contain exactly one directory."
-            }
-            if (-not $roots[0].EndsWith('/')) {
-              throw "$($archive.Name)'s single top-level entry '$($roots[0])' is a file, not a directory."
-            }
-            "$($archive.Name) → $($roots[0])" >> $env:GITHUB_STEP_SUMMARY
-          }
+        run: ./tools/signing/Invoke-WindowsSigningRun.ps1 -Phase Record -WorkDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts') -Runtime '${{ matrix.rid }}' -Version $env:RELEASE_VERSION
+      - name: Hand the unsigned Windows payload to the signing job
+        if: startsWith(matrix.rid, 'win-')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unsigned-${{ matrix.rid }}
+          path: |
+            artifacts/desktop/
+            artifacts/cli/
+            artifacts/payload-manifest.json
+          # A tagged release's signing job waits for the owner's approval, which can take days.
+          retention-days: 30
+          if-no-files-found: error
+      - name: Archive packages
+        # Windows payloads are archived by their signing job, once signed.
+        if: ${{ !startsWith(matrix.rid, 'win-') }}
+        shell: pwsh
+        run: ./tools/archive-release-packages.ps1 -PublishRoot artifacts -Runtime '${{ matrix.rid }}' -Archive '${{ matrix.archive }}' -Version $env:RELEASE_VERSION -Destination packages
       - name: Verify the archives that will be uploaded
+        if: ${{ !startsWith(matrix.rid, 'win-') }}
         shell: pwsh
         run: |
           $extension = if ('${{ matrix.archive }}' -eq 'zip') { 'zip' } else { 'tar.gz' }
@@ -218,10 +206,107 @@ jobs:
           ./tools/verify-package-contents.ps1 `
             -Archive "packages/VisualCat-CLI-${{ matrix.rid }}-v$env:RELEASE_VERSION.$extension" `
             -Component Cli -Version $env:RELEASE_VERSION -Runtime '${{ matrix.rid }}' -SkipExecution:$skip
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - if: ${{ !startsWith(matrix.rid, 'win-') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: packages-${{ matrix.rid }}
           path: packages/*
+          if-no-files-found: error
+
+  # A tagged release's Windows packages are signed with the release certificate, held in
+  # SSL.com eSigner. The job takes its credentials from the protected `signing` environment,
+  # so it waits for the owner's approval; the environment must already exist (see
+  # docs/RELEASE-CHECKLIST.md). The credentials reach only the Sign step, on a machine that
+  # never ran the build, and a canary signature is checked against the pinned certificate
+  # before anything else is signed. Each release costs one eSigner signing per distinct
+  # unsigned PE file, about 33.
+  windows-sign:
+    needs: [preflight, desktop]
+    if: needs.preflight.outputs.is-tagged-release == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    environment: signing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Refuse an unprotected signing environment
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./tools/signing/Assert-SigningEnvironment.ps1 -Repository $env:GITHUB_REPOSITORY -Environment signing
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: unsigned-win-x64
+          path: ${{ runner.temp }}/signing-run
+      - name: Check the payload against the desktop job's record and prepare Jsign
+        shell: pwsh
+        env:
+          PAYLOAD_MANIFEST_SHA256: ${{ needs.desktop.outputs.windows-payload-manifest-sha256 }}
+        run: ./tools/signing/Invoke-WindowsSigningRun.ps1 -Phase Prepare -WorkDirectory (Join-Path $env:RUNNER_TEMP 'signing-run') -Mode ESigner -PayloadManifestSha256 $env:PAYLOAD_MANIFEST_SHA256
+      - name: Sign with the release certificate
+        shell: pwsh
+        env:
+          VISUALCAT_ESIGNER_USERNAME: ${{ secrets.ESIGNER_USERNAME }}
+          VISUALCAT_ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
+          VISUALCAT_ESIGNER_CREDENTIAL_ID: ${{ secrets.ESIGNER_CREDENTIAL_ID }}
+          VISUALCAT_ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
+          VISUALCAT_EXPECTED_SIGNER_SHA256: ${{ secrets.ESIGNER_CERT_SHA256 }}
+        run: ./tools/signing/Invoke-WindowsSigningRun.ps1 -Phase Sign -WorkDirectory (Join-Path $env:RUNNER_TEMP 'signing-run')
+      - name: Archive the signed packages and verify their contents
+        shell: pwsh
+        run: ./tools/signing/Invoke-WindowsSigningRun.ps1 -Phase Package -WorkDirectory (Join-Path $env:RUNNER_TEMP 'signing-run')
+      - name: Verify every signature against Windows' roots with revocation
+        shell: pwsh
+        run: ./tools/signing/Invoke-WindowsSigningRun.ps1 -Phase Verify -WorkDirectory (Join-Path $env:RUNNER_TEMP 'signing-run')
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: packages-win-x64
+          path: ${{ runner.temp }}/signing-run/packages/*
+          if-no-files-found: error
+
+  # A rehearsal (workflow_dispatch) runs every signing phase with a throwaway test
+  # certificate and no secrets, so the signing path executes before the first tag that
+  # needs it. Its packages are signed but untrusted, and are never published.
+  windows-sign-rehearsal:
+    needs: [preflight, desktop]
+    if: needs.preflight.outputs.is-tagged-release != 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check the release signing environment (informational in a rehearsal)
+        # The tag's signing job refuses to run without a protected environment; a rehearsal
+        # reports that here, before a release depends on it, without failing.
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./tools/signing/Assert-SigningEnvironment.ps1 -Repository $env:GITHUB_REPOSITORY -Environment signing
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: unsigned-win-x64
+          path: ${{ runner.temp }}/signing-run
+      - name: Check the payload against the desktop job's record and make a test certificate
+        shell: pwsh
+        env:
+          PAYLOAD_MANIFEST_SHA256: ${{ needs.desktop.outputs.windows-payload-manifest-sha256 }}
+        run: ./tools/signing/Invoke-WindowsSigningRun.ps1 -Phase Prepare -WorkDirectory (Join-Path $env:RUNNER_TEMP 'signing-run') -Mode TestCertificate -PayloadManifestSha256 $env:PAYLOAD_MANIFEST_SHA256
+      - name: Sign with the test certificate
+        shell: pwsh
+        run: ./tools/signing/Invoke-WindowsSigningRun.ps1 -Phase Sign -WorkDirectory (Join-Path $env:RUNNER_TEMP 'signing-run')
+      - name: Archive the signed packages and verify their contents
+        shell: pwsh
+        run: ./tools/signing/Invoke-WindowsSigningRun.ps1 -Phase Package -WorkDirectory (Join-Path $env:RUNNER_TEMP 'signing-run')
+      - name: Verify every signature against the test root
+        shell: pwsh
+        run: ./tools/signing/Invoke-WindowsSigningRun.ps1 -Phase Verify -WorkDirectory (Join-Path $env:RUNNER_TEMP 'signing-run')
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: packages-win-x64
+          path: ${{ runner.temp }}/signing-run/packages/*
           if-no-files-found: error
 
   android:
@@ -374,11 +459,16 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [preflight, desktop, android, nuget, sbom]
+    needs: [preflight, desktop, windows-sign, windows-sign-rehearsal, android, nuget, sbom]
+    # Exactly one Windows signing job runs: the release certificate's for a tag, the test
+    # certificate's for a rehearsal. A tag never publishes packages the release certificate
+    # did not sign.
     if: >-
       always() &&
       needs.preflight.result == 'success' &&
       needs.desktop.result == 'success' &&
+      ((needs.preflight.outputs.is-tagged-release == 'true' && needs.windows-sign.result == 'success') ||
+      (needs.preflight.outputs.is-tagged-release != 'true' && needs.windows-sign-rehearsal.result == 'success')) &&
       needs.nuget.result == 'success' &&
       needs.sbom.result == 'success' &&
       (needs.android.result == 'success' || needs.android.result == 'skipped')

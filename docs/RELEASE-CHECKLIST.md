@@ -48,6 +48,12 @@ be published from an unmerged commit or one that would fail a pull request:
 - extraction of each finished archive, verifying its layout, notice files, and
   reported version, and running the archived CLI where the runner can execute
   it;
+- every unsigned PE file of the Windows desktop and CLI payloads signed by the
+  release certificate in a job of its own, after the payload is checked against
+  the build job's record; then every PE file of the finished Windows archives
+  verified against Windows' roots with revocation, vendor files byte-identical,
+  and four negative controls rejected (`tools/signing/`). A rehearsal does the
+  same with a throwaway test certificate;
 - installation of the packed `.nupkg` from a local feed, then running it;
 - a CycloneDX SBOM whose licenses are reviewed, failing on licenses
   incompatible with an MIT-licensed self-contained distribution; and
@@ -66,6 +72,7 @@ be published from an unmerged commit or one that would fail a pull request:
 - [ ] Four-hour host-ADB soak and Android Wireless-ADB soak/reconnect/disconnect matrices complete without an orphan process, leaked stream, persistent debugging connection, or sustained post-warm-up memory growth. Exercise enough log traffic to prove the bounded Wireless-ADB receive pump recycles/reconnects rather than allowing the third-party queue to grow without limit.
 - [ ] File, portable, growing-file, partial, degraded, and incompatible sessions are manually exercised.
 - [ ] Keyboard, contrast, text scaling, focus, and screen-reader labels are reviewed.
+- [ ] The Windows signing job was approved by the owner, and its summary shows every distinct unsigned file signed, 0 verification failures, revocation checked, and 4/4 negative controls rejected. The eSigner signing allowance covers the release (about 33 signings).
 - [ ] Windows and macOS signing/notarization state matches the release decision and public docs; any intentionally unsigned artifact has explicit risk approval and tested OS-warning instructions; Linux packages are validated.
 - [ ] Android own-app and Wireless-debugging full-device modes are tested on physical hardware, including first pairing, saved reconnect, Stop/disconnect, background/resume, rotation, and revoked/stale pairing recovery.
 - [ ] Cancel is exercised during Wireless-ADB discovery/connection and during the low-level pairing handshake. Discovery/connection must unwind promptly; pairing may remain visibly `Cancelling…` until LibADB's local socket handshake returns, but Live must not start afterward and no authenticated ADB connection may remain.
@@ -439,6 +446,13 @@ tag. Dispatch runs derive `<VersionPrefix>-preview.<run>` from the checkout and
 never publish a GitHub release or push to NuGet, so the packaging path can be
 exercised repeatedly and safely.
 
+A rehearsal's Windows packages go through the same signing job as a tag's, with a
+throwaway test certificate made in the job instead of the release certificate.
+Windows does not trust that certificate, so treat the rehearsal's Windows archives
+as unsigned when you run them. The job's first step reports whether the `signing`
+environment that a tag needs exists and is protected, without failing the
+rehearsal; fix it before tagging if that step is red.
+
 Download and inspect the resulting artifacts: Windows, Linux, Intel macOS, and
 Apple-silicon macOS desktop archives; the matching CLI archives; the `.nupkg`;
 the SBOM; `SHA256SUMS`; and the APK if Android release signing is enabled.
@@ -644,7 +658,35 @@ Set `NUGET_API_KEY` to publish the `VisualCat.Cli` global-tool package to
 nuget.org. Without it, the `.nupkg` is still built, checksummed, and attached to
 the GitHub release for inspection and manual publication.
 
-Desktop signing, macOS notarization, store submission, physical-device
+### Windows code signing
+
+A tagged release's Windows packages are signed with the release certificate,
+held in SSL.com eSigner, by the `windows-sign` job of the release workflow. Set
+it up once, before the first tag that needs it:
+
+1. Create a `signing` environment under **Settings → Environments**. Require a
+   reviewer (the owner), turn off **Allow administrators to bypass configured
+   protection rules**, and limit deployment branches and tags to the `v*` tag
+   pattern, plus `main` if you like. The job checks all of this
+   (`tools/signing/Assert-SigningEnvironment.ps1`) and refuses to sign otherwise.
+   A job that names a missing environment would create an unprotected one, so
+   create it before tagging.
+2. Add five environment secrets to `signing`, never repository secrets:
+   - `ESIGNER_USERNAME` and `ESIGNER_PASSWORD` — the SSL.com account;
+   - `ESIGNER_CREDENTIAL_ID` — the eSigner credential ID of the certificate;
+   - `ESIGNER_TOTP_SECRET` — the base64 secret shown with the eSigner QR code,
+     not the PIN;
+   - `ESIGNER_CERT_SHA256` — the certificate's SHA-256 fingerprint, the pin that
+     the canary signature is checked against.
+
+Each tag then waits at `windows-sign` until the owner approves the deployment.
+Agents never approve it. A release costs one eSigner signing per distinct
+unsigned PE file, currently 33. The allowance belongs to the certificate and is
+shared with anything else signed with it. The certificate is valid for a year.
+Renewing it changes its SHA-256, so update `ESIGNER_CERT_SHA256` before the next
+release, or the canary stops the run after one signing.
+
+macOS notarization, store submission, physical-device
 validation, and multi-hour soak gates require release infrastructure or hardware
 and must be recorded explicitly when deferred. The published CycloneDX SBOM
 covers the desktop solution's resolved packages; it does not enumerate the

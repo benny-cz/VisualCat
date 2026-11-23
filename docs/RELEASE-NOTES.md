@@ -58,10 +58,17 @@ embedded self-contained .NET runtime or Android-only dependencies.
 
 ## Desktop packages
 
-Desktop packages are currently unsigned.
+Windows packages are Authenticode-signed; macOS packages are neither signed nor
+notarized.
 
-- **Windows:** extract the ZIP and run `VisualCat.exe`. If SmartScreen warns,
-  choose **More info → Run anyway** after verifying the checksum.
+- **Windows:** every program file in the ZIP carries an Authenticode signature.
+  VisualCat's own files, and bundled components that shipped unsigned, are signed
+  and timestamped by VisualCat's publisher; the rest keep their vendors'
+  signatures (Microsoft, AvaloniaUI). Windows names the publisher in the
+  SmartScreen prompt and under **Properties → Digital Signatures**. Extract the
+  ZIP and run `VisualCat.exe`. A new release can still meet a SmartScreen warning
+  while it builds reputation; choose **More info → Run anyway** only after
+  verifying the checksum.
 - **macOS:** the download is a bare command-line-launched executable, not a
   Finder `.app` bundle, and is neither signed nor notarized. Extract the archive,
   then remove the downloaded-file quarantine after verifying the checksum:

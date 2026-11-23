@@ -154,10 +154,10 @@ hibernate, and user switching where supported.
 - Android companion behaviour except a portable/parity exchange.
 - Linux and macOS platform chrome and packaging.
 - File associations, Start-menu shortcuts, MSI/MSIX install/uninstall, automatic
-  desktop updating, code signing, or Windows Store deployment unless the
-  candidate begins shipping one of those capabilities. The current Windows
-  product is a portable unsigned ZIP; absence of installer-created integration
-  is not a defect.
+  desktop updating, or Windows Store deployment unless the candidate begins
+  shipping one of those capabilities. The current Windows product is a portable
+  ZIP whose program files are Authenticode-signed (releases after 2.1.0);
+  absence of installer-created integration is not a defect.
 - Explorer drag-and-drop, shell context-menu verbs, jump lists, taskbar progress,
   toast notifications, and a tray icon are not current product claims. Their
   absence is not a defect unless the candidate or its documentation adds them;
@@ -192,7 +192,7 @@ only by the newest machine available.
 | Gate | Minimum live coverage | Important dimensions |
 |---|---|---|
 | Change smoke | One supported Windows 11 x64 host | Candidate ZIP, standard user, 100% or 125% scale, mouse and keyboard |
-| Release candidate | Windows 11 plus Windows 10 where the release still claims it | Clean local profile; standard user; Defender active; 100% and non-integer scale; single monitor and mixed-DPI dual monitor; exact unsigned candidate |
+| Release candidate | Windows 11 plus Windows 10 where the release still claims it | Clean local profile; standard user; Defender active; 100% and non-integer scale; single monitor and mixed-DPI dual monitor; exact signed candidate |
 | UI/accessibility gate | One host with Narrator and Windows contrast themes; two materially different displays | 100/125/150/200% scaling, small/large resolution, light/dark/contrast, keyboard-only, Magnifier, IME; touch/pen where claimed and available |
 | ADB gate | One physical supported Android device and one Windows host with current platform-tools | USB transport, unauthorized/offline state, Wi-Fi or transport interruption where available, at least main/system/crash buffers |
 | Storage gate | NTFS local SSD plus one materially different supported path | Long/Unicode/spaced path, non-system volume, removable or network/OneDrive path as an explicit compatibility probe, restrictive ACL, Defender/indexer interaction |
@@ -340,12 +340,30 @@ archive root must contain `VisualCat.exe`, `LICENSE`, `THIRD-PARTY-NOTICES.md`,
 and `README.txt`; its README and visible application identity must name the
 candidate version. No separate .NET installation may be required.
 
-Do **not** click *Run anyway* before capturing the expected unsigned-candidate
-SmartScreen path. Mark-of-the-Web propagation depends on browser and extractor,
-so record the stream on both ZIP and executable after extraction. A warning is
-expected for the currently unsigned artifact; an unexplained signature, a
-publisher claim, a changed warning, or instructions that omit checksum review
-is a finding.
+Do **not** click *Run anyway* before capturing the SmartScreen path the
+candidate actually meets. Mark-of-the-Web propagation depends on browser and
+extractor, so record the stream on both ZIP and executable after extraction. A
+signed candidate names its publisher in the prompt and can still warn while the
+release builds reputation. Every PE file of the extracted tree must carry a
+valid, timestamped Authenticode signature. VisualCat's files, and bundled
+components that shipped unsigned, carry the release certificate's; the rest
+carry unchanged Microsoft or AvaloniaUI signatures:
+
+```powershell
+Get-ChildItem -LiteralPath '<extracted-root>' -Recurse -File -Include *.exe, *.dll |
+    Get-AuthenticodeSignature |
+    Group-Object Status, { $_.SignerCertificate.GetNameInfo('SimpleName', $false) } -NoElement
+```
+
+Each of these is a finding:
+
+- a PE file that is unsigned, invalid or signed by anyone else;
+- a publisher in the prompt other than the release certificate's;
+- an untrusted or rehearsal (test-certificate) signature on a release asset;
+- instructions that omit checksum review.
+
+Where Smart App Control is on, the candidate must start and load its libraries
+with no Application Control block.
 
 After launch, record:
 
@@ -363,7 +381,7 @@ PID **and executable path**, not name alone.
 
 | State | How to produce | Expected product behaviour |
 |---|---|---|
-| **W0 — ordinary verified portable run** | Download exact ZIP, verify it, extract through Explorer to a user-writable local NTFS directory, accept expected unsigned warning | Starts as standard user; no installer, elevation, or system .NET required; identity and notices match candidate |
+| **W0 — ordinary verified portable run** | Download exact ZIP, verify it, extract through Explorer to a user-writable local NTFS directory, handle any SmartScreen prompt only after verification | Starts as standard user; no installer, elevation, or system .NET required; identity and notices match candidate |
 | **W1 — clean profile / no VisualCat data** | New local test user or validated backup-and-move of the exact VisualCat data directory | First launch has no stale settings, sessions, or diagnostics and does not create data outside declared locations |
 | **W2 — preserved profile / upgrade** | Previous supported release has settings, sessions, saved views, and an interrupted session; start candidate from a different extracted directory | Data is migrated or read compatibly; candidate does not rewrite old data merely by listing it; rollback risk is documented |
 | **W3 — standard user with restrictive destination** | Run app from a readable directory while session/export target is denied, read-only, Controlled-Folder-Access protected, or low-space | Launch still works if its own directory is readable; each denied write fails visibly and safely; no elevation prompt or silent fallback |
@@ -853,7 +871,7 @@ like-for-like baseline delta rather than silently lowering the repository gate.
 | Soak resources | No sustained post-warm-up positive slope in private bytes, handles, threads, mapped files, or latency | Rolling-window medians at least every 15 min |
 | Crash/hang/WER | Zero attributable events in scenario window | Event logs, WER/Reliability, process observation |
 
-First launch of a freshly downloaded unsigned self-contained build may include
+First launch of a freshly downloaded self-contained build may include
 SmartScreen, Defender scanning, runtime image mapping, and shader/font-cache
 warm-up. Measure it, but report it separately from repeat cold launches. Never
 discard it as an outlier: it is a real first-user experience.
@@ -1008,14 +1026,15 @@ an undeclared runtime/elevation, or is misrepresented by Windows security UI.
 *Steps* Verify checksum/provenance and ZIP entries per §2.4 · open the unopened
 archive in Explorer and assess whether its README/release instructions clearly
 say to extract before launch · extract with Explorer · inspect Mark-of-the-Web on
-ZIP and executable · launch from Explorer as a standard user · handle the
-expected unsigned SmartScreen route only after verification · wait 30 s.
+ZIP and executable · launch from Explorer as a standard user · handle any
+SmartScreen prompt only after verification, recording the publisher it names ·
+wait 30 s.
 *Expect* Required notices and `VisualCat.exe` are at archive root; no installer,
 elevation, or system .NET prompt appears; one main window opens inside budget
 with the VisualCat icon and product title; the in-window identity shows the exact
 candidate version and agrees with file metadata. Executable path/hash match the
-inventory; no crash/WER event. The unsigned warning and README instructions
-agree with [`RELEASE-NOTES.md`](RELEASE-NOTES.md), make extraction discoverable,
+inventory; no crash/WER event. The SmartScreen behaviour, the signatures and the
+README instructions agree with [`RELEASE-NOTES.md`](RELEASE-NOTES.md), make extraction discoverable,
 and never encourage running a dependency-filled app from Explorer's compressed-
 folder view.
 *Fail if* archive identity differs, an unexpected publisher/signature appears,
@@ -2367,8 +2386,9 @@ load path is a security finding; archive files must remain hash-identical.
 Compare browser download + Explorer extract, PowerShell extract, copy via USB,
 and explicitly unblocked controlled copy. Record Zone.Identifier propagation and
 actual warning. Product docs never instruct bypass before checksum/provenance;
-unsigned artifact never claims signed publisher; warning absence caused by
-reputation/MOTW loss is not called a product pass or fail by itself.
+an unsigned artifact never claims a signed publisher, and a signed one names only
+the release certificate's; warning absence caused by reputation/MOTW loss is not
+called a product pass or fail by itself.
 
 ### P-14 · Clipboard and sensitive display
 
@@ -2750,7 +2770,7 @@ not fix effort or reproducibility.
    and expiry. Missing/zero-frame instrumentation is Blocked, never Pass.
 10. A-29 passes from the previous supported release whenever settings, session
     format, cache, default path, versioning, runtime, or packaging changes.
-11. Candidate hash/version/notices/checksum/provenance/unsigned SmartScreen
+11. Candidate hash/version/notices/checksum/provenance/signature/SmartScreen
     documentation all agree; no undeclared runtime, elevation, installer,
     auto-update, file association, service, task or network traffic appears.
 12. Run header, results, defect links, evidence hash index, sensitive-data
@@ -2943,7 +2963,7 @@ Check every finding against these before filing; record the check in the defect.
    `Zone.Identifier`; Explorer may propagate it to extracted files; PowerShell,
    USB, Git, network shares, and some archivers may not. SmartScreen not appearing
    does not prove signing or reputation.
-2. **SmartScreen reputation is external state.** A byte-identical unsigned build
+2. **SmartScreen reputation is external state.** A byte-identical build, signed or not,
    can warn on one host and not another. The product gate is honest artifact
    identity/documentation and successful verified launch, not a specific blue
    dialog on every machine.

@@ -13,6 +13,25 @@ screenshot says which build it came from.
 
 ## [Unreleased]
 
+### Changed
+
+- **Windows packages are Authenticode-signed.** The release workflow signs every
+  unsigned PE file of the `win-x64` desktop and CLI payloads, 33 distinct files:
+  VisualCat's own and the bundled Avalonia, MicroCom and Tmds.DBus libraries,
+  which ship unsigned and which Smart App Control would block. Vendor-signed files
+  stay byte for byte. The release certificate is held in SSL.com eSigner, and its
+  credentials reach only one step of a job that waits for the owner's approval in
+  the protected `signing` environment and never ran the build. That job checks the
+  payload against the build's record, signs a canary against the pinned
+  certificate before anything else, and then verifies every PE file of the
+  finished archives independently of the signing tool: against Windows' roots
+  with revocation, with tampered, stripped, untimestamped and foreign-signer
+  controls that must each be rejected
+  ([`tools/signing/Invoke-WindowsSigningRun.ps1`](tools/signing/Invoke-WindowsSigningRun.ps1)).
+  A rehearsal runs the same path with a throwaway test certificate, so it executes
+  before a tag depends on it. Every runtime is now archived by one script,
+  [`tools/archive-release-packages.ps1`](tools/archive-release-packages.ps1).
+
 ## [2.1.0] - 2026-09-19
 
 ### Added

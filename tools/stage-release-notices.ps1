@@ -28,7 +28,15 @@ param(
 
     [Parameter(Mandatory)]
     [ValidateSet('win-x64', 'linux-x64', 'osx-x64', 'osx-arm64')]
-    [string]$Runtime
+    [string]$Runtime,
+
+    # Who signs a Windows payload is the release workflow's decision, made after
+    # this script runs: a tagged release is signed with the release certificate in
+    # the protected signing job, a rehearsal with a throwaway test certificate, and
+    # a local package (tools/package.ps1) not at all. The README must say which.
+    # Ignored for every other runtime.
+    [ValidateSet('None', 'Release', 'Rehearsal')]
+    [string]$WindowsSignature = 'None'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,14 +106,41 @@ Index a log and inspect it:
 "@
 }
 
+$windowsSignatureNote = switch ($WindowsSignature) {
+    'Release' {
+        @'
+Every program file in this archive carries an Authenticode signature.
+VisualCat's own files, and bundled components that shipped unsigned, are
+signed and timestamped by VisualCat's publisher; the rest keep their vendors'
+signatures (Microsoft, AvaloniaUI). Windows names the publisher in the
+SmartScreen prompt and under Properties > Digital Signatures. A new release can
+still meet a SmartScreen warning while it builds reputation; after verifying the
+checksum above, choose "More info" then "Run anyway".
+'@
+    }
+    'Rehearsal' {
+        @'
+This is a release rehearsal, not a release. Its program files are signed with a
+throwaway test certificate that Windows does not trust, so Windows treats them
+as unsigned: SmartScreen may warn, and Smart App Control blocks them.
+'@
+    }
+    default {
+        @'
+This build is not code-signed. SmartScreen may warn on first launch; after
+verifying the checksum above, choose "More info" then "Run anyway". Smart App
+Control, where it is on, blocks unsigned programs.
+'@
+    }
+}
+
 $platformNotes = if ($targetIsWindows) {
-    @'
+    @"
 Windows notes
 -------------
 
-This build is not code-signed. SmartScreen may warn on first launch; after
-verifying the checksum above, choose "More info" then "Run anyway".
-'@
+$windowsSignatureNote
+"@
 } elseif ($Runtime -like 'osx-*') {
     @"
 macOS notes

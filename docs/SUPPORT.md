@@ -181,10 +181,13 @@ launch succeed. For a scheduled or unattended capture on a Mac whose screen slee
 
 ## Desktop distribution limits
 
-The initial Windows and macOS binaries are unsigned, and the macOS binaries are
-not notarized. Windows SmartScreen and macOS Gatekeeper may therefore require a
-one-time confirmation after the user verifies the release checksum and build
-provenance. The macOS archives contain terminal-launched executables, not Finder
+Windows packages released after 2.1.0 are Authenticode-signed. Earlier Windows
+packages and every macOS binary are unsigned, and the macOS binaries are not
+notarized. SmartScreen can still ask for a one-time confirmation while a new
+signed release builds reputation, and macOS Gatekeeper asks for one on every
+release; confirm only after verifying the release checksum and build provenance.
+Where Windows Smart App Control is on, it blocks the unsigned Windows packages
+outright. The macOS archives contain terminal-launched executables, not Finder
 `.app` bundles, so they do not provide normal Finder, Dock, or application-menu
 integration.
 
